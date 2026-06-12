@@ -6,6 +6,7 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique"
 	"github.com/theapemachine/nomagique/core"
+	"gonum.org/v1/gonum/stat"
 )
 
 /*
@@ -136,7 +137,8 @@ func (kl *KLDivergence) divergence(observed, expected []float64) (float64, bool)
 		observedSum = floor
 	}
 
-	divergence := 0.0
+	observedProbabilities := make([]float64, width)
+	expectedProbabilities := make([]float64, width)
 
 	for index := range width {
 		observedProbability := floor
@@ -148,6 +150,8 @@ func (kl *KLDivergence) divergence(observed, expected []float64) (float64, bool)
 		if observedProbability < floor {
 			observedProbability = floor
 		}
+
+		observedProbabilities[index] = observedProbability
 
 		expectedMass := floor
 
@@ -161,8 +165,10 @@ func (kl *KLDivergence) divergence(observed, expected []float64) (float64, bool)
 			expectedProbability = floor
 		}
 
-		divergence += observedProbability * math.Log(observedProbability/expectedProbability)
+		expectedProbabilities[index] = expectedProbability
 	}
+
+	divergence := stat.KullbackLeibler(observedProbabilities, expectedProbabilities)
 
 	if math.IsNaN(divergence) || math.IsInf(divergence, 0) {
 		errnie.Err(

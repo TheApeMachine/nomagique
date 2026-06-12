@@ -4,6 +4,7 @@ import (
 	"math"
 	"time"
 
+	"github.com/theapemachine/nomagique/decay"
 	"gonum.org/v1/gonum/optimize"
 )
 
@@ -30,17 +31,17 @@ func (context FitContext) logParamBounds() logParamBounds {
 
 	return logParamBounds{
 		lower: [bivariateParamCount]float64{
-			LogPositive(minRate),
-			LogPositive(minRate),
+			decay.LogPositive(minRate),
+			decay.LogPositive(minRate),
 			math.Log(betaMin),
-			LogPositive(context.BranchFloor),
-			LogPositive(1e-9),
-			LogPositive(1e-9),
-			LogPositive(context.BranchFloor),
+			decay.LogPositive(context.BranchFloor),
+			decay.LogPositive(1e-9),
+			decay.LogPositive(1e-9),
+			decay.LogPositive(context.BranchFloor),
 		},
 		upper: [bivariateParamCount]float64{
-			LogPositive(maxRate),
-			LogPositive(maxRate),
+			decay.LogPositive(maxRate),
+			decay.LogPositive(maxRate),
 			math.Log(betaMax),
 			math.Log(selfMax),
 			math.Log(crossMax),
@@ -301,13 +302,13 @@ func (estimator *BivariateEstimator) multiStartSeeds(
 	muYStart := context.MuYStart()
 	betaStart := 1 / context.MedianGapSec
 	baseLog := [bivariateParamCount]float64{
-		LogPositive(muXStart),
-		LogPositive(muYStart),
-		LogPositive(betaStart),
-		LogPositive(0.2),
-		LogPositive(0.05),
-		LogPositive(0.05),
-		LogPositive(0.2),
+		decay.LogPositive(muXStart),
+		decay.LogPositive(muYStart),
+		decay.LogPositive(betaStart),
+		decay.LogPositive(0.2),
+		decay.LogPositive(0.05),
+		decay.LogPositive(0.05),
+		decay.LogPositive(0.2),
 	}
 	seeds := make([][bivariateParamCount]float64, 0, len(context.LocalScales)+2)
 
@@ -337,12 +338,12 @@ func logParamsFromFit(fit BivariateFit) [bivariateParamCount]float64 {
 	}
 
 	return [bivariateParamCount]float64{
-		LogPositive(fit.MuX),
-		LogPositive(fit.MuY),
-		LogPositive(fit.Beta),
-		LogPositive(fit.AlphaXX / beta),
-		LogPositive(fit.AlphaXY / beta),
-		LogPositive(fit.AlphaYX / beta),
-		LogPositive(fit.AlphaYY / beta),
+		decay.LogPositive(fit.MuX),
+		decay.LogPositive(fit.MuY),
+		decay.LogPositive(fit.Beta),
+		decay.LogPositive(fit.AlphaXX / beta),
+		decay.LogPositive(fit.AlphaXY / beta),
+		decay.LogPositive(fit.AlphaYX / beta),
+		decay.LogPositive(fit.AlphaYY / beta),
 	}
 }

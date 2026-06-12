@@ -3,6 +3,8 @@ package statistic
 import (
 	"math"
 	"sort"
+
+	"gonum.org/v1/gonum/stat"
 )
 
 /*
@@ -62,34 +64,8 @@ func Quartiles(values []float64) (lower float64, upper float64) {
 	sorted := append([]float64(nil), values...)
 	sort.Float64s(sorted)
 
-	lower = quantileSorted(sorted, 0.25)
-	upper = quantileSorted(sorted, 0.75)
+	lower = stat.Quantile(0.25, stat.LinInterp, sorted, nil)
+	upper = stat.Quantile(0.75, stat.LinInterp, sorted, nil)
 
 	return lower, upper
-}
-
-func quantileSorted(sorted []float64, percentile float64) float64 {
-	if len(sorted) == 0 {
-		return 0
-	}
-
-	if percentile <= 0 {
-		return sorted[0]
-	}
-
-	if percentile >= 1 {
-		return sorted[len(sorted)-1]
-	}
-
-	position := percentile * float64(len(sorted)-1)
-	lowerIndex := int(math.Floor(position))
-	upperIndex := int(math.Ceil(position))
-
-	if lowerIndex == upperIndex {
-		return sorted[lowerIndex]
-	}
-
-	weight := position - float64(lowerIndex)
-
-	return sorted[lowerIndex]*(1-weight) + sorted[upperIndex]*weight
 }

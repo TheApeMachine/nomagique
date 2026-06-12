@@ -1,6 +1,10 @@
 package causal
 
-import "errors"
+import (
+	"errors"
+
+	"gonum.org/v1/gonum/stat"
+)
 
 const nonLinearStumps = 8
 
@@ -32,7 +36,7 @@ func FitNonLinearTable(nodeTable NodeTable, features []int) (NonLinearModel, boo
 	residuals := append([]float64(nil), targets...)
 	thresholds := featureThresholds(nodeTable, features)
 	model := NonLinearModel{
-		intercept: meanOf(targets),
+		intercept: stat.Mean(targets, nil),
 		stumps:    make([]stumpSplit, 0, nonLinearStumps),
 	}
 
@@ -91,20 +95,6 @@ func (model NonLinearModel) CounterfactualUplift(
 	}
 
 	return counterfactual - observed, nil
-}
-
-func meanOf(values []float64) float64 {
-	if len(values) == 0 {
-		return 0
-	}
-
-	sum := 0.0
-
-	for _, value := range values {
-		sum += value
-	}
-
-	return sum / float64(len(values))
 }
 
 func bestStump(

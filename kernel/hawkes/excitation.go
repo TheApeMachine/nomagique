@@ -1,6 +1,10 @@
 package hawkes
 
-import "time"
+import (
+	"time"
+
+	"github.com/theapemachine/nomagique/decay"
+)
 
 /*
 ExcitationState tracks running Hawkes excitation sums while walking marked events.
@@ -22,7 +26,7 @@ func (state *ExcitationState) DecayTo(eventTime time.Time, beta float64) {
 		return
 	}
 
-	decayFactor := ExpNeg(beta, eventTime.Sub(state.lastTime).Seconds())
+	decayFactor := decay.ExpNeg(beta, eventTime.Sub(state.lastTime).Seconds())
 	state.buyToBuy *= decayFactor
 	state.sellToBuy *= decayFactor
 	state.buyToSell *= decayFactor
@@ -64,7 +68,7 @@ func (state *ExcitationState) LogLikelihoodSum(
 					return 0, false
 				}
 
-				logSum += LogPositive(lambda)
+				logSum += decay.LogPositive(lambda)
 			case sideSell:
 				lambda := muSell + alphaSB*state.buyToSell + alphaSS*state.sellToSell
 
@@ -72,7 +76,7 @@ func (state *ExcitationState) LogLikelihoodSum(
 					return 0, false
 				}
 
-				logSum += LogPositive(lambda)
+				logSum += decay.LogPositive(lambda)
 			}
 		}
 

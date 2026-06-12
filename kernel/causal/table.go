@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"sort"
 
 	"github.com/theapemachine/nomagique/statistic"
 	"gonum.org/v1/gonum/stat"
@@ -189,7 +190,9 @@ func (nodeTable NodeTable) Percentile(node int, percentile float64) (float64, er
 	}
 
 	sorted := append([]float64(nil), values...)
-	return percentileSorted(sorted, percentile), nil
+	sort.Float64s(sorted)
+
+	return stat.Quantile(percentile, stat.LinInterp, sorted, nil), nil
 }
 
 /*
@@ -357,20 +360,3 @@ func nodeDistance(left, right []float64, features []int) float64 {
 	return math.Sqrt(sum)
 }
 
-func percentileSorted(sorted []float64, percentile float64) float64 {
-	if len(sorted) == 0 {
-		return 0
-	}
-
-	index := percentile * float64(len(sorted)-1)
-	lower := int(math.Floor(index))
-	upper := int(math.Ceil(index))
-
-	if lower == upper {
-		return sorted[lower]
-	}
-
-	weight := index - float64(lower)
-
-	return sorted[lower]*(1-weight) + sorted[upper]*weight
-}

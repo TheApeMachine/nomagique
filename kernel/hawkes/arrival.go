@@ -1,6 +1,11 @@
 package hawkes
 
-import "time"
+import (
+	"time"
+
+	"github.com/theapemachine/nomagique/decay"
+	"github.com/theapemachine/nomagique/timeline"
+)
 
 type eventSide int
 
@@ -21,8 +26,8 @@ type MarkedEvent struct {
 ArrivalStream holds sorted buy and sell timelines inside one measurement window.
 */
 type ArrivalStream struct {
-	buy  Timeline
-	sell Timeline
+	buy  timeline.Timeline
+	sell timeline.Timeline
 }
 
 /*
@@ -30,8 +35,8 @@ NewArrivalStream copies and sorts both arrival timelines.
 */
 func NewArrivalStream(buyTimes, sellTimes []time.Time) ArrivalStream {
 	return ArrivalStream{
-		buy:  NewTimeline(buyTimes),
-		sell: NewTimeline(sellTimes),
+		buy:  timeline.New(buyTimes),
+		sell: timeline.New(sellTimes),
 	}
 }
 
@@ -83,7 +88,7 @@ func (stream ArrivalStream) Marked() []MarkedEvent {
 	return marked
 }
 
-func (stream ArrivalStream) markedTimeline() Timeline {
+func (stream ArrivalStream) markedTimeline() timeline.Timeline {
 	marked := stream.Marked()
 	times := make([]time.Time, len(marked))
 
@@ -91,7 +96,7 @@ func (stream ArrivalStream) markedTimeline() Timeline {
 		times[index] = event.At
 	}
 
-	return NewTimeline(times)
+	return timeline.New(times)
 }
 
 /*
@@ -112,17 +117,17 @@ func (stream ArrivalStream) buyIntensityAt(
 	horizon time.Time,
 	muBuy, alphaBB, alphaBS, beta float64,
 ) float64 {
-	return IntensityAt(stream.buy, stream.sell, horizon, muBuy, alphaBB, alphaBS, beta)
+	return decay.IntensityAt(stream.buy, stream.sell, horizon, muBuy, alphaBB, alphaBS, beta)
 }
 
 func (stream ArrivalStream) sellIntensityAt(
 	horizon time.Time,
 	muSell, alphaSB, alphaSS, beta float64,
 ) float64 {
-	return IntensityAt(stream.buy, stream.sell, horizon, muSell, alphaSB, alphaSS, beta)
+	return decay.IntensityAt(stream.buy, stream.sell, horizon, muSell, alphaSB, alphaSS, beta)
 }
 
 func (stream ArrivalStream) kernelSupport(horizon time.Time, beta float64) (buy, sell float64) {
-	return KernelSupport(stream.buy, horizon, beta),
-		KernelSupport(stream.sell, horizon, beta)
+	return decay.KernelSupport(stream.buy, horizon, beta),
+		decay.KernelSupport(stream.sell, horizon, beta)
 }

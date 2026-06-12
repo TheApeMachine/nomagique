@@ -3,6 +3,9 @@ package hawkes
 import (
 	"math"
 	"time"
+
+	"github.com/theapemachine/nomagique/decay"
+	"github.com/theapemachine/nomagique/timeline"
 )
 
 type likelihoodGradient struct {
@@ -93,7 +96,7 @@ func (fit BivariateFit) eventLogLikelihoodGradient(
 		eventTime := marked[index].At
 
 		if haveLast && eventTime.After(lastTime) {
-			decayFactor := ExpNeg(beta, eventTime.Sub(lastTime).Seconds())
+			decayFactor := decay.ExpNeg(beta, eventTime.Sub(lastTime).Seconds())
 			age := eventTime.Sub(lastTime).Seconds()
 			dBuyToBuy = (dBuyToBuy - buyToBuy*age) * decayFactor
 			dSellToBuy = (dSellToBuy - sellToBuy*age) * decayFactor
@@ -163,7 +166,7 @@ func (fit BivariateFit) eventLogLikelihoodGradient(
 }
 
 func kernelSupportBetaDerivative(
-	events Timeline,
+	events timeline.Timeline,
 	horizon time.Time,
 	beta float64,
 ) float64 {
@@ -173,7 +176,7 @@ func kernelSupportBetaDerivative(
 		remaining := horizon.Sub(eventTime).Seconds()
 
 		if remaining > 0 {
-			derivative += remaining * ExpNeg(beta, remaining)
+			derivative += remaining * decay.ExpNeg(beta, remaining)
 		}
 	}
 

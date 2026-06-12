@@ -3,6 +3,7 @@ package statistic
 import (
 	"math"
 
+	"gonum.org/v1/gonum/floats"
 	"gonum.org/v1/gonum/stat"
 )
 
@@ -95,13 +96,7 @@ func Dot(left, right []float64) float64 {
 		return 0
 	}
 
-	sum := 0.0
-
-	for index := range left {
-		sum += left[index] * right[index]
-	}
-
-	return sum
+	return floats.Dot(left, right)
 }
 
 /*

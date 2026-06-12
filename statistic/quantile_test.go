@@ -49,6 +49,16 @@ func TestQuantile_Observe(testingTB *testing.T) {
 		})
 	})
 
+	Convey("Given an unsorted weighted stream with Empirical at p=0.5", testingTB, func() {
+		quantile := NewQuantile(0.5, stat.Empirical, nomagique.Numbers(3, 1, 1, 1)).Observe(
+			nomagique.Numbers(100, 1, 2, 3)...,
+		)
+
+		Convey("It should sort values and weights together", func() {
+			So(float64(quantile), ShouldEqual, 3)
+		})
+	})
+
 	Convey("Given mismatched weights", testingTB, func() {
 		quantile := NewQuantile(0.5, stat.LinInterp, nomagique.Numbers(1, 1)).Observe(
 			nomagique.Numbers(1, 2, 3)...,

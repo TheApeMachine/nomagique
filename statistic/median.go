@@ -39,7 +39,7 @@ func (median *Median) Observe(inputs ...core.Number) core.Float64 {
 		return 0
 	}
 
-	weights := median.weights.Float64()
+	weights := nomagique.Samples(median.weights)
 
 	if len(weights) == 0 {
 		return core.Float64(medianOf(values))
@@ -63,16 +63,15 @@ func (median *Median) Reset() error {
 }
 
 func medianOf(values []float64) float64 {
-	sorted := append([]float64(nil), values...)
-	sort.Float64s(sorted)
+	sort.Float64s(values)
 
-	middle := len(sorted) / 2
+	middle := len(values) / 2
 
-	if len(sorted)%2 == 1 {
-		return sorted[middle]
+	if len(values)%2 == 1 {
+		return values[middle]
 	}
 
-	return (sorted[middle-1] + sorted[middle]) / 2
+	return (values[middle-1] + values[middle]) / 2
 }
 
 func weightedMedian(values, weights []float64) float64 {
@@ -83,11 +82,6 @@ func weightedMedian(values, weights []float64) float64 {
 	}
 
 	return stat.Quantile(0.5, stat.Empirical, sortedValues, sortedWeights)
-}
-
-type weightedSample struct {
-	value  float64
-	weight float64
 }
 
 type MedianErrorType string

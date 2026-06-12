@@ -46,10 +46,30 @@ func (quantile *Quantile) Observe(inputs ...core.Number) core.Float64 {
 		return 0
 	}
 
-	sorted := append([]float64(nil), values...)
-	sort.Float64s(sorted)
+	weights := nomagique.Samples(quantile.weights)
 
-	return quantile.ObserveSorted(sorted)
+	if len(weights) != 0 {
+		if len(weights) != len(values) {
+			errnie.Err(
+				errnie.Validation, "unable to compute quantile",
+				QuantileError(QuantileErrorWeightLengthMismatch),
+			)
+
+			return 0
+		}
+
+		sortedValues, sortedWeights, ok := sortWeightedSamples(values, weights)
+
+		if !ok {
+			return core.Float64(math.NaN())
+		}
+
+		return quantile.quantileOf(sortedValues, sortedWeights)
+	}
+
+	sort.Float64s(values)
+
+	return quantile.quantileOf(values, nil)
 }
 
 /*
@@ -60,27 +80,37 @@ func (quantile *Quantile) ObserveSorted(sorted []float64) core.Float64 {
 		return 0
 	}
 
-	if quantile.percentile <= 0 {
-		return core.Float64(sorted[0])
-	}
-
-	if quantile.percentile >= 1 {
-		return core.Float64(sorted[len(sorted)-1])
-	}
-
-	weights := quantile.weights.Float64()
+	weights := nomagique.Samples(quantile.weights)
 
 	if len(weights) == 0 {
-		weights = nil
+		return quantile.quantileOf(sorted, nil)
 	}
 
-	if len(weights) != 0 && len(weights) != len(sorted) {
+	if len(weights) != len(sorted) {
 		errnie.Err(
 			errnie.Validation, "unable to compute quantile",
 			QuantileError(QuantileErrorWeightLengthMismatch),
 		)
 
 		return 0
+	}
+
+	sortedValues, sortedWeights, ok := sortWeightedSamples(sorted, weights)
+
+	if !ok {
+		return core.Float64(math.NaN())
+	}
+
+	return quantile.quantileOf(sortedValues, sortedWeights)
+}
+
+func (quantile *Quantile) quantileOf(sorted []float64, weights []float64) core.Float64 {
+	if quantile.percentile <= 0 {
+		return core.Float64(sorted[0])
+	}
+
+	if quantile.percentile >= 1 {
+		return core.Float64(sorted[len(sorted)-1])
 	}
 
 	if weights == nil {
@@ -95,14 +125,8 @@ func (quantile *Quantile) ObserveSorted(sorted []float64) core.Float64 {
 		)
 	}
 
-	sortedValues, sortedWeights, ok := sortWeightedSamples(sorted, weights)
-
-	if !ok {
-		return core.Float64(math.NaN())
-	}
-
 	return core.Float64(
-		stat.Quantile(quantile.percentile, quantile.kind, sortedValues, sortedWeights),
+		stat.Quantile(quantile.percentile, quantile.kind, sorted, weights),
 	)
 }
 
@@ -140,8 +164,6 @@ func (quartiles *Quartiles) Observe(inputs ...core.Number) (lower core.Float64, 
 }
 
 func sortWeightedSamples(values, weights []float64) ([]float64, []float64, bool) {
-	pairs := make([]weightedSample, len(values))
-
 	for index, value := range values {
 		if math.IsNaN(value) || math.IsInf(value, 0) {
 			return nil, nil, false
@@ -152,24 +174,14 @@ func sortWeightedSamples(values, weights []float64) ([]float64, []float64, bool)
 		if math.IsNaN(weight) || math.IsInf(weight, 0) || weight < 0 {
 			return nil, nil, false
 		}
-
-		pairs[index] = weightedSample{
-			value:  value,
-			weight: weight,
-		}
 	}
 
-	sort.Slice(pairs, func(leftIndex, rightIndex int) bool {
-		return pairs[leftIndex].value < pairs[rightIndex].value
-	})
+	sortedValues := make([]float64, len(values))
+	copy(sortedValues, values)
+	sortedWeights := make([]float64, len(weights))
+	copy(sortedWeights, weights)
 
-	sortedValues := make([]float64, len(pairs))
-	sortedWeights := make([]float64, len(pairs))
-
-	for index, pair := range pairs {
-		sortedValues[index] = pair.value
-		sortedWeights[index] = pair.weight
-	}
+	stat.SortWeighted(sortedValues, sortedWeights)
 
 	return sortedValues, sortedWeights, true
 }

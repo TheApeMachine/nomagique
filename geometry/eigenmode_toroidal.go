@@ -6,6 +6,7 @@ import (
 	"math"
 	"math/cmplx"
 	"sort"
+	"unsafe"
 
 	"gonum.org/v1/gonum/mat"
 )
@@ -227,13 +228,7 @@ complex conjugate eigenvalue pairs. Only v2 and v3 are used for phase mapping
 func (emt *EigenModeToroidal) top3Eigenvectors(
 	C *[512][512]float64,
 ) (v1, v2, v3 [512]float64) {
-	// Build row-major dense matrix for gonum
-	data := make([]float64, 512*512)
-	for rowIdx := range 512 {
-		for colIdx := range 512 {
-			data[rowIdx*512+colIdx] = C[rowIdx][colIdx]
-		}
-	}
+	data := unsafe.Slice(&C[0][0], 512*512)
 	dense := mat.NewDense(512, 512, data)
 
 	var eig mat.Eigen

@@ -72,6 +72,16 @@ func Number(stages ...core.Number) (Scalar, error) {
 	return Scalar(result), nil
 }
 
+func Numbers(series ...float64) core.Numbers {
+	numbers := make([]core.Number, len(series))
+
+	for i, sample := range series {
+		numbers[i] = Scalar(sample)
+	}
+
+	return numbers
+}
+
 func observeResolved(
 	raw float64, stages []core.Number,
 ) (core.Float64, error) {

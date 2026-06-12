@@ -20,8 +20,15 @@ Float64 converts the numbers to a slice of float64s.
 func (numbers Numbers) Float64() []float64 {
 	floats := make([]float64, len(numbers))
 
-	for i, number := range numbers {
-		floats[i] = float64(number.Observe())
+	for index, number := range numbers {
+		sample, isBoundary := number.(Float64)
+
+		if isBoundary {
+			floats[index] = float64(sample)
+			continue
+		}
+
+		floats[index] = float64(number.Observe())
 	}
 
 	return floats

@@ -75,11 +75,31 @@ func Number(stages ...core.Number) (Scalar, error) {
 func Numbers(series ...float64) core.Numbers {
 	numbers := make([]core.Number, len(series))
 
-	for i, sample := range series {
-		numbers[i] = Scalar(sample)
+	for index, sample := range series {
+		numbers[index] = Scalar(sample)
 	}
 
 	return numbers
+}
+
+/*
+Samples reads raw float64 observations from boundary numbers without applying dynamics.
+*/
+func Samples(numbers core.Numbers) []float64 {
+	samples := make([]float64, len(numbers))
+
+	for index, number := range numbers {
+		switch value := number.(type) {
+		case Scalar:
+			samples[index] = float64(value)
+		case core.Float64:
+			samples[index] = float64(value)
+		default:
+			samples[index] = float64(number.Observe())
+		}
+	}
+
+	return samples
 }
 
 func observeResolved(

@@ -28,7 +28,9 @@ func NewPearson(weights core.Numbers) *Pearson {
 Observe computes the Pearson correlation coefficient between two streams.
 */
 func (pearson *Pearson) Observe(inputs ...core.Number) core.Float64 {
-	if len(inputs) < 2 {
+	count := len(inputs)
+
+	if count < 2 {
 		errnie.Err(
 			errnie.Validation, "unable to compute Pearson correlation",
 			PearsonError(PearsonErrorRequireAtLeastTwoInputs),
@@ -37,15 +39,7 @@ func (pearson *Pearson) Observe(inputs ...core.Number) core.Float64 {
 		return 0
 	}
 
-	var (
-		left  core.Numbers
-		right core.Numbers
-	)
-
-	left = inputs[0 : (len(inputs)-1)/2]
-	right = inputs[(len(inputs)+1)/2:]
-
-	if len(left) != len(right) {
+	if count%2 != 0 {
 		errnie.Err(
 			errnie.Validation, "unable to compute Pearson correlation",
 			PearsonError(PearsonErrorRequireEqualLength),
@@ -54,13 +48,20 @@ func (pearson *Pearson) Observe(inputs ...core.Number) core.Float64 {
 		return 0
 	}
 
-	return core.Float64(
-		stat.Correlation(
-			left.Float64(),
-			right.Float64(),
-			pearson.weights.Float64(),
-		),
-	)
+	half := count / 2
+
+	left := core.Numbers(inputs[:half])
+	right := core.Numbers(inputs[half:])
+
+	var weights []float64
+
+	if len(pearson.weights) > 0 {
+		weights = pearson.weights.Float64()
+	}
+
+	return core.Float64(stat.Correlation(
+		left.Float64(), right.Float64(), weights,
+	))
 }
 
 /*

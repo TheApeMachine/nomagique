@@ -91,6 +91,10 @@ func pairSuccess(predicted float64, actual float64) float64 {
 }
 
 func posteriorMean(state *BetaState) float64 {
+	if state.Alpha+state.Beta == 0 {
+		return 0
+	}
+
 	distribution := distuv.Beta{
 		Alpha: state.Alpha,
 		Beta:  state.Beta,

@@ -27,7 +27,7 @@ Observe computes the mean of a stream of numbers.
 */
 func (mean *Mean) Observe(inputs ...core.Number) core.Float64 {
 	values := nomagique.Samples(core.Numbers(inputs))
-	weights := mean.weights.Float64()
+	weights := nomagique.Samples(mean.weights)
 
 	if len(weights) == 0 {
 		weights = nil

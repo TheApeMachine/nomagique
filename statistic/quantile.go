@@ -72,36 +72,9 @@ func (quantile *Quantile) Observe(inputs ...core.Number) core.Float64 {
 	return quantile.quantileOf(values, nil)
 }
 
-/*
-ObserveSorted returns the configured quantile from an ascending slice.
-*/
-func (quantile *Quantile) ObserveSorted(sorted []float64) core.Float64 {
-	if len(sorted) == 0 {
-		return 0
-	}
-
-	weights := nomagique.Samples(quantile.weights)
-
-	if len(weights) == 0 {
-		return quantile.quantileOf(sorted, nil)
-	}
-
-	if len(weights) != len(sorted) {
-		errnie.Err(
-			errnie.Validation, "unable to compute quantile",
-			QuantileError(QuantileErrorWeightLengthMismatch),
-		)
-
-		return 0
-	}
-
-	sortedValues, sortedWeights, ok := sortWeightedSamples(sorted, weights)
-
-	if !ok {
-		return core.Float64(math.NaN())
-	}
-
-	return quantile.quantileOf(sortedValues, sortedWeights)
+func (quantile *Quantile) Reset() error {
+	quantile.weights = nil
+	return nil
 }
 
 func (quantile *Quantile) quantileOf(sorted []float64, weights []float64) core.Float64 {
@@ -128,39 +101,6 @@ func (quantile *Quantile) quantileOf(sorted []float64, weights []float64) core.F
 	return core.Float64(
 		stat.Quantile(quantile.percentile, quantile.kind, sorted, weights),
 	)
-}
-
-func (quantile *Quantile) Reset() error {
-	quantile.weights = nil
-	return nil
-}
-
-/*
-Quartiles returns the lower and upper quartiles at 0.25 and 0.75.
-*/
-type Quartiles struct {
-	kind    stat.CumulantKind
-	weights core.Numbers
-}
-
-/*
-NewQuartiles creates a quartile pair dynamic.
-*/
-func NewQuartiles(kind stat.CumulantKind, weights core.Numbers) *Quartiles {
-	return &Quartiles{
-		kind:    kind,
-		weights: weights,
-	}
-}
-
-/*
-Observe returns the lower and upper quartiles of the input stream.
-*/
-func (quartiles *Quartiles) Observe(inputs ...core.Number) (lower core.Float64, upper core.Float64) {
-	lowerQuantile := NewQuantile(0.25, quartiles.kind, quartiles.weights)
-	upperQuantile := NewQuantile(0.75, quartiles.kind, quartiles.weights)
-
-	return lowerQuantile.Observe(inputs...), upperQuantile.Observe(inputs...)
 }
 
 func sortWeightedSamples(values, weights []float64) ([]float64, []float64, bool) {

@@ -52,6 +52,20 @@ func TestKLDivergence_Observe(testingTB *testing.T) {
 			So(float64(value), ShouldEqual, 0)
 		})
 	})
+
+	Convey("Given batch slices via DivergenceBetween", testingTB, func() {
+		divergence, err := DivergenceBetween(
+			[]float64{0.25, 0.25, 0.25, 0.25},
+			[]float64{0.25, 0.25, 0.25, 0.25},
+			1.0,
+			1e-6,
+		)
+
+		Convey("It should match the dynamic path", func() {
+			So(err, ShouldBeNil)
+			So(divergence, ShouldAlmostEqual, 0, 1e-6)
+		})
+	})
 }
 
 func BenchmarkKLDivergence_Observe(testingTB *testing.B) {

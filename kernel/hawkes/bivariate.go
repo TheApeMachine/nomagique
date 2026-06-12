@@ -61,18 +61,28 @@ func (params BivariateParams) branchingMatrix() [2][2]float64 {
 }
 
 func spectralRadius(matrix [2][2]float64) float64 {
+	return SpectralRadius(matrix)
+}
+
+/*
+SpectralRadius returns the spectral radius of a 2×2 branching matrix.
+Complex eigenvalues use modulus; real eigenvalues use maximum absolute value.
+*/
+func SpectralRadius(matrix [2][2]float64) float64 {
 	trace := matrix[0][0] + matrix[1][1]
 	determinant := matrix[0][0]*matrix[1][1] - matrix[0][1]*matrix[1][0]
-
-	discriminant := trace*trace/4 - determinant
+	discriminant := trace*trace - 4*determinant
 
 	if discriminant < 0 {
-		discriminant = 0
+		modulus := math.Sqrt(-discriminant)
+		realPart := trace / 2
+		imagPart := modulus / 2
+
+		return math.Sqrt(realPart*realPart + imagPart*imagPart)
 	}
 
-	root := math.Sqrt(discriminant)
-	first := trace/2 + root
-	second := trace/2 - root
+	rootHigh := (trace + math.Sqrt(discriminant)) / 2
+	rootLow := (trace - math.Sqrt(discriminant)) / 2
 
-	return math.Max(first, second)
+	return math.Max(math.Abs(rootHigh), math.Abs(rootLow))
 }

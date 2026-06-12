@@ -23,9 +23,14 @@ type KLDivergence struct {
 NewKLDivergence creates a KL divergence dynamic.
 expectedSum and floor may be zero to derive them from each observation.
 */
-func NewKLDivergence(weights core.Numbers) *KLDivergence {
+func NewKLDivergence(
+	weights core.Numbers,
+	expectedSum, floor float64,
+) *KLDivergence {
 	return &KLDivergence{
-		weights: weights,
+		weights:     weights,
+		expectedSum: expectedSum,
+		floor:       floor,
 	}
 }
 

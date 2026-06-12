@@ -11,7 +11,7 @@ import (
 
 func TestKLDivergence_Observe(testingTB *testing.T) {
 	Convey("Given matching observed and expected halves", testingTB, func() {
-		kl := NewKLDivergence(nil)
+		kl := NewKLDivergence(nil, 0, 0)
 		inputs := append(
 			nomagique.Numbers(1, 1),
 			nomagique.Numbers(1, 1)...,
@@ -24,7 +24,7 @@ func TestKLDivergence_Observe(testingTB *testing.T) {
 	})
 
 	Convey("Given fewer than two inputs", testingTB, func() {
-		value := NewKLDivergence(nil).Observe(nomagique.Numbers(1)...)
+		value := NewKLDivergence(nil, 0, 0).Observe(nomagique.Numbers(1)...)
 
 		Convey("It should return zero", func() {
 			So(float64(value), ShouldEqual, 0)
@@ -32,7 +32,7 @@ func TestKLDivergence_Observe(testingTB *testing.T) {
 	})
 
 	Convey("Given an odd input count", testingTB, func() {
-		value := NewKLDivergence(nil).Observe(
+		value := NewKLDivergence(nil, 0, 0).Observe(
 			nomagique.Numbers(1, 1, 1)...,
 		)
 
@@ -46,30 +46,28 @@ func TestKLDivergence_Observe(testingTB *testing.T) {
 			[]core.Number{core.Float64(1), core.Float64(math.NaN())},
 			nomagique.Numbers(1, 1)...,
 		)
-		value := NewKLDivergence(nil).Observe(inputs...)
+		value := NewKLDivergence(nil, 0, 0).Observe(inputs...)
 
 		Convey("It should return zero", func() {
 			So(float64(value), ShouldEqual, 0)
 		})
 	})
 
-	Convey("Given batch slices via DivergenceBetween", testingTB, func() {
-		divergence, err := DivergenceBetween(
-			[]float64{0.25, 0.25, 0.25, 0.25},
-			[]float64{0.25, 0.25, 0.25, 0.25},
-			1.0,
-			1e-6,
+	Convey("Given batch halves wired through Observe", testingTB, func() {
+		inputs := append(
+			nomagique.Numbers(0.25, 0.25, 0.25, 0.25),
+			nomagique.Numbers(0.25, 0.25, 0.25, 0.25)...,
 		)
+		value := NewKLDivergence(nil, 1, 1e-6).Observe(inputs...)
 
-		Convey("It should match the dynamic path", func() {
-			So(err, ShouldBeNil)
-			So(divergence, ShouldAlmostEqual, 0, 1e-6)
+		Convey("It should return zero divergence", func() {
+			So(float64(value), ShouldAlmostEqual, 0, 1e-6)
 		})
 	})
 }
 
 func BenchmarkKLDivergence_Observe(testingTB *testing.B) {
-	kl := NewKLDivergence(nil)
+	kl := NewKLDivergence(nil, 0, 0)
 	inputs := append(
 		nomagique.Numbers(1, 2, 3, 4),
 		nomagique.Numbers(1, 1, 2, 4)...,

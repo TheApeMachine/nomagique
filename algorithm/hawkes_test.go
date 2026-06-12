@@ -49,10 +49,10 @@ func BenchmarkHawkes_Observe(testingTB *testing.B) {
 	xStream := nomagique.Numbers(2, 4, 6, 8, 10, 12)
 	yStream := nomagique.Numbers(1, 2, 3, 4, 5, 6)
 	params := hawkes.BivariateParams{
-		MuBuy:   5,
-		MuSell:  3,
-		AlphaBB: 0.1,
-		AlphaSS: 0.1,
+		MuX:     5,
+		MuY:     3,
+		AlphaXX: 0.1,
+		AlphaYY: 0.1,
 		Beta:    1,
 	}
 	process := NewHawkes(params, 1, 1, xStream, yStream, nil)

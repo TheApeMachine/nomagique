@@ -102,7 +102,7 @@ func (hawkesProcess *Hawkes) Reset() error {
 func (hawkesProcess *Hawkes) samples() (xValues, yValues, weights []float64, ok bool) {
 	xValues = nomagique.Samples(hawkesProcess.x)
 	yValues = nomagique.Samples(hawkesProcess.y)
-	weights = hawkesProcess.weights.Float64()
+	weights = nomagique.Samples(hawkesProcess.weights)
 
 	if len(weights) == 0 {
 		weights = nil

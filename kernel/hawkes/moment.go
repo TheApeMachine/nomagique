@@ -7,45 +7,45 @@ import (
 )
 
 /*
-MethodOfMoments derives a stable seed from empirical buy and sell count streams.
+MethodOfMoments derives a stable seed from empirical x and y count streams.
 */
 func MethodOfMoments(
-	buy, sell, weights []float64, beta float64,
+	x, y, weights []float64, beta float64,
 ) (BivariateParams, bool) {
-	if beta <= 0 || len(buy) != len(sell) || len(buy) < 2 {
+	if beta <= 0 || len(x) != len(y) || len(x) < 2 {
 		return BivariateParams{}, false
 	}
 
-	meanBuy := stat.Mean(buy, weights)
-	meanSell := stat.Mean(sell, weights)
+	meanX := stat.Mean(x, weights)
+	meanY := stat.Mean(y, weights)
 
-	if meanBuy <= 0 || meanSell <= 0 {
+	if meanX <= 0 || meanY <= 0 {
 		return BivariateParams{}, false
 	}
 
-	varianceBuy := stat.BivariateMoment(2, 0, buy, sell, weights)
-	varianceSell := stat.BivariateMoment(0, 2, buy, sell, weights)
-	covariance := stat.BivariateMoment(1, 1, buy, sell, weights)
+	varianceX := stat.BivariateMoment(2, 0, x, y, weights)
+	varianceY := stat.BivariateMoment(0, 2, x, y, weights)
+	covariance := stat.BivariateMoment(1, 1, x, y, weights)
 
 	params := BivariateParams{Beta: beta}
 
-	if varianceBuy > meanBuy {
-		params.AlphaBB = (varianceBuy - meanBuy) * beta / (2 * meanBuy)
+	if varianceX > meanX {
+		params.AlphaXX = (varianceX - meanX) * beta / (2 * meanX)
 	}
 
-	if varianceSell > meanSell {
-		params.AlphaSS = (varianceSell - meanSell) * beta / (2 * meanSell)
+	if varianceY > meanY {
+		params.AlphaYY = (varianceY - meanY) * beta / (2 * meanY)
 	}
 
 	if covariance > 0 {
-		params.AlphaBS = covariance * beta / (2 * meanSell)
-		params.AlphaSB = covariance * beta / (2 * meanBuy)
+		params.AlphaXY = covariance * beta / (2 * meanY)
+		params.AlphaYX = covariance * beta / (2 * meanX)
 	}
 
-	params.MuBuy = meanBuy * (1 - params.AlphaBB/beta)
-	params.MuSell = meanSell * (1 - params.AlphaSS/beta)
+	params.MuX = meanX * (1 - params.AlphaXX/beta)
+	params.MuY = meanY * (1 - params.AlphaYY/beta)
 
-	if params.MuBuy <= 0 || params.MuSell <= 0 || !params.Stable() {
+	if params.MuX <= 0 || params.MuY <= 0 || !params.Stable() {
 		return BivariateParams{}, false
 	}
 
@@ -56,9 +56,9 @@ func MethodOfMoments(
 TheoreticalCentralMoment estimates the central mixed moment from fitted parameters.
 */
 func TheoreticalCentralMoment(
-	params BivariateParams, orderR, orderS float64,
+	params BivariateParams, momentR, momentS float64,
 ) (float64, bool) {
-	lambdaBuy, lambdaSell, ok := params.MeanIntensity()
+	lambdaX, lambdaY, ok := params.MeanIntensity()
 
 	if !ok {
 		return 0, false
@@ -67,12 +67,12 @@ func TheoreticalCentralMoment(
 	branching := params.branchingMatrix()
 
 	switch {
-	case orderR == 2 && orderS == 0:
-		return lambdaBuy + 2*branching[0][0]*lambdaBuy, true
-	case orderR == 0 && orderS == 2:
-		return lambdaSell + 2*branching[1][1]*lambdaSell, true
-	case orderR == 1 && orderS == 1:
-		return branching[0][1]*lambdaSell + branching[1][0]*lambdaBuy, true
+	case momentR == 2 && momentS == 0:
+		return lambdaX + 2*branching[0][0]*lambdaX, true
+	case momentR == 0 && momentS == 2:
+		return lambdaY + 2*branching[1][1]*lambdaY, true
+	case momentR == 1 && momentS == 1:
+		return branching[0][1]*lambdaY + branching[1][0]*lambdaX, true
 	default:
 		return 0, false
 	}
@@ -96,15 +96,15 @@ func MomentConfidence(
 }
 
 /*
-CrossAsymmetry compares third-order mixed moments to expose leader/follower asymmetry.
+CrossAsymmetry compares third-order mixed moments between x and y streams.
 */
-func CrossAsymmetry(buy, sell, weights []float64) (float64, bool) {
-	if len(buy) != len(sell) || len(buy) < 2 {
+func CrossAsymmetry(x, y, weights []float64) (float64, bool) {
+	if len(x) != len(y) || len(x) < 2 {
 		return 0, false
 	}
 
-	leadBuy := stat.BivariateMoment(2, 1, buy, sell, weights)
-	leadSell := stat.BivariateMoment(1, 2, buy, sell, weights)
+	moment21 := stat.BivariateMoment(2, 1, x, y, weights)
+	moment12 := stat.BivariateMoment(1, 2, x, y, weights)
 
-	return leadBuy - leadSell, true
+	return moment21 - moment12, true
 }

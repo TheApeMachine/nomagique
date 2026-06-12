@@ -3,22 +3,22 @@ package hawkes
 import "math"
 
 /*
-BivariateParams holds exponential-kernel Hawkes parameters for buy and sell streams.
+BivariateParams holds exponential-kernel Hawkes parameters for two coupled streams x and y.
 */
 type BivariateParams struct {
-	MuBuy   float64
-	MuSell  float64
-	AlphaBB float64
-	AlphaBS float64
-	AlphaSB float64
-	AlphaSS float64
+	MuX     float64
+	MuY     float64
+	AlphaXX float64
+	AlphaXY float64
+	AlphaYX float64
+	AlphaYY float64
 	Beta    float64
 }
 
 /*
 MeanIntensity returns stationary mean intensities under the branching matrix G = A / beta.
 */
-func (params BivariateParams) MeanIntensity() (buy float64, sell float64, ok bool) {
+func (params BivariateParams) MeanIntensity() (lambdaX float64, lambdaY float64, ok bool) {
 	if params.Beta <= 0 {
 		return 0, 0, false
 	}
@@ -30,14 +30,14 @@ func (params BivariateParams) MeanIntensity() (buy float64, sell float64, ok boo
 		return 0, 0, false
 	}
 
-	buy = ((1-branching[1][1])*params.MuBuy + branching[0][1]*params.MuSell) / determinant
-	sell = (branching[1][0]*params.MuBuy + (1-branching[0][0])*params.MuSell) / determinant
+	lambdaX = ((1-branching[1][1])*params.MuX + branching[0][1]*params.MuY) / determinant
+	lambdaY = (branching[1][0]*params.MuX + (1-branching[0][0])*params.MuY) / determinant
 
-	if buy < 0 || sell < 0 || math.IsNaN(buy) || math.IsNaN(sell) {
+	if lambdaX < 0 || lambdaY < 0 || math.IsNaN(lambdaX) || math.IsNaN(lambdaY) {
 		return 0, 0, false
 	}
 
-	return buy, sell, true
+	return lambdaX, lambdaY, true
 }
 
 /*
@@ -55,8 +55,8 @@ func (params BivariateParams) branchingMatrix() [2][2]float64 {
 	invBeta := 1 / params.Beta
 
 	return [2][2]float64{
-		{params.AlphaBB * invBeta, params.AlphaBS * invBeta},
-		{params.AlphaSB * invBeta, params.AlphaSS * invBeta},
+		{params.AlphaXX * invBeta, params.AlphaXY * invBeta},
+		{params.AlphaYX * invBeta, params.AlphaYY * invBeta},
 	}
 }
 

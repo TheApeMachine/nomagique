@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"gonum.org/v1/gonum/mat"
 )
 
 func TestProcrustes(t *testing.T) {
@@ -17,7 +18,12 @@ func TestProcrustes(t *testing.T) {
 			matA := randomMatrix(nSamples, nDim, 42)
 			matB := copyMatrix(matA)
 
-			result, err := Procrustes(matA, matB, nSamples, nDim)
+			denseA, err := DenseFromRows(matA, nSamples, nDim)
+			So(err, ShouldBeNil)
+			denseB, err := DenseFromRows(matB, nSamples, nDim)
+			So(err, ShouldBeNil)
+
+			result, err := Procrustes(denseA, denseB)
 			So(err, ShouldBeNil)
 
 			Convey("It should return R ≈ I with near-zero residual", func() {
@@ -27,11 +33,12 @@ func TestProcrustes(t *testing.T) {
 				for row := 0; row < nDim; row++ {
 					for col := 0; col < nDim; col++ {
 						expected := 0.0
+
 						if row == col {
 							expected = 1.0
 						}
 
-						So(result.R[row][col], ShouldAlmostEqual, expected, 1e-8)
+						So(result.R.At(row, col), ShouldAlmostEqual, expected, 1e-8)
 					}
 				}
 			})
@@ -42,25 +49,15 @@ func TestProcrustes(t *testing.T) {
 			nSamples := 6
 
 			matA := randomMatrix(nSamples, nDim, 99)
+			knownR := knownRotation90(nDim)
+			matB := applyRotation(knownR, matA, nSamples, nDim)
 
-			knownR := eye(nDim)
-			knownR[0][0] = 0
-			knownR[0][1] = -1
-			knownR[1][0] = 1
-			knownR[1][1] = 0
+			denseA, err := DenseFromRows(matA, nSamples, nDim)
+			So(err, ShouldBeNil)
+			denseB, err := DenseFromRows(matB, nSamples, nDim)
+			So(err, ShouldBeNil)
 
-			matB := make([][]float64, nSamples)
-			for sample := 0; sample < nSamples; sample++ {
-				matB[sample] = make([]float64, nDim)
-
-				for dim := 0; dim < nDim; dim++ {
-					for inner := 0; inner < nDim; inner++ {
-						matB[sample][dim] += knownR[dim][inner] * matA[sample][inner]
-					}
-				}
-			}
-
-			result, err := Procrustes(matA, matB, nSamples, nDim)
+			result, err := Procrustes(denseA, denseB)
 			So(err, ShouldBeNil)
 
 			Convey("It should recover the known rotation with low residual", func() {
@@ -69,22 +66,28 @@ func TestProcrustes(t *testing.T) {
 
 				for row := 0; row < nDim; row++ {
 					for col := 0; col < nDim; col++ {
-						So(result.R[row][col], ShouldAlmostEqual, knownR[row][col], 1e-6)
+						So(result.R.At(row, col), ShouldAlmostEqual, knownR.At(row, col), 1e-6)
 					}
 				}
 			})
 		})
 
 		Convey("When given degenerate inputs", func() {
-			Convey("It should error on zero dimensions", func() {
-				_, err := Procrustes(nil, nil, 0, 0)
+			Convey("It should error on dimension mismatch", func() {
+				denseA := mat.NewDense(1, 2, []float64{1, 2})
+				denseB := mat.NewDense(2, 2, []float64{1, 2, 3, 4})
+				_, err := Procrustes(denseA, denseB)
 				So(err, ShouldNotBeNil)
 			})
 
 			Convey("It should error on row count mismatch", func() {
 				matA := randomMatrix(3, 2, 1)
 				matB := randomMatrix(4, 2, 2)
-				_, err := Procrustes(matA, matB, 3, 2)
+				denseA, err := DenseFromRows(matA, 3, 2)
+				So(err, ShouldBeNil)
+				denseB, err := DenseFromRows(matB, 4, 2)
+				So(err, ShouldBeNil)
+				_, err = Procrustes(denseA, denseB)
 				So(err, ShouldNotBeNil)
 			})
 		})
@@ -94,32 +97,20 @@ func TestProcrustes(t *testing.T) {
 func TestJacobiSVD(t *testing.T) {
 	Convey("Given the Jacobi SVD decomposition", t, func() {
 		Convey("When decomposing a known diagonal matrix", func() {
-			mat := [][]float64{
-				{3, 0, 0},
-				{0, 5, 0},
-				{0, 0, 2},
-			}
+			dense := mat.NewDense(3, 3, []float64{
+				3, 0, 0,
+				0, 5, 0,
+				0, 0, 2,
+			})
 
-			uMat, sigma, vMat, err := JacobiSVD(mat, 3, 3)
+			uMat, sigma, vMat, err := JacobiSVD(dense)
 			So(err, ShouldBeNil)
 
 			Convey("It should recover the singular values", func() {
 				So(len(sigma), ShouldEqual, 3)
 
-				sorted := make([]float64, len(sigma))
-				copy(sorted, sigma)
-
-				for idx := range sorted {
-					found := false
-
-					for _, expected := range []float64{5, 3, 2} {
-						if math.Abs(sorted[idx]-expected) < 1e-8 {
-							found = true
-							break
-						}
-					}
-
-					So(found, ShouldBeTrue)
+				for _, value := range sigma {
+					So(singularValuesMatch(value, []float64{5, 3, 2}, 1e-8), ShouldBeTrue)
 				}
 
 				So(uMat, ShouldNotBeNil)
@@ -128,26 +119,21 @@ func TestJacobiSVD(t *testing.T) {
 		})
 
 		Convey("When decomposing a general matrix", func() {
-			mat := [][]float64{
-				{1, 2},
-				{3, 4},
-				{5, 6},
-			}
+			dense := mat.NewDense(3, 2, []float64{
+				1, 2,
+				3, 4,
+				5, 6,
+			})
 
-			uMat, sigma, vMat, err := JacobiSVD(mat, 3, 2)
+			uMat, sigma, vMat, err := JacobiSVD(dense)
 			So(err, ShouldBeNil)
 
 			Convey("It should reconstruct A = U·Σ·Vᵀ", func() {
+				reconstructed := reconstructFromSVD(uMat, sigma, vMat, 3, 2)
 
 				for row := 0; row < 3; row++ {
 					for col := 0; col < 2; col++ {
-						var reconstructed float64
-
-						for inner := 0; inner < 2; inner++ {
-							reconstructed += uMat[row][inner] * sigma[inner] * vMat[col][inner]
-						}
-
-						So(reconstructed, ShouldAlmostEqual, mat[row][col], 1e-8)
+						So(reconstructed[row][col], ShouldAlmostEqual, dense.At(row, col), 1e-8)
 					}
 				}
 			})
@@ -155,8 +141,8 @@ func TestJacobiSVD(t *testing.T) {
 
 		Convey("When rows < cols", func() {
 			Convey("It should return an error", func() {
-				mat := [][]float64{{1, 2, 3}}
-				_, _, _, err := JacobiSVD(mat, 1, 3)
+				dense := mat.NewDense(1, 3, []float64{1, 2, 3})
+				_, _, _, err := JacobiSVD(dense)
 				So(err, ShouldNotBeNil)
 			})
 		})
@@ -169,40 +155,43 @@ func BenchmarkProcrustes512(b *testing.B) {
 
 	matA := randomMatrix(nSamples, nDim, 1337)
 	matB := randomMatrix(nSamples, nDim, 7331)
+	denseA, _ := DenseFromRows(matA, nSamples, nDim)
+	denseB, _ := DenseFromRows(matB, nSamples, nDim)
 
 	b.ReportAllocs()
 	b.ResetTimer()
 
 	for b.Loop() {
-		_, _ = Procrustes(matA, matB, nSamples, nDim)
+		_, _ = Procrustes(denseA, denseB)
 	}
 }
 
 func BenchmarkJacobiSVD512(b *testing.B) {
 	nDim := 512
-	mat := randomMatrix(nDim, nDim, 2024)
+	matRows := randomMatrix(nDim, nDim, 2024)
+	dense, _ := DenseFromRows(matRows, nDim, nDim)
 
 	b.ReportAllocs()
 	b.ResetTimer()
 
 	for b.Loop() {
-		_, _, _, _ = JacobiSVD(mat, nDim, nDim)
+		_, _, _, _ = JacobiSVD(dense)
 	}
 }
 
 func randomMatrix(rows, cols int, seed int64) [][]float64 {
 	rng := rand.New(rand.NewSource(seed))
-	mat := make([][]float64, rows)
+	matOut := make([][]float64, rows)
 
-	for row := range mat {
-		mat[row] = make([]float64, cols)
+	for row := range matOut {
+		matOut[row] = make([]float64, cols)
 
-		for col := range mat[row] {
-			mat[row][col] = rng.NormFloat64()
+		for col := range matOut[row] {
+			matOut[row][col] = rng.NormFloat64()
 		}
 	}
 
-	return mat
+	return matOut
 }
 
 func copyMatrix(src [][]float64) [][]float64 {
@@ -214,4 +203,76 @@ func copyMatrix(src [][]float64) [][]float64 {
 	}
 
 	return dst
+}
+
+func eye(nDim int) *mat.Dense {
+	identity := mat.NewDense(nDim, nDim, nil)
+
+	for rowIdx := 0; rowIdx < nDim; rowIdx++ {
+		identity.Set(rowIdx, rowIdx, 1)
+	}
+
+	return identity
+}
+
+func knownRotation90(nDim int) *mat.Dense {
+	rotation := eye(nDim)
+	rotation.Set(0, 0, 0)
+	rotation.Set(0, 1, -1)
+	rotation.Set(1, 0, 1)
+	rotation.Set(1, 1, 0)
+
+	return rotation
+}
+
+func applyRotation(rotation *mat.Dense, matA [][]float64, nSamples, nDim int) [][]float64 {
+	out := make([][]float64, nSamples)
+
+	for sampleIdx := 0; sampleIdx < nSamples; sampleIdx++ {
+		out[sampleIdx] = make([]float64, nDim)
+
+		for dimIdx := 0; dimIdx < nDim; dimIdx++ {
+			var sum float64
+
+			for innerIdx := 0; innerIdx < nDim; innerIdx++ {
+				sum += rotation.At(dimIdx, innerIdx) * matA[sampleIdx][innerIdx]
+			}
+
+			out[sampleIdx][dimIdx] = sum
+		}
+	}
+
+	return out
+}
+
+func reconstructFromSVD(
+	uMat *mat.Dense, sigma []float64, vMat *mat.Dense, rows, cols int,
+) [][]float64 {
+	out := make([][]float64, rows)
+
+	for rowIdx := 0; rowIdx < rows; rowIdx++ {
+		out[rowIdx] = make([]float64, cols)
+
+		for colIdx := 0; colIdx < cols; colIdx++ {
+			var sum float64
+
+			for innerIdx := 0; innerIdx < cols; innerIdx++ {
+				sum += uMat.At(rowIdx, innerIdx) * sigma[innerIdx] * vMat.At(colIdx, innerIdx)
+			}
+
+			out[rowIdx][colIdx] = sum
+		}
+	}
+
+	return out
+}
+
+func singularValuesMatch(value float64, expected []float64, tolerance float64) bool {
+	for _, target := range expected {
+		if math.Abs(value-target) < tolerance {
+			return true
+		}
+	}
+
+	return false
 }

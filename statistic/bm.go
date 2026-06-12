@@ -48,7 +48,7 @@ func (bivariateMoment *BivariateMoment) Observe(inputs ...core.Number) core.Floa
 
 	xValues := nomagique.Samples(bivariateMoment.x)
 	yValues := nomagique.Samples(bivariateMoment.y)
-	weights := bivariateMoment.weights.Float64()
+	weights := nomagique.Samples(bivariateMoment.weights)
 
 	if len(weights) == 0 {
 		weights = nil

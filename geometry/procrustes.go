@@ -2,7 +2,6 @@ package geometry
 
 import (
 	"fmt"
-	"math"
 
 	"gonum.org/v1/gonum/mat"
 )
@@ -14,105 +13,99 @@ minimizes ||R·A − B||_F², and Residual is the squared Frobenius norm of
 the post-alignment error.
 */
 type ProcrustesResult struct {
-	R        [][]float64
+	R        *mat.Dense
 	Residual float64
 }
 
 /*
-Procrustes computes the orthogonal Procrustes alignment between matrices
-A and B (both nSamples × nDim). Finds the rotation R minimizing
-||R·A − B||² via SVD of M = Bᵀ·A, then R = U·Vᵀ. A sign correction on
-the last column of U enforces det(R) = +1 (proper rotation).
-
-Uses a hand-rolled Jacobi-rotation SVD so the solver carries zero
-external linear-algebra dependencies.
+Procrustes computes the orthogonal Procrustes alignment between sample matrices
+A and B (both nSamples × nDim). Finds the rotation R minimizing ||R·A − B||²
+via SVD of M = Bᵀ·A, then R = U·Vᵀ. A sign correction on the last column of U
+enforces det(R) = +1 (proper rotation).
 */
-func Procrustes(matA, matB [][]float64, nSamples, nDim int) (*ProcrustesResult, error) {
-	if nSamples < 1 || nDim < 1 {
-		return nil, ProcrustesError("degenerate dimensions")
+func Procrustes(matA, matB mat.Matrix) (*ProcrustesResult, error) {
+	nSamples, nDim := matA.Dims()
+	rowsB, colsB := matB.Dims()
+
+	if nSamples < 1 || nDim < 1 || rowsB != nSamples || colsB != nDim {
+		return nil, ProcrustesError("dimension mismatch")
 	}
 
-	if len(matA) != nSamples || len(matB) != nSamples {
-		return nil, ProcrustesError("row count mismatch")
-	}
+	var bTranspose mat.Dense
 
-	crossProduct := make([][]float64, nDim)
-	for row := range crossProduct {
-		crossProduct[row] = make([]float64, nDim)
-	}
+	bTranspose.CloneFrom(matB.T())
 
-	for sample := 0; sample < nSamples; sample++ {
-		if len(matA[sample]) != nDim || len(matB[sample]) != nDim {
-			return nil, ProcrustesError("column count mismatch")
-		}
+	var cross mat.Dense
 
-		for row := 0; row < nDim; row++ {
-			for col := 0; col < nDim; col++ {
-				crossProduct[row][col] += matB[sample][row] * matA[sample][col]
-			}
-		}
-	}
+	cross.Mul(&bTranspose, matA)
 
-	uMat, _, vMat, svdErr := JacobiSVD(crossProduct, nDim, nDim)
+	uMat, _, vMat, svdErr := JacobiSVD(&cross)
+
 	if svdErr != nil {
 		return nil, svdErr
 	}
 
-	rotation := matMul(uMat, transpose(vMat, nDim, nDim), nDim, nDim, nDim)
+	var vTranspose mat.Dense
 
-	if determinant(rotation, nDim) < 0 {
-		for row := 0; row < nDim; row++ {
-			uMat[row][nDim-1] = -uMat[row][nDim-1]
+	vTranspose.CloneFrom(vMat.T())
+
+	var rotation mat.Dense
+
+	rotation.Mul(uMat, &vTranspose)
+
+	var lu mat.LU
+
+	lu.Factorize(&rotation)
+
+	if lu.Det() < 0 {
+		for rowIdx := 0; rowIdx < nDim; rowIdx++ {
+			uMat.Set(rowIdx, nDim-1, -uMat.At(rowIdx, nDim-1))
 		}
 
-		rotation = matMul(uMat, transpose(vMat, nDim, nDim), nDim, nDim, nDim)
+		rotation.Mul(uMat, &vTranspose)
 	}
 
-	var residual float64
+	var aTranspose mat.Dense
 
-	for sample := 0; sample < nSamples; sample++ {
-		for dim := 0; dim < nDim; dim++ {
-			var rotated float64
+	aTranspose.CloneFrom(matA.T())
 
-			for inner := 0; inner < nDim; inner++ {
-				rotated += rotation[dim][inner] * matA[sample][inner]
-			}
+	var rotated mat.Dense
 
-			diff := rotated - matB[sample][dim]
-			residual += diff * diff
-		}
-	}
+	rotated.Mul(&rotation, &aTranspose)
 
-	return &ProcrustesResult{R: rotation, Residual: residual}, nil
+	var diff mat.Dense
+
+	diff.Sub(&rotated, &bTranspose)
+
+	residual := mat.Norm(&diff, 2)
+
+	return &ProcrustesResult{
+		R:        &rotation,
+		Residual: residual * residual,
+	}, nil
 }
 
 /*
 JacobiSVD computes the thin SVD of an m×n matrix (m ≥ n). The name is
-historical: the implementation uses LAPACK (via gonum/mat.SVD and
-dgesvd-style backends) rather than the previous cubic Jacobi sweeps,
-giving stable, fast decomposition at large dimensions (e.g. 512×512).
-
-Returns U (m×n), singular values Σ (length n, descending), and V (n×n)
-with the same indexing contract as before: A ≈ U·diag(Σ)·Vᵀ.
+historical: the implementation uses gonum/mat.SVD rather than Jacobi sweeps.
+Returns U (m×n), singular values Σ (length n, descending), and V (n×n).
 */
-func JacobiSVD(matrix [][]float64, rows, cols int) ([][]float64, []float64, [][]float64, error) {
+func JacobiSVD(matrix mat.Matrix) (*mat.Dense, []float64, *mat.Dense, error) {
+	rows, cols := matrix.Dims()
+
 	if rows < cols {
 		return nil, nil, nil, ProcrustesError(fmt.Sprintf(
 			"JacobiSVD requires rows ≥ cols, got %d × %d", rows, cols,
 		))
 	}
 
-	dense := mat.NewDense(rows, cols, nil)
+	var dense mat.Dense
 
-	for row := 0; row < rows; row++ {
-		for col := 0; col < cols; col++ {
-			dense.Set(row, col, matrix[row][col])
-		}
-	}
+	dense.CloneFrom(matrix)
 
 	var svd mat.SVD
 
-	if ok := svd.Factorize(dense, mat.SVDThin); !ok {
+	if !svd.Factorize(&dense, mat.SVDThin) {
 		return nil, nil, nil, ProcrustesError("SVD factorization failed")
 	}
 
@@ -123,129 +116,28 @@ func JacobiSVD(matrix [][]float64, rows, cols int) ([][]float64, []float64, [][]
 	svd.UTo(&uDense)
 	svd.VTo(&vDense)
 
-	return denseToSlice(&uDense), sigma, denseToSlice(&vDense), nil
-}
-
-func denseToSlice(d *mat.Dense) [][]float64 {
-	rows, cols := d.Dims()
-	out := make([][]float64, rows)
-
-	for row := 0; row < rows; row++ {
-		out[row] = make([]float64, cols)
-
-		for col := 0; col < cols; col++ {
-			out[row][col] = d.At(row, col)
-		}
-	}
-
-	return out
+	return &uDense, sigma, &vDense, nil
 }
 
 /*
-matMul multiplies two dense matrices a (rA × cA) and b (cA × cB),
-returning the rA × cB product.
+DenseFromRows builds an nSamples × nDim matrix from a row-major slice-of-slices.
 */
-func matMul(a, b [][]float64, rA, cA, cB int) [][]float64 {
-	out := make([][]float64, rA)
-
-	for row := range out {
-		out[row] = make([]float64, cB)
-
-		for col := 0; col < cB; col++ {
-			var sum float64
-
-			for inner := 0; inner < cA; inner++ {
-				sum += a[row][inner] * b[inner][col]
-			}
-
-			out[row][col] = sum
-		}
+func DenseFromRows(rows [][]float64, nSamples, nDim int) (*mat.Dense, error) {
+	if len(rows) != nSamples {
+		return nil, ProcrustesError("row count mismatch")
 	}
 
-	return out
-}
+	data := make([]float64, nSamples*nDim)
 
-/*
-transpose returns the n×m transpose of an m×n matrix.
-*/
-func transpose(mat [][]float64, rows, cols int) [][]float64 {
-	out := make([][]float64, cols)
-
-	for col := range out {
-		out[col] = make([]float64, rows)
-
-		for row := 0; row < rows; row++ {
-			out[col][row] = mat[row][col]
-		}
-	}
-
-	return out
-}
-
-/*
-eye returns the n×n identity matrix.
-*/
-func eye(n int) [][]float64 {
-	mat := make([][]float64, n)
-
-	for row := range mat {
-		mat[row] = make([]float64, n)
-		mat[row][row] = 1.0
-	}
-
-	return mat
-}
-
-/*
-determinant computes the determinant of an n×n matrix via LU decomposition
-with partial pivoting. Used once per Procrustes call to verify reflection
-parity.
-*/
-func determinant(mat [][]float64, n int) float64 {
-	lu := make([][]float64, n)
-	for row := range lu {
-		lu[row] = make([]float64, n)
-		copy(lu[row], mat[row])
-	}
-
-	sign := 1.0
-
-	for col := 0; col < n; col++ {
-		pivotRow := col
-		pivotVal := math.Abs(lu[col][col])
-
-		for row := col + 1; row < n; row++ {
-			if math.Abs(lu[row][col]) > pivotVal {
-				pivotRow = row
-				pivotVal = math.Abs(lu[row][col])
-			}
+	for rowIdx := 0; rowIdx < nSamples; rowIdx++ {
+		if len(rows[rowIdx]) != nDim {
+			return nil, ProcrustesError("column count mismatch")
 		}
 
-		if pivotRow != col {
-			lu[col], lu[pivotRow] = lu[pivotRow], lu[col]
-			sign = -sign
-		}
-
-		if lu[col][col] == 0 {
-			return 0
-		}
-
-		for row := col + 1; row < n; row++ {
-			factor := lu[row][col] / lu[col][col]
-
-			for inner := col + 1; inner < n; inner++ {
-				lu[row][inner] -= factor * lu[col][inner]
-			}
-		}
+		copy(data[rowIdx*nDim:(rowIdx+1)*nDim], rows[rowIdx])
 	}
 
-	det := sign
-
-	for diag := 0; diag < n; diag++ {
-		det *= lu[diag][diag]
-	}
-
-	return det
+	return mat.NewDense(nSamples, nDim, data), nil
 }
 
 /*

@@ -21,9 +21,9 @@ func TestQuantile_Observe(testingTB *testing.T) {
 		})
 	})
 
-	Convey("Given a sorted slice with LinInterp at p=0.25", testingTB, func() {
-		quantile := NewQuantile(0.25, stat.LinInterp, nil).ObserveSorted(
-			[]float64{1, 2, 3, 4},
+	Convey("Given an unsorted stream with LinInterp at p=0.25", testingTB, func() {
+		quantile := NewQuantile(0.25, stat.LinInterp, nil).Observe(
+			nomagique.Numbers(1, 2, 3, 4)...,
 		)
 
 		Convey("It should return the lower interpolated quartile", func() {
@@ -76,19 +76,6 @@ func TestQuantile_Observe(testingTB *testing.T) {
 
 		Convey("It should return NaN", func() {
 			So(math.IsNaN(float64(quantile)), ShouldBeTrue)
-		})
-	})
-}
-
-func TestQuartiles_Observe(testingTB *testing.T) {
-	Convey("Given a four-value stream", testingTB, func() {
-		lower, upper := NewQuartiles(stat.LinInterp, nil).Observe(
-			nomagique.Numbers(1, 2, 3, 4)...,
-		)
-
-		Convey("It should return gonum LinInterp quartiles", func() {
-			So(float64(lower), ShouldEqual, 1)
-			So(float64(upper), ShouldEqual, 3)
 		})
 	})
 }

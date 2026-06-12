@@ -2,6 +2,7 @@ package correlation
 
 import (
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/nomagique"
 	"github.com/theapemachine/nomagique/core"
 	"gonum.org/v1/gonum/stat"
 )
@@ -52,15 +53,14 @@ func (pearson *Pearson) Observe(inputs ...core.Number) core.Float64 {
 
 	left := core.Numbers(inputs[:half])
 	right := core.Numbers(inputs[half:])
+	weights := nomagique.Samples(pearson.weights)
 
-	var weights []float64
-
-	if len(pearson.weights) > 0 {
-		weights = pearson.weights.Float64()
+	if len(weights) == 0 {
+		weights = nil
 	}
 
 	return core.Float64(stat.Correlation(
-		left.Float64(), right.Float64(), weights,
+		nomagique.Samples(left), nomagique.Samples(right), weights,
 	))
 }
 

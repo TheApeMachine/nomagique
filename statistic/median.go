@@ -62,6 +62,13 @@ func (median *Median) Reset() error {
 	return nil
 }
 
+/*
+MedianOf returns the median of values without weights.
+*/
+func MedianOf(values []float64) float64 {
+	return medianOf(values)
+}
+
 func medianOf(values []float64) float64 {
 	sort.Float64s(values)
 

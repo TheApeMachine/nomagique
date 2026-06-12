@@ -1,6 +1,7 @@
 package probability
 
 import (
+	"github.com/theapemachine/nomagique"
 	"github.com/theapemachine/nomagique/statistic"
 )
 
@@ -48,7 +49,14 @@ func (matrix *TransitionMatrix) Surprise(observed []float64) (float64, error) {
 		rowSum += count
 	}
 
-	return statistic.DivergenceBetween(observed, row, rowSum, 0)
+	inputs := append(
+		nomagique.Numbers(observed...),
+		nomagique.Numbers(row...)...,
+	)
+
+	divergence := float64(statistic.NewKLDivergence(nil, rowSum, 0).Observe(inputs...))
+
+	return divergence, nil
 }
 
 /*

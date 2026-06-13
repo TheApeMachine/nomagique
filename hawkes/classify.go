@@ -2,11 +2,6 @@ package hawkes
 
 import "github.com/theapemachine/nomagique/probability"
 
-const (
-	saturationRadius = 0.85
-	frenzyAsymmetry  = 0.15
-)
-
 /*
 FitCategory names the dominant Hawkes regime for a fitted process.
 */
@@ -23,12 +18,29 @@ const uniformFitConfidence = 1.0 / 4.0
 
 /*
 ClassifyFit maps a fit and asymmetry to a category and confidence score.
+Classification is withheld until fit gates are ready.
 */
 func ClassifyFit(
 	fit BivariateFit,
 	asymmetry float64,
 	preferY bool,
+	gates FitGates,
 ) (category FitCategory, confidence float64) {
+	if !gates.Ready() {
+		return FitCategoryOrganic, 0
+	}
+
+	return classifyFitWithGates(fit, asymmetry, preferY, gates)
+}
+
+func classifyFitWithGates(
+	fit BivariateFit,
+	asymmetry float64,
+	preferY bool,
+	gates FitGates,
+) (category FitCategory, confidence float64) {
+	saturationRadius := gates.SaturationRadius
+	frenzyAsymmetry := gates.FrenzyAsymmetry
 	intensity, baseline := fit.IntensityX, fit.MuX
 
 	if preferY {

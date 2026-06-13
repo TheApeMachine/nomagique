@@ -48,6 +48,65 @@ func SoftmaxScores(scores []float64) ([]float64, error) {
 }
 
 /*
+SoftmaxScoresNormalized standardizes scores by their own spread before applying
+softmax, so the resulting probabilities reflect how decisively the winning score
+SEPARATES from the field rather than the raw magnitude of the scores.
+
+Plain SoftmaxScores saturates to a one-hot vector whenever one raw score is much
+larger than the others — which happens routinely when an input is an unbounded
+physical quantity (relative volume, divergence, a 1/spread ratio): the winner's
+confidence pins to ~1.0 and surprise collapses to 0, regardless of how genuinely
+distinct the state is. Dividing the centered scores by their standard deviation
+makes the margin scale-invariant: a 2x and a 50x volume spike that both clearly
+mean "ignition" yield comparable, sub-unity confidence instead of both pinning to
+exactly 1.0.
+
+When every score is equal (zero spread) the result is the uniform distribution,
+matching SoftmaxScores on uniform input.
+*/
+func SoftmaxScoresNormalized(scores []float64) ([]float64, error) {
+	if len(scores) == 0 {
+		return nil, fmt.Errorf("probability: softmax requires at least one score")
+	}
+
+	for index, score := range scores {
+		if math.IsNaN(score) || math.IsInf(score, 0) {
+			return nil, fmt.Errorf("probability: softmax score[%d] is non-finite", index)
+		}
+	}
+
+	mean := 0.0
+
+	for _, score := range scores {
+		mean += score
+	}
+
+	mean /= float64(len(scores))
+
+	variance := 0.0
+
+	for _, score := range scores {
+		deviation := score - mean
+		variance += deviation * deviation
+	}
+
+	variance /= float64(len(scores))
+	stddev := math.Sqrt(variance)
+
+	if stddev <= 0 {
+		return SoftmaxScores(scores)
+	}
+
+	standardized := make([]float64, len(scores))
+
+	for index, score := range scores {
+		standardized[index] = (score - mean) / stddev
+	}
+
+	return SoftmaxScores(standardized)
+}
+
+/*
 ArgmaxIndex returns the index of the largest value.
 */
 func ArgmaxIndex(values []float64) int {

@@ -6,19 +6,19 @@ Composable numeric dynamics behind `core.Number`. Boundary scalars use `nomagiqu
 
 ## Packages
 
-| Package | Responsibility |
-|---------|----------------|
-| `core` | `Number`, `Pipeline`, `BoundaryRegistry`, `StageParser`, `Stage.Apply` fast path |
-| `adaptive` | Exact `float64` EMA, Delta, Accumulator, Compression, FracDiff, Variance, ZScore, Momentum, Range; arm64 EMA batch in `batch_hot_ema_arm64.s` (bit-identical to Go); pipeline bindings |
-| `learning` | `Weight`, `SampleRatio`, `Forecast` for predicted-vs-actual calibration |
-| `probability` | `Bernoulli`, `CUSUM`, `Rank` for streaming probability signals |
-| `statistic` | `Mean`, `Median`, `Quantile`, `StdDev`, `Min`, `Entropy`, `FastSlow`, `KLDivergence`, `BivariateMoment`, `OLS`, `RidgeSolver`, `LinSpace`/`LogSpace` |
-| `correlation` | `Pearson`, `HayashiYoshida`, `Covariance`, `Multiverse`, `IntervalCoupling` |
-| `causal` | Tabular SCM: `NodeTable`, backdoor, stump ensemble, regime hysteresis |
-| `hawkes` | Count-stream MoM plus timestamp MLE: `ArrivalStream`, `BivariateFit`, `BivariateEstimator` |
-| `algorithm` | `Pearl`, `Hawkes`, `HawkesFit`, `Shift`, `Correlate`, `Backdoor`, `Calibrate`, `Trust` |
-| `geometry` | Phase dials, eigenmodes, PGA, Procrustes, scans; `Velocity`, `Coupling`, `ModeDetector` pipeline bindings |
-| `nomagique` | `Scalar` boundary API and nested composition via `resolveStages` |
+| Package       | Responsibility                                                                                                                                                                         |
+|---------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `core`        | `Number`, `Pipeline`, `BoundaryRegistry`, `StageParser`, `Stage.Apply` fast path                                                                                                       |
+| `adaptive`    | Exact `float64` EMA, Delta, Accumulator, Compression, FracDiff, Variance, ZScore, Momentum, Range; arm64 EMA batch in `batch_hot_ema_arm64.s` (bit-identical to Go); pipeline bindings |
+| `learning`    | `Weight`, `SampleRatio`, `Forecast` for predicted-vs-actual calibration                                                                                                                |
+| `probability` | `Bernoulli`, `CUSUM`, `Rank` for streaming probability signals                                                                                                                         |
+| `statistic`   | `Mean`, `Median`, `Quantile`, `StdDev`, `Min`, `Entropy`, `FastSlow`, `KLDivergence`, `BivariateMoment`, `OLS`, `RidgeSolver`, `LinSpace`/`LogSpace`                                   |
+| `correlation` | `Pearson`, `HayashiYoshida`, `Covariance`, `Multiverse`, `IntervalCoupling`                                                                                                            |
+| `causal`      | Tabular SCM: `NodeTable`, backdoor, stump ensemble, regime hysteresis                                                                                                                  |
+| `hawkes`      | Count-stream MoM plus timestamp MLE: `ArrivalStream`, `BivariateFit`, `BivariateEstimator`                                                                                             |
+| `algorithm`   | `Pearl`, `Hawkes`, `HawkesFit`, `Shift`, `Correlate`, `Backdoor`, `Calibrate`, `Trust`                                                                                                 |
+| `geometry`    | Phase dials, eigenmodes, PGA, Procrustes, scans; `Velocity`, `Coupling`, `ModeDetector` pipeline bindings                                                                              |
+| `nomagique`   | `Scalar` boundary API and nested composition via `resolveStages`                                                                                                                       |
 
 Domain math lives in `causal`, `hawkes`, `learning`, `probability`, `geometry`, `statistic`, and `correlation`. Hot-path signal kernels and SIMD batch code live in `adaptive`. Orchestration lives in `core`. `adaptive`, `learning`, `probability`, and `geometry` bind types into pipelines.
 

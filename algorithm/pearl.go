@@ -34,6 +34,8 @@ func NewPearl(
 		config.MinHistory = 12
 	}
 
+	config = applyDerivedLadderConfig(config, streams)
+
 	return &Pearl{
 		target:    target,
 		config:    config,

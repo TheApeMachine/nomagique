@@ -12,12 +12,14 @@ import (
 HawkesFit estimates bivariate Hawkes parameters from timestamp arrival streams.
 */
 type HawkesFit struct {
-	xTimes    core.Numbers
-	yTimes    core.Numbers
-	horizon   time.Time
-	prior     hawkes.BivariateFit
-	estimator *hawkes.BivariateEstimator
-	fit       hawkes.BivariateFit
+	xTimes        core.Numbers
+	yTimes        core.Numbers
+	horizon       time.Time
+	prior         hawkes.BivariateFit
+	estimator     *hawkes.BivariateEstimator
+	fit           hawkes.BivariateFit
+	spectralRadii []float64
+	asymmetries   []float64
 }
 
 /*
@@ -53,6 +55,8 @@ func (hawkesFit *HawkesFit) Observe(_ ...core.Number) core.Float64 {
 	if !hawkesFit.fit.Valid() {
 		return 0
 	}
+
+	hawkesFit.recordFitGates()
 
 	asymmetry := hawkesFit.fit.Asymmetry(false)
 
@@ -92,11 +96,44 @@ func (hawkesFit *HawkesFit) SpectralRadius() core.Float64 {
 Category returns the classified fit regime and confidence.
 */
 func (hawkesFit *HawkesFit) Category(preferY bool) (hawkes.FitCategory, core.Float64) {
+	gates, gatesReady := hawkes.FitGatesFromHistory(hawkesFit.spectralRadii, hawkesFit.asymmetries)
+
+	if !gatesReady {
+		return hawkes.FitCategoryOrganic, 0
+	}
+
 	category, confidence := hawkes.ClassifyFit(
-		hawkesFit.fit, hawkesFit.fit.Asymmetry(preferY), preferY,
+		hawkesFit.fit, hawkesFit.fit.Asymmetry(preferY), preferY, gates,
 	)
 
 	return category, core.Float64(confidence)
+}
+
+func (hawkesFit *HawkesFit) recordFitGates() {
+	if hawkesFit.fit.SpectralRadius <= 0 {
+		return
+	}
+
+	hawkesFit.spectralRadii = appendRingFloat(
+		hawkesFit.spectralRadii,
+		hawkesFit.fit.SpectralRadius,
+		64,
+	)
+	hawkesFit.asymmetries = appendRingFloat(
+		hawkesFit.asymmetries,
+		hawkesFit.fit.Asymmetry(false),
+		64,
+	)
+}
+
+func appendRingFloat(values []float64, value float64, capacity int) []float64 {
+	values = append(values, value)
+
+	if len(values) <= capacity {
+		return values
+	}
+
+	return values[len(values)-capacity:]
 }
 
 /*

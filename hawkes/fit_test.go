@@ -72,7 +72,14 @@ func TestClassifyFit_Saturation(testingTB *testing.T) {
 			SpectralRadius: 0.9,
 		}
 
-		category, confidence := ClassifyFit(fit, 0.05, false)
+		gates, gatesReady := FitGatesFromHistory(
+			[]float64{0.7, 0.75, 0.8, 0.82},
+			[]float64{0.05, 0.08, 0.1, 0.12},
+		)
+
+		So(gatesReady, ShouldBeTrue)
+
+		category, confidence := ClassifyFit(fit, 0.05, false, gates)
 
 		Convey("It should classify saturation", func() {
 			So(category, ShouldEqual, FitCategorySaturation)

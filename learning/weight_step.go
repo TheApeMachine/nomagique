@@ -15,14 +15,14 @@ func ObserveWeight(state *WeightState, predicted float64, actual float64) float6
 		return state.Trust
 	}
 
-	return observeWeightReady(state, predicted, actual, residual)
+	return observeWeightReady(state, predicted, residual)
 }
 
 /*
 observeWeightReady runs the hot weight path; state must already be Ready.
 */
 func observeWeightReady(
-	state *WeightState, predicted float64, actual float64, residual float64,
+	state *WeightState, predicted float64, residual float64,
 ) float64 {
 	if residual < state.Min {
 		state.Min = residual

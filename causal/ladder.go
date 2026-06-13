@@ -42,7 +42,7 @@ func Evaluate(
 	bandwidth := config.KernelBandwidth
 
 	if bandwidth <= 0 {
-		bandwidth = 0.35
+		return Outcome{}
 	}
 
 	association, assocErr := nodeTable.Association(roles.Treatment)
@@ -110,12 +110,8 @@ func Evaluate(
 	}
 
 	confoundFraction := config.ConfoundFraction
-
-	if confoundFraction <= 0 {
-		confoundFraction = 0.25
-	}
-
-	confounded := math.Abs(intervention-association) > math.Abs(association)*confoundFraction
+	confounded := confoundFraction > 0 &&
+		math.Abs(intervention-association) > math.Abs(association)*confoundFraction
 	outcome.Reason = "intervention" + suffix
 
 	if confounded {

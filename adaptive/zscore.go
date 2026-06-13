@@ -2,7 +2,6 @@ package adaptive
 
 import (
 	"github.com/theapemachine/nomagique/core"
-	"github.com/theapemachine/nomagique/kernel"
 )
 
 /*
@@ -10,7 +9,7 @@ Surprise scores how many adaptive standard deviations the sample sits from a lev
 */
 type Surprise struct {
 	stageParser *core.StageParser
-	state       kernel.ZScoreState
+	state       ZScoreState
 }
 
 /*
@@ -58,7 +57,7 @@ func (surprise *Surprise) Apply(
 	}
 
 	return core.Float64(
-		kernel.ObserveZScore(&surprise.state, sample, anchor, hasAnchor),
+		ObserveZScore(&surprise.state, sample, anchor, hasAnchor),
 	), nil
 }
 

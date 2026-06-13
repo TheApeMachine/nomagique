@@ -2,7 +2,6 @@ package learning
 
 import (
 	"github.com/theapemachine/nomagique/core"
-	"github.com/theapemachine/nomagique/kernel/learn"
 )
 
 /*
@@ -10,7 +9,7 @@ Calibrator maps predicted and actual pairs into calibration samples.
 */
 type Calibrator struct {
 	stageParser *core.StageParser
-	state       learn.SampleRatioState
+	state       SampleRatioState
 }
 
 /*
@@ -56,7 +55,7 @@ func (calibrator *Calibrator) Apply(
 	}
 
 	return core.Float64(
-		learn.ObserveSampleRatio(&calibrator.state, predicted, actual),
+		ObserveSampleRatio(&calibrator.state, predicted, actual),
 	), nil
 }
 

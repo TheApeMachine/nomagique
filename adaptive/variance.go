@@ -2,7 +2,6 @@ package adaptive
 
 import (
 	"github.com/theapemachine/nomagique/core"
-	"github.com/theapemachine/nomagique/kernel"
 )
 
 /*
@@ -10,7 +9,7 @@ Dispersion tracks adaptive variance of the observed sample stream.
 */
 type Dispersion struct {
 	stageParser *core.StageParser
-	state       kernel.VarianceState
+	state       VarianceState
 }
 
 /*

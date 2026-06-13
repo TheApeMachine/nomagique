@@ -2,7 +2,6 @@ package adaptive
 
 import (
 	"github.com/theapemachine/nomagique/core"
-	"github.com/theapemachine/nomagique/kernel"
 )
 
 /*
@@ -10,7 +9,7 @@ Impulse tracks signed normalized momentum relative to the running range.
 */
 type Impulse struct {
 	stageParser *core.StageParser
-	state       kernel.MomentumState
+	state       MomentumState
 }
 
 /*

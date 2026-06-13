@@ -9,21 +9,18 @@ Composable numeric dynamics behind `core.Number`. Boundary scalars use `nomagiqu
 | Package | Responsibility |
 |---------|----------------|
 | `core` | `Number`, `Pipeline`, `BoundaryRegistry`, `StageParser`, `Stage.Apply` fast path |
-| `kernel` | Exact `float64` EMA, Delta, Accumulator, Compression, FracDiff, Variance, ZScore, Momentum, Range; arm64 EMA batch in `batch_hot_ema_arm64.s` (bit-identical to Go); delta batch uses 8× unrolled Go on all arches |
-| `kernel/hawkes` | Bivariate exponential Hawkes kernel math: method-of-moments fit, theoretical moments, cross-asymmetry |
-| `adaptive` | Constructors for signal dynamics, wired into `core.Number` |
+| `adaptive` | Exact `float64` EMA, Delta, Accumulator, Compression, FracDiff, Variance, ZScore, Momentum, Range; arm64 EMA batch in `batch_hot_ema_arm64.s` (bit-identical to Go); pipeline bindings |
 | `learning` | `Weight`, `SampleRatio`, `Forecast` for predicted-vs-actual calibration |
 | `probability` | `Bernoulli`, `CUSUM`, `Rank` for streaming probability signals |
-| `statistic` | `Mean`, `Median`, `Quantile`, `KLDivergence`, `BivariateMoment`, `OLS`, `RidgeSolver`, `LinSpace`/`LogSpace` |
-| `correlation` | `Pearson`, `HayashiYoshida` for synchronous and async correlation |
-| `kernel/causal` | Tabular SCM: `NodeTable`, kernel backdoor, stump ensemble, regime hysteresis |
-| `kernel/hawkes` | Count-stream MoM plus timestamp MLE: `ArrivalStream`, `BivariateFit`, `BivariateEstimator` |
-| `algorithm` | `Pearl` ladder, `Hawkes` moment validation, `HawkesFit` timestamp MLE |
-| `geometric` | `Velocity`, `Coupling` for phase-space geometry on scalar pipelines |
-| `geometry` | Phase dials, eigenmodes, PGA, Procrustes, scans (batch / token-oriented math) |
+| `statistic` | `Mean`, `Median`, `Quantile`, `StdDev`, `Min`, `Entropy`, `FastSlow`, `KLDivergence`, `BivariateMoment`, `OLS`, `RidgeSolver`, `LinSpace`/`LogSpace` |
+| `correlation` | `Pearson`, `HayashiYoshida`, `Covariance`, `Multiverse`, `IntervalCoupling` |
+| `causal` | Tabular SCM: `NodeTable`, backdoor, stump ensemble, regime hysteresis |
+| `hawkes` | Count-stream MoM plus timestamp MLE: `ArrivalStream`, `BivariateFit`, `BivariateEstimator` |
+| `algorithm` | `Pearl`, `Hawkes`, `HawkesFit`, `Shift`, `Correlate`, `Backdoor`, `Calibrate`, `Trust` |
+| `geometry` | Phase dials, eigenmodes, PGA, Procrustes, scans; `Velocity`, `Coupling`, `ModeDetector` pipeline bindings |
 | `nomagique` | `Scalar` boundary API and nested composition via `resolveStages` |
 
-Algorithms live in `kernel` (including `kernel/learn`, `kernel/prob`, and `kernel/geom`). Orchestration lives in `core`. `adaptive`, `learning`, `probability`, and `geometric` bind types into pipelines.
+Domain math lives in `causal`, `hawkes`, `learning`, `probability`, `geometry`, `statistic`, and `correlation`. Hot-path signal kernels and SIMD batch code live in `adaptive`. Orchestration lives in `core`. `adaptive`, `learning`, `probability`, and `geometry` bind types into pipelines.
 
 ## Profiling
 
@@ -123,11 +120,60 @@ fitProcess := algorithm.NewHawkesFit(xTimes, yTimes, horizonNano, hawkes.Bivaria
 excitation := fitProcess.Observe()
 ```
 
+Distribution shift (KL drift between reference and live streams):
+
+```go
+shift := algorithm.NewShift(reference, live, nil, 0, 0)
+drift := shift.Observe()
+```
+
+Dual correlation (async minus sync coupling gap):
+
+```go
+correlate := algorithm.NewCorrelate(syncLeft, syncRight, asyncLeft, asyncRight, nil, maxInterval)
+gap := correlate.Observe()
+```
+
+Linear backdoor adjustment:
+
+```go
+backdoor := algorithm.NewBackdoor(targetNode, treatmentNode, []int{0, 1}, streams, 12)
+effect := backdoor.Observe()
+```
+
+RLS calibration over feature streams:
+
+```go
+calibrate, err := algorithm.NewCalibrate([]core.Numbers{feature}, target, 1000, 1)
+residual := calibrate.Observe()
+```
+
+Calibration trust (forecast scale × adaptive weight):
+
+```go
+trust := algorithm.NewTrust()
+score := trust.Observe(core.Float64(predicted), core.Float64(actual))
+```
+
+Multiverse coupling (feed WindowSets, then observe):
+
+```go
+multiverse := correlation.NewMultiverse([]*correlation.WindowSet{left, right}, tiers, config)
+coupling := multiverse.Observe()
+```
+
+Eigenmode detection:
+
+```go
+detector := geometry.NewModeDetector(threshold, origins, energies, couplingMatrix)
+dominantEnergy := detector.Observe()
+```
+
 Geometry (phase velocity and coupling on means or growth pairs):
 
 ```go
-phaseVelocity := geometric.Velocity()
-phaseCoupling := geometric.Coupling()
+phaseVelocity := geometry.Velocity()
+phaseCoupling := geometry.Coupling()
 
 number, err := nomagique.Number(adaptive.EMA(), phaseVelocity)
 _, _ = phaseCoupling.Observe(leftGrowth, rightGrowth)

@@ -2,7 +2,6 @@ package adaptive
 
 import (
 	"github.com/theapemachine/nomagique/core"
-	"github.com/theapemachine/nomagique/kernel"
 )
 
 /*
@@ -10,7 +9,7 @@ Compressor scores how far below the running baseline the current sample sits.
 */
 type Compressor struct {
 	stageParser *core.StageParser
-	state       kernel.CompressionState
+	state       CompressionState
 }
 
 /*

@@ -4,131 +4,139 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/nomagique/core"
 )
 
-func TestCompression(testingTB *testing.T) {
-	Convey("Given Compression constructor", testingTB, func() {
-		compression := Compression()
-
-		Convey("It should return a usable dynamic", func() {
-			So(compression, ShouldNotBeNil)
-		})
-	})
-}
-
-func TestCompression_Observe(testingTB *testing.T) {
-	Convey("Given a fresh compression scorer", testingTB, func() {
-		compression := Compression()
+func TestCompressionState_Observe(testingTB *testing.T) {
+	Convey("Given a fresh compression state", testingTB, func() {
+		state := CompressionState{}
 
 		Convey("When bootstrapping", func() {
-			value := compression.Observe(core.Float64(10))
+			value := state.Observe(10)
 
-			Convey("It should return zero without error", func() {
+			Convey("It should return zero", func() {
 				So(value, ShouldEqual, 0)
 			})
 		})
 	})
 
 	Convey("Given compression history", testingTB, func() {
-		compression := Compression()
-		compression.Observe(core.Float64(100))
+		state := CompressionState{}
+		_ = state.Observe(100)
 
-		Convey("When spread tightens", func() {
-			value := compression.Observe(core.Float64(75))
+		Convey("When the sample tightens below baseline", func() {
+			value := state.Observe(50)
 
 			Convey("It should return a positive score", func() {
-				So(value, ShouldEqual, 0.25)
-			})
-		})
-	})
-
-	Convey("Given pipeline work samples", testingTB, func() {
-		compressor := Compression()
-		compressor.Observe(core.Float64(100))
-		value := compressor.Observe(core.Float64(0), core.Float64(50))
-
-		Convey("It should score using the work sample", func() {
-			So(value, ShouldEqual, 0.5)
-		})
-	})
-
-	Convey("Given invalid stage inputs", testingTB, func() {
-		compression := Compression()
-
-		Convey("When observing", func() {
-			value := compression.Observe(blankNumber{})
-
-			Convey("It should return zero", func() {
-				So(value, ShouldEqual, core.Float64(0))
-			})
-		})
-	})
-}
-
-func TestCompression_ObserveSample(testingTB *testing.T) {
-	Convey("Given compression", testingTB, func() {
-		compression := Compression()
-		_ = compression.ObserveSample(100)
-
-		Convey("When spread tightens", func() {
-			value := compression.ObserveSample(50)
-
-			Convey("It should return the compression score", func() {
 				So(value, ShouldEqual, 0.5)
 			})
 		})
+
+		Convey("When the sample widens above baseline", func() {
+			value := state.Observe(120)
+
+			Convey("It should reset the score and raise baseline", func() {
+				So(value, ShouldEqual, 0)
+				So(state.Baseline, ShouldEqual, 120)
+			})
+		})
+
+		Convey("When baseline is unchanged", func() {
+			value := state.Observe(100)
+
+			Convey("It should return zero", func() {
+				So(value, ShouldEqual, 0)
+			})
+		})
+	})
+
+	Convey("Given a collapsed baseline", testingTB, func() {
+		state := CompressionState{}
+		_ = state.Observe(0)
+
+		Convey("When observing zero again", func() {
+			value := state.Observe(0)
+
+			Convey("It should return zero", func() {
+				So(value, ShouldEqual, 0)
+			})
+		})
 	})
 }
 
-func TestCompression_ObserveSamples(testingTB *testing.T) {
-	Convey("Given compression", testingTB, func() {
-		compression := Compression()
-		samples := []float64{100, 50}
+func TestCompressionState_ObserveSamples(testingTB *testing.T) {
+	Convey("Given samples", testingTB, func() {
+		state := CompressionState{}
+		samples := []float64{100, 50, 120}
 		out := make([]float64, len(samples))
 
-		Convey("When observing samples in batch", func() {
-			compression.ObserveSamples(samples, out)
+		Convey("When observing in batch", func() {
+			state.ObserveSamples(samples, out)
 
-			Convey("It should fill the output buffer", func() {
-				So(out[1], ShouldEqual, 0.5)
+			Convey("It should match sequential observation", func() {
+				expect := CompressionState{}
+				for index, sample := range samples {
+					So(out[index], ShouldEqual, expect.Observe(sample))
+				}
 			})
 		})
 	})
 }
 
-func TestCompression_Reset(testingTB *testing.T) {
-	Convey("Given compression with state", testingTB, func() {
-		compression := Compression()
-		compression.Observe(core.Float64(3))
+func TestCompressionState_Reset(testingTB *testing.T) {
+	Convey("Given compression state", testingTB, func() {
+		state := CompressionState{}
+		_ = state.Observe(3)
 
 		Convey("When reset", func() {
-			err := compression.Reset()
-So(err, ShouldBeNil)
+			state.Reset()
 
-			Convey("It should clear derived state", func() {
-				So(compression.state.Ready, ShouldBeFalse)
+			Convey("It should clear readiness", func() {
+				So(state.Ready, ShouldBeFalse)
 			})
 		})
 	})
 }
 
-func BenchmarkCompression_Observe(testingTB *testing.B) {
-	compression := Compression()
-	compression.Observe(core.Float64(10))
+func TestObserveCompression(testingTB *testing.T) {
+	Convey("Given ObserveCompression", testingTB, func() {
+		state := CompressionState{}
+
+		Convey("It should match method observation", func() {
+			So(ObserveCompression(&state, 8), ShouldEqual, state.Observe(8))
+		})
+	})
+}
+
+func TestObserveCompressionReady(testingTB *testing.T) {
+	Convey("Given ObserveCompressionReady", testingTB, func() {
+		state := CompressionState{Baseline: 20, Ready: true}
+
+		Convey("It should match ready observation", func() {
+			So(observeCompressionReady(&state, 10), ShouldEqual, state.Observe(10))
+		})
+	})
+}
+
+func BenchmarkCompressionState_Observe(testingTB *testing.B) {
+	state := CompressionState{}
+	_ = state.Observe(10)
 
 	for testingTB.Loop() {
-		compression.Observe(core.Float64(9))
+		_ = state.Observe(9)
 	}
 }
 
-func BenchmarkCompression_ObserveSamples(testingTB *testing.B) {
-	compression := Compression()
+func BenchmarkCompressionState_ObserveSamples(testingTB *testing.B) {
+	state := CompressionState{}
 	samples := make([]float64, 1024)
 	out := make([]float64, len(samples))
 
+	for index := range samples {
+		samples[index] = float64(index % 20)
+	}
+
 	for testingTB.Loop() {
-		compression.state.Reset()
-		compression.ObserveSamples(samples, out)
+		state.Reset()
+		state.ObserveSamples(samples, out)
 	}
 }

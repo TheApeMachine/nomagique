@@ -1,12 +1,11 @@
 /*
 Package adaptive provides dynamics whose parameters emerge from the observed signal.
-Algorithms live in kernel; this package wires them into core.Number pipelines.
+Hot-path kernels and pipeline bindings for adaptive signal dynamics.
 */
 package adaptive
 
 import (
 	"github.com/theapemachine/nomagique/core"
-	"github.com/theapemachine/nomagique/kernel"
 )
 
 /*
@@ -14,7 +13,7 @@ Exponential is a volatility-adaptive exponential moving average.
 */
 type Exponential struct {
 	stageParser *core.StageParser
-	state       kernel.EMAState
+	state       EMAState
 }
 
 /*

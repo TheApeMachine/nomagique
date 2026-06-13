@@ -2,7 +2,6 @@ package probability
 
 import (
 	"github.com/theapemachine/nomagique/core"
-	"github.com/theapemachine/nomagique/kernel/prob"
 )
 
 /*
@@ -10,7 +9,7 @@ ChangeSum accumulates sequential change evidence from a sample stream.
 */
 type ChangeSum struct {
 	stageParser *core.StageParser
-	state       prob.CUSUMState
+	state       CUSUMState
 }
 
 /*
@@ -55,7 +54,7 @@ func (changeSum *ChangeSum) Apply(
 		sample = float64(out) + float64(work[0])
 	}
 
-	return core.Float64(prob.ObserveCUSUM(&changeSum.state, sample)), nil
+	return core.Float64(ObserveCUSUM(&changeSum.state, sample)), nil
 }
 
 /*

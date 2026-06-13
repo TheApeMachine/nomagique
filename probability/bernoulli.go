@@ -2,7 +2,6 @@ package probability
 
 import (
 	"github.com/theapemachine/nomagique/core"
-	"github.com/theapemachine/nomagique/kernel/prob"
 )
 
 /*
@@ -10,7 +9,7 @@ Posterior tracks a Beta posterior mean from Bernoulli outcomes.
 */
 type Posterior struct {
 	stageParser *core.StageParser
-	state       prob.BetaState
+	state       BetaState
 }
 
 /*
@@ -57,7 +56,7 @@ func (posterior *Posterior) Apply(
 		}
 
 		return core.Float64(
-			prob.ObserveBetaPair(&posterior.state, predicted, actual),
+			ObserveBetaPair(&posterior.state, predicted, actual),
 		), nil
 	}
 
@@ -67,7 +66,7 @@ func (posterior *Posterior) Apply(
 		return 0, err
 	}
 
-	return core.Float64(prob.ObserveBeta(&posterior.state, outcome)), nil
+	return core.Float64(ObserveBeta(&posterior.state, outcome)), nil
 }
 
 /*

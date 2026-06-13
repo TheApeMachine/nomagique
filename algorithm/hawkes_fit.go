@@ -5,7 +5,7 @@ import (
 
 	"github.com/theapemachine/nomagique"
 	"github.com/theapemachine/nomagique/core"
-	"github.com/theapemachine/nomagique/kernel/hawkes"
+	"github.com/theapemachine/nomagique/hawkes"
 )
 
 /*

@@ -4,118 +4,106 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/nomagique/core"
 )
 
-func TestMomentum(testingTB *testing.T) {
-	Convey("Given Momentum constructor", testingTB, func() {
-		impulse := Momentum()
-
-		Convey("It should return a usable dynamic", func() {
-			So(impulse, ShouldNotBeNil)
-		})
-	})
-}
-
-func TestImpulse_Observe(testingTB *testing.T) {
-	Convey("Given a fresh momentum dynamic", testingTB, func() {
-		impulse := Momentum()
+func TestMomentumState_Observe(testingTB *testing.T) {
+	Convey("Given a fresh momentum state", testingTB, func() {
+		state := MomentumState{}
 
 		Convey("When bootstrapping", func() {
-			value := impulse.Observe(core.Float64(0))
+			value := state.Observe(0)
 
-			Convey("It should return zero without error", func() {
+			Convey("It should return zero", func() {
 				So(value, ShouldEqual, 0)
 			})
 		})
 	})
 
 	Convey("Given momentum history", testingTB, func() {
-		impulse := Momentum()
-		impulse.Observe(core.Float64(0))
-		value := impulse.Observe(core.Float64(10))
-
-		Convey("It should return positive momentum", func() {
-			So(value, ShouldEqual, 1)
-		})
-	})
-
-	Convey("Given invalid stage inputs", testingTB, func() {
-		impulse := Momentum()
-
-		Convey("When observing", func() {
-			value := impulse.Observe(blankNumber{})
-
-			Convey("It should return zero", func() {
-				So(value, ShouldEqual, core.Float64(0))
-			})
-		})
-	})
-}
-
-func TestImpulse_ObserveSample(testingTB *testing.T) {
-	Convey("Given momentum", testingTB, func() {
-		impulse := Momentum()
-		_ = impulse.ObserveSample(0)
+		state := MomentumState{}
+		_ = state.Observe(0)
 
 		Convey("When price rises", func() {
-			value := impulse.ObserveSample(10)
+			value := state.Observe(10)
 
-			Convey("It should return unit momentum", func() {
+			Convey("It should return positive momentum", func() {
 				So(value, ShouldEqual, 1)
 			})
 		})
+
+		Convey("When price falls", func() {
+			state := MomentumState{}
+			_ = state.Observe(20)
+			value := state.Observe(10)
+
+			Convey("It should return negative momentum", func() {
+				So(value, ShouldEqual, -1)
+			})
+		})
 	})
 }
 
-func TestImpulse_ObserveSamples(testingTB *testing.T) {
-	Convey("Given momentum", testingTB, func() {
-		impulse := Momentum()
+func TestMomentumState_ObserveSamples(testingTB *testing.T) {
+	Convey("Given samples", testingTB, func() {
+		state := MomentumState{}
 		samples := []float64{0, 10}
 		out := make([]float64, len(samples))
 
-		Convey("When observing samples in batch", func() {
-			impulse.ObserveSamples(samples, out)
+		Convey("When observing in batch", func() {
+			state.ObserveSamples(samples, out)
 
-			Convey("It should fill the output buffer", func() {
-				So(out[1], ShouldEqual, 1)
+			Convey("It should match sequential observation", func() {
+				expect := MomentumState{}
+				for index, sample := range samples {
+					So(out[index], ShouldEqual, expect.Observe(sample))
+				}
 			})
 		})
 	})
 }
 
-func TestImpulse_Reset(testingTB *testing.T) {
-	Convey("Given momentum with state", testingTB, func() {
-		impulse := Momentum()
-		impulse.Observe(core.Float64(3))
+func TestMomentumState_Reset(testingTB *testing.T) {
+	Convey("Given momentum state", testingTB, func() {
+		state := MomentumState{}
+		_ = state.Observe(3)
 
 		Convey("When reset", func() {
-			err := impulse.Reset()
-So(err, ShouldBeNil)
+			state.Reset()
 
-			Convey("It should clear derived state", func() {
-				So(impulse.state.Ready, ShouldBeFalse)
+			Convey("It should clear readiness", func() {
+				So(state.Ready, ShouldBeFalse)
 			})
 		})
 	})
 }
 
-func BenchmarkMomentum_Observe(testingTB *testing.B) {
-	impulse := Momentum()
-	impulse.Observe(core.Float64(1))
+func TestObserveMomentum(testingTB *testing.T) {
+	Convey("Given ObserveMomentum", testingTB, func() {
+		byFunction := MomentumState{}
+		byMethod := MomentumState{}
+
+		Convey("It should match method observation", func() {
+			So(ObserveMomentum(&byFunction, 3), ShouldEqual, byMethod.Observe(3))
+		})
+	})
+}
+
+func BenchmarkMomentumState_Observe(testingTB *testing.B) {
+	state := MomentumState{}
+	_ = state.Observe(1)
 
 	for testingTB.Loop() {
-		impulse.Observe(core.Float64(1.01))
+		_ = state.Observe(1.01)
 	}
 }
 
-func BenchmarkMomentum_ObserveSamples(testingTB *testing.B) {
-	impulse := Momentum()
+func BenchmarkMomentumState_ObserveSamples(testingTB *testing.B) {
+	state := MomentumState{}
 	samples := make([]float64, 1024)
 	out := make([]float64, len(samples))
 
 	for testingTB.Loop() {
-		impulse.state.Reset()
-		impulse.ObserveSamples(samples, out)
+		state.Reset()
+		state.ObserveSamples(samples, out)
 	}
 }

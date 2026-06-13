@@ -2,7 +2,6 @@ package adaptive
 
 import (
 	"github.com/theapemachine/nomagique/core"
-	"github.com/theapemachine/nomagique/kernel"
 )
 
 /*
@@ -10,7 +9,7 @@ Extent tracks the running span between minimum and maximum observations.
 */
 type Extent struct {
 	stageParser *core.StageParser
-	state       kernel.RangeState
+	state       RangeState
 }
 
 /*

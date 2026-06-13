@@ -2,7 +2,6 @@ package learning
 
 import (
 	"github.com/theapemachine/nomagique/core"
-	"github.com/theapemachine/nomagique/kernel/learn"
 )
 
 /*
@@ -10,7 +9,7 @@ TrustWeight is a self-adapting rate from prediction error.
 */
 type TrustWeight struct {
 	stageParser *core.StageParser
-	state       learn.WeightState
+	state       WeightState
 }
 
 /*
@@ -56,7 +55,7 @@ func (trustWeight *TrustWeight) Apply(
 	}
 
 	return core.Float64(
-		learn.ObserveWeight(&trustWeight.state, predicted, actual),
+		ObserveWeight(&trustWeight.state, predicted, actual),
 	), nil
 }
 

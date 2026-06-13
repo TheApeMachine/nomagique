@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/nomagique"
 )
 
 func TestFastSlowRate(testingTB *testing.T) {
@@ -74,5 +75,38 @@ func BenchmarkFastSlowRate(b *testing.B) {
 
 	for b.Loop() {
 		_ = FastSlowRate(samples, 3, 1e-6)
+	}
+}
+
+func TestFastSlow_Observe(testingTB *testing.T) {
+	Convey("Given a breakout stream", testingTB, func() {
+		stream := nomagique.Numbers(0, 0, 0, 0, 0, 10, 10, 10)
+		ratio := NewFastSlow(stream, 3, 1e-6)
+		value := ratio.Observe()
+
+		Convey("It should exceed unity", func() {
+			So(float64(value), ShouldBeGreaterThan, 1)
+		})
+	})
+
+	Convey("Given an inverted fast-slow stream", testingTB, func() {
+		stream := nomagique.Numbers(0.5, 0.5, 0.5, 0.5, 0.2, 0.2, 0.2)
+		ratio := NewInvertedFastSlow(stream, 3, 1e-6)
+		value := ratio.Observe()
+
+		Convey("It should exceed unity", func() {
+			So(float64(value), ShouldBeGreaterThan, 1)
+		})
+	})
+}
+
+func BenchmarkFastSlow_Observe(testingTB *testing.B) {
+	stream := nomagique.Numbers(0, 0, 0, 0, 0, 10, 10, 10, 12, 12, 12)
+	ratio := NewFastSlow(stream, 3, 1e-6)
+
+	testingTB.ReportAllocs()
+
+	for testingTB.Loop() {
+		_ = ratio.Observe()
 	}
 }

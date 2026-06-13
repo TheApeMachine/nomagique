@@ -1,12 +1,11 @@
 /*
 Package adaptive provides dynamics whose parameters emerge from the observed signal.
-Algorithms live in kernel; this package wires them into core.Number pipelines.
+Hot-path kernels and pipeline bindings for adaptive signal dynamics.
 */
 package adaptive
 
 import (
 	"github.com/theapemachine/nomagique/core"
-	"github.com/theapemachine/nomagique/kernel"
 )
 
 /*
@@ -14,7 +13,7 @@ Integrator is a capacitor that integrates signed signal strength with no bounds.
 */
 type Integrator struct {
 	stageParser *core.StageParser
-	state       kernel.AccumulatorState
+	state       AccumulatorState
 }
 
 /*

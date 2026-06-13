@@ -96,6 +96,29 @@ func TestRLSFilterObserve(testingTB *testing.T) {
 	})
 }
 
+func TestRLSFilter_Reset(testingTB *testing.T) {
+	Convey("Given a trained RLS filter", testingTB, func() {
+		filter, err := NewRLSFilter(1, 1000)
+		So(err, ShouldBeNil)
+
+		for step := 0; step < 8; step++ {
+			feature := float64(step) / 8
+			observeErr := filter.Observe([]float64{feature}, 2*feature+1)
+			So(observeErr, ShouldBeNil)
+		}
+
+		before := filter.Coefficients()
+		filter.Reset()
+
+		Convey("It should clear coefficients after reset", func() {
+			for index, coefficient := range filter.Coefficients() {
+				So(coefficient, ShouldEqual, 0)
+				So(before[index], ShouldNotEqual, 0)
+			}
+		})
+	})
+}
+
 func BenchmarkRLSFilterObserve(b *testing.B) {
 	filter, err := NewRLSFilter(13, 1000)
 

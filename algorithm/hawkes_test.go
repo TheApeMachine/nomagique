@@ -5,7 +5,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/nomagique"
-	"github.com/theapemachine/nomagique/kernel/hawkes"
+	"github.com/theapemachine/nomagique/hawkes"
 )
 
 func TestHawkes_Observe(testingTB *testing.T) {

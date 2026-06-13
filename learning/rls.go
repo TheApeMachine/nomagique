@@ -46,6 +46,22 @@ func NewRLSFilter(dimension int, initialVariance float64) (*RLSFilter, error) {
 	}, nil
 }
 
+/*
+Reset restores coefficients and covariance to their initial state.
+*/
+func (filter *RLSFilter) Reset() {
+	size := filter.dimension + 1
+
+	for row := 0; row < size; row++ {
+		for col := 0; col < size; col++ {
+			filter.covariance[row][col] = 0
+		}
+
+		filter.covariance[row][row] = filter.initialVariance
+		filter.beta[row] = 0
+	}
+}
+
 func (filter *RLSFilter) resetCovariance() {
 	size := filter.dimension + 1
 

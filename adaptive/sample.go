@@ -2,7 +2,6 @@ package adaptive
 
 import (
 	"github.com/theapemachine/nomagique/core"
-	"github.com/theapemachine/nomagique/kernel"
 )
 
 var (
@@ -21,63 +20,63 @@ var (
 ObserveSample ingests a raw float64 sample into the EMA state.
 */
 func (exponential *Exponential) ObserveSample(sample float64) float64 {
-	return kernel.ObserveEMA(&exponential.state, sample)
+	return ObserveEMA(&exponential.state, sample)
 }
 
 /*
 ObserveSample ingests a raw float64 sample into the delta state.
 */
 func (delta *Normalized) ObserveSample(sample float64) float64 {
-	return kernel.ObserveDelta(&delta.state, sample)
+	return ObserveDelta(&delta.state, sample)
 }
 
 /*
 ObserveSample ingests a raw float64 sample into the accumulator level.
 */
 func (integrator *Integrator) ObserveSample(sample float64) float64 {
-	return kernel.ObserveAccumulator(&integrator.state, sample)
+	return ObserveAccumulator(&integrator.state, sample)
 }
 
 /*
 ObserveSample ingests a raw float64 sample into the compression state.
 */
 func (compressor *Compressor) ObserveSample(sample float64) float64 {
-	return kernel.ObserveCompression(&compressor.state, sample)
+	return ObserveCompression(&compressor.state, sample)
 }
 
 /*
 ObserveSample ingests a raw float64 sample into the fractional differencing state.
 */
 func (fractional *Fractional) ObserveSample(sample float64) float64 {
-	return kernel.ObserveFracDiff(&fractional.state, sample)
+	return ObserveFracDiff(&fractional.state, sample)
 }
 
 /*
 ObserveSample ingests a raw float64 sample into the variance state.
 */
 func (dispersion *Dispersion) ObserveSample(sample float64) float64 {
-	return kernel.ObserveVariance(&dispersion.state, sample)
+	return ObserveVariance(&dispersion.state, sample)
 }
 
 /*
 ObserveSample ingests a raw float64 sample into the z-score state.
 */
 func (surprise *Surprise) ObserveSample(sample float64) float64 {
-	return kernel.ObserveZScore(&surprise.state, sample, 0, false)
+	return ObserveZScore(&surprise.state, sample, 0, false)
 }
 
 /*
 ObserveSample ingests a raw float64 sample into the momentum state.
 */
 func (impulse *Impulse) ObserveSample(sample float64) float64 {
-	return kernel.ObserveMomentum(&impulse.state, sample)
+	return ObserveMomentum(&impulse.state, sample)
 }
 
 /*
 ObserveSample ingests a raw float64 sample into the range state.
 */
 func (extent *Extent) ObserveSample(sample float64) float64 {
-	return kernel.ObserveRange(&extent.state, sample)
+	return ObserveRange(&extent.state, sample)
 }
 
 /*
@@ -93,9 +92,9 @@ func ObserveEMAThenZScore(
 		anchor = raw
 	}
 
-	kernel.ObserveEMA(&exponential.state, raw)
+	ObserveEMA(&exponential.state, raw)
 
-	return kernel.ObserveZScore(&surprise.state, raw, anchor, true)
+	return ObserveZScore(&surprise.state, raw, anchor, true)
 }
 
 /*
@@ -105,7 +104,7 @@ Matches core.Pipeline ordering for those two stages.
 func ObserveEMAThenDelta(
 	raw float64, exponential *Exponential, delta *Normalized,
 ) float64 {
-	kernel.ObserveEMA(&exponential.state, raw)
+	ObserveEMA(&exponential.state, raw)
 
-	return kernel.ObserveDelta(&delta.state, raw)
+	return ObserveDelta(&delta.state, raw)
 }

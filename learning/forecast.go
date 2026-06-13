@@ -2,7 +2,6 @@ package learning
 
 import (
 	"github.com/theapemachine/nomagique/core"
-	"github.com/theapemachine/nomagique/kernel/learn"
 )
 
 /*
@@ -10,7 +9,7 @@ Forecaster learns a multiplicative scale from settled predicted-vs-actual outcom
 */
 type Forecaster struct {
 	stageParser *core.StageParser
-	state       learn.ForecastState
+	state       ForecastState
 }
 
 /*
@@ -63,7 +62,7 @@ func (forecaster *Forecaster) Apply(
 	}
 
 	return core.Float64(
-		learn.ObserveForecast(&forecaster.state, predicted, actual),
+		ObserveForecast(&forecaster.state, predicted, actual),
 	), nil
 }
 

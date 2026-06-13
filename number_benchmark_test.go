@@ -6,7 +6,7 @@ import (
 	"github.com/theapemachine/nomagique"
 	"github.com/theapemachine/nomagique/adaptive"
 	"github.com/theapemachine/nomagique/core"
-	"github.com/theapemachine/nomagique/geometric"
+	"github.com/theapemachine/nomagique/geometry"
 	"github.com/theapemachine/nomagique/learning"
 	"github.com/theapemachine/nomagique/probability"
 )
@@ -68,7 +68,7 @@ func BenchmarkNumber_retainedObserve(testingTB *testing.B) {
 			},
 		},
 		{name: "cusum_rank", stages: []core.Number{probability.CUSUM(), probability.Rank()}},
-		{name: "ema_velocity", stages: []core.Number{adaptive.EMA(), geometric.Velocity()}},
+		{name: "ema_velocity", stages: []core.Number{adaptive.EMA(), geometry.Velocity()}},
 		{
 			name: "long_mixed",
 			stages: []core.Number{
@@ -157,7 +157,7 @@ func BenchmarkNumber_stressSeries(testingTB *testing.B) {
 		adaptive.Delta(),
 		adaptive.ZScore(),
 		probability.CUSUM(),
-		geometric.Velocity(),
+		geometry.Velocity(),
 	}
 	number := prepareNumberBench(testingTB, stages)
 	sampleIndex := 0
@@ -195,7 +195,7 @@ func BenchmarkNumber_probabilityBernoulli(testingTB *testing.B) {
 }
 
 func BenchmarkNumber_geometricCoupling(testingTB *testing.B) {
-	phaseCoupling := geometric.Coupling()
+	phaseCoupling := geometry.Coupling()
 
 	for testingTB.Loop() {
 		phaseCoupling.Observe(core.Float64(1.7), core.Float64(-0.9))

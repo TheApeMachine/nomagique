@@ -2,7 +2,6 @@ package adaptive
 
 import (
 	"github.com/theapemachine/nomagique/core"
-	"github.com/theapemachine/nomagique/kernel"
 )
 
 /*
@@ -10,7 +9,7 @@ Fractional applies a fixed-width fractional differencing filter to recent sample
 */
 type Fractional struct {
 	stageParser *core.StageParser
-	state       kernel.FracDiffState
+	state       FracDiffState
 }
 
 /*

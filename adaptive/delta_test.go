@@ -4,135 +4,113 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/nomagique/core"
 )
 
-func TestDelta(testingTB *testing.T) {
-	Convey("Given Delta constructor", testingTB, func() {
-		delta := Delta()
+func TestDeltaState_Observe(testingTB *testing.T) {
+	Convey("Given a fresh delta state", testingTB, func() {
+		state := DeltaState{}
 
-		Convey("It should return a usable dynamic", func() {
-			So(delta, ShouldNotBeNil)
-		})
-	})
-}
+		Convey("When bootstrapping", func() {
+			value := state.Observe(10)
 
-func TestNormalized_Observe(testingTB *testing.T) {
-	Convey("Given a fresh normalized delta", testingTB, func() {
-		delta := Delta()
-
-		Convey("When bootstrapping with the first sample", func() {
-			value := delta.Observe(core.Float64(10))
-
-			Convey("It should return zero without error", func() {
+			Convey("It should return zero", func() {
 				So(value, ShouldEqual, 0)
 			})
 		})
 	})
 
-	Convey("Given a normalized delta with history", testingTB, func() {
-		delta := Delta()
-		delta.Observe(core.Float64(0))
+	Convey("Given delta history", testingTB, func() {
+		state := DeltaState{}
+		_ = state.Observe(0)
+		value := state.Observe(10)
 
-		Convey("When observing a unit step within range", func() {
-			value := delta.Observe(core.Float64(0), core.Float64(10))
+		Convey("It should return a unit normalized step", func() {
+			So(value, ShouldEqual, 1)
+		})
+	})
+}
 
-			Convey("It should return a normalized delta of one", func() {
-				So(value, ShouldEqual, 1)
+func TestDeltaState_Reset(testingTB *testing.T) {
+	Convey("Given delta state", testingTB, func() {
+		state := DeltaState{}
+		_ = state.Observe(3)
+
+		Convey("When reset", func() {
+			state.Reset()
+
+			Convey("It should clear readiness", func() {
+				So(state.Ready, ShouldBeFalse)
 			})
 		})
 	})
+}
 
-	Convey("Given a normalized delta with a collapsed range", testingTB, func() {
-		delta := Delta()
-		delta.Observe(core.Float64(8))
-		value := delta.Observe(core.Float64(8))
+func TestDeltaState_Observe_extendsMinimum(testingTB *testing.T) {
+	Convey("Given delta state", testingTB, func() {
+		state := DeltaState{}
+		_ = state.Observe(20)
+		value := state.Observe(10)
 
-		Convey("It should return zero", func() {
+		Convey("It should derive a positive normalized change", func() {
+			So(value, ShouldBeGreaterThan, 0)
+		})
+	})
+}
+
+func TestDeltaState_Observe_extendsMaximum(testingTB *testing.T) {
+	Convey("Given delta state", testingTB, func() {
+		state := DeltaState{}
+		_ = state.Observe(5)
+		value := state.Observe(25)
+
+		Convey("It should derive a positive normalized change", func() {
+			So(value, ShouldBeGreaterThan, 0)
+		})
+	})
+}
+
+func TestDeltaState_Observe_collapsedRange(testingTB *testing.T) {
+	Convey("Given delta state", testingTB, func() {
+		state := DeltaState{}
+		_ = state.Observe(5)
+		value := state.Observe(5)
+
+		Convey("It should return zero for zero span", func() {
 			So(value, ShouldEqual, 0)
 		})
 	})
-
-	Convey("Given a normalized delta extending its minimum", testingTB, func() {
-		delta := Delta()
-		delta.Observe(core.Float64(20))
-		value := delta.Observe(core.Float64(10))
-
-		Convey("It should derive a positive normalized change", func() {
-			So(value, ShouldBeGreaterThan, 0)
-		})
-	})
-
-	Convey("Given a normalized delta extending its maximum", testingTB, func() {
-		delta := Delta()
-		delta.Observe(core.Float64(5))
-		value := delta.Observe(core.Float64(25))
-
-		Convey("It should derive a positive normalized change", func() {
-			So(value, ShouldBeGreaterThan, 0)
-		})
-	})
-
-	Convey("Given invalid stage inputs", testingTB, func() {
-		delta := Delta()
-
-		Convey("When observing", func() {
-			value := delta.Observe(blankNumber{})
-
-			Convey("It should return zero", func() {
-				So(value, ShouldEqual, core.Float64(0))
-			})
-		})
-	})
 }
 
-func TestNormalized_ObserveSamples(testingTB *testing.T) {
-	Convey("Given a normalized delta", testingTB, func() {
-		delta := Delta()
+func TestDeltaState_ObserveSamples(testingTB *testing.T) {
+	Convey("Given samples", testingTB, func() {
+		state := DeltaState{}
 		samples := []float64{0, 10}
 		out := make([]float64, len(samples))
 
-		Convey("When observing samples in batch", func() {
-			delta.ObserveSamples(samples, out)
+		Convey("When observing in batch", func() {
+			state.ObserveSamples(samples, out)
 
-			Convey("It should fill the output buffer", func() {
-				So(out[1], ShouldEqual, 1)
+			Convey("It should match sequential observation", func() {
+				expect := DeltaState{}
+				for index, sample := range samples {
+					So(out[index], ShouldEqual, expect.Observe(sample))
+				}
 			})
 		})
 	})
 }
 
-func BenchmarkNormalized_ObserveSamples(testingTB *testing.B) {
-	delta := Delta()
+func BenchmarkDeltaState_ObserveSamples(testingTB *testing.B) {
+	state := DeltaState{}
 	samples := make([]float64, 1024)
 	out := make([]float64, len(samples))
 
-	for testingTB.Loop() {
-		delta.state.Reset()
-		delta.ObserveSamples(samples, out)
+	for index := range samples {
+		samples[index] = float64(index)
 	}
-}
-
-func TestNormalized_Reset(testingTB *testing.T) {
-	Convey("Given a normalized delta with state", testingTB, func() {
-		delta := Delta()
-		delta.Observe(core.Float64(3))
-
-		Convey("When reset", func() {
-			err := delta.Reset()
-So(err, ShouldBeNil)
-
-			Convey("It should clear derived state", func() {
-				So(delta.state.Ready, ShouldBeFalse)
-			})
-		})
-	})
-}
-
-func BenchmarkNormalized_Observe(testingTB *testing.B) {
-	delta := Delta()
 
 	for testingTB.Loop() {
-		delta.Observe(core.Float64(1), core.Float64(2))
+		state.Reset()
+		state.ObserveSamples(samples, out)
 	}
 }

@@ -2,7 +2,6 @@ package probability
 
 import (
 	"github.com/theapemachine/nomagique/core"
-	"github.com/theapemachine/nomagique/kernel/prob"
 )
 
 /*
@@ -10,7 +9,7 @@ EmpiricalRank tracks P(history <= current sample) over a span-derived window.
 */
 type EmpiricalRank struct {
 	stageParser *core.StageParser
-	state       prob.RankState
+	state       RankState
 }
 
 /*
@@ -55,7 +54,7 @@ func (empiricalRank *EmpiricalRank) Apply(
 		sample = float64(out) + float64(work[0])
 	}
 
-	return core.Float64(prob.ObserveRank(&empiricalRank.state, sample)), nil
+	return core.Float64(ObserveRank(&empiricalRank.state, sample)), nil
 }
 
 /*

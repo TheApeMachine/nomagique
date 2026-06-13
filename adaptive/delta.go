@@ -2,7 +2,6 @@ package adaptive
 
 import (
 	"github.com/theapemachine/nomagique/core"
-	"github.com/theapemachine/nomagique/kernel"
 )
 
 /*
@@ -10,7 +9,7 @@ Normalized tracks a unit-normalized change of the observed sample relative to it
 */
 type Normalized struct {
 	stageParser *core.StageParser
-	state       kernel.DeltaState
+	state       DeltaState
 }
 
 /*

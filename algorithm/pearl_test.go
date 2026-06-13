@@ -5,8 +5,8 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/nomagique"
+	"github.com/theapemachine/nomagique/causal"
 	"github.com/theapemachine/nomagique/core"
-	"github.com/theapemachine/nomagique/kernel/causal"
 )
 
 func TestPearl_Observe(testingTB *testing.T) {

@@ -7,7 +7,7 @@ import (
 	"github.com/theapemachine/nomagique"
 	"github.com/theapemachine/nomagique/adaptive"
 	"github.com/theapemachine/nomagique/core"
-	"github.com/theapemachine/nomagique/geometric"
+	"github.com/theapemachine/nomagique/geometry"
 	"github.com/theapemachine/nomagique/learning"
 	"github.com/theapemachine/nomagique/probability"
 )
@@ -395,7 +395,7 @@ func TestNumber(testingTB *testing.T) {
 
 	Convey("Given EMA then phase velocity in a pipeline", testingTB, func() {
 		exponential := adaptive.EMA()
-		phaseVelocity := geometric.Velocity()
+		phaseVelocity := geometry.Velocity()
 		number, err := nomagique.Number(exponential, phaseVelocity)
 		So(err, ShouldBeNil)
 

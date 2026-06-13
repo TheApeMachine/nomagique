@@ -7,7 +7,7 @@ import (
 	"github.com/theapemachine/nomagique"
 	"github.com/theapemachine/nomagique/adaptive"
 	"github.com/theapemachine/nomagique/core"
-	"github.com/theapemachine/nomagique/geometric"
+	"github.com/theapemachine/nomagique/geometry"
 	"github.com/theapemachine/nomagique/learning"
 	"github.com/theapemachine/nomagique/probability"
 )
@@ -148,7 +148,7 @@ func TestNumber_stress_probabilityAndGeometry(testingTB *testing.T) {
 
 	Convey("Given EMA then phase velocity on a stress series", testingTB, func() {
 		geometryStages := func() []core.Number {
-			return []core.Number{adaptive.EMA(), geometric.Velocity()}
+			return []core.Number{adaptive.EMA(), geometry.Velocity()}
 		}
 		outputs, err := observeSamplesThroughNumber(geometryStages(), samples)
 		So(err, ShouldBeNil)
@@ -194,7 +194,7 @@ func TestNumber_stress_highVolumeTicks(testingTB *testing.T) {
 			adaptive.Delta(),
 			adaptive.ZScore(),
 			probability.CUSUM(),
-			geometric.Velocity(),
+			geometry.Velocity(),
 		}
 		number, err := nomagique.Number(stages...)
 		So(err, ShouldBeNil)

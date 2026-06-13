@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/theapemachine/nomagique"
+	"github.com/theapemachine/nomagique/core"
 )
 
 /*
@@ -116,4 +117,54 @@ func InvertedFastSlowRate(samples []float64, fastWindow int, epsilon float64) fl
 	}
 
 	return olderRate / recentRate
+}
+
+/*
+FastSlow compares trailing fast-window mean rate to the preceding slow window.
+*/
+type FastSlow struct {
+	stream core.Numbers
+	ratio  *FastSlowRatio
+}
+
+/*
+NewFastSlow creates a breakout-ratio dynamic over a configured stream.
+*/
+func NewFastSlow(stream core.Numbers, fastWindow int, epsilon float64) *FastSlow {
+	return &FastSlow{
+		stream: stream,
+		ratio:  NewFastSlowRatio(fastWindow, epsilon),
+	}
+}
+
+/*
+NewInvertedFastSlow creates a compression-ratio dynamic over a configured stream.
+*/
+func NewInvertedFastSlow(stream core.Numbers, fastWindow int, epsilon float64) *FastSlow {
+	return &FastSlow{
+		stream: stream,
+		ratio:  NewInvertedFastSlowRatio(fastWindow, epsilon),
+	}
+}
+
+/*
+Observe returns the configured fast/slow ratio for the stream history.
+*/
+func (fastSlow *FastSlow) Observe(_ ...core.Number) core.Float64 {
+	samples := nomagique.Samples(fastSlow.stream)
+	value, err := fastSlow.ratio.Next(0, samples...)
+
+	if err != nil {
+		return 0
+	}
+
+	return core.Float64(value)
+}
+
+/*
+Reset clears derived state.
+*/
+func (fastSlow *FastSlow) Reset() error {
+	fastSlow.stream = nil
+	return nil
 }

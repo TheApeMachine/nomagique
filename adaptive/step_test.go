@@ -6,24 +6,41 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 )
 
-func TestObserveEMA(t *testing.T) {
-	Convey("Given ObserveEMA", t, func() {
+func TestObserveEMABootstrap(testingTB *testing.T) {
+	Convey("Given a cold EMA state", testingTB, func() {
 		state := EMAState{}
 
-		Convey("It should match method observation", func() {
-			So(ObserveEMA(&state, 3), ShouldEqual, state.Observe(3))
+		Convey("When observing the first sample", func() {
+			value := ObserveEMA(&state, 10)
+
+			Convey("It should bootstrap to the sample", func() {
+				So(value, ShouldEqual, 10)
+				So(state.Ready, ShouldBeTrue)
+			})
 		})
 	})
 }
 
-func TestObserveDelta(t *testing.T) {
-	Convey("Given ObserveDelta", t, func() {
+func TestObserveDeltaBootstrap(testingTB *testing.T) {
+	Convey("Given a cold delta state", testingTB, func() {
 		state := DeltaState{}
-		byFunc := ObserveDelta(&state, 10)
-		byMethod := state.Observe(10)
 
-		Convey("It should match method observation", func() {
-			So(byFunc, ShouldEqual, byMethod)
+		Convey("When observing the first sample", func() {
+			value := ObserveDelta(&state, 10)
+
+			Convey("It should return zero delta", func() {
+				So(value, ShouldEqual, 0)
+				So(state.Ready, ShouldBeTrue)
+			})
+		})
+	})
+}
+
+func TestAbsExact(testingTB *testing.T) {
+	Convey("Given negative and positive values", testingTB, func() {
+		Convey("It should return exact magnitudes", func() {
+			So(absExact(-3.5), ShouldEqual, 3.5)
+			So(absExact(2), ShouldEqual, 2)
 		})
 	})
 }

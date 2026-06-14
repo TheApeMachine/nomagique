@@ -12,7 +12,7 @@ func TestMin_Observe(testingTB *testing.T) {
 		value := NewMin().Observe(nomagique.Numbers(3, 1, 4, 2)...)
 
 		Convey("It should return the smallest value", func() {
-			So(float64(value), ShouldEqual, 1)
+			So(value, ShouldEqual, 1)
 		})
 	})
 }

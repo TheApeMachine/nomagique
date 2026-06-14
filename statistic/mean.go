@@ -7,7 +7,11 @@ import (
 )
 
 /*
-Mean computes the mean of a stream of numbers.
+Mean computes the arithmetic average of every sample in one Observe call.
+
+Trading example: average session change across symbols fed in one batch. Optional
+weights let you emphasize liquid names. Mean implements core.Number; compose it
+inside nomagique.Number(...) or call Observe directly with boundary scalars.
 */
 type Mean struct {
 	weights core.Numbers

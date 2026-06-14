@@ -20,6 +20,9 @@ type WindowSnapshot struct {
 
 /*
 WindowSet holds one live interval series and materializes tier views on demand.
+
+WindowSet.Observe(nanos, price) is a feed adapter, not core.Number. Push trade
+prints here, then pass WindowSnapshot into correlation stages such as Multiverse.
 */
 type WindowSet struct {
 	series *IntervalSeries
@@ -36,6 +39,8 @@ func NewWindowSet(capacity int) *WindowSet {
 
 /*
 Observe folds one trade print into the live series.
+
+This is not core.Number.Observe — it accepts raw timestamp and price directly.
 */
 func (windowSet *WindowSet) Observe(nanos int64, price float64) {
 	if windowSet == nil || windowSet.series == nil {

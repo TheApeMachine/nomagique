@@ -7,7 +7,13 @@ import (
 )
 
 /*
-Sum computes the total of a stream of numbers.
+Sum adds every sample in one Observe call.
+
+Plain-language example: three trade sizes (1.2, 0.8, 3.0) sum to 5.0. There is no
+memory between calls — each Observe is a fresh total over its inputs.
+
+Sum implements core.Number and fits early in pipelines that later divide by a count
+(Mean) or compare against a threshold. Empty input returns zero.
 */
 type Sum struct{}
 

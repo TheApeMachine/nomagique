@@ -4,86 +4,65 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/nomagique/core"
 )
 
-func TestEMAState_Observe(testingTB *testing.T) {
-	Convey("Given a fresh EMA state", testingTB, func() {
-		state := EMAState{}
+func TestEMA(testingTB *testing.T) {
+	Convey("Given EMA constructor", testingTB, func() {
+		exponential := EMA()
+
+		Convey("It should return a usable dynamic", func() {
+			So(exponential, ShouldNotBeNil)
+		})
+	})
+}
+
+func TestExponential_Observe(testingTB *testing.T) {
+	Convey("Given a fresh exponential dynamic", testingTB, func() {
+		exponential := EMA()
 
 		Convey("When bootstrapping", func() {
-			value := state.Observe(10)
+			value := exponential.Observe(core.Float64(10))
 
-			Convey("It should adopt the sample exactly", func() {
-				So(value, ShouldEqual, 10)
-			})
-		})
-	})
-
-	Convey("Given an EMA with collapsed range", testingTB, func() {
-		state := EMAState{}
-		_ = state.Observe(8)
-		value := state.Observe(8)
-
-		Convey("It should keep the prior value", func() {
-			So(value, ShouldEqual, 8)
-		})
-	})
-}
-
-func TestEMAState_ObserveSamples(testingTB *testing.T) {
-	Convey("Given samples", testingTB, func() {
-		state := EMAState{}
-		samples := []float64{10, 5, 20}
-		out := make([]float64, len(samples))
-
-		Convey("When observing in batch", func() {
-			state.ObserveSamples(samples, out)
-
-			Convey("It should match sequential observation", func() {
-				expect := EMAState{}
-				for index, sample := range samples {
-					So(out[index], ShouldEqual, expect.Observe(sample))
-				}
+			Convey("It should echo the first sample", func() {
+				So(value, ShouldEqual, core.Float64(10))
 			})
 		})
 	})
 }
 
-func TestEMAState_Reset(testingTB *testing.T) {
-	Convey("Given EMA state", testingTB, func() {
-		state := EMAState{}
-		_ = state.Observe(4)
+func TestExponential_Reset(testingTB *testing.T) {
+	Convey("Given an observed exponential dynamic", testingTB, func() {
+		exponential := EMA()
+		_ = exponential.Observe(core.Float64(10))
 
 		Convey("When reset", func() {
-			state.Reset()
+			So(exponential.Reset(), ShouldBeNil)
+			value := exponential.Observe(core.Float64(20))
 
-			Convey("It should clear readiness", func() {
-				So(state.Ready, ShouldBeFalse)
+			Convey("It should bootstrap again", func() {
+				So(value, ShouldEqual, core.Float64(20))
 			})
 		})
 	})
 }
 
-func BenchmarkEMAState_Observe(testingTB *testing.B) {
-	state := EMAState{}
-	sample := 1.0
+func TestExponential_ObserveSamples(testingTB *testing.T) {
+	Convey("Given a bootstrapped exponential dynamic", testingTB, func() {
+		exponential := EMA()
+		_ = exponential.Observe(core.Float64(10))
+		samples := []float64{11, 12, 13}
+		out := make([]float64, len(samples))
 
-	for testingTB.Loop() {
-		sample = state.Observe(sample + 0.01)
-	}
-}
+		exponential.ObserveSamples(samples, out)
 
-func BenchmarkEMAState_ObserveSamples(testingTB *testing.B) {
-	state := EMAState{}
-	samples := make([]float64, 1024)
-	out := make([]float64, len(samples))
+		Convey("It should match sequential observation", func() {
+			expect := EMA()
+			_ = expect.Observe(core.Float64(10))
 
-	for index := range samples {
-		samples[index] = float64(index)
-	}
-
-	for testingTB.Loop() {
-		state.Reset()
-		state.ObserveSamples(samples, out)
-	}
+			for index, sample := range samples {
+				So(out[index], ShouldEqual, float64(expect.Observe(core.Float64(sample))))
+			}
+		})
+	})
 }

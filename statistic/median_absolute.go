@@ -8,7 +8,14 @@ import (
 )
 
 /*
-MedianAbsolute computes the median of absolute sample magnitudes.
+MedianAbsolute measures typical magnitude while ignoring sign.
+
+Each input is converted to its absolute value, then Median runs on that batch.
+Trading example: median absolute return tells you how much symbols move on average
+without caring whether the move was up or down — useful for energy and volatility
+rankings.
+
+MedianAbsolute implements core.Number and delegates the actual median to Median.
 */
 type MedianAbsolute struct {
 	weights core.Numbers

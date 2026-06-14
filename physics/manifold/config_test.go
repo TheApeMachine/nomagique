@@ -40,6 +40,29 @@ func TestValidateRejectsUnstableDiffusion(t *testing.T) {
 	})
 }
 
+func productionTestConfig() Config {
+	tickSize := 0.01
+	halfWidth := 32
+	gamma := 5.0 / 3.0
+	deltaT := 0.1
+
+	config := Config{
+		GridX:    32,
+		GridY:    3,
+		GridZ:    16,
+		DomainX:  float64(halfWidth*2+1) * tickSize,
+		DomainY:  3,
+		DomainZ:  16,
+		DeltaT:   deltaT,
+		Gamma:    gamma,
+		MaxModes: 128,
+	}
+
+	ApplyDerivedGasParams(&config)
+
+	return config
+}
+
 func BenchmarkDiffusionCFL(b *testing.B) {
 	config := productionTestConfig()
 

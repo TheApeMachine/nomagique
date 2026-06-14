@@ -6,10 +6,22 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 )
 
+func testFeedbackWeights(testingTB *testing.T) ClassifierWeights {
+	testingTB.Helper()
+
+	weights, err := NewClassifierWeights(2.0, testClassifierScales())
+
+	if err != nil {
+		testingTB.Fatal(err)
+	}
+
+	return weights
+}
+
 func TestFeedbackTunerApply(testingTB *testing.T) {
 	Convey("Given matching feedback with rising samples", testingTB, func() {
 		tuner := NewFeedbackTuner()
-		weights := DefaultClassifierWeights(2.0)
+		weights := testFeedbackWeights(testingTB)
 		baseline := weights.WIgnVol
 
 		applied, err := tuner.Apply("ETH/EUR", "ETH/EUR", 4, 0.5, 1.0, 0.2, &weights)
@@ -24,7 +36,7 @@ func TestFeedbackTunerApply(testingTB *testing.T) {
 
 	Convey("Given stale feedback samples", testingTB, func() {
 		tuner := NewFeedbackTuner()
-		weights := DefaultClassifierWeights(2.0)
+		weights := testFeedbackWeights(testingTB)
 
 		_, applyErr := tuner.Apply("ETH/EUR", "ETH/EUR", 4, 0.5, 1.0, 0.2, &weights)
 		So(applyErr, ShouldBeNil)
@@ -51,16 +63,20 @@ func TestFeedbackTunerApply(testingTB *testing.T) {
 
 func BenchmarkFeedbackTunerApply(b *testing.B) {
 	tuner := NewFeedbackTuner()
-	weights := DefaultClassifierWeights(2.0)
 
 	b.ReportAllocs()
 
 	samples := 0
 
 	for b.Loop() {
-		weights = DefaultClassifierWeights(2.0)
+		weights, err := NewClassifierWeights(2.0, testClassifierScales())
+
+		if err != nil {
+			b.Fatal(err)
+		}
+
 		samples++
-		_, err := tuner.Apply("ETH/EUR", "ETH/EUR", samples, 0.5, 1.0, 0.2, &weights)
+		_, err = tuner.Apply("ETH/EUR", "ETH/EUR", samples, 0.5, 1.0, 0.2, &weights)
 
 		if err != nil {
 			b.Fatal(err)

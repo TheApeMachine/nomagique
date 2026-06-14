@@ -9,8 +9,11 @@ import (
 
 /*
 FastSlowRatio compares the mean rate in the trailing fast window to the mean
-rate in the preceding slow window. A zero slow baseline is smoothed by
-recentRate * epsilon so breakouts after silence produce a high ratio.
+rate in the preceding slow window.
+
+Trading example: fast window = last three trade arrivals per second, slow window
+= the prior baseline window. A spike after quiet trading yields a high ratio
+without a hard cap; a zero slow baseline is smoothed by recentRate * epsilon.
 */
 type FastSlowRatio struct {
 	fastWindow int

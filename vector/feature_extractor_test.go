@@ -6,96 +6,52 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 )
 
-const (
-	testInputBidPrice = iota
-	testInputAskPrice
-	testInputBidQty
-	testInputAskQty
-	testL1InputCount
-)
-
-const (
-	testFeatureMidPrice = iota
-	testFeatureSpreadBPS
-	testFeatureImbalance
-)
-
-func newTestL1Extractor() (*FeatureExtractor, error) {
-	return NewFeatureExtractor(testL1InputCount,
-		func(inputs []float64) float64 {
-			return (inputs[testInputBidPrice] + inputs[testInputAskPrice]) / 2
-		},
-		func(inputs []float64) float64 {
-			mid := (inputs[testInputBidPrice] + inputs[testInputAskPrice]) / 2
-
-			if mid <= 0 {
-				return 0
-			}
-
-			return (inputs[testInputAskPrice] - inputs[testInputBidPrice]) / mid * 10000
-		},
-		func(inputs []float64) float64 {
-			total := inputs[testInputBidQty] + inputs[testInputAskQty]
-
-			if total <= 0 {
-				return 0
-			}
-
-			return (inputs[testInputBidQty] - inputs[testInputAskQty]) / total
-		},
-	)
-
-}
-
 func TestFeatureExtractorExtract(testingTB *testing.T) {
 	Convey("Given an L1 feature extractor", testingTB, func() {
-		extractor, err := newTestL1Extractor()
+		extractor, err := NewL1BookExtractor()
 		So(err, ShouldBeNil)
 
 		Convey("It should derive mid, spread, and imbalance", func() {
-			So(extractor.SetInput(testInputBidPrice, 100), ShouldBeNil)
-			So(extractor.SetInput(testInputAskPrice, 101), ShouldBeNil)
-			So(extractor.SetInput(testInputBidQty, 3), ShouldBeNil)
-			So(extractor.SetInput(testInputAskQty, 1), ShouldBeNil)
+			So(extractor.SetInput(L1BidPrice, 100), ShouldBeNil)
+			So(extractor.SetInput(L1AskPrice, 101), ShouldBeNil)
+			So(extractor.SetInput(L1BidQty, 3), ShouldBeNil)
+			So(extractor.SetInput(L1AskQty, 1), ShouldBeNil)
 
 			features := extractor.Extract()
 
-			So(features[testFeatureMidPrice], ShouldAlmostEqual, 100.5, 1e-9)
-			So(features[testFeatureSpreadBPS], ShouldBeGreaterThan, 0)
-			So(features[testFeatureImbalance], ShouldAlmostEqual, 0.5, 1e-9)
+			So(features[L1MidPrice], ShouldAlmostEqual, 100.5, 1e-9)
+			So(features[L1SpreadBPS], ShouldBeGreaterThan, 0)
+			So(features[L1Imbalance], ShouldAlmostEqual, 0.5, 1e-9)
 		})
 	})
 }
 
-func TestFeatureNodeObserve(testingTB *testing.T) {
-	Convey("Given a feature node", testingTB, func() {
-		extractor, err := newTestL1Extractor()
+func TestFeatureExtractorReset(testingTB *testing.T) {
+	Convey("Given a populated extractor", testingTB, func() {
+		extractor, err := NewL1BookExtractor()
 		So(err, ShouldBeNil)
-		node := NewFeatureNode(extractor, testFeatureSpreadBPS)
 
-		_ = extractor.SetInput(testInputBidPrice, 100)
-		_ = extractor.SetInput(testInputAskPrice, 101)
-		_ = extractor.SetInput(testInputBidQty, 1)
-		_ = extractor.SetInput(testInputAskQty, 1)
+		_ = extractor.SetInput(L1BidPrice, 100)
 		extractor.Extract()
+		So(extractor.Reset(), ShouldBeNil)
 
-		Convey("It should expose the derived spread", func() {
-			So(float64(node.Observe()), ShouldBeGreaterThan, 0)
-		})
+		bid, inputErr := extractor.Input(L1BidPrice)
+		So(inputErr, ShouldBeNil)
+		So(bid, ShouldEqual, 0)
 	})
 }
 
 func BenchmarkFeatureExtractorExtract(testingTB *testing.B) {
-	extractor, err := newTestL1Extractor()
+	extractor, err := NewL1BookExtractor()
 
 	if err != nil {
 		testingTB.Fatal(err)
 	}
 
-	_ = extractor.SetInput(testInputBidPrice, 100)
-	_ = extractor.SetInput(testInputAskPrice, 101)
-	_ = extractor.SetInput(testInputBidQty, 3)
-	_ = extractor.SetInput(testInputAskQty, 1)
+	_ = extractor.SetInput(L1BidPrice, 100)
+	_ = extractor.SetInput(L1AskPrice, 101)
+	_ = extractor.SetInput(L1BidQty, 3)
+	_ = extractor.SetInput(L1AskQty, 1)
 
 	testingTB.ReportAllocs()
 

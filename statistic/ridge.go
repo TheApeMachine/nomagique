@@ -15,6 +15,9 @@ const (
 
 /*
 RidgeSolver solves regularized normal equations with Gonum LAPACK backends.
+
+Use when a cross-section or feature panel is rank-deficient: ridge strength is
+derived from the condition number rather than a fixed lambda.
 */
 type RidgeSolver struct{}
 

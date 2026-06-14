@@ -78,21 +78,6 @@ func TestForecastState_Reset(testingTB *testing.T) {
 	})
 }
 
-func TestObserveForecast(testingTB *testing.T) {
-	Convey("Given ObserveForecast", testingTB, func() {
-		byFunction := ForecastState{}
-		byMethod := ForecastState{}
-
-		Convey("It should match method observation", func() {
-			So(
-				ObserveForecast(&byFunction, 10, 10),
-				ShouldEqual,
-				byMethod.Observe(10, 10),
-			)
-		})
-	})
-}
-
 func BenchmarkForecastState_Observe(testingTB *testing.B) {
 	state := ForecastState{}
 	_ = state.Observe(10, 10)

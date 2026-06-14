@@ -7,7 +7,12 @@ import (
 )
 
 /*
-StdDev computes the sample standard deviation of a stream.
+StdDev computes the sample standard deviation of a stream of numbers.
+
+Trading example: pass session returns for one symbol (or residuals from a
+forecast stage) to measure realized volatility. Optional weights turn the
+stream into a weighted dispersion when some observations carry more evidence
+than others.
 */
 type StdDev struct {
 	weights core.Numbers

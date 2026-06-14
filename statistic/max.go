@@ -7,7 +7,11 @@ import (
 )
 
 /*
-Max computes the largest value in a stream.
+Max returns the largest value in a batch passed to Observe.
+
+Like Min, it is a stateless snapshot reducer over whatever scalars you feed it in
+one call — useful for peak energy, best bid depth, or any worst case in this set.
+Max implements core.Number. Empty input returns zero.
 */
 type Max struct{}
 

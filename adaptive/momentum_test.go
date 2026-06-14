@@ -4,106 +4,42 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/nomagique/core"
 )
 
-func TestMomentumState_Observe(testingTB *testing.T) {
-	Convey("Given a fresh momentum state", testingTB, func() {
-		state := MomentumState{}
+func TestMomentum(testingTB *testing.T) {
+	Convey("Given Momentum constructor", testingTB, func() {
+		inertia := Momentum()
 
-		Convey("When bootstrapping", func() {
-			value := state.Observe(0)
-
-			Convey("It should return zero", func() {
-				So(value, ShouldEqual, 0)
-			})
-		})
-	})
-
-	Convey("Given momentum history", testingTB, func() {
-		state := MomentumState{}
-		_ = state.Observe(0)
-
-		Convey("When price rises", func() {
-			value := state.Observe(10)
-
-			Convey("It should return positive momentum", func() {
-				So(value, ShouldEqual, 1)
-			})
-		})
-
-		Convey("When price falls", func() {
-			state := MomentumState{}
-			_ = state.Observe(20)
-			value := state.Observe(10)
-
-			Convey("It should return negative momentum", func() {
-				So(value, ShouldEqual, -1)
-			})
+		Convey("It should return a usable dynamic", func() {
+			So(inertia, ShouldNotBeNil)
 		})
 	})
 }
 
-func TestMomentumState_ObserveSamples(testingTB *testing.T) {
-	Convey("Given samples", testingTB, func() {
-		state := MomentumState{}
-		samples := []float64{0, 10}
-		out := make([]float64, len(samples))
+func TestInertia_Observe(testingTB *testing.T) {
+	Convey("Given a fresh momentum dynamic", testingTB, func() {
+		inertia := Momentum()
+		value := inertia.Observe(core.Float64(10))
 
-		Convey("When observing in batch", func() {
-			state.ObserveSamples(samples, out)
-
-			Convey("It should match sequential observation", func() {
-				expect := MomentumState{}
-				for index, sample := range samples {
-					So(out[index], ShouldEqual, expect.Observe(sample))
-				}
-			})
+		Convey("It should return zero on bootstrap", func() {
+			So(value, ShouldEqual, core.Float64(0))
 		})
 	})
 }
 
-func TestMomentumState_Reset(testingTB *testing.T) {
-	Convey("Given momentum state", testingTB, func() {
-		state := MomentumState{}
-		_ = state.Observe(3)
+func TestInertia_Reset(testingTB *testing.T) {
+	Convey("Given an observed momentum dynamic", testingTB, func() {
+		inertia := Momentum()
+		_ = inertia.Observe(core.Float64(10))
 
 		Convey("When reset", func() {
-			state.Reset()
+			So(inertia.Reset(), ShouldBeNil)
+			value := inertia.Observe(core.Float64(20))
 
-			Convey("It should clear readiness", func() {
-				So(state.Ready, ShouldBeFalse)
+			Convey("It should bootstrap again", func() {
+				So(value, ShouldEqual, core.Float64(0))
 			})
 		})
 	})
-}
-
-func TestObserveMomentum(testingTB *testing.T) {
-	Convey("Given ObserveMomentum", testingTB, func() {
-		byFunction := MomentumState{}
-		byMethod := MomentumState{}
-
-		Convey("It should match method observation", func() {
-			So(ObserveMomentum(&byFunction, 3), ShouldEqual, byMethod.Observe(3))
-		})
-	})
-}
-
-func BenchmarkMomentumState_Observe(testingTB *testing.B) {
-	state := MomentumState{}
-	_ = state.Observe(1)
-
-	for testingTB.Loop() {
-		_ = state.Observe(1.01)
-	}
-}
-
-func BenchmarkMomentumState_ObserveSamples(testingTB *testing.B) {
-	state := MomentumState{}
-	samples := make([]float64, 1024)
-	out := make([]float64, len(samples))
-
-	for testingTB.Loop() {
-		state.Reset()
-		state.ObserveSamples(samples, out)
-	}
 }

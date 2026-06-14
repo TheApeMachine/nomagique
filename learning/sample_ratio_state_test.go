@@ -65,21 +65,6 @@ func TestSampleRatioState_ObserveSamples(testingTB *testing.T) {
 	})
 }
 
-func TestObserveSampleRatio(testingTB *testing.T) {
-	Convey("Given ObserveSampleRatio", testingTB, func() {
-		byFunction := SampleRatioState{}
-		byMethod := SampleRatioState{}
-
-		Convey("It should match method observation", func() {
-			So(
-				ObserveSampleRatio(&byFunction, 10, 10),
-				ShouldEqual,
-				byMethod.Observe(10, 10),
-			)
-		})
-	})
-}
-
 func BenchmarkSampleRatioState_Observe(testingTB *testing.B) {
 	state := SampleRatioState{}
 	_ = state.Observe(10, 10)

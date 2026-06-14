@@ -1,3 +1,8 @@
+/*
+Package decay provides numerically stable exponential decay helpers for
+event-time kernels. LogPositive floors non-positive inputs at 1e-300 so
+log-likelihood paths never take ln(0).
+*/
 package decay
 
 import (

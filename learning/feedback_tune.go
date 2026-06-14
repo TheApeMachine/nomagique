@@ -1,20 +1,30 @@
 package learning
 
-import "fmt"
+import (
+	"fmt"
+	"math"
+)
 
 /*
 FeedbackTuner applies top-down prediction feedback to a surprise threshold and
 classifier weights exactly once per newer sample set for a matching symbol.
+
+Tuning rates derive from the current sample count and forecast scale.
 */
 type FeedbackTuner struct {
 	lastSamples int
-	mseGain     float64
 }
 
+/*
+NewFeedbackTuner creates a tuner with no prior application history.
+*/
 func NewFeedbackTuner() *FeedbackTuner {
-	return &FeedbackTuner{mseGain: 0.05}
+	return &FeedbackTuner{}
 }
 
+/*
+Apply adjusts threshold and logits when feedback arrives for a newer sample window.
+*/
 func (tuner *FeedbackTuner) Apply(
 	symbol string,
 	feedbackSymbol string,
@@ -40,28 +50,40 @@ func (tuner *FeedbackTuner) Apply(
 		return false, fmt.Errorf("learning: FeedbackTuner requires weights")
 	}
 
+	if scale <= 0 || math.IsNaN(scale) || math.IsInf(scale, 0) {
+		return false, fmt.Errorf("learning: FeedbackTuner scale must be finite and positive")
+	}
+
 	tuner.lastSamples = samples
 
+	mseGain := 1.0 / float64(samples)
 	adjustedThreshold := weights.Threshold
 
 	if mse > 0 {
-		adjustedThreshold += mse * tuner.mseGain
+		adjustedThreshold += mse * mseGain
 	}
 
-	weights.Threshold = clamp(adjustedThreshold, 1.0, 5.0)
+	thresholdSpread := math.Max(mse, math.SmallestNonzeroFloat64)
+	weights.Threshold = clamp(
+		adjustedThreshold,
+		weights.Threshold/(1.0+thresholdSpread),
+		weights.Threshold*(1.0+thresholdSpread),
+	)
 
-	learningRate := clamp(0.01*scale, 0.001, 0.1)
+	learningRate := scale / float64(samples)
 	adjustment := bias * learningRate
+	orgShare := 1.0 / 3.0
+	exShare := 0.5
 
 	weights.WIgnVol += adjustment
 	weights.WIgnPrec += adjustment
 	weights.WCoilComp += adjustment
 	weights.WCoilPrec += adjustment
 	weights.WOrgPrec += adjustment
-	weights.WOrgComp += adjustment * 0.5
-	weights.WOrgVol += adjustment * 0.5
-	weights.WExVol -= adjustment
-	weights.WExPrec -= adjustment
+	weights.WOrgComp += adjustment * orgShare
+	weights.WOrgVol += adjustment * orgShare
+	weights.WExVol -= adjustment * exShare
+	weights.WExPrec -= adjustment * exShare
 	weights.clamp()
 
 	return true, nil

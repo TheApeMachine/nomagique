@@ -7,7 +7,10 @@ import (
 )
 
 /*
-Min computes the smallest value in a stream.
+Min returns the smallest value in a batch passed to Observe.
+
+Stateless snapshot reducer — useful for floor liquidity, minimum spread, or any
+best-case-in-set step. Min implements core.Number. Empty input returns zero.
 */
 type Min struct{}
 

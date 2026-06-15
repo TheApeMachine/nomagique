@@ -1,87 +1,97 @@
 package adaptive
 
 import (
-	"github.com/theapemachine/nomagique/core"
+	"encoding/binary"
+	"math"
+
+	"github.com/theapemachine/datura"
 )
 
 /*
 Compression scores how far below the running baseline the current sample sits.
 */
-type Compression[T ~float64] struct {
+type Compression struct {
+	artifact *datura.Artifact
 	Baseline float64
 	Ready    bool
-	output   core.Scalar[T]
 }
 
 /*
 NewCompression returns a compression stage ready to bootstrap from its first observation.
 */
-func NewCompression[T ~float64](initial ...core.Number[T]) *Compression[T] {
-	compression := &Compression[T]{}
-
-	if len(initial) > 0 {
-		compression.output = core.Scalar[T](0).Observe(initial...)
+func NewCompression() *Compression {
+	return &Compression{
+		artifact: datura.Acquire("compression", datura.Artifact_Type_json),
 	}
-
-	return compression
 }
 
-/*
-Observe absorbs the carried sample and returns the compression score.
-*/
-func (compression *Compression[T]) Observe(inputs ...core.Number[T]) core.Scalar[T] {
-	if len(inputs) == 0 {
-		return compression.output
+func (compression *Compression) Write(p []byte) (int, error) {
+	return compression.artifact.Write(p)
+}
+
+func (compression *Compression) Read(p []byte) (int, error) {
+	payload, err := compression.artifact.Payload()
+
+	if err == nil && len(payload) == 8 {
+		sample := math.Float64frombits(binary.BigEndian.Uint64(payload))
+		derived := compression.step(sample)
+		assignScalarPayload(&compression.artifact, "compression", derived)
 	}
 
-	sample, ok := inputs[0].(core.Scalar[T])
+	return compression.artifact.Read(p)
+}
 
-	if !ok {
-		return compression.output
-	}
-
-	if len(inputs) > 1 {
-		if work, workOK := inputs[1].(core.Scalar[T]); workOK {
-			sample = core.Scalar[T](T(sample) + T(work))
-		}
-	}
-
-	compression.output = core.Scalar[T](T(compression.observe(float64(sample))))
-
-	return compression.output
+func (compression *Compression) Close() error {
+	return nil
 }
 
 /*
 ObserveSample ingests one raw sample through the compression kernel.
 */
-func (compression *Compression[T]) ObserveSample(sample T) T {
-	derived := T(compression.observe(float64(sample)))
-	compression.output = core.Scalar[T](derived)
-
-	return derived
+func (compression *Compression) ObserveSample(sample float64) float64 {
+	return compression.readSampleViaArtifact(sample)
 }
 
 /*
 ObserveSamples writes one derived value per sample into out.
 */
-func (compression *Compression[T]) ObserveSamples(samples []T, out []T) {
+func (compression *Compression) ObserveSamples(samples []float64, out []float64) {
 	for index, sample := range samples {
 		out[index] = compression.ObserveSample(sample)
 	}
 }
 
 /*
-Reset clears derived state so the next Observe bootstraps again.
+Reset clears derived state so the next Read bootstraps again.
 */
-func (compression *Compression[T]) Reset() error {
+func (compression *Compression) Reset() error {
 	compression.Baseline = 0
 	compression.Ready = false
-	compression.output = core.Scalar[T](0)
 
 	return nil
 }
 
-func (compression *Compression[T]) observe(sample float64) float64 {
+func (compression *Compression) readSampleViaArtifact(sample float64) float64 {
+	inbound := datura.Acquire("compression-in", datura.Artifact_Type_json)
+	payload := make([]byte, 8)
+	binary.BigEndian.PutUint64(payload, math.Float64bits(sample))
+	_ = inbound.SetPayload(payload)
+	buf, _ := inbound.Message().Marshal()
+	_, _ = compression.Write(buf)
+	outBuf := make([]byte, 4096)
+	_, _ = compression.Read(outBuf)
+	outbound := datura.Acquire("stage-out", datura.Artifact_Type_json)
+	_, _ = outbound.Write(outBuf)
+	readPayload, _ := outbound.Payload()
+
+	if len(readPayload) != 8 {
+		return 0
+	}
+
+	return math.Float64frombits(binary.BigEndian.Uint64(readPayload))
+}
+
+func (compression *Compression) step(sample float64) float64 {
 	if !compression.Ready {
 		compression.Baseline = sample
 		compression.Ready = true
@@ -89,10 +99,10 @@ func (compression *Compression[T]) observe(sample float64) float64 {
 		return 0
 	}
 
-	return compression.observeReady(sample)
+	return compression.stepReady(sample)
 }
 
-func (compression *Compression[T]) observeReady(sample float64) float64 {
+func (compression *Compression) stepReady(sample float64) float64 {
 	if sample > compression.Baseline {
 		compression.Baseline = sample
 
@@ -104,4 +114,11 @@ func (compression *Compression[T]) observeReady(sample float64) float64 {
 	}
 
 	return (compression.Baseline - sample) / compression.Baseline
+}
+
+/*
+Value returns the last derived scalar without re-processing the stage.
+*/
+func (compression *Compression) Value() float64 {
+	return valueFromArtifact(compression.artifact)
 }

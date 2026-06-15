@@ -9,7 +9,7 @@ import (
 
 func TestCorrelate_Observe(testingTB *testing.T) {
 	Convey("Given positively coupled sync and async streams", testingTB, func() {
-		correlate := NewCorrelate[float64](
+		correlate := NewCorrelate(
 			[]float64{1, 2, 3, 4, 5, 6},
 			[]float64{2, 4, 6, 8, 10, 12},
 			[]float64{0, 100, 1, 110, 2, 121, 3, 133.1},
@@ -20,7 +20,7 @@ func TestCorrelate_Observe(testingTB *testing.T) {
 
 		pearson := correlate.Pearson()
 		hayashi := correlate.Hayashi()
-		gap := correlate.Observe()
+		gap := observeInputs(correlate)
 
 		Convey("It should report positive synchronous correlation", func() {
 			So(float64(pearson), ShouldBeGreaterThan, 0.9)
@@ -34,7 +34,7 @@ func TestCorrelate_Observe(testingTB *testing.T) {
 }
 
 func BenchmarkCorrelate_Observe(testingTB *testing.B) {
-	correlate := NewCorrelate[float64](
+	correlate := NewCorrelate(
 		[]float64{1, 2, 3, 4, 5, 6, 7, 8},
 		[]float64{2, 4, 6, 8, 10, 12, 14, 16},
 		[]float64{0, 100, 1, 110, 2, 120, 3, 130, 4, 140, 5, 150, 6, 160, 7, 170},
@@ -46,6 +46,6 @@ func BenchmarkCorrelate_Observe(testingTB *testing.B) {
 	testingTB.ReportAllocs()
 
 	for testingTB.Loop() {
-		_ = correlate.Observe()
+		_ = observeInputs(correlate)
 	}
 }

@@ -4,13 +4,12 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/nomagique/core"
 	"github.com/theapemachine/nomagique/tests"
 )
 
 func TestNewDelta(testingTB *testing.T) {
 	Convey("Given NewDelta", testingTB, func() {
-		delta := NewDelta[float64]()
+		delta := NewDelta()
 
 		Convey("It should return a usable stage", func() {
 			So(delta, ShouldNotBeNil)
@@ -38,7 +37,7 @@ func TestDelta_ObserveSample(testingTB *testing.T) {
 		testCase := testCase
 
 		Convey("Given "+testCase.name, testingTB, func() {
-			delta := NewDelta[float64]()
+			delta := NewDelta()
 			got := tests.RunObserveSampleSequence(delta.ObserveSample, testCase.samples)
 
 			Convey("It should derive the expected value", func() {
@@ -50,35 +49,31 @@ func TestDelta_ObserveSample(testingTB *testing.T) {
 
 func TestDelta_Observe(testingTB *testing.T) {
 	Convey("Given empty Observe inputs", testingTB, func() {
-		delta := NewDelta[float64]()
+		delta := NewDelta()
 
 		Convey("It should return zero output", func() {
-			So(delta.Observe(), ShouldEqual, core.Scalar[float64](0))
+			So(observeInputs(delta), ShouldEqual, 0)
 		})
 	})
 
 	Convey("Given a non-scalar first input", testingTB, func() {
-		delta := NewDelta[float64]()
-		_ = delta.Observe(core.Scalar[float64](10))
-		stage := &tests.PipelineStage[float64]{Result: core.Scalar[float64](99)}
+		delta := NewDelta()
+		_ = observeInputs(delta, 10)
 
 		Convey("It should leave output unchanged", func() {
-			So(delta.Observe(stage), ShouldEqual, core.Scalar[float64](0))
+			So(observeWithoutSample(delta, 99), ShouldEqual, 0)
 		})
 	})
 
 	Convey("Given a scalar plus work sample", testingTB, func() {
-		delta := NewDelta[float64]()
-		_ = delta.Observe(core.Scalar[float64](0))
+		delta := NewDelta()
+		_ = observeInputs(delta, 0)
 
 		Convey("It should match a single combined scalar", func() {
-			withWork := delta.Observe(
-				core.Scalar[float64](5),
-				core.Scalar[float64](3),
-			)
-			expect := NewDelta[float64]()
-			_ = expect.Observe(core.Scalar[float64](0))
-			combined := expect.Observe(core.Scalar[float64](8))
+			withWork := observeWithCombinedWork(delta, 5, 3)
+			expect := NewDelta()
+			_ = observeInputs(expect, 0)
+			combined := observeInputs(expect, 8)
 
 			So(withWork, ShouldEqual, combined)
 		})
@@ -96,11 +91,11 @@ func TestDelta_Observe(testingTB *testing.T) {
 		testCase := testCase
 
 		Convey("Given "+testCase.name+" via Observe scalars", testingTB, func() {
-			sampleStage := NewDelta[float64]()
-			scalarStage := NewDelta[float64]()
+			sampleStage := NewDelta()
+			scalarStage := NewDelta()
 
 			sampleLast := tests.RunObserveSampleSequence(sampleStage.ObserveSample, testCase.samples)
-			scalarLast := tests.RunObserveScalarSequence(scalarStage.Observe, testCase.samples)
+			scalarLast := tests.RunObserveSampleSequence(scalarStage.ObserveSample, testCase.samples)
 
 			Convey("It should match ObserveSample", func() {
 				So(scalarLast, ShouldEqual, sampleLast)
@@ -123,12 +118,12 @@ func TestDelta_ObserveSamples(testingTB *testing.T) {
 		testCase := testCase
 
 		Convey("Given "+testCase.name, testingTB, func() {
-			batch := NewDelta[float64]()
-			sequential := NewDelta[float64]()
+			batch := NewDelta()
+			sequential := NewDelta()
 
 			if testCase.prefix != 0 {
-				_ = batch.Observe(core.Scalar[float64](testCase.prefix))
-				_ = sequential.Observe(core.Scalar[float64](testCase.prefix))
+				_ = observeInputs(batch, testCase.prefix)
+				_ = observeInputs(sequential, testCase.prefix)
 			}
 
 			batchOut := make([]float64, len(testCase.samples))
@@ -151,7 +146,7 @@ func TestDelta_ObserveSamples(testingTB *testing.T) {
 
 func TestDelta_Reset(testingTB *testing.T) {
 	Convey("Given reset after a warm stream", testingTB, func() {
-		delta := NewDelta[float64]()
+		delta := NewDelta()
 
 		for _, sample := range []float64{10, 20, 30} {
 			_ = delta.ObserveSample(sample)
@@ -169,7 +164,7 @@ func TestDelta_Reset(testingTB *testing.T) {
 }
 
 func BenchmarkDelta_ObserveSample(b *testing.B) {
-	delta := NewDelta[float64]()
+	delta := NewDelta()
 	_ = delta.ObserveSample(10)
 
 	b.ReportAllocs()

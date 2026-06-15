@@ -8,12 +8,12 @@ import (
 
 func TestShift_Observe(testingTB *testing.T) {
 	Convey("Given matching reference and live distributions", testingTB, func() {
-		shift := NewShift[float64](
+		shift := NewShift(
 			[]float64{1, 1, 1, 1},
 			[]float64{1, 1, 1, 1},
 			nil, 0, 0,
 		)
-		divergence := shift.Observe()
+		divergence := observeInputs(shift)
 
 		Convey("It should return zero drift", func() {
 			So(float64(divergence), ShouldAlmostEqual, 0, 1e-9)
@@ -21,12 +21,12 @@ func TestShift_Observe(testingTB *testing.T) {
 	})
 
 	Convey("Given diverging reference and live distributions", testingTB, func() {
-		shift := NewShift[float64](
+		shift := NewShift(
 			[]float64{4, 1, 1, 1},
 			[]float64{1, 1, 1, 4},
 			nil, 0, 0,
 		)
-		divergence := shift.Observe()
+		divergence := observeInputs(shift)
 
 		Convey("It should return positive drift", func() {
 			So(float64(divergence), ShouldBeGreaterThan, 0)
@@ -35,7 +35,7 @@ func TestShift_Observe(testingTB *testing.T) {
 }
 
 func BenchmarkShift_Observe(testingTB *testing.B) {
-	shift := NewShift[float64](
+	shift := NewShift(
 		[]float64{1, 2, 3, 4},
 		[]float64{1, 1, 2, 4},
 		nil, 0, 0,
@@ -44,6 +44,6 @@ func BenchmarkShift_Observe(testingTB *testing.B) {
 	testingTB.ReportAllocs()
 
 	for testingTB.Loop() {
-		_ = shift.Observe()
+		_ = observeInputs(shift)
 	}
 }

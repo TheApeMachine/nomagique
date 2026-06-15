@@ -1,69 +1,60 @@
 package adaptive
 
 import (
-	"github.com/theapemachine/nomagique/core"
+	"encoding/binary"
+	"math"
+
+	"github.com/theapemachine/datura"
 )
 
 /*
 Accumulator integrates signed signal strength into a level with no bounds.
 */
-type Accumulator[T ~float64] struct {
-	Level  float64
-	output core.Scalar[T]
+type Accumulator struct {
+	artifact *datura.Artifact
+	Level    float64
 }
 
 /*
 NewAccumulator returns an accumulator stage ready for its first observation.
 */
-func NewAccumulator[T ~float64](initial ...core.Number[T]) *Accumulator[T] {
-	accumulator := &Accumulator[T]{}
-
-	if len(initial) > 0 {
-		accumulator.output = core.Scalar[T](0).Observe(initial...)
+func NewAccumulator() *Accumulator {
+	return &Accumulator{
+		artifact: datura.Acquire("accumulator", datura.Artifact_Type_json),
 	}
-
-	return accumulator
 }
 
-/*
-Observe absorbs the carried sample and integrates it into the level.
-*/
-func (accumulator *Accumulator[T]) Observe(inputs ...core.Number[T]) core.Scalar[T] {
-	if len(inputs) == 0 {
-		return accumulator.output
+func (accumulator *Accumulator) Write(p []byte) (int, error) {
+	return accumulator.artifact.Write(p)
+}
+
+func (accumulator *Accumulator) Read(p []byte) (int, error) {
+	payload, err := accumulator.artifact.Payload()
+
+	if err == nil && len(payload) == 8 {
+		sample := math.Float64frombits(binary.BigEndian.Uint64(payload))
+		derived := accumulator.step(sample)
+		assignScalarPayload(&accumulator.artifact, "accumulator", derived)
 	}
 
-	sample, ok := inputs[0].(core.Scalar[T])
+	return accumulator.artifact.Read(p)
+}
 
-	if !ok {
-		return accumulator.output
-	}
-
-	if len(inputs) > 1 {
-		if work, workOK := inputs[1].(core.Scalar[T]); workOK {
-			sample = core.Scalar[T](T(sample) + T(work))
-		}
-	}
-
-	accumulator.output = core.Scalar[T](T(accumulator.observe(float64(sample))))
-
-	return accumulator.output
+func (accumulator *Accumulator) Close() error {
+	return nil
 }
 
 /*
 ObserveSample ingests one raw sample through the accumulator kernel.
 */
-func (accumulator *Accumulator[T]) ObserveSample(sample T) T {
-	derived := T(accumulator.observe(float64(sample)))
-	accumulator.output = core.Scalar[T](derived)
-
-	return derived
+func (accumulator *Accumulator) ObserveSample(sample float64) float64 {
+	return accumulator.readSampleViaArtifact(sample)
 }
 
 /*
 ObserveSamples writes one derived value per sample into out.
 */
-func (accumulator *Accumulator[T]) ObserveSamples(samples []T, out []T) {
+func (accumulator *Accumulator) ObserveSamples(samples []float64, out []float64) {
 	for index, sample := range samples {
 		out[index] = accumulator.ObserveSample(sample)
 	}
@@ -72,14 +63,33 @@ func (accumulator *Accumulator[T]) ObserveSamples(samples []T, out []T) {
 /*
 Reset clears derived state.
 */
-func (accumulator *Accumulator[T]) Reset() error {
+func (accumulator *Accumulator) Reset() error {
 	accumulator.Level = 0
-	accumulator.output = core.Scalar[T](0)
 
 	return nil
 }
 
-func (accumulator *Accumulator[T]) observe(sample float64) float64 {
+func (accumulator *Accumulator) readSampleViaArtifact(sample float64) float64 {
+	inbound := datura.Acquire("accumulator-in", datura.Artifact_Type_json)
+	payload := make([]byte, 8)
+	binary.BigEndian.PutUint64(payload, math.Float64bits(sample))
+	_ = inbound.SetPayload(payload)
+	buf, _ := inbound.Message().Marshal()
+	_, _ = accumulator.Write(buf)
+	outBuf := make([]byte, 4096)
+	_, _ = accumulator.Read(outBuf)
+	outbound := datura.Acquire("stage-out", datura.Artifact_Type_json)
+	_, _ = outbound.Write(outBuf)
+	readPayload, _ := outbound.Payload()
+
+	if len(readPayload) != 8 {
+		return 0
+	}
+
+	return math.Float64frombits(binary.BigEndian.Uint64(readPayload))
+}
+
+func (accumulator *Accumulator) step(sample float64) float64 {
 	if sample == 0 {
 		return accumulator.Level
 	}
@@ -87,4 +97,11 @@ func (accumulator *Accumulator[T]) observe(sample float64) float64 {
 	accumulator.Level += sample
 
 	return accumulator.Level
+}
+
+/*
+Value returns the last derived scalar without re-processing the stage.
+*/
+func (accumulator *Accumulator) Value() float64 {
+	return valueFromArtifact(accumulator.artifact)
 }

@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	gc "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/nomagique/core"
 )
 
 func TestRotorConstruction(t *testing.T) {
@@ -284,13 +283,8 @@ func TestCompose(t *testing.T) {
 
 func TestRotorFromAxis_Observe(testingTB *testing.T) {
 	gc.Convey("Given axis-angle scalars", testingTB, func() {
-		stage := NewRotor[float64]()
-		scalar := stage.Observe(
-			core.Scalar[float64](0),
-			core.Scalar[float64](1),
-			core.Scalar[float64](0),
-			core.Scalar[float64](0),
-		)
+		stage := NewRotor()
+		scalar := observeInputs(stage, 0, 1, 0, 0)
 
 		gc.Convey("It should return cos(θ/2)", func() {
 			gc.So(float64(scalar), gc.ShouldEqual, 1)
@@ -301,12 +295,8 @@ func TestRotorFromAxis_Observe(testingTB *testing.T) {
 
 func TestTranslatorFromDisplacement_Observe(testingTB *testing.T) {
 	gc.Convey("Given displacement scalars", testingTB, func() {
-		stage := NewTranslator[float64]()
-		scalar := stage.Observe(
-			core.Scalar[float64](2),
-			core.Scalar[float64](4),
-			core.Scalar[float64](6),
-		)
+		stage := NewTranslator()
+		scalar := observeInputs(stage, 2, 4, 6)
 
 		gc.Convey("It should return unit scalar", func() {
 			gc.So(float64(scalar), gc.ShouldEqual, 1)
@@ -318,17 +308,8 @@ func TestTranslatorFromDisplacement_Observe(testingTB *testing.T) {
 func TestSandwichTransform_Observe(testingTB *testing.T) {
 	gc.Convey("Given a configured motor and target components", testingTB, func() {
 		motor := rotationMV(0, 1, 0, 0)
-		stage := NewSandwich[float64](motor)
-		scalar := stage.Observe(
-			core.Scalar[float64](1),
-			core.Scalar[float64](0),
-			core.Scalar[float64](0),
-			core.Scalar[float64](0),
-			core.Scalar[float64](0),
-			core.Scalar[float64](0),
-			core.Scalar[float64](0),
-			core.Scalar[float64](0),
-		)
+		stage := NewSandwich(motor)
+		scalar := observeInputs(stage, 1, 0, 0, 0, 0, 0, 0, 0)
 
 		gc.Convey("It should return the transformed scalar component", func() {
 			gc.So(float64(scalar), gc.ShouldEqual, 1)
@@ -337,39 +318,23 @@ func TestSandwichTransform_Observe(testingTB *testing.T) {
 }
 
 func BenchmarkRotorFromAxis_Observe(testingTB *testing.B) {
-	stage := NewRotor[float64]()
-	inputs := []core.Number[float64]{
-		core.Scalar[float64](0),
-		core.Scalar[float64](1),
-		core.Scalar[float64](0),
-		core.Scalar[float64](0),
-	}
+	stage := NewRotor()
 
 	testingTB.ReportAllocs()
 
 	for testingTB.Loop() {
-		_ = stage.Observe(inputs...)
+		_ = observeInputs(stage, 0, 1, 0, 0)
 	}
 }
 
 func BenchmarkSandwichTransform_Observe(testingTB *testing.B) {
 	motor := rotationMV(0, 1, 0, 0)
-	stage := NewSandwich[float64](motor)
-	inputs := []core.Number[float64]{
-		core.Scalar[float64](1),
-		core.Scalar[float64](0),
-		core.Scalar[float64](0),
-		core.Scalar[float64](0),
-		core.Scalar[float64](0),
-		core.Scalar[float64](0),
-		core.Scalar[float64](0),
-		core.Scalar[float64](0),
-	}
+	stage := NewSandwich(motor)
 
 	testingTB.ReportAllocs()
 
 	for testingTB.Loop() {
-		_ = stage.Observe(inputs...)
+		_ = observeInputs(stage, 1, 0, 0, 0, 0, 0, 0, 0)
 	}
 }
 

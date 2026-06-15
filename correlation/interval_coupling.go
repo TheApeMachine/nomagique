@@ -1,54 +1,55 @@
 package correlation
 
 import (
-	"github.com/theapemachine/nomagique/core"
+	"github.com/theapemachine/datura"
 )
 
 /*
 IntervalCoupling tracks Hayashi-Yoshida correlation between two interval accumulators.
 */
-type IntervalCoupling[T ~float64] struct {
-	left   *IntervalSeries[T]
-	right  *IntervalSeries[T]
-	output core.Scalar[T]
+type IntervalCoupling struct {
+	artifact *datura.Artifact
+	left     *IntervalSeries
+	right    *IntervalSeries
+	output   float64
 }
 
 /*
 NewIntervalCoupling creates an interval-correlation dynamic over two series.
 */
-func NewIntervalCoupling[T ~float64](
-	left, right *IntervalSeries[T],
-) *IntervalCoupling[T] {
-	return &IntervalCoupling[T]{
-		left:  left,
-		right: right,
+func NewIntervalCoupling(left, right *IntervalSeries) *IntervalCoupling {
+	return &IntervalCoupling{
+		artifact: datura.Acquire("interval-coupling", datura.Artifact_Type_json),
+		left:     left,
+		right:    right,
 	}
 }
 
-/*
-Observe returns the interval correlation between the configured series.
-*/
-func (coupling *IntervalCoupling[T]) Observe(_ ...core.Number[T]) core.Scalar[T] {
+func (coupling *IntervalCoupling) Write(p []byte) (int, error) {
+	return coupling.artifact.Write(p)
+}
+
+func (coupling *IntervalCoupling) Read(p []byte) (int, error) {
 	if coupling == nil {
-		return core.Scalar[T](0)
+		return coupling.artifact.Read(p)
 	}
 
 	value, ok := IntervalCorrelation(coupling.left, coupling.right)
 
-	if !ok {
-		return coupling.output
+	if ok {
+		coupling.output = value
+		putFloat64Payload(&coupling.artifact, "interval-coupling", coupling.output)
 	}
 
-	coupling.output = core.Scalar[T](T(value))
-
-	return coupling.output
+	return coupling.artifact.Read(p)
 }
 
-/*
-Reset is a no-op; interval history lives in the series.
-*/
-func (coupling *IntervalCoupling[T]) Reset() error {
-	coupling.output = core.Scalar[T](0)
+func (coupling *IntervalCoupling) Close() error {
+	return nil
+}
+
+func (coupling *IntervalCoupling) Reset() error {
+	coupling.output = 0
 
 	return nil
 }

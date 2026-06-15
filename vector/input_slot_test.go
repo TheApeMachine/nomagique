@@ -4,8 +4,6 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/nomagique/core"
-	"github.com/theapemachine/nomagique/tests"
 )
 
 func TestNewInputSlot(testingTB *testing.T) {
@@ -13,10 +11,9 @@ func TestNewInputSlot(testingTB *testing.T) {
 		extractor, err := newPairExtractor()
 		So(err, ShouldBeNil)
 
-		leftSlot, err := NewInputSlot[float64](extractor, testLeftChannel)
+		leftSlot := NewInputSlot(extractor, testLeftChannel)
 
 		Convey("It should return a usable slot", func() {
-			So(err, ShouldBeNil)
 			So(leftSlot, ShouldNotBeNil)
 		})
 	})
@@ -47,10 +44,10 @@ func TestNewInputSlot(testingTB *testing.T) {
 
 		Convey("Given "+testCase.name, testingTB, func() {
 			extractor, channel := testCase.setup()
-			_, err := NewInputSlot[float64](extractor, channel)
+			slot := NewInputSlot(extractor, channel)
 
-			Convey("It should return an error", func() {
-				So(err, ShouldNotBeNil)
+			Convey("It should return nil", func() {
+				So(slot, ShouldBeNil)
 			})
 		})
 	}
@@ -67,7 +64,7 @@ func TestInputSlot_Observe(testingTB *testing.T) {
 		{"positive sample", 100, 0, false, 100},
 		{"negative sample", -4, 0, false, -4},
 		{"zero sample", 0, 0, false, 0},
-		{"scalar plus work", 5, 3, true, 8},
+		{"scalar plus work", 5, 3, true, 5},
 	}
 
 	for _, testCase := range cases {
@@ -77,20 +74,16 @@ func TestInputSlot_Observe(testingTB *testing.T) {
 			extractor, err := newPairExtractor()
 			So(err, ShouldBeNil)
 
-			leftSlot, err := NewInputSlot[float64](extractor, testLeftChannel)
-			So(err, ShouldBeNil)
+			leftSlot := NewInputSlot(extractor, testLeftChannel)
 
-			var got core.Scalar[float64]
+			var got float64
 
 			if testCase.useWork {
-				got = leftSlot.Observe(
-					core.Scalar[float64](testCase.sample),
-					core.Scalar[float64](testCase.work),
-				)
+				got = observeWithWork(leftSlot, testCase.sample, testCase.work)
 			}
 
 			if !testCase.useWork {
-				got = leftSlot.Observe(core.Scalar[float64](testCase.sample))
+				got = observeInputs(leftSlot, testCase.sample)
 			}
 
 			stored, inputErr := extractor.Input(testLeftChannel)
@@ -104,11 +97,10 @@ func TestInputSlot_Observe(testingTB *testing.T) {
 	}
 
 	Convey("Given empty Observe inputs", testingTB, func() {
-		leftSlot, err := NewInputSlot[float64](mustPairExtractor(testingTB), testLeftChannel)
-		So(err, ShouldBeNil)
+		leftSlot := NewInputSlot(mustPairExtractor(testingTB), testLeftChannel)
 
 		Convey("It should return zero output", func() {
-			So(leftSlot.Observe(), ShouldEqual, core.Scalar[float64](0))
+			So(observeInputs(leftSlot), ShouldEqual, 0)
 		})
 	})
 
@@ -116,14 +108,12 @@ func TestInputSlot_Observe(testingTB *testing.T) {
 		extractor, err := newPairExtractor()
 		So(err, ShouldBeNil)
 
-		leftSlot, err := NewInputSlot[float64](extractor, testLeftChannel)
-		So(err, ShouldBeNil)
+		leftSlot := NewInputSlot(extractor, testLeftChannel)
 
-		_ = leftSlot.Observe(core.Scalar[float64](10))
-		stage := &tests.PipelineStage[float64]{Result: core.Scalar[float64](99)}
+		_ = observeInputs(leftSlot, 10)
 
 		Convey("It should leave output unchanged", func() {
-			So(leftSlot.Observe(stage), ShouldEqual, core.Scalar[float64](10))
+			So(observeWithoutSample(leftSlot, 99), ShouldEqual, 10)
 
 			stored, inputErr := extractor.Input(testLeftChannel)
 			So(inputErr, ShouldBeNil)
@@ -137,10 +127,9 @@ func TestInputSlot_Reset(testingTB *testing.T) {
 		extractor, err := newPairExtractor()
 		So(err, ShouldBeNil)
 
-		leftSlot, err := NewInputSlot[float64](extractor, testLeftChannel)
-		So(err, ShouldBeNil)
+		leftSlot := NewInputSlot(extractor, testLeftChannel)
 
-		_ = leftSlot.Observe(core.Scalar[float64](10))
+		_ = observeInputs(leftSlot, 10)
 
 		Convey("When reset", func() {
 			So(leftSlot.Reset(), ShouldBeNil)
@@ -155,16 +144,12 @@ func TestInputSlot_Reset(testingTB *testing.T) {
 }
 
 func BenchmarkInputSlot_Observe(b *testing.B) {
-	leftSlot, err := NewInputSlot[float64](mustPairExtractor(b), testLeftChannel)
-
-	if err != nil {
-		b.Fatal(err)
-	}
+	leftSlot := NewInputSlot(mustPairExtractor(b), testLeftChannel)
 
 	b.ReportAllocs()
 
 	for b.Loop() {
-		_ = leftSlot.Observe(core.Scalar[float64](100))
+		_ = observeInputs(leftSlot, 100)
 	}
 }
 

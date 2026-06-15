@@ -3,8 +3,8 @@ package vector
 import (
 	"fmt"
 
+	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/nomagique/core"
 )
 
 /*
@@ -16,13 +16,14 @@ type FeatureFormula func(inputs []float64) float64
 
 /*
 FeatureExtractor holds raw input channels and derived feature slots in reusable
-buffers. Observe writes one channel index and sample value, then refreshes features.
+buffers. Write brings an artifact in; Read updates one channel and refreshes features.
 */
 type FeatureExtractor struct {
+	artifact *datura.Artifact
 	inputs   []float64
 	features []float64
 	formulas []FeatureFormula
-	output   core.Scalar[float64]
+	output   float64
 }
 
 /*
@@ -44,43 +45,37 @@ func NewFeatureExtractor(inputCount int, formulas ...FeatureFormula) (*FeatureEx
 	}
 
 	return &FeatureExtractor{
+		artifact: datura.Acquire("feature-extractor", datura.Artifact_Type_json),
 		inputs:   make([]float64, inputCount),
 		features: make([]float64, len(formulas)),
 		formulas: formulas,
 	}, nil
 }
 
-/*
-Observe writes channel index and sample value, evaluates formulas, and returns the
-first derived feature.
-*/
-func (extractor *FeatureExtractor) Observe(inputs ...core.Number[float64]) core.Scalar[float64] {
-	if extractor == nil {
-		return core.Scalar[float64](0)
+func (extractor *FeatureExtractor) Write(p []byte) (int, error) {
+	return extractor.artifact.Write(p)
+}
+
+func (extractor *FeatureExtractor) Read(p []byte) (int, error) {
+	values := float64Batch(extractor.artifact)
+
+	if len(values) >= 2 {
+		channel := int(values[0])
+
+		if channel >= 0 && channel < len(extractor.inputs) {
+			extractor.inputs[channel] = values[1]
+			extractor.Extract()
+			extractor.output = extractor.features[0]
+		}
 	}
 
-	if len(inputs) < 2 {
-		return extractor.output
-	}
+	putFloat64Payload(&extractor.artifact, "extractor", extractor.output)
 
-	channelScalar, channelOK := inputs[0].(core.Scalar[float64])
-	valueScalar, valueOK := inputs[1].(core.Scalar[float64])
+	return extractor.artifact.Read(p)
+}
 
-	if !channelOK || !valueOK {
-		return extractor.output
-	}
-
-	channel := int(float64(channelScalar))
-
-	if channel < 0 || channel >= len(extractor.inputs) {
-		return extractor.output
-	}
-
-	extractor.inputs[channel] = float64(valueScalar)
-	extractor.Extract()
-	extractor.output = core.Scalar[float64](extractor.features[0])
-
-	return extractor.output
+func (extractor *FeatureExtractor) Close() error {
+	return nil
 }
 
 /*
@@ -167,7 +162,7 @@ func (extractor *FeatureExtractor) Reset() error {
 		extractor.features[index] = 0
 	}
 
-	extractor.output = core.Scalar[float64](0)
+	extractor.output = 0
 
 	return nil
 }

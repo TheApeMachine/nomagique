@@ -1,81 +1,67 @@
 package vector
 
 import (
-	"fmt"
-
-	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/nomagique/core"
+	"github.com/theapemachine/datura"
 )
 
 /*
 InputSlot binds one raw input channel on a shared FeatureExtractor to the
 nomagique pipeline.
 
-Observe writes the boundary sample into that channel. Multiple InputSlots can
+Write stores the boundary sample into that channel. Multiple InputSlots can
 share one extractor, one per channel.
 */
-type InputSlot[T ~float64] struct {
+type InputSlot struct {
+	artifact  *datura.Artifact
 	extractor *FeatureExtractor
 	channel   int
-	output    core.Scalar[T]
+	output    float64
 }
 
 /*
 NewInputSlot binds channel on extractor for composable input updates.
 */
-func NewInputSlot[T ~float64](
+func NewInputSlot(
 	extractor *FeatureExtractor, channel int,
-) (*InputSlot[T], error) {
+) *InputSlot {
 	if extractor == nil {
-		return nil, errnie.Error(fmt.Errorf("vector: NewInputSlot requires extractor"))
+		return nil
 	}
 
 	if channel < 0 || channel >= extractor.InputCount() {
-		return nil, errnie.Error(fmt.Errorf(
-			"vector: NewInputSlot channel %d outside [0,%d)",
-			channel,
-			extractor.InputCount(),
-		))
+		return nil
 	}
 
-	return &InputSlot[T]{
+	return &InputSlot{
+		artifact:  datura.Acquire("input-slot", datura.Artifact_Type_json),
 		extractor: extractor,
 		channel:   channel,
-	}, nil
+	}
+}
+
+func (inputSlot *InputSlot) Write(p []byte) (int, error) {
+	return inputSlot.artifact.Write(p)
+}
+
+func (inputSlot *InputSlot) Read(p []byte) (int, error) {
+	sample, sampleOK := boundaryFloat64(inputSlot.artifact)
+
+	if sampleOK {
+		_ = inputSlot.extractor.SetInput(inputSlot.channel, sample)
+		inputSlot.output = sample
+		putFloat64Payload(&inputSlot.artifact, "input-slot", inputSlot.output)
+	}
+
+	return inputSlot.artifact.Read(p)
+}
+
+func (inputSlot *InputSlot) Close() error {
+	return nil
 }
 
 /*
-Observe stores the carried sample into the bound input channel.
+Reset is a no-op; the shared extractor owns mutable state.
 */
-func (inputSlot *InputSlot[T]) Observe(inputs ...core.Number[T]) core.Scalar[T] {
-	if len(inputs) == 0 {
-		return inputSlot.output
-	}
-
-	sample, ok := inputs[0].(core.Scalar[T])
-
-	if !ok {
-		return inputSlot.output
-	}
-
-	if len(inputs) > 1 {
-		if work, workOK := inputs[1].(core.Scalar[T]); workOK {
-			sample = core.Scalar[T](T(sample) + T(work))
-		}
-	}
-
-	if err := inputSlot.extractor.SetInput(inputSlot.channel, float64(sample)); err != nil {
-		return inputSlot.output
-	}
-
-	inputSlot.output = sample
-
-	return inputSlot.output
-}
-
-/*
-Reset is a no-op; the shared extractor owns buffer state.
-*/
-func (inputSlot *InputSlot[T]) Reset() error {
+func (inputSlot *InputSlot) Reset() error {
 	return nil
 }

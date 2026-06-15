@@ -1,49 +1,140 @@
 package algorithm
 
 import (
-	"github.com/theapemachine/nomagique/core"
+	"encoding/binary"
+	"errors"
+	"math"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/theapemachine/datura"
+	"github.com/theapemachine/nomagique/correlation"
 )
 
-func sampleBatch[T ~float64](inputs ...core.Number[T]) []float64 {
-	values := make([]float64, 0, len(inputs))
+var (
+	ErrEmptyInputs   = errors.New("algorithm: empty inputs")
+	ErrZeroPredicted = errors.New("algorithm: zero predicted value")
+)
 
-	for _, input := range inputs {
-		scalar, ok := input.(core.Scalar[T])
-
-		if !ok {
-			continue
-		}
-
-		values = append(values, float64(scalar))
+func payloadSamples(payload []byte) []float64 {
+	if len(payload) == 0 || len(payload)%8 != 0 {
+		return nil
 	}
 
-	return values
-}
+	samples := make([]float64, len(payload)/8)
 
-func collectScalars[T ~float64](inputs ...core.Number[T]) ([]float64, bool) {
-	scalars := make([]float64, 0, len(inputs))
-
-	for _, input := range inputs {
-		scalar, ok := input.(core.Scalar[T])
-
-		if !ok {
-			return nil, false
-		}
-
-		scalars = append(scalars, float64(scalar))
+	for index := range samples {
+		offset := index * 8
+		samples[index] = math.Float64frombits(binary.BigEndian.Uint64(payload[offset : offset+8]))
 	}
 
-	return scalars, true
+	return samples
 }
 
-func samplesToInputs[T ~float64](samples []float64) []core.Number[T] {
-	inputs := make([]core.Number[T], len(samples))
+func encodePayload(samples ...float64) []byte {
+	payload := make([]byte, 8*len(samples))
 
 	for index, sample := range samples {
-		inputs[index] = core.Scalar[T](T(sample))
+		offset := index * 8
+		binary.BigEndian.PutUint64(payload[offset:offset+8], math.Float64bits(sample))
 	}
 
-	return inputs
+	return payload
+}
+
+func payloadScalar(payload []byte) (float64, bool) {
+	if len(payload) != 8 {
+		return 0, false
+	}
+
+	return math.Float64frombits(binary.BigEndian.Uint64(payload)), true
+}
+
+func pokeFloat(artifact *datura.Artifact, key string, value float64) {
+	artifact.Poke(key, strconv.FormatFloat(value, 'g', -1, 64))
+}
+
+func peekFloat(artifact *datura.Artifact, key string) (float64, bool) {
+	raw := artifact.Peek(key)
+
+	if raw == "" {
+		return 0, false
+	}
+
+	value, err := strconv.ParseFloat(raw, 64)
+
+	if err != nil {
+		return 0, false
+	}
+
+	return value, true
+}
+
+func rehydrateArtifact(artifact **datura.Artifact, origin string, artifactType datura.Artifact_Type) {
+	if artifact == nil || *artifact == nil {
+		return
+	}
+
+	current := *artifact
+	payload, _ := current.Payload()
+	fresh := datura.Acquire(origin, artifactType)
+
+	if fresh == nil {
+		return
+	}
+
+	if len(payload) > 0 {
+		_ = fresh.SetPayload(payload)
+	}
+
+	attrs, err := current.Attributes()
+
+	if err == nil {
+		for index := 0; index < attrs.Len(); index++ {
+			attr := attrs.At(index)
+			key, keyErr := attr.Key()
+			value, valueErr := attr.Value()
+
+			if keyErr != nil || valueErr != nil {
+				continue
+			}
+
+			fresh.Poke(key, value)
+		}
+	}
+
+	*artifact = fresh
+}
+
+func zipNodeRows(streams [][]float64) ([][]float64, bool) {
+	if len(streams) == 0 {
+		return nil, false
+	}
+
+	length := len(streams[0])
+
+	if length == 0 {
+		return nil, false
+	}
+
+	for _, stream := range streams {
+		if len(stream) != length {
+			return nil, false
+		}
+	}
+
+	rows := make([][]float64, length)
+
+	for index := range rows {
+		rows[index] = make([]float64, len(streams))
+
+		for nodeIndex, stream := range streams {
+			rows[index][nodeIndex] = stream[index]
+		}
+	}
+
+	return rows, true
 }
 
 func parsePredictedActual(
@@ -54,50 +145,233 @@ func parsePredictedActual(
 		actual := extras[1]
 
 		if predicted == 0 {
-			return 0, 0, core.ErrZeroPredicted
+			return 0, 0, ErrZeroPredicted
 		}
 
 		return predicted, actual, nil
 	}
 
 	if len(extras) == 0 {
-		return 0, 0, core.ErrEmptyInputs
+		return 0, 0, ErrEmptyInputs
 	}
 
 	predicted := primary
 	actual := extras[0]
 
 	if predicted == 0 {
-		return 0, 0, core.ErrZeroPredicted
+		return 0, 0, ErrZeroPredicted
 	}
 
 	return predicted, actual, nil
 }
 
-func zipNodeRows(streams [][]float64) ([][]float64, bool) {
-	if len(streams) == 0 {
+func samplesFromTimeValues(values []float64) ([]correlation.Sample, bool) {
+	if len(values) < 4 || len(values)%2 != 0 {
 		return nil, false
 	}
 
-	rowCount := len(streams[0])
+	samples := make([]correlation.Sample, len(values)/2)
 
-	if rowCount == 0 {
+	for index := range samples {
+		pair := index * 2
+		seconds := values[pair]
+		wholeSeconds := int64(seconds)
+		nanoseconds := int64((seconds - float64(wholeSeconds)) * float64(time.Second))
+
+		samples[index] = correlation.Sample{
+			At:    time.Unix(wholeSeconds, nanoseconds),
+			Value: values[pair+1],
+		}
+	}
+
+	return samples, true
+}
+
+func hayashiCorrelation(
+	left, right []correlation.Sample, maxInterval time.Duration,
+) (float64, bool) {
+	if len(left) < 2 || len(right) < 2 {
+		return 0, false
+	}
+
+	leftVariance := hayashiVarianceSum(left, maxInterval)
+	rightVariance := hayashiVarianceSum(right, maxInterval)
+
+	if leftVariance <= 0 || rightVariance <= 0 {
+		return 0, false
+	}
+
+	covariance := 0.0
+	rightStart := 0
+
+	for leftIndex := 0; leftIndex < len(left)-1; leftIndex++ {
+		leftStart := left[leftIndex].At
+		leftEnd := left[leftIndex+1].At
+
+		if !validHayashiInterval(left[leftIndex], left[leftIndex+1], maxInterval) {
+			continue
+		}
+
+		leftReturn := math.Log(left[leftIndex+1].Value / left[leftIndex].Value)
+
+		for rightStart < len(right)-1 {
+			if !validHayashiInterval(right[rightStart], right[rightStart+1], maxInterval) ||
+				!leftStart.Before(right[rightStart+1].At) {
+				rightStart++
+
+				continue
+			}
+
+			break
+		}
+
+		for rightIndex := rightStart; rightIndex < len(right)-1; rightIndex++ {
+			rightIntervalStart := right[rightIndex].At
+
+			if !rightIntervalStart.Before(leftEnd) {
+				break
+			}
+
+			if !validHayashiInterval(right[rightIndex], right[rightIndex+1], maxInterval) {
+				continue
+			}
+
+			covariance += leftReturn * math.Log(
+				right[rightIndex+1].Value/right[rightIndex].Value,
+			)
+		}
+	}
+
+	denominator := math.Sqrt(leftVariance * rightVariance)
+
+	if denominator <= 0 {
+		return 0, false
+	}
+
+	correlationValue := covariance / denominator
+
+	if correlationValue > 1 {
+		return 1, true
+	}
+
+	if correlationValue < -1 {
+		return -1, true
+	}
+
+	return correlationValue, true
+}
+
+func hayashiVarianceSum(samples []correlation.Sample, maxInterval time.Duration) float64 {
+	if len(samples) < 2 {
+		return 0
+	}
+
+	sum := 0.0
+
+	for index := 1; index < len(samples); index++ {
+		if !validHayashiInterval(samples[index-1], samples[index], maxInterval) {
+			continue
+		}
+
+		ret := math.Log(samples[index].Value / samples[index-1].Value)
+		sum += ret * ret
+	}
+
+	return sum
+}
+
+func validHayashiInterval(
+	previous, current correlation.Sample, maxInterval time.Duration,
+) bool {
+	if previous.Value <= 0 || current.Value <= 0 || !previous.At.Before(current.At) {
+		return false
+	}
+
+	if maxInterval <= 0 {
+		return true
+	}
+
+	return current.At.Sub(previous.At) <= maxInterval
+}
+
+func zipFeatureTargetRows(
+	features [][]float64, target []float64,
+) ([]featureTargetRow, bool) {
+	if len(features) == 0 {
 		return nil, false
 	}
 
-	rows := make([][]float64, rowCount)
+	rowCount := len(features[0])
+
+	if rowCount == 0 || len(target) != rowCount {
+		return nil, false
+	}
+
+	rows := make([]featureTargetRow, rowCount)
 
 	for rowIndex := range rows {
-		rows[rowIndex] = make([]float64, len(streams))
+		rowFeatures := make([]float64, len(features))
 
-		for nodeIndex, stream := range streams {
-			if len(stream) != rowCount {
+		for featureIndex, featureStream := range features {
+			if len(featureStream) != rowCount {
 				return nil, false
 			}
 
-			rows[rowIndex][nodeIndex] = stream[rowIndex]
+			rowFeatures[featureIndex] = featureStream[rowIndex]
+		}
+
+		rows[rowIndex] = featureTargetRow{
+			features: rowFeatures,
+			target:   target[rowIndex],
 		}
 	}
 
 	return rows, true
+}
+
+type featureTargetRow struct {
+	features []float64
+	target   float64
+}
+
+func appendRingFloat(values []float64, value float64, capacity int) []float64 {
+	values = append(values, value)
+
+	if len(values) <= capacity {
+		return values
+	}
+
+	return values[len(values)-capacity:]
+}
+
+func samplesToTimes(samples []float64) []time.Time {
+	times := make([]time.Time, len(samples))
+
+	for index, sample := range samples {
+		times[index] = time.Unix(0, int64(sample))
+	}
+
+	return times
+}
+
+func weightSamples(weights []float64) []float64 {
+	if len(weights) == 0 {
+		return nil
+	}
+
+	return weights
+}
+
+func formatFloatList(values []float64) string {
+	if len(values) == 0 {
+		return ""
+	}
+
+	parts := make([]string, len(values))
+
+	for index, value := range values {
+		parts[index] = strconv.FormatFloat(value, 'g', -1, 64)
+	}
+
+	return strings.Join(parts, ",")
 }

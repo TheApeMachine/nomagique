@@ -4,13 +4,12 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/nomagique/core"
 	"github.com/theapemachine/nomagique/tests"
 )
 
 func TestNewAccumulator(testingTB *testing.T) {
 	Convey("Given NewAccumulator", testingTB, func() {
-		accumulator := NewAccumulator[float64]()
+		accumulator := NewAccumulator()
 
 		Convey("It should return a usable stage", func() {
 			So(accumulator, ShouldNotBeNil)
@@ -38,7 +37,7 @@ func TestAccumulator_ObserveSample(testingTB *testing.T) {
 		testCase := testCase
 
 		Convey("Given "+testCase.name, testingTB, func() {
-			accumulator := NewAccumulator[float64]()
+			accumulator := NewAccumulator()
 			got := tests.RunObserveSampleSequence(accumulator.ObserveSample, testCase.samples)
 
 			Convey("It should derive the expected level", func() {
@@ -49,36 +48,20 @@ func TestAccumulator_ObserveSample(testingTB *testing.T) {
 }
 
 func TestAccumulator_Observe(testingTB *testing.T) {
-	Convey("Given empty Observe inputs", testingTB, func() {
-		accumulator := NewAccumulator[float64]()
+	Convey("Given empty pipeline input", testingTB, func() {
+		accumulator := NewAccumulator()
 
 		Convey("It should return zero output", func() {
-			So(accumulator.Observe(), ShouldEqual, core.Scalar[float64](0))
+			So(pipelineSample(accumulator, 0), ShouldEqual, 0)
 		})
 	})
 
-	Convey("Given a non-scalar first input", testingTB, func() {
-		accumulator := NewAccumulator[float64]()
-		_ = accumulator.Observe(core.Scalar[float64](10))
-		stage := &tests.PipelineStage[float64]{Result: core.Scalar[float64](99)}
+	Convey("Given a retained accumulator", testingTB, func() {
+		accumulator := NewAccumulator()
+		_ = pipelineSample(accumulator, 10)
 
-		Convey("It should leave output unchanged", func() {
-			So(accumulator.Observe(stage), ShouldEqual, core.Scalar[float64](10))
-		})
-	})
-
-	Convey("Given a scalar plus work sample", testingTB, func() {
-		accumulator := NewAccumulator[float64]()
-
-		Convey("It should match a single combined scalar", func() {
-			withWork := accumulator.Observe(
-				core.Scalar[float64](5),
-				core.Scalar[float64](3),
-			)
-			expect := NewAccumulator[float64]()
-			combined := expect.Observe(core.Scalar[float64](8))
-
-			So(withWork, ShouldEqual, combined)
+		Convey("It should continue integrating", func() {
+			So(pipelineSample(accumulator, 5), ShouldEqual, 15)
 		})
 	})
 
@@ -93,15 +76,15 @@ func TestAccumulator_Observe(testingTB *testing.T) {
 	for _, testCase := range pathCases {
 		testCase := testCase
 
-		Convey("Given "+testCase.name+" via Observe scalars", testingTB, func() {
-			sampleStage := NewAccumulator[float64]()
-			scalarStage := NewAccumulator[float64]()
+		Convey("Given "+testCase.name+" via pipeline", testingTB, func() {
+			sampleStage := NewAccumulator()
+			pipelineStage := NewAccumulator()
 
 			sampleLast := tests.RunObserveSampleSequence(sampleStage.ObserveSample, testCase.samples)
-			scalarLast := tests.RunObserveScalarSequence(scalarStage.Observe, testCase.samples)
+			pipelineLast := pipelineSamples(pipelineStage, testCase.samples...)
 
 			Convey("It should match ObserveSample", func() {
-				So(scalarLast, ShouldEqual, sampleLast)
+				So(pipelineLast, ShouldEqual, sampleLast)
 			})
 		})
 	}
@@ -110,8 +93,8 @@ func TestAccumulator_Observe(testingTB *testing.T) {
 func TestAccumulator_ObserveSamples(testingTB *testing.T) {
 	Convey("Given a sample batch", testingTB, func() {
 		samples := []float64{1, 2, 3, -1}
-		batch := NewAccumulator[float64]()
-		sequential := NewAccumulator[float64]()
+		batch := NewAccumulator()
+		sequential := NewAccumulator()
 
 		batchOut := make([]float64, len(samples))
 		batch.ObserveSamples(samples, batchOut)
@@ -132,7 +115,7 @@ func TestAccumulator_ObserveSamples(testingTB *testing.T) {
 
 func TestAccumulator_Reset(testingTB *testing.T) {
 	Convey("Given reset after integration", testingTB, func() {
-		accumulator := NewAccumulator[float64]()
+		accumulator := NewAccumulator()
 
 		for _, sample := range []float64{10, 20, -5} {
 			_ = accumulator.ObserveSample(sample)
@@ -150,7 +133,7 @@ func TestAccumulator_Reset(testingTB *testing.T) {
 }
 
 func BenchmarkAccumulator_ObserveSample(b *testing.B) {
-	accumulator := NewAccumulator[float64]()
+	accumulator := NewAccumulator()
 
 	b.ReportAllocs()
 

@@ -1,69 +1,67 @@
 package correlation
 
 import (
+	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/nomagique/core"
 	"gonum.org/v1/gonum/stat"
 )
 
 /*
 Covariance computes sample covariance between two configured streams.
 */
-type Covariance[T ~float64] struct {
-	weights []float64
-	output  core.Scalar[T]
+type Covariance struct {
+	artifact *datura.Artifact
+	weights  []float64
 }
 
 /*
 NewCovariance creates a covariance dynamic.
 */
-func NewCovariance[T ~float64](weights []float64) *Covariance[T] {
-	return &Covariance[T]{
-		weights: weights,
+func NewCovariance(weights []float64) *Covariance {
+	return &Covariance{
+		artifact: datura.Acquire("covariance", datura.Artifact_Type_json),
+		weights:  weights,
 	}
 }
 
-/*
-Observe computes covariance between equal halves of the input stream.
-*/
-func (covariance *Covariance[T]) Observe(inputs ...core.Number[T]) core.Scalar[T] {
-	count := len(inputs)
+func (covariance *Covariance) Write(p []byte) (int, error) {
+	return covariance.artifact.Write(p)
+}
 
-	if count < 2 {
+func (covariance *Covariance) Read(p []byte) (int, error) {
+	values := float64Batch(covariance.artifact)
+	count := len(values)
+
+	if count >= 2 && count%2 == 0 {
+		half := count / 2
+		left := values[:half]
+		right := values[half:]
+		putFloat64Payload(&covariance.artifact, "covariance", stat.Covariance(left, right, weightSamples(covariance.weights)))
+	}
+
+	if count > 0 && count < 2 {
 		errnie.Err(
 			errnie.Validation, "unable to compute covariance",
 			CovarianceError(CovarianceErrorRequireAtLeastTwoInputs),
 		)
-
-		return covariance.output
 	}
 
-	if count%2 != 0 {
+	if count%2 != 0 && count > 0 {
 		errnie.Err(
 			errnie.Validation, "unable to compute covariance",
 			CovarianceError(CovarianceErrorRequireEqualLength),
 		)
-
-		return covariance.output
 	}
 
-	half := count / 2
-	left := sampleBatch[T](inputs[:half]...)
-	right := sampleBatch[T](inputs[half:]...)
-
-	covariance.output = core.Scalar[T](T(stat.Covariance(
-		left, right, weightSamples(covariance.weights),
-	)))
-
-	return covariance.output
+	return covariance.artifact.Read(p)
 }
 
-/*
-Reset clears derived state.
-*/
-func (covariance *Covariance[T]) Reset() error {
+func (covariance *Covariance) Close() error {
+	return nil
+}
+
+func (covariance *Covariance) Reset() error {
 	covariance.weights = nil
-	covariance.output = core.Scalar[T](0)
 
 	return nil
 }

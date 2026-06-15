@@ -1,8 +1,9 @@
 package probability
 
 import (
-	"github.com/theapemachine/nomagique/core"
-	"github.com/theapemachine/nomagique/statistic"
+	"math"
+
+	"gonum.org/v1/gonum/stat"
 )
 
 /*
@@ -49,19 +50,21 @@ func (matrix *TransitionMatrix) Surprise(observed []float64) (float64, error) {
 		rowSum += count
 	}
 
-	inputs := make([]core.Number[float64], 0, len(observed)+len(row))
-
-	for _, probability := range observed {
-		inputs = append(inputs, core.Scalar[float64](probability))
+	if rowSum <= 0 {
+		return 0, nil
 	}
 
-	for _, probability := range row {
-		inputs = append(inputs, core.Scalar[float64](probability))
+	expected := make([]float64, len(row))
+
+	for index, count := range row {
+		expected[index] = count / rowSum
 	}
 
-	divergence := float64(
-		statistic.NewKLDivergence[float64](nil, rowSum, 0).Observe(inputs...),
-	)
+	divergence, ok := klDivergence(observed, expected, 0, 0)
+
+	if !ok {
+		return 0, nil
+	}
 
 	return divergence, nil
 }
@@ -127,4 +130,110 @@ func (matrix *TransitionMatrix) Reset() {
 	}
 
 	matrix.lastCategory = 0
+}
+
+func klDivergence(
+	observed, expected []float64, expectedSum, floor float64,
+) (float64, bool) {
+	for _, value := range observed {
+		if math.IsNaN(value) || math.IsInf(value, 0) {
+			return 0, false
+		}
+	}
+
+	for _, value := range expected {
+		if math.IsNaN(value) || math.IsInf(value, 0) {
+			return 0, false
+		}
+	}
+
+	if expectedSum <= 0 || math.IsNaN(expectedSum) || math.IsInf(expectedSum, 0) {
+		for index := range expected {
+			expectedSum += expected[index]
+		}
+	}
+
+	width := max(len(observed), len(expected))
+	probabilityFloor := klProbabilityFloor(observed, expected, width, floor)
+
+	if expectedSum <= 0 {
+		expectedSum = probabilityFloor
+	}
+
+	observedSum := 0.0
+
+	for index := range observed {
+		observedSum += observed[index]
+	}
+
+	if math.IsNaN(observedSum) || math.IsInf(observedSum, 0) || observedSum <= 0 {
+		observedSum = probabilityFloor
+	}
+
+	observedProbabilities := make([]float64, width)
+	expectedProbabilities := make([]float64, width)
+
+	for index := range width {
+		observedProbability := probabilityFloor
+
+		if index < len(observed) {
+			observedProbability = observed[index] / observedSum
+		}
+
+		if observedProbability < probabilityFloor {
+			observedProbability = probabilityFloor
+		}
+
+		observedProbabilities[index] = observedProbability
+
+		expectedMass := probabilityFloor
+
+		if index < len(expected) {
+			expectedMass = expected[index]
+		}
+
+		expectedProbability := expectedMass / expectedSum
+
+		if expectedProbability < probabilityFloor {
+			expectedProbability = probabilityFloor
+		}
+
+		expectedProbabilities[index] = expectedProbability
+	}
+
+	divergence := stat.KullbackLeibler(observedProbabilities, expectedProbabilities)
+
+	if math.IsNaN(divergence) || math.IsInf(divergence, 0) {
+		return 0, false
+	}
+
+	return divergence, true
+}
+
+func klProbabilityFloor(
+	observed, expected []float64, width int, floor float64,
+) float64 {
+	if floor > 0 {
+		return floor
+	}
+
+	observedSum := 0.0
+
+	for index := range observed {
+		observedSum += observed[index]
+	}
+
+	expectedSum := 0.0
+
+	for index := range expected {
+		expectedSum += expected[index]
+	}
+
+	scale := math.Max(observedSum, expectedSum) / float64(width)
+
+	if scale <= 0 || math.IsNaN(scale) || math.IsInf(scale, 0) {
+		return math.SmallestNonzeroFloat64
+	}
+
+	return math.Nextafter(0, scale)
 }

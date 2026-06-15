@@ -1,79 +1,80 @@
 package learning
 
 import (
-	"github.com/theapemachine/nomagique/core"
+	"github.com/theapemachine/datura"
 )
 
 /*
 RLS is an online recursive-least-squares stage composable in nomagique.Number pipelines.
 
-Observe ingests feature scalars followed by one target scalar. When fewer than
+Read ingests feature scalars followed by one target scalar. When fewer than
 dimension+1 scalars are supplied, the prior output is returned.
 */
-type RLS[T ~float64] struct {
-	filter *RLSFilter
-	output core.Scalar[T]
+type RLS struct {
+	artifact *datura.Artifact
+	filter   *RLSFilter
+	output   float64
 }
 
 /*
 NewRLS allocates an RLS stage with the given feature dimension excluding intercept.
 */
-func NewRLS[T ~float64](dimension int, initialVariance float64) (*RLS[T], error) {
+func NewRLS(dimension int, initialVariance float64) (*RLS, error) {
 	filter, err := NewRLSFilter(dimension, initialVariance)
 
 	if err != nil {
 		return nil, err
 	}
 
-	return &RLS[T]{
-		filter: filter,
+	return &RLS{
+		artifact: datura.Acquire("rls", datura.Artifact_Type_json),
+		filter:   filter,
 	}, nil
 }
 
-/*
-Observe updates coefficients from feature scalars and a trailing target scalar.
-*/
-func (rls *RLS[T]) Observe(inputs ...core.Number[T]) core.Scalar[T] {
+func (rls *RLS) Write(p []byte) (int, error) {
+	return rls.artifact.Write(p)
+}
+
+func (rls *RLS) Read(p []byte) (int, error) {
 	if rls == nil || rls.filter == nil {
-		return core.Scalar[T](0)
+		return rls.artifact.Read(p)
 	}
 
-	scalars, ok := collectScalars[T](inputs...)
+	values := float64Batch(rls.artifact)
 
-	if !ok || len(scalars) < rls.filter.dimension+1 {
-		return rls.output
+	if len(values) >= rls.filter.dimension+1 {
+		features := values[:rls.filter.dimension]
+		target := values[len(values)-1]
+		observeErr := rls.filter.Observe(features, target)
+
+		if observeErr == nil {
+			prediction, predictErr := rls.filter.Predict(features)
+
+			if predictErr == nil {
+				rls.output = prediction
+				putFloat64Payload(&rls.artifact, "rls-dynamic", rls.output)
+			}
+		}
 	}
 
-	features := scalars[:rls.filter.dimension]
-	target := scalars[len(scalars)-1]
+	return rls.artifact.Read(p)
+}
 
-	observeErr := rls.filter.Observe(features, target)
-
-	if observeErr != nil {
-		return rls.output
-	}
-
-	prediction, predictErr := rls.filter.Predict(features)
-
-	if predictErr != nil {
-		return rls.output
-	}
-
-	rls.output = core.Scalar[T](T(prediction))
-
-	return rls.output
+func (rls *RLS) Close() error {
+	return nil
 }
 
 /*
 Reset restores coefficients and covariance to their initial state.
 */
-func (rls *RLS[T]) Reset() error {
+func (rls *RLS) Reset() error {
 	if rls == nil || rls.filter == nil {
 		return nil
 	}
 
 	rls.filter.Reset()
-	rls.output = core.Scalar[T](0)
+	rls.output = 0
 
 	return nil
 }
@@ -81,7 +82,7 @@ func (rls *RLS[T]) Reset() error {
 /*
 Filter returns the underlying RLS filter for coefficient inspection.
 */
-func (rls *RLS[T]) Filter() *RLSFilter {
+func (rls *RLS) Filter() *RLSFilter {
 	if rls == nil {
 		return nil
 	}

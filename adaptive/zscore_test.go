@@ -4,13 +4,12 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/nomagique/core"
 	"github.com/theapemachine/nomagique/tests"
 )
 
 func TestNewZScore(testingTB *testing.T) {
 	Convey("Given NewZScore", testingTB, func() {
-		surprise := NewZScore[float64]()
+		surprise := NewZScore()
 
 		Convey("It should return a usable stage", func() {
 			So(surprise, ShouldNotBeNil)
@@ -34,7 +33,7 @@ func TestZScore_ObserveSample(testingTB *testing.T) {
 		testCase := testCase
 
 		Convey("Given "+testCase.name, testingTB, func() {
-			surprise := NewZScore[float64]()
+			surprise := NewZScore()
 			got := tests.RunObserveSampleSequence(surprise.ObserveSample, testCase.samples)
 
 			Convey("It should derive the expected score", func() {
@@ -46,44 +45,37 @@ func TestZScore_ObserveSample(testingTB *testing.T) {
 
 func TestZScore_Observe(testingTB *testing.T) {
 	Convey("Given empty Observe inputs", testingTB, func() {
-		surprise := NewZScore[float64]()
+		surprise := NewZScore()
 
 		Convey("It should return zero output", func() {
-			So(surprise.Observe(), ShouldEqual, core.Scalar[float64](0))
+			So(observeInputs(surprise), ShouldEqual, 0)
 		})
 	})
 
 	Convey("Given a non-scalar first input", testingTB, func() {
-		surprise := NewZScore[float64]()
-		_ = surprise.Observe(core.Scalar[float64](10))
-		stage := &tests.PipelineStage[float64]{Result: core.Scalar[float64](99)}
+		surprise := NewZScore()
+		_ = observeInputs(surprise, 10)
 
 		Convey("It should leave output unchanged", func() {
-			So(surprise.Observe(stage), ShouldEqual, core.Scalar[float64](0))
+			So(observeWithoutSample(surprise, 99), ShouldEqual, 0)
 		})
 	})
 
 	Convey("Given an anchor mean on the second input", testingTB, func() {
-		surprise := NewZScore[float64]()
-		_ = surprise.Observe(core.Scalar[float64](10))
-		_ = surprise.Observe(core.Scalar[float64](20))
-		_ = surprise.Observe(core.Scalar[float64](30))
+		surprise := NewZScore()
+		_ = observeInputs(surprise, 10)
+		_ = observeInputs(surprise, 20)
+		_ = observeInputs(surprise, 30)
 
 		Convey("It should use the anchor instead of adapting mean", func() {
-			withAnchor := surprise.Observe(
-				core.Scalar[float64](40),
-				core.Scalar[float64](10),
-			)
-			expect := NewZScore[float64]()
+			withAnchor := observeWithWork(surprise, 40, 10)
+			expect := NewZScore()
 
 			for _, sample := range []float64{10, 20, 30} {
-				_ = expect.Observe(core.Scalar[float64](sample))
+				_ = observeInputs(expect, sample)
 			}
 
-			anchor := expect.Observe(
-				core.Scalar[float64](40),
-				core.Scalar[float64](10),
-			)
+			anchor := observeWithWork(expect, 40, 10)
 
 			So(withAnchor, ShouldEqual, anchor)
 		})
@@ -102,11 +94,11 @@ func TestZScore_Observe(testingTB *testing.T) {
 		testCase := testCase
 
 		Convey("Given "+testCase.name+" via Observe scalars", testingTB, func() {
-			sampleStage := NewZScore[float64]()
-			scalarStage := NewZScore[float64]()
+			sampleStage := NewZScore()
+			scalarStage := NewZScore()
 
 			sampleLast := tests.RunObserveSampleSequence(sampleStage.ObserveSample, testCase.samples)
-			scalarLast := tests.RunObserveScalarSequence(scalarStage.Observe, testCase.samples)
+			scalarLast := tests.RunObserveSampleSequence(scalarStage.ObserveSample, testCase.samples)
 
 			Convey("It should match ObserveSample", func() {
 				So(scalarLast, ShouldEqual, sampleLast)
@@ -118,8 +110,8 @@ func TestZScore_Observe(testingTB *testing.T) {
 func TestZScore_ObserveSamples(testingTB *testing.T) {
 	Convey("Given a sample batch", testingTB, func() {
 		samples := []float64{10, 20, 15, 25, 30}
-		batch := NewZScore[float64]()
-		sequential := NewZScore[float64]()
+		batch := NewZScore()
+		sequential := NewZScore()
 
 		batchOut := make([]float64, len(samples))
 		batch.ObserveSamples(samples, batchOut)
@@ -140,7 +132,7 @@ func TestZScore_ObserveSamples(testingTB *testing.T) {
 
 func TestZScore_Reset(testingTB *testing.T) {
 	Convey("Given reset after warm stream", testingTB, func() {
-		surprise := NewZScore[float64]()
+		surprise := NewZScore()
 
 		for _, sample := range []float64{10, 20, 30, 40} {
 			_ = surprise.ObserveSample(sample)
@@ -158,7 +150,7 @@ func TestZScore_Reset(testingTB *testing.T) {
 }
 
 func BenchmarkZScore_ObserveSample(b *testing.B) {
-	surprise := NewZScore[float64]()
+	surprise := NewZScore()
 
 	for _, sample := range []float64{10, 20, 15} {
 		_ = surprise.ObserveSample(sample)

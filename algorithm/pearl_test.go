@@ -5,10 +5,28 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/nomagique/causal"
-	"github.com/theapemachine/nomagique/core"
 )
 
-func TestPearl_Observe(testingTB *testing.T) {
+func TestPearl_Readings(testingTB *testing.T) {
+	Convey("Given a Pearl ladder", testingTB, func() {
+		ladder := NewPearl(
+			3,
+			causal.LadderConfig{MinHistory: 12},
+			nil,
+			newFixedScore(0),
+			nil,
+		)
+
+		Convey("It should publish composable ladder score sources", func() {
+			So(ladder.UpliftReading(), ShouldNotBeNil)
+			So(ladder.ContagionReading(), ShouldNotBeNil)
+			So(ladder.AssociationReading(), ShouldNotBeNil)
+			So(ladder.InterventionReading(), ShouldNotBeNil)
+		})
+	})
+}
+
+func TestPearl_Read(testingTB *testing.T) {
 	Convey("Given aligned node streams with causal structure", testingTB, func() {
 		nodeZero := make([]float64, 16)
 		nodeOne := make([]float64, 16)
@@ -33,17 +51,18 @@ func TestPearl_Observe(testingTB *testing.T) {
 		}
 
 		streams := [][]float64{nodeZero, nodeOne, nodeTwo, nodeThree}
-		ladder := NewPearl[float64](3, config, streams, core.Scalar[float64](0), nil)
+		nodes := nodeRingFromStreams(streams)
+		ladder := NewPearl(3, config, nodes, newFixedScore(0), nil)
 
-		intervention := ladder.Observe()
+		intervention := observeInputs(ladder)
 
 		Convey("It should return a positive intervention effect", func() {
-			So(float64(intervention), ShouldBeGreaterThan, 0)
+			So(intervention, ShouldBeGreaterThan, 0)
 		})
 	})
 }
 
-func BenchmarkPearl_Observe(testingTB *testing.B) {
+func BenchmarkPearl_Read(testingTB *testing.B) {
 	nodeZero := make([]float64, 16)
 	nodeOne := make([]float64, 16)
 	nodeTwo := make([]float64, 16)
@@ -67,11 +86,12 @@ func BenchmarkPearl_Observe(testingTB *testing.B) {
 	}
 
 	streams := [][]float64{nodeZero, nodeOne, nodeTwo, nodeThree}
-	ladder := NewPearl[float64](3, config, streams, core.Scalar[float64](0), nil)
+	nodes := nodeRingFromStreams(streams)
+	ladder := NewPearl(3, config, nodes, newFixedScore(0), nil)
 
 	testingTB.ReportAllocs()
 
 	for testingTB.Loop() {
-		_ = ladder.Observe()
+		_ = observeInputs(ladder)
 	}
 }

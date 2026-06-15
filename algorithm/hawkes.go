@@ -1,72 +1,83 @@
 package algorithm
 
 import (
-	"github.com/theapemachine/nomagique/core"
+	"github.com/theapemachine/datura"
 	"github.com/theapemachine/nomagique/hawkes"
-	"github.com/theapemachine/nomagique/statistic"
+	"gonum.org/v1/gonum/stat"
 )
 
 /*
 Hawkes validates bivariate exponential-kernel parameters through empirical moments
-composed from statistic.BivariateMoment dynamics.
+composed from configured sample streams.
 */
-type Hawkes[T ~float64] struct {
-	params  hawkes.BivariateParams
-	x       []float64
-	y       []float64
-	weights []float64
-	fit     *statistic.BivariateMoment[T]
-	cross21 *statistic.BivariateMoment[T]
-	cross12 *statistic.BivariateMoment[T]
-	output  core.Scalar[T]
+type Hawkes struct {
+	artifact *datura.Artifact
+	params   hawkes.BivariateParams
+	x        []float64
+	y        []float64
+	weights  []float64
+	momentR  float64
+	momentS  float64
+	cross21R float64
+	cross21S float64
+	cross12R float64
+	cross12S float64
 }
 
 /*
-NewHawkes creates a Hawkes dynamic over configured x and y streams.
-r and s select the mixed moment used by Observe for fit diagnostics.
+NewHawkes creates a Hawkes stage over configured x and y streams.
+r and s select the mixed moment used by Read for fit diagnostics.
 */
-func NewHawkes[T ~float64](
+func NewHawkes(
 	params hawkes.BivariateParams,
 	r, s float64,
 	x, y, weights []float64,
-) *Hawkes[T] {
-	return &Hawkes[T]{
-		params:  params,
-		x:       x,
-		y:       y,
-		weights: weights,
-		fit:     statistic.NewBivariateMoment[T](T(r), T(s), x, y, weights),
-		cross21: statistic.NewBivariateMoment[T](2, 1, x, y, weights),
-		cross12: statistic.NewBivariateMoment[T](1, 2, x, y, weights),
+) *Hawkes {
+	return &Hawkes{
+		artifact: datura.Acquire("hawkes", datura.Artifact_Type_json),
+		params:   params,
+		x:        x,
+		y:        y,
+		weights:  weights,
+		momentR:  r,
+		momentS:  s,
+		cross21R: 2,
+		cross21S: 1,
+		cross12R: 1,
+		cross12S: 2,
 	}
 }
 
-/*
-Observe returns moment-fit confidence for the configured moment and parameters.
-*/
-func (hawkesProcess *Hawkes[T]) Observe(_ ...core.Number[T]) core.Scalar[T] {
-	empirical := float64(hawkesProcess.fit.Observe())
-	momentR, momentS := hawkesProcess.fit.Powers()
+func (hawkesProcess *Hawkes) Write(p []byte) (int, error) {
+	return hawkesProcess.artifact.Write(p)
+}
+
+func (hawkesProcess *Hawkes) Read(p []byte) (int, error) {
+	rehydrateArtifact(&hawkesProcess.artifact, "hawkes", datura.Artifact_Type_json)
+
+	empirical := hawkesProcess.bivariateMoment(hawkesProcess.momentR, hawkesProcess.momentS)
 
 	theoretical, ok := hawkes.TheoreticalCentralMoment(
-		hawkesProcess.params, float64(momentR), float64(momentS),
+		hawkesProcess.params, hawkesProcess.momentR, hawkesProcess.momentS,
 	)
 
-	if !ok {
-		return hawkesProcess.output
+	if ok {
+		confidence := hawkes.MomentConfidence(empirical, theoretical)
+		out := encodePayload(confidence)
+		_ = hawkesProcess.artifact.SetPayload(out)
 	}
 
-	hawkesProcess.output = core.Scalar[T](T(
-		hawkes.MomentConfidence(empirical, theoretical),
-	))
+	return hawkesProcess.artifact.Read(p)
+}
 
-	return hawkesProcess.output
+func (hawkesProcess *Hawkes) Close() error {
+	return nil
 }
 
 /*
 MethodOfMoments derives stable seed parameters from the configured streams.
 */
-func (hawkesProcess *Hawkes[T]) MethodOfMoments() (hawkes.BivariateParams, bool) {
+func (hawkesProcess *Hawkes) MethodOfMoments() (hawkes.BivariateParams, bool) {
 	xValues, yValues, weights, ok := hawkesProcess.samples()
 
 	if !ok {
@@ -79,32 +90,33 @@ func (hawkesProcess *Hawkes[T]) MethodOfMoments() (hawkes.BivariateParams, bool)
 /*
 CrossAsymmetry compares third-order mixed moments between the configured streams.
 */
-func (hawkesProcess *Hawkes[T]) CrossAsymmetry() core.Scalar[T] {
-	moment21 := float64(hawkesProcess.cross21.Observe())
-	moment12 := float64(hawkesProcess.cross12.Observe())
+func (hawkesProcess *Hawkes) CrossAsymmetry() float64 {
+	moment21 := hawkesProcess.bivariateMoment(hawkesProcess.cross21R, hawkesProcess.cross21S)
+	moment12 := hawkesProcess.bivariateMoment(hawkesProcess.cross12R, hawkesProcess.cross12S)
 
-	return core.Scalar[T](T(moment21 - moment12))
+	return moment21 - moment12
 }
 
 /*
 Reset clears derived state.
 */
-func (hawkesProcess *Hawkes[T]) Reset() error {
+func (hawkesProcess *Hawkes) Reset() error {
 	hawkesProcess.weights = nil
-	hawkesProcess.output = core.Scalar[T](0)
 
-	if err := hawkesProcess.fit.Reset(); err != nil {
-		return err
-	}
-
-	if err := hawkesProcess.cross21.Reset(); err != nil {
-		return err
-	}
-
-	return hawkesProcess.cross12.Reset()
+	return nil
 }
 
-func (hawkesProcess *Hawkes[T]) samples() (xValues, yValues, weights []float64, ok bool) {
+func (hawkesProcess *Hawkes) bivariateMoment(r, s float64) float64 {
+	xValues, yValues, weights, ok := hawkesProcess.samples()
+
+	if !ok {
+		return 0
+	}
+
+	return stat.BivariateMoment(r, s, xValues, yValues, weights)
+}
+
+func (hawkesProcess *Hawkes) samples() (xValues, yValues, weights []float64, ok bool) {
 	xValues = hawkesProcess.x
 	yValues = hawkesProcess.y
 	weights = hawkesProcess.weights

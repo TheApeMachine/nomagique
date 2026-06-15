@@ -1,67 +1,68 @@
 package vector
 
 import (
-	"fmt"
-
-	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/nomagique/core"
+	"github.com/theapemachine/datura"
 )
 
 /*
-FeatureNode exposes one derived feature from a shared FeatureExtractor as a
-core.Number pipeline stage.
+FeatureNode exposes one derived feature from a shared FeatureExtractor as an
+io.ReadWriteCloser pipeline stage.
 
 Wire several InputSlots into the same extractor, then compose FeatureNode for
-each derived feature inside nomagique.Number(...). Each Observe re-runs Extract
+each derived feature inside nomagique.Number(...). Each Read re-runs Extract
 so features always reflect the latest inputs.
 */
-type FeatureNode[T ~float64] struct {
+type FeatureNode struct {
+	artifact   *datura.Artifact
 	extractor  *FeatureExtractor
 	featureIdx int
-	output     core.Scalar[T]
+	output     float64
 }
 
 /*
 NewFeatureNode binds one feature index on a shared extractor.
 */
-func NewFeatureNode[T ~float64](
+func NewFeatureNode(
 	extractor *FeatureExtractor, featureIndex int,
-) (*FeatureNode[T], error) {
+) *FeatureNode {
 	if extractor == nil {
-		return nil, errnie.Error(fmt.Errorf("vector: NewFeatureNode requires extractor"))
+		return nil
 	}
 
 	if featureIndex < 0 || featureIndex >= extractor.FeatureCount() {
-		return nil, errnie.Error(fmt.Errorf(
-			"vector: NewFeatureNode featureIndex %d outside [0,%d)",
-			featureIndex,
-			extractor.FeatureCount(),
-		))
+		return nil
 	}
 
-	return &FeatureNode[T]{
+	return &FeatureNode{
+		artifact:   datura.Acquire("feature-node", datura.Artifact_Type_json),
 		extractor:  extractor,
 		featureIdx: featureIndex,
-	}, nil
+	}
 }
 
-/*
-Observe runs Extract on the shared extractor and returns the selected feature.
-*/
-func (featureNode *FeatureNode[T]) Observe(inputs ...core.Number[T]) core.Scalar[T] {
-	featureNode.refresh()
+func (featureNode *FeatureNode) Write(p []byte) (int, error) {
+	return featureNode.artifact.Write(p)
+}
 
-	return featureNode.output
+func (featureNode *FeatureNode) Read(p []byte) (int, error) {
+	featureNode.refresh()
+	putFloat64Payload(&featureNode.artifact, "feature-node", featureNode.output)
+
+	return featureNode.artifact.Read(p)
+}
+
+func (featureNode *FeatureNode) Close() error {
+	return nil
 }
 
 /*
 Reset is a no-op; the shared extractor owns mutable state.
 */
-func (featureNode *FeatureNode[T]) Reset() error {
+func (featureNode *FeatureNode) Reset() error {
 	return nil
 }
 
-func (featureNode *FeatureNode[T]) refresh() {
+func (featureNode *FeatureNode) refresh() {
 	featureNode.extractor.Extract()
 
 	value, err := featureNode.extractor.Feature(featureNode.featureIdx)
@@ -70,5 +71,5 @@ func (featureNode *FeatureNode[T]) refresh() {
 		return
 	}
 
-	featureNode.output = core.Scalar[T](T(value))
+	featureNode.output = value
 }

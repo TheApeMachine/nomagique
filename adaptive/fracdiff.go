@@ -1,89 +1,78 @@
 package adaptive
 
 import (
+	"encoding/binary"
 	"math"
 
-	"github.com/theapemachine/nomagique/core"
+	"github.com/theapemachine/datura"
 )
 
 /*
 FracDiff applies a fixed-width fractional differencing filter to recent samples.
 */
-type FracDiff[T ~float64] struct {
-	Prev    float64
-	Min     float64
-	Max     float64
-	Order   float64
-	Ready   bool
-	Width   int
-	Head    int
-	Count   int
-	History []float64
-	Weights []float64
-	output  core.Scalar[T]
+type FracDiff struct {
+	artifact *datura.Artifact
+	Prev     float64
+	Min      float64
+	Max      float64
+	Order    float64
+	Ready    bool
+	Width    int
+	Head     int
+	Count    int
+	History  []float64
+	Weights  []float64
 }
 
 /*
 NewFracDiff returns a fractional differencing stage ready to bootstrap from its first observation.
 */
-func NewFracDiff[T ~float64](initial ...core.Number[T]) *FracDiff[T] {
-	fractional := &FracDiff[T]{}
-
-	if len(initial) > 0 {
-		fractional.output = core.Scalar[T](0).Observe(initial...)
+func NewFracDiff() *FracDiff {
+	return &FracDiff{
+		artifact: datura.Acquire("fracdiff", datura.Artifact_Type_json),
 	}
-
-	return fractional
 }
 
-/*
-Observe absorbs the carried sample and returns the filtered value.
-*/
-func (fractional *FracDiff[T]) Observe(inputs ...core.Number[T]) core.Scalar[T] {
-	if len(inputs) == 0 {
-		return fractional.output
+func (fractional *FracDiff) Write(p []byte) (int, error) {
+	return fractional.artifact.Write(p)
+}
+
+func (fractional *FracDiff) Read(p []byte) (int, error) {
+	payload, err := fractional.artifact.Payload()
+
+	if err == nil && len(payload) == 8 {
+		sample := math.Float64frombits(binary.BigEndian.Uint64(payload))
+		derived := fractional.step(sample)
+		assignScalarPayload(&fractional.artifact, "frac-diff", derived)
 	}
 
-	sample, ok := inputs[0].(core.Scalar[T])
+	return fractional.artifact.Read(p)
+}
 
-	if !ok {
-		return fractional.output
-	}
-
-	if len(inputs) > 1 {
-		if work, workOK := inputs[1].(core.Scalar[T]); workOK {
-			sample = core.Scalar[T](T(sample) + T(work))
-		}
-	}
-
-	fractional.output = core.Scalar[T](T(fractional.observe(float64(sample))))
-
-	return fractional.output
+func (fractional *FracDiff) Close() error {
+	return nil
 }
 
 /*
 ObserveSample ingests one raw sample through the fractional differencing kernel.
 */
-func (fractional *FracDiff[T]) ObserveSample(sample T) T {
-	derived := T(fractional.observe(float64(sample)))
-	fractional.output = core.Scalar[T](derived)
-
-	return derived
+func (fractional *FracDiff) ObserveSample(sample float64) float64 {
+	return fractional.readSampleViaArtifact(sample)
 }
 
 /*
 ObserveSamples writes one derived value per sample into out.
 */
-func (fractional *FracDiff[T]) ObserveSamples(samples []T, out []T) {
+func (fractional *FracDiff) ObserveSamples(samples []float64, out []float64) {
 	for index, sample := range samples {
 		out[index] = fractional.ObserveSample(sample)
 	}
 }
 
 /*
-Reset clears derived state so the next Observe bootstraps again.
+Reset clears derived state so the next Read bootstraps again.
 */
-func (fractional *FracDiff[T]) Reset() error {
+func (fractional *FracDiff) Reset() error {
 	fractional.Prev = 0
 	fractional.Min = 0
 	fractional.Max = 0
@@ -94,12 +83,31 @@ func (fractional *FracDiff[T]) Reset() error {
 	fractional.Count = 0
 	fractional.History = nil
 	fractional.Weights = nil
-	fractional.output = core.Scalar[T](0)
 
 	return nil
 }
 
-func (fractional *FracDiff[T]) observe(sample float64) float64 {
+func (fractional *FracDiff) readSampleViaArtifact(sample float64) float64 {
+	inbound := datura.Acquire("fracdiff-in", datura.Artifact_Type_json)
+	payload := make([]byte, 8)
+	binary.BigEndian.PutUint64(payload, math.Float64bits(sample))
+	_ = inbound.SetPayload(payload)
+	buf, _ := inbound.Message().Marshal()
+	_, _ = fractional.Write(buf)
+	outBuf := make([]byte, 4096)
+	_, _ = fractional.Read(outBuf)
+	outbound := datura.Acquire("stage-out", datura.Artifact_Type_json)
+	_, _ = outbound.Write(outBuf)
+	readPayload, _ := outbound.Payload()
+
+	if len(readPayload) != 8 {
+		return 0
+	}
+
+	return math.Float64frombits(binary.BigEndian.Uint64(readPayload))
+}
+
+func (fractional *FracDiff) step(sample float64) float64 {
 	if !fractional.Ready {
 		fractional.Min = sample
 		fractional.Max = sample
@@ -116,10 +124,10 @@ func (fractional *FracDiff[T]) observe(sample float64) float64 {
 		return sample
 	}
 
-	return fractional.observeReady(sample)
+	return fractional.stepReady(sample)
 }
 
-func (fractional *FracDiff[T]) observeReady(sample float64) float64 {
+func (fractional *FracDiff) stepReady(sample float64) float64 {
 	fractional.Min = math.Min(fractional.Min, sample)
 	fractional.Max = math.Max(fractional.Max, sample)
 
@@ -141,7 +149,7 @@ func (fractional *FracDiff[T]) observeReady(sample float64) float64 {
 	return fractional.outputSum()
 }
 
-func (fractional *FracDiff[T]) maybeRebuildWeights(order float64, span float64) {
+func (fractional *FracDiff) maybeRebuildWeights(order float64, span float64) {
 	if order == fractional.Order && fractional.Width > 0 {
 		return
 	}
@@ -160,7 +168,7 @@ func (fractional *FracDiff[T]) maybeRebuildWeights(order float64, span float64) 
 	fractional.ensureHistoryCapacity(capacity)
 }
 
-func (fractional *FracDiff[T]) ensureHistoryCapacity(capacity int) {
+func (fractional *FracDiff) ensureHistoryCapacity(capacity int) {
 	if len(fractional.History) >= capacity {
 		return
 	}
@@ -180,7 +188,7 @@ func (fractional *FracDiff[T]) ensureHistoryCapacity(capacity int) {
 	fractional.History = next
 }
 
-func (fractional *FracDiff[T]) pushHistory(sample float64) {
+func (fractional *FracDiff) pushHistory(sample float64) {
 	if len(fractional.History) == 0 {
 		return
 	}
@@ -193,7 +201,7 @@ func (fractional *FracDiff[T]) pushHistory(sample float64) {
 	}
 }
 
-func (fractional *FracDiff[T]) outputSum() float64 {
+func (fractional *FracDiff) outputSum() float64 {
 	sum := 0.0
 	limit := fractional.Width
 
@@ -274,4 +282,11 @@ func fracDiffMaxLag(span float64) int {
 	}
 
 	return int(span) + 1
+}
+
+/*
+Value returns the last derived scalar without re-processing the stage.
+*/
+func (fractional *FracDiff) Value() float64 {
+	return valueFromArtifact(fractional.artifact)
 }

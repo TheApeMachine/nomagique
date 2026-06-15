@@ -1,8 +1,8 @@
 package correlation
 
 import (
+	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/nomagique/core"
 	"gonum.org/v1/gonum/stat"
 )
 
@@ -11,61 +11,65 @@ Pearson computes the Pearson correlation coefficient between two streams.
 Optionally, weights can be provided which are applied to the inputs before
 computing the correlation. This helps to reduce the impact of outliers.
 */
-type Pearson[T ~float64] struct {
-	weights []float64
-	output  core.Scalar[T]
+type Pearson struct {
+	artifact *datura.Artifact
+	weights  []float64
 }
 
 /*
 NewPearson creates a new Pearson correlation dynamic.
 */
-func NewPearson[T ~float64](weights []float64) *Pearson[T] {
-	return &Pearson[T]{
-		weights: weights,
+func NewPearson(weights []float64) *Pearson {
+	return &Pearson{
+		artifact: datura.Acquire("pearson", datura.Artifact_Type_json),
+		weights:  weights,
 	}
 }
 
-/*
-Observe computes the Pearson correlation coefficient between two streams.
-*/
-func (pearson *Pearson[T]) Observe(inputs ...core.Number[T]) core.Scalar[T] {
-	count := len(inputs)
+func (pearson *Pearson) Write(p []byte) (int, error) {
+	return pearson.artifact.Write(p)
+}
 
-	if count < 2 {
+func (pearson *Pearson) Read(p []byte) (int, error) {
+	values := float64Batch(pearson.artifact)
+	count := len(values)
+
+	if count >= 2 && count%2 == 0 {
+		half := count / 2
+		left := values[:half]
+		right := values[half:]
+		putFloat64Payload(&pearson.artifact, "pearson", stat.Correlation(left, right, weightSamples(pearson.weights)))
+
+		return pearson.artifact.Read(p)
+	}
+
+	if count > 0 && count < 2 {
 		errnie.Err(
 			errnie.Validation, "unable to compute Pearson correlation",
 			PearsonError(PearsonErrorRequireAtLeastTwoInputs),
 		)
-
-		return pearson.output
 	}
 
-	if count%2 != 0 {
+	if count%2 != 0 && count > 0 {
 		errnie.Err(
 			errnie.Validation, "unable to compute Pearson correlation",
 			PearsonError(PearsonErrorRequireEqualLength),
 		)
-
-		return pearson.output
 	}
 
-	half := count / 2
-	left := sampleBatch[T](inputs[:half]...)
-	right := sampleBatch[T](inputs[half:]...)
+	if count == 0 || count < 2 || count%2 != 0 {
+		putFloat64Payload(&pearson.artifact, "pearson", 0)
+	}
 
-	pearson.output = core.Scalar[T](T(stat.Correlation(
-		left, right, weightSamples(pearson.weights),
-	)))
-
-	return pearson.output
+	return pearson.artifact.Read(p)
 }
 
-/*
-Reset clears derived state.
-*/
-func (pearson *Pearson[T]) Reset() error {
+func (pearson *Pearson) Close() error {
+	return nil
+}
+
+func (pearson *Pearson) Reset() error {
 	pearson.weights = nil
-	pearson.output = core.Scalar[T](0)
 
 	return nil
 }

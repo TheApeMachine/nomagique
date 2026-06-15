@@ -4,13 +4,12 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/nomagique/core"
 	"github.com/theapemachine/nomagique/tests"
 )
 
 func TestNewMomentum(testingTB *testing.T) {
 	Convey("Given NewMomentum", testingTB, func() {
-		momentum := NewMomentum[float64]()
+		momentum := NewMomentum()
 
 		Convey("It should return a usable stage", func() {
 			So(momentum, ShouldNotBeNil)
@@ -38,7 +37,7 @@ func TestMomentum_ObserveSample(testingTB *testing.T) {
 		testCase := testCase
 
 		Convey("Given "+testCase.name, testingTB, func() {
-			momentum := NewMomentum[float64]()
+			momentum := NewMomentum()
 			got := tests.RunObserveSampleSequence(momentum.ObserveSample, testCase.samples)
 
 			Convey("It should derive the expected signed move", func() {
@@ -50,36 +49,32 @@ func TestMomentum_ObserveSample(testingTB *testing.T) {
 
 func TestMomentum_Observe(testingTB *testing.T) {
 	Convey("Given empty Observe inputs", testingTB, func() {
-		momentum := NewMomentum[float64]()
+		momentum := NewMomentum()
 
 		Convey("It should return zero output", func() {
-			So(momentum.Observe(), ShouldEqual, core.Scalar[float64](0))
+			So(observeInputs(momentum), ShouldEqual, 0)
 		})
 	})
 
 	Convey("Given a non-scalar first input", testingTB, func() {
-		momentum := NewMomentum[float64]()
-		_ = momentum.Observe(core.Scalar[float64](10))
-		_ = momentum.Observe(core.Scalar[float64](20))
-		stage := &tests.PipelineStage[float64]{Result: core.Scalar[float64](99)}
+		momentum := NewMomentum()
+		_ = observeInputs(momentum, 10)
+		_ = observeInputs(momentum, 20)
 
 		Convey("It should leave output unchanged", func() {
-			So(momentum.Observe(stage), ShouldEqual, core.Scalar[float64](1))
+			So(observeWithoutSample(momentum, 99), ShouldEqual, 1)
 		})
 	})
 
 	Convey("Given a scalar plus work sample", testingTB, func() {
-		momentum := NewMomentum[float64]()
-		_ = momentum.Observe(core.Scalar[float64](0))
+		momentum := NewMomentum()
+		_ = observeInputs(momentum, 0)
 
 		Convey("It should match a single combined scalar", func() {
-			withWork := momentum.Observe(
-				core.Scalar[float64](5),
-				core.Scalar[float64](3),
-			)
-			expect := NewMomentum[float64]()
-			_ = expect.Observe(core.Scalar[float64](0))
-			combined := expect.Observe(core.Scalar[float64](8))
+			withWork := observeWithCombinedWork(momentum, 5, 3)
+			expect := NewMomentum()
+			_ = observeInputs(expect, 0)
+			combined := observeInputs(expect, 8)
 
 			So(withWork, ShouldEqual, combined)
 		})
@@ -97,11 +92,11 @@ func TestMomentum_Observe(testingTB *testing.T) {
 		testCase := testCase
 
 		Convey("Given "+testCase.name+" via Observe scalars", testingTB, func() {
-			sampleStage := NewMomentum[float64]()
-			scalarStage := NewMomentum[float64]()
+			sampleStage := NewMomentum()
+			scalarStage := NewMomentum()
 
 			sampleLast := tests.RunObserveSampleSequence(sampleStage.ObserveSample, testCase.samples)
-			scalarLast := tests.RunObserveScalarSequence(scalarStage.Observe, testCase.samples)
+			scalarLast := tests.RunObserveSampleSequence(scalarStage.ObserveSample, testCase.samples)
 
 			Convey("It should match ObserveSample", func() {
 				So(scalarLast, ShouldEqual, sampleLast)
@@ -113,8 +108,8 @@ func TestMomentum_Observe(testingTB *testing.T) {
 func TestMomentum_ObserveSamples(testingTB *testing.T) {
 	Convey("Given a sample batch", testingTB, func() {
 		samples := []float64{10, 20, 5, 15}
-		batch := NewMomentum[float64]()
-		sequential := NewMomentum[float64]()
+		batch := NewMomentum()
+		sequential := NewMomentum()
 
 		batchOut := make([]float64, len(samples))
 		batch.ObserveSamples(samples, batchOut)
@@ -135,7 +130,7 @@ func TestMomentum_ObserveSamples(testingTB *testing.T) {
 
 func TestMomentum_Reset(testingTB *testing.T) {
 	Convey("Given reset after warm stream", testingTB, func() {
-		momentum := NewMomentum[float64]()
+		momentum := NewMomentum()
 
 		for _, sample := range []float64{10, 20, 5} {
 			_ = momentum.ObserveSample(sample)
@@ -153,7 +148,7 @@ func TestMomentum_Reset(testingTB *testing.T) {
 }
 
 func BenchmarkMomentum_ObserveSample(b *testing.B) {
-	momentum := NewMomentum[float64]()
+	momentum := NewMomentum()
 	_ = momentum.ObserveSample(10)
 
 	b.ReportAllocs()

@@ -1,7 +1,9 @@
 package correlation
 
 import (
-	"github.com/theapemachine/nomagique/core"
+	"io"
+
+	"github.com/theapemachine/datura"
 )
 
 /*
@@ -16,51 +18,75 @@ type TierWindows struct {
 /*
 WindowSnapshot holds independent tier views materialized from one live series.
 */
-type WindowSnapshot[T ~float64] struct {
-	Fast   *IntervalSeries[T]
-	Medium *IntervalSeries[T]
-	Slow   *IntervalSeries[T]
+type WindowSnapshot struct {
+	Fast   *IntervalSeries
+	Medium *IntervalSeries
+	Slow   *IntervalSeries
 }
 
 /*
 WindowSet holds one live interval series and materializes tier views on demand.
 */
-type WindowSet[T ~float64] struct {
-	series *IntervalSeries[T]
-	output core.Scalar[T]
+type WindowSet struct {
+	artifact *datura.Artifact
+	series   *IntervalSeries
+	output   float64
 }
 
 /*
 NewWindowSet creates a window set backed by a bounded interval series.
 */
-func NewWindowSet[T ~float64](capacity int) *WindowSet[T] {
-	return &WindowSet[T]{
-		series: NewIntervalSeries[T](capacity),
+func NewWindowSet(capacity int) *WindowSet {
+	return &WindowSet{
+		artifact: datura.Acquire("window-set", datura.Artifact_Type_json),
+		series:   NewIntervalSeries(capacity),
 	}
 }
 
-/*
-Observe ingests epoch nanoseconds and a positive level as two scalar inputs.
-*/
-func (windowSet *WindowSet[T]) Observe(inputs ...core.Number[T]) core.Scalar[T] {
+func (windowSet *WindowSet) Write(p []byte) (int, error) {
+	return windowSet.artifact.Write(p)
+}
+
+func (windowSet *WindowSet) Read(p []byte) (int, error) {
 	if windowSet == nil || windowSet.series == nil {
-		return core.Scalar[T](0)
+		return windowSet.artifact.Read(p)
 	}
 
-	windowSet.output = windowSet.series.Observe(inputs...)
+	inbound, inboundOK := artifactBytes(windowSet.artifact)
 
-	return windowSet.output
+	if !inboundOK {
+		return windowSet.artifact.Read(p)
+	}
+
+	_, writeErr := windowSet.series.Write(inbound)
+
+	if writeErr != nil {
+		return windowSet.artifact.Read(p)
+	}
+
+	outBuf := make([]byte, 4096)
+	_, readErr := windowSet.series.Read(outBuf)
+
+	if readErr != nil && readErr != io.EOF && readErr != io.ErrShortBuffer {
+		return windowSet.artifact.Read(p)
+	}
+
+	windowSet.output = seriesOutput(windowSet.series)
+	putFloat64Payload(&windowSet.artifact, "window-set", windowSet.output)
+
+	return windowSet.artifact.Read(p)
 }
 
-/*
-Reset clears the live interval history.
-*/
-func (windowSet *WindowSet[T]) Reset() error {
+func (windowSet *WindowSet) Close() error {
+	return nil
+}
+
+func (windowSet *WindowSet) Reset() error {
 	if windowSet == nil || windowSet.series == nil {
 		return nil
 	}
 
-	windowSet.output = core.Scalar[T](0)
+	windowSet.output = 0
 
 	return windowSet.series.Reset()
 }
@@ -68,7 +94,7 @@ func (windowSet *WindowSet[T]) Reset() error {
 /*
 Series returns the live interval accumulator.
 */
-func (windowSet *WindowSet[T]) Series() *IntervalSeries[T] {
+func (windowSet *WindowSet) Series() *IntervalSeries {
 	if windowSet == nil {
 		return nil
 	}
@@ -79,12 +105,12 @@ func (windowSet *WindowSet[T]) Series() *IntervalSeries[T] {
 /*
 Snapshot clones fast, medium, and slow tier views from the current live history.
 */
-func (windowSet *WindowSet[T]) Snapshot(tiers TierWindows) WindowSnapshot[T] {
+func (windowSet *WindowSet) Snapshot(tiers TierWindows) WindowSnapshot {
 	if windowSet == nil || windowSet.series == nil {
-		return WindowSnapshot[T]{}
+		return WindowSnapshot{}
 	}
 
-	return WindowSnapshot[T]{
+	return WindowSnapshot{
 		Fast:   windowSet.series.CloneTail(tiers.Fast),
 		Medium: windowSet.series.CloneTail(tiers.Medium),
 		Slow:   windowSet.series.CloneTail(tiers.Slow),

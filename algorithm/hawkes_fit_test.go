@@ -24,15 +24,15 @@ func TestHawkesFit_Observe(testingTB *testing.T) {
 		}
 
 		horizon := float64(start.Add(4 * time.Second).UnixNano())
-		fitProcess := NewHawkesFit[float64](xTimes, yTimes, horizon, hawkes.BivariateFit{})
+		fitProcess := NewHawkesFit(xTimes, yTimes, horizon, hawkes.BivariateFit{})
 
-		excitation := fitProcess.Observe()
+		excitation := observeInputs(fitProcess)
 		fit, ok := fitProcess.Fit()
 
 		Convey("It should fit and return a positive excitation ratio", func() {
 			So(ok, ShouldBeTrue)
 			So(fit.MuX, ShouldBeGreaterThan, 0)
-			So(float64(excitation), ShouldBeGreaterThan, 0)
+			So(excitation, ShouldBeGreaterThan, 0)
 		})
 	})
 }
@@ -48,11 +48,11 @@ func BenchmarkHawkesFit_Observe(testingTB *testing.B) {
 	}
 
 	horizon := float64(start.Add(4 * time.Second).UnixNano())
-	fitProcess := NewHawkesFit[float64](xTimes, yTimes, horizon, hawkes.BivariateFit{})
+	fitProcess := NewHawkesFit(xTimes, yTimes, horizon, hawkes.BivariateFit{})
 
 	testingTB.ReportAllocs()
 
 	for testingTB.Loop() {
-		_ = fitProcess.Observe()
+		_ = observeInputs(fitProcess)
 	}
 }

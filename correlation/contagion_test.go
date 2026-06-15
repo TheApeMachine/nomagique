@@ -8,8 +8,8 @@ import (
 
 func TestMedianPairwiseAbsCorrelation(testingTB *testing.T) {
 	Convey("Given proportional interval series", testingTB, func() {
-		left := NewIntervalSeries[float64](8)
-		right := NewIntervalSeries[float64](8)
+		left := NewIntervalSeries(8)
+		right := NewIntervalSeries(8)
 
 		observeEpochLevel(left, 1_000, 100)
 		observeEpochLevel(left, 2_000, 110)
@@ -17,7 +17,7 @@ func TestMedianPairwiseAbsCorrelation(testingTB *testing.T) {
 		observeEpochLevel(right, 2_000, 55)
 
 		Convey("It should return unit median correlation", func() {
-			value := MedianPairwiseAbsCorrelation([]*IntervalSeries[float64]{left, right})
+			value := MedianPairwiseAbsCorrelation([]*IntervalSeries{left, right})
 			So(value, ShouldAlmostEqual, 1, 1e-9)
 		})
 	})
@@ -25,8 +25,8 @@ func TestMedianPairwiseAbsCorrelation(testingTB *testing.T) {
 
 func TestContagionObserve(testingTB *testing.T) {
 	Convey("Given a contagion stage with fed window sets", testingTB, func() {
-		first := NewWindowSet[float64](8)
-		second := NewWindowSet[float64](8)
+		first := NewWindowSet(8)
+		second := NewWindowSet(8)
 
 		observeEpochLevel(first, 1_000, 100)
 		observeEpochLevel(first, 2_000, 110)
@@ -34,7 +34,7 @@ func TestContagionObserve(testingTB *testing.T) {
 		observeEpochLevel(second, 2_000, 55)
 
 		contagion := NewContagion(
-			[]*WindowSet[float64]{first, second},
+			[]*WindowSet{first, second},
 			TierWindows{Fast: 8, Medium: 8, Slow: 8},
 			ContagionConfig{
 				MinSamples:    1,
@@ -44,17 +44,17 @@ func TestContagionObserve(testingTB *testing.T) {
 		)
 
 		Convey("It should publish positive coupling for correlated tiers", func() {
-			value := float64(contagion.Observe())
+			value := float64(observeInputs(contagion))
 			So(value, ShouldBeGreaterThan, 0)
 		})
 	})
 }
 
 func BenchmarkContagionObserve(testingTB *testing.B) {
-	sets := make([]*WindowSet[float64], 16)
+	sets := make([]*WindowSet, 16)
 
 	for index := range sets {
-		set := NewWindowSet[float64](32)
+		set := NewWindowSet(32)
 
 		for step := range 32 {
 			observeEpochLevel(set, int64((step+1)*1_000), 100+float64(index)+float64(step)*0.01)
@@ -75,6 +75,6 @@ func BenchmarkContagionObserve(testingTB *testing.B) {
 	testingTB.ReportAllocs()
 
 	for testingTB.Loop() {
-		_ = contagion.Observe()
+		_ = observeInputs(contagion)
 	}
 }

@@ -1,45 +1,58 @@
 package statistic
 
 import (
+	"encoding/binary"
 	"math"
 
+	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/nomagique/core"
 	"gonum.org/v1/gonum/stat"
 )
 
 /*
 KLDivergence computes sum(q_i * log(q_i / p_i)) for aligned distributions.
-Inputs split into observed and expected halves; lengths may differ inside each half.
-When expectedSum or floor on the receiver are zero, they are derived from the samples.
 */
-type KLDivergence[T ~float64] struct {
+type KLDivergence struct {
+	artifact    *datura.Artifact
 	weights     []float64
 	expectedSum float64
 	floor       float64
-	output      core.Scalar[T]
 }
 
 /*
 NewKLDivergence creates a KL divergence stage.
 expectedSum and floor may be zero to derive them from each observation.
 */
-func NewKLDivergence[T ~float64](
+func NewKLDivergence(
 	weights []float64,
 	expectedSum, floor float64,
-) *KLDivergence[T] {
-	return &KLDivergence[T]{
+) *KLDivergence {
+	return &KLDivergence{
+		artifact:    datura.Acquire("kl", datura.Artifact_Type_json),
 		weights:     weights,
 		expectedSum: expectedSum,
 		floor:       floor,
 	}
 }
 
-/*
-Observe computes KL divergence between observed and expected sample halves.
-*/
-func (kl *KLDivergence[T]) Observe(inputs ...core.Number[T]) core.Scalar[T] {
-	count := len(inputs)
+func (kl *KLDivergence) Write(p []byte) (int, error) {
+	return kl.artifact.Write(p)
+}
+
+func (kl *KLDivergence) Read(p []byte) (int, error) {
+	payload, err := kl.artifact.Payload()
+
+	if err != nil || len(payload) < 8 || len(payload)%8 != 0 {
+		return kl.artifact.Read(p)
+	}
+
+	count := len(payload) / 8
+	values := make([]float64, count)
+
+	for index := range count {
+		offset := index * 8
+		values[index] = math.Float64frombits(binary.BigEndian.Uint64(payload[offset : offset+8]))
+	}
 
 	if count < 2 {
 		errnie.Err(
@@ -47,7 +60,9 @@ func (kl *KLDivergence[T]) Observe(inputs ...core.Number[T]) core.Scalar[T] {
 			KLError(KLErrorRequireAtLeastTwoInputs),
 		)
 
-		return kl.output
+		putFloat64Payload(&kl.artifact, "kl", 0)
+
+		return kl.artifact.Read(p)
 	}
 
 	if count%2 != 0 {
@@ -56,35 +71,39 @@ func (kl *KLDivergence[T]) Observe(inputs ...core.Number[T]) core.Scalar[T] {
 			KLError(KLErrorRequireEqualLength),
 		)
 
-		return kl.output
+		putFloat64Payload(&kl.artifact, "kl", 0)
+
+		return kl.artifact.Read(p)
 	}
 
 	half := count / 2
-	observed := sampleBatch[T](inputs[:half]...)
-	expected := sampleBatch[T](inputs[half:]...)
+	observed := values[:half]
+	expected := values[half:]
 
 	divergence, ok := kl.divergence(observed, expected)
 
-	if !ok {
-		return kl.output
+	if ok {
+		putFloat64Payload(&kl.artifact, "kl", divergence)
 	}
 
-	kl.output = core.Scalar[T](T(divergence))
+	if !ok {
+		putFloat64Payload(&kl.artifact, "kl", 0)
+	}
 
-	return kl.output
+	return kl.artifact.Read(p)
 }
 
-/*
-Reset clears derived state.
-*/
-func (kl *KLDivergence[T]) Reset() error {
+func (kl *KLDivergence) Close() error {
+	return nil
+}
+
+func (kl *KLDivergence) Reset() error {
 	kl.weights = nil
-	kl.output = core.Scalar[T](0)
 
 	return nil
 }
 
-func (kl *KLDivergence[T]) divergence(observed, expected []float64) (float64, bool) {
+func (kl *KLDivergence) divergence(observed, expected []float64) (float64, bool) {
 	for _, value := range observed {
 		if math.IsNaN(value) || math.IsInf(value, 0) {
 			errnie.Err(
@@ -186,7 +205,7 @@ func (kl *KLDivergence[T]) divergence(observed, expected []float64) (float64, bo
 	return divergence, true
 }
 
-func (kl *KLDivergence[T]) probabilityFloor(
+func (kl *KLDivergence) probabilityFloor(
 	observed, expected []float64, width int,
 ) float64 {
 	if kl.floor > 0 {

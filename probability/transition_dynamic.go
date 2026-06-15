@@ -1,70 +1,87 @@
 package probability
 
 import (
-	"github.com/theapemachine/nomagique/core"
+	"github.com/theapemachine/datura"
 )
 
 /*
-Transition scores transition surprisal from an observed distribution and optionally
+Transition scores transition surprisal from classifier probabilities and optionally
 records the next category index.
 */
-type Transition[T ~float64] struct {
-	matrix *TransitionMatrix
-	output core.Scalar[T]
+type Transition struct {
+	artifact *datura.Artifact
+	matrix   *TransitionMatrix
 }
 
 /*
-TransitionSurprise returns a transition surprisal stage for nomagique.Number pipelines.
+NewTransitionSurprise returns a transition surprisal stage for io.ReadWriter pipelines.
 */
-func TransitionSurprise[T ~float64](numStates int, alpha float64) *Transition[T] {
-	return &Transition[T]{
-		matrix: NewTransitionMatrix(numStates, alpha),
+func NewTransitionSurprise(numStates int, alpha float64) *Transition {
+	return &Transition{
+		artifact: datura.Acquire("transition", datura.Artifact_Type_json),
+		matrix:   NewTransitionMatrix(numStates, alpha),
 	}
 }
 
-/*
-Observe ingests numStates distribution scalars and returns KL surprisal against the
-current transition row. When numStates+1 scalars are supplied, the final scalar
-records the next category via Update.
-*/
-func (transition *Transition[T]) Observe(inputs ...core.Number[T]) core.Scalar[T] {
+func (transition *Transition) Write(p []byte) (int, error) {
+	return transition.artifact.Write(p)
+}
+
+func (transition *Transition) Read(p []byte) (int, error) {
+	rehydrateArtifact(&transition.artifact, "transition", datura.Artifact_Type_json)
+
 	if transition == nil || transition.matrix == nil {
-		return core.Scalar[T](0)
+		return transition.artifact.Read(p)
 	}
 
-	scalars, ok := collectScalars[T](inputs...)
+	probabilities := peekFloatList(transition.artifact, "classifier.probabilities")
 
-	if !ok || len(scalars) < transition.matrix.numStates {
-		return transition.output
+	if len(probabilities) == 0 || len(probabilities) < transition.matrix.numStates {
+		return transition.artifact.Read(p)
 	}
 
-	observed := scalars[:transition.matrix.numStates]
+	observed := probabilities[:transition.matrix.numStates]
+	surprise, surpriseErr := transition.matrix.Surprise(observed)
 
-	surprise, err := transition.matrix.Surprise(observed)
+	if surpriseErr == nil {
+		out := encodePayload(surprise)
+		_ = transition.artifact.SetPayload(out)
+		pokeFloat(transition.artifact, "transition.surprise", surprise)
 
-	if err != nil {
-		return transition.output
+		categoryIndex, categoryOK := peekInt(transition.artifact, "classifier.category")
+
+		if categoryOK && categoryIndex >= 1 && categoryIndex <= transition.matrix.numStates {
+			transition.matrix.Update(categoryIndex - 1)
+		}
 	}
 
-	if len(scalars) > transition.matrix.numStates {
-		transition.matrix.Update(int(scalars[transition.matrix.numStates]))
+	return transition.artifact.Read(p)
+}
+
+func (transition *Transition) Close() error {
+	return nil
+}
+
+/*
+SetSmoothingAlpha replaces the Dirichlet smoothing prior used by PadObserved.
+*/
+func (transition *Transition) SetSmoothingAlpha(alpha float64) {
+	if transition == nil || transition.matrix == nil || alpha <= 0 {
+		return
 	}
 
-	transition.output = core.Scalar[T](T(surprise))
-
-	return transition.output
+	transition.matrix.smoothingAlpha = alpha
 }
 
 /*
 Reset clears transition counts back to the smoothing prior.
 */
-func (transition *Transition[T]) Reset() error {
+func (transition *Transition) Reset() error {
 	if transition == nil || transition.matrix == nil {
 		return nil
 	}
 
 	transition.matrix.Reset()
-	transition.output = core.Scalar[T](0)
 
 	return nil
 }

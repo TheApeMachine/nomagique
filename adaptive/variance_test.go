@@ -4,13 +4,12 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/nomagique/core"
 	"github.com/theapemachine/nomagique/tests"
 )
 
 func TestNewVariance(testingTB *testing.T) {
 	Convey("Given NewVariance", testingTB, func() {
-		variance := NewVariance[float64]()
+		variance := NewVariance()
 
 		Convey("It should return a usable stage", func() {
 			So(variance, ShouldNotBeNil)
@@ -36,7 +35,7 @@ func TestVariance_ObserveSample(testingTB *testing.T) {
 		testCase := testCase
 
 		Convey("Given "+testCase.name, testingTB, func() {
-			variance := NewVariance[float64]()
+			variance := NewVariance()
 			got := tests.RunObserveSampleSequence(variance.ObserveSample, testCase.samples)
 
 			Convey("It should derive the expected variance", func() {
@@ -48,36 +47,32 @@ func TestVariance_ObserveSample(testingTB *testing.T) {
 
 func TestVariance_Observe(testingTB *testing.T) {
 	Convey("Given empty Observe inputs", testingTB, func() {
-		variance := NewVariance[float64]()
+		variance := NewVariance()
 
 		Convey("It should return zero output", func() {
-			So(variance.Observe(), ShouldEqual, core.Scalar[float64](0))
+			So(observeInputs(variance), ShouldEqual, 0)
 		})
 	})
 
 	Convey("Given a non-scalar first input", testingTB, func() {
-		variance := NewVariance[float64]()
-		_ = variance.Observe(core.Scalar[float64](10))
-		_ = variance.Observe(core.Scalar[float64](20))
-		stage := &tests.PipelineStage[float64]{Result: core.Scalar[float64](99)}
+		variance := NewVariance()
+		_ = observeInputs(variance, 10)
+		_ = observeInputs(variance, 20)
 
 		Convey("It should leave output unchanged", func() {
-			So(variance.Observe(stage), ShouldEqual, core.Scalar[float64](100))
+			So(observeWithoutSample(variance, 99), ShouldEqual, 100)
 		})
 	})
 
 	Convey("Given a scalar plus work sample", testingTB, func() {
-		variance := NewVariance[float64]()
-		_ = variance.Observe(core.Scalar[float64](10))
+		variance := NewVariance()
+		_ = observeInputs(variance, 10)
 
 		Convey("It should match a single combined scalar", func() {
-			withWork := variance.Observe(
-				core.Scalar[float64](5),
-				core.Scalar[float64](3),
-			)
-			expect := NewVariance[float64]()
-			_ = expect.Observe(core.Scalar[float64](10))
-			combined := expect.Observe(core.Scalar[float64](8))
+			withWork := observeWithCombinedWork(variance, 5, 3)
+			expect := NewVariance()
+			_ = observeInputs(expect, 10)
+			combined := observeInputs(expect, 8)
 
 			So(withWork, ShouldEqual, combined)
 		})
@@ -95,11 +90,11 @@ func TestVariance_Observe(testingTB *testing.T) {
 		testCase := testCase
 
 		Convey("Given "+testCase.name+" via Observe scalars", testingTB, func() {
-			sampleStage := NewVariance[float64]()
-			scalarStage := NewVariance[float64]()
+			sampleStage := NewVariance()
+			scalarStage := NewVariance()
 
 			sampleLast := tests.RunObserveSampleSequence(sampleStage.ObserveSample, testCase.samples)
-			scalarLast := tests.RunObserveScalarSequence(scalarStage.Observe, testCase.samples)
+			scalarLast := tests.RunObserveSampleSequence(scalarStage.ObserveSample, testCase.samples)
 
 			Convey("It should match ObserveSample", func() {
 				So(scalarLast, ShouldEqual, sampleLast)
@@ -111,8 +106,8 @@ func TestVariance_Observe(testingTB *testing.T) {
 func TestVariance_ObserveSamples(testingTB *testing.T) {
 	Convey("Given a sample batch", testingTB, func() {
 		samples := []float64{10, 20, 15, 25}
-		batch := NewVariance[float64]()
-		sequential := NewVariance[float64]()
+		batch := NewVariance()
+		sequential := NewVariance()
 
 		batchOut := make([]float64, len(samples))
 		batch.ObserveSamples(samples, batchOut)
@@ -133,7 +128,7 @@ func TestVariance_ObserveSamples(testingTB *testing.T) {
 
 func TestVariance_Reset(testingTB *testing.T) {
 	Convey("Given reset after warm stream", testingTB, func() {
-		variance := NewVariance[float64]()
+		variance := NewVariance()
 
 		for _, sample := range []float64{10, 20, 30} {
 			_ = variance.ObserveSample(sample)
@@ -151,7 +146,7 @@ func TestVariance_Reset(testingTB *testing.T) {
 }
 
 func BenchmarkVariance_ObserveSample(b *testing.B) {
-	variance := NewVariance[float64]()
+	variance := NewVariance()
 	_ = variance.ObserveSample(10)
 
 	b.ReportAllocs()

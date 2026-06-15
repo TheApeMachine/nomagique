@@ -3,7 +3,7 @@ package geometry
 import (
 	"math"
 
-	"github.com/theapemachine/nomagique/core"
+	"github.com/theapemachine/datura"
 )
 
 /*
@@ -160,47 +160,51 @@ func (multivector Multivector) Compose(other Multivector) Multivector {
 /*
 Rotor builds a rotation motor from angle and axis bivector scalars.
 */
-type Rotor[T ~float64] struct {
+type Rotor struct {
+	artifact    *datura.Artifact
 	multivector Multivector
-	output      core.Scalar[T]
+	output      float64
 }
 
 /*
 NewRotor returns a rotor stage for nomagique.Number pipelines.
 */
-func NewRotor[T ~float64]() *Rotor[T] {
-	return &Rotor[T]{}
+func NewRotor() *Rotor {
+	return &Rotor{
+		artifact: datura.Acquire("rotor", datura.Artifact_Type_json),
+	}
 }
 
-/*
-Observe expects four scalars: angle, axisE12, axisE31, axisE23.
-*/
-func (rotor *Rotor[T]) Observe(inputs ...core.Number[T]) core.Scalar[T] {
-	scalars, ok := collectScalars[T](inputs...)
+func (rotor *Rotor) Write(p []byte) (int, error) {
+	return rotor.artifact.Write(p)
+}
 
-	if !ok || len(scalars) < 4 {
-		return rotor.output
+func (rotor *Rotor) Read(p []byte) (int, error) {
+	scalars := float64Batch(rotor.artifact)
+
+	if len(scalars) >= 4 {
+		rotor.multivector.FromRotation(scalars[0], scalars[1], scalars[2], scalars[3])
+		rotor.output = rotor.multivector[MvScalar]
+		putFloat64Payload(&rotor.artifact, "rotor", rotor.output)
 	}
 
-	rotor.multivector.FromRotation(scalars[0], scalars[1], scalars[2], scalars[3])
-	rotor.output = core.Scalar[T](T(rotor.multivector[MvScalar]))
+	return rotor.artifact.Read(p)
+}
 
-	return rotor.output
+func (rotor *Rotor) Close() error {
+	return nil
 }
 
 /*
-Multivector returns the rotor built by the last Observe call.
+Multivector returns the rotor built by the last Read call.
 */
-func (rotor *Rotor[T]) Multivector() Multivector {
+func (rotor *Rotor) Multivector() Multivector {
 	return rotor.multivector
 }
 
-/*
-Reset clears derived state.
-*/
-func (rotor *Rotor[T]) Reset() error {
+func (rotor *Rotor) Reset() error {
 	rotor.multivector = Multivector{}
-	rotor.output = core.Scalar[T](0)
+	rotor.output = 0
 
 	return nil
 }
@@ -208,47 +212,51 @@ func (rotor *Rotor[T]) Reset() error {
 /*
 Translator builds a translation motor from displacement scalars.
 */
-type Translator[T ~float64] struct {
+type Translator struct {
+	artifact    *datura.Artifact
 	multivector Multivector
-	output      core.Scalar[T]
+	output      float64
 }
 
 /*
 NewTranslator returns a translation stage for nomagique.Number pipelines.
 */
-func NewTranslator[T ~float64]() *Translator[T] {
-	return &Translator[T]{}
+func NewTranslator() *Translator {
+	return &Translator{
+		artifact: datura.Acquire("translator", datura.Artifact_Type_json),
+	}
 }
 
-/*
-Observe expects three scalars: dx, dy, dz.
-*/
-func (translator *Translator[T]) Observe(inputs ...core.Number[T]) core.Scalar[T] {
-	scalars, ok := collectScalars[T](inputs...)
+func (translator *Translator) Write(p []byte) (int, error) {
+	return translator.artifact.Write(p)
+}
 
-	if !ok || len(scalars) < 3 {
-		return translator.output
+func (translator *Translator) Read(p []byte) (int, error) {
+	scalars := float64Batch(translator.artifact)
+
+	if len(scalars) >= 3 {
+		translator.multivector.FromTranslation(scalars[0], scalars[1], scalars[2])
+		translator.output = translator.multivector[MvScalar]
+		putFloat64Payload(&translator.artifact, "translator", translator.output)
 	}
 
-	translator.multivector.FromTranslation(scalars[0], scalars[1], scalars[2])
-	translator.output = core.Scalar[T](T(translator.multivector[MvScalar]))
+	return translator.artifact.Read(p)
+}
 
-	return translator.output
+func (translator *Translator) Close() error {
+	return nil
 }
 
 /*
-Multivector returns the motor built by the last Observe call.
+Multivector returns the motor built by the last Read call.
 */
-func (translator *Translator[T]) Multivector() Multivector {
+func (translator *Translator) Multivector() Multivector {
 	return translator.multivector
 }
 
-/*
-Reset clears derived state.
-*/
-func (translator *Translator[T]) Reset() error {
+func (translator *Translator) Reset() error {
 	translator.multivector = Multivector{}
-	translator.output = core.Scalar[T](0)
+	translator.output = 0
 
 	return nil
 }
@@ -256,44 +264,47 @@ func (translator *Translator[T]) Reset() error {
 /*
 Sandwich applies a configured motor sandwich to an observed multivector.
 */
-type Sandwich[T ~float64] struct {
-	motor  Multivector
-	output core.Scalar[T]
+type Sandwich struct {
+	artifact *datura.Artifact
+	motor    Multivector
+	output   float64
 }
 
 /*
 NewSandwich returns a sandwich stage bound to motor.
 */
-func NewSandwich[T ~float64](motor Multivector) *Sandwich[T] {
-	return &Sandwich[T]{
-		motor: motor,
+func NewSandwich(motor Multivector) *Sandwich {
+	return &Sandwich{
+		artifact: datura.Acquire("sandwich", datura.Artifact_Type_json),
+		motor:    motor,
 	}
 }
 
-/*
-Observe expects eight target component scalars in layout order.
-*/
-func (sandwich *Sandwich[T]) Observe(inputs ...core.Number[T]) core.Scalar[T] {
-	scalars, ok := collectScalars[T](inputs...)
-
-	if !ok || len(scalars) < multivectorComponentCount {
-		return sandwich.output
-	}
-
-	var target Multivector
-
-	target.FromComponents(scalars)
-	result := sandwich.motor.Sandwich(target)
-	sandwich.output = core.Scalar[T](T(result[MvScalar]))
-
-	return sandwich.output
+func (sandwich *Sandwich) Write(p []byte) (int, error) {
+	return sandwich.artifact.Write(p)
 }
 
-/*
-Reset clears derived output.
-*/
-func (sandwich *Sandwich[T]) Reset() error {
-	sandwich.output = core.Scalar[T](0)
+func (sandwich *Sandwich) Read(p []byte) (int, error) {
+	scalars := float64Batch(sandwich.artifact)
+
+	if len(scalars) >= multivectorComponentCount {
+		var target Multivector
+
+		target.FromComponents(scalars)
+		result := sandwich.motor.Sandwich(target)
+		sandwich.output = result[MvScalar]
+		putFloat64Payload(&sandwich.artifact, "clifford", sandwich.output)
+	}
+
+	return sandwich.artifact.Read(p)
+}
+
+func (sandwich *Sandwich) Close() error {
+	return nil
+}
+
+func (sandwich *Sandwich) Reset() error {
+	sandwich.output = 0
 
 	return nil
 }

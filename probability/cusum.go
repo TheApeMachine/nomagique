@@ -1,64 +1,76 @@
 package probability
 
 import (
-	"github.com/theapemachine/nomagique/core"
+	"encoding/binary"
+	"math"
+
+	"github.com/theapemachine/datura"
 )
 
 /*
-ChangeSum accumulates sequential change evidence from a sample stream.
+CUSUM accumulates sequential change evidence from a sample stream.
 */
-type ChangeSum[T ~float64] struct {
-	state  CUSUMState
-	output core.Scalar[T]
+type CUSUM struct {
+	artifact *datura.Artifact
+	state    CUSUMState
 }
 
 /*
-CUSUM returns a change-detection dynamic ready from its first observation.
+NewCUSUM returns a change-detection stage ready from its first observation.
 */
-func CUSUM[T ~float64]() *ChangeSum[T] {
-	return &ChangeSum[T]{}
+func NewCUSUM() *CUSUM {
+	return &CUSUM{
+		artifact: datura.Acquire("cusum", datura.Artifact_Type_json),
+	}
 }
 
-/*
-Observe derives cumulative change evidence for the current sample.
-*/
-func (changeSum *ChangeSum[T]) Observe(inputs ...core.Number[T]) core.Scalar[T] {
-	if len(inputs) == 0 {
-		return changeSum.output
+func (cusum *CUSUM) Write(p []byte) (int, error) {
+	return cusum.artifact.Write(p)
+}
+
+func (cusum *CUSUM) Read(p []byte) (int, error) {
+	rehydrateArtifact(&cusum.artifact, "cusum", datura.Artifact_Type_json)
+
+	payload, err := cusum.artifact.Payload()
+
+	if err == nil && len(payload) == 8 {
+		sample := math.Float64frombits(binary.BigEndian.Uint64(payload))
+		derived := ObserveCUSUM(&cusum.state, sample)
+		out := make([]byte, 8)
+		binary.BigEndian.PutUint64(out, math.Float64bits(derived))
+		_ = cusum.artifact.SetPayload(out)
 	}
 
-	sample, ok := inputs[0].(core.Scalar[T])
+	return cusum.artifact.Read(p)
+}
+
+func (cusum *CUSUM) Value() float64 {
+	payload, _ := cusum.artifact.Payload()
+	value, ok := payloadScalar(payload)
 
 	if !ok {
-		return changeSum.output
+		return 0
 	}
 
-	if len(inputs) > 1 {
-		if work, workOK := inputs[1].(core.Scalar[T]); workOK {
-			sample = core.Scalar[T](T(sample) + T(work))
-		}
-	}
+	return value
+}
 
-	changeSum.output = core.Scalar[T](T(
-		ObserveCUSUM(&changeSum.state, float64(sample)),
-	))
-
-	return changeSum.output
+func (cusum *CUSUM) Close() error {
+	return nil
 }
 
 /*
 ObserveSamples runs the exact batch kernel over samples into out.
 */
-func (changeSum *ChangeSum[T]) ObserveSamples(samples []float64, out []float64) {
-	changeSum.state.ObserveSamples(samples, out)
+func (cusum *CUSUM) ObserveSamples(samples []float64, out []float64) {
+	cusum.state.ObserveSamples(samples, out)
 }
 
 /*
 Reset clears derived state.
 */
-func (changeSum *ChangeSum[T]) Reset() error {
-	changeSum.state.Reset()
-	changeSum.output = core.Scalar[T](0)
+func (cusum *CUSUM) Reset() error {
+	cusum.state.Reset()
 
 	return nil
 }

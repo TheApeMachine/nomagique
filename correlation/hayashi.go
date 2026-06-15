@@ -4,8 +4,8 @@ import (
 	"math"
 	"time"
 
+	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/nomagique/core"
 )
 
 /*
@@ -13,91 +13,78 @@ HayashiYoshida estimates asynchronous high-frequency correlation with a sliding
 sweep over overlapping return intervals. It does not require both series to
 share the same observation grid.
 */
-type HayashiYoshida[T ~float64] struct {
+type HayashiYoshida struct {
+	artifact    *datura.Artifact
 	weights     []float64
 	maxInterval time.Duration
-	output      core.Scalar[T]
 }
 
 /*
 NewHayashiYoshida creates a Hayashi-Yoshida correlation dynamic.
 When maxInterval is zero, consecutive sample spacing is not capped.
 */
-func NewHayashiYoshida[T ~float64](
-	weights []float64, maxInterval time.Duration,
-) *HayashiYoshida[T] {
-	return &HayashiYoshida[T]{
+func NewHayashiYoshida(weights []float64, maxInterval time.Duration) *HayashiYoshida {
+	return &HayashiYoshida{
+		artifact:    datura.Acquire("hayashi", datura.Artifact_Type_json),
 		weights:     weights,
 		maxInterval: maxInterval,
 	}
 }
 
-/*
-Observe computes Hayashi-Yoshida correlation between two encoded sample streams.
-Inputs are split into equal halves; each half is a sequence of (time, value) pairs.
-*/
-func (hayashi *HayashiYoshida[T]) Observe(inputs ...core.Number[T]) core.Scalar[T] {
-	count := len(inputs)
+func (hayashi *HayashiYoshida) Write(p []byte) (int, error) {
+	return hayashi.artifact.Write(p)
+}
 
-	if count < 2 {
+func (hayashi *HayashiYoshida) Read(p []byte) (int, error) {
+	values := float64Batch(hayashi.artifact)
+	count := len(values)
+
+	if count >= 4 && count%2 == 0 {
+		half := count / 2
+		left, leftOK := samplesFromScalars(values[:half])
+		right, rightOK := samplesFromScalars(values[half:])
+
+		if leftOK && rightOK {
+			correlation, ok := hayashiYoshidaCorrelation(left, right, hayashi.maxInterval)
+
+			if ok {
+				putFloat64Payload(&hayashi.artifact, "hayashi", correlation)
+
+				return hayashi.artifact.Read(p)
+			}
+		}
+
+		errnie.Err(
+			errnie.Validation, "unable to compute Hayashi-Yoshida correlation",
+			HayashiError(HayashiErrorRequirePairedSamples),
+		)
+	}
+
+	if count > 0 && count < 2 {
 		errnie.Err(
 			errnie.Validation, "unable to compute Hayashi-Yoshida correlation",
 			HayashiError(HayashiErrorRequireAtLeastTwoInputs),
 		)
-
-		return hayashi.output
 	}
 
-	if count%2 != 0 {
+	if count%2 != 0 && count > 0 {
 		errnie.Err(
 			errnie.Validation, "unable to compute Hayashi-Yoshida correlation",
 			HayashiError(HayashiErrorRequireEqualLength),
 		)
-
-		return hayashi.output
 	}
 
-	half := count / 2
+	putFloat64Payload(&hayashi.artifact, "hayashi", 0)
 
-	left, leftOK := samplesFromScalars(sampleBatch[T](inputs[:half]...))
-
-	if !leftOK {
-		errnie.Err(
-			errnie.Validation, "unable to compute Hayashi-Yoshida correlation",
-			HayashiError(HayashiErrorRequirePairedSamples),
-		)
-
-		return hayashi.output
-	}
-
-	right, rightOK := samplesFromScalars(sampleBatch[T](inputs[half:]...))
-
-	if !rightOK {
-		errnie.Err(
-			errnie.Validation, "unable to compute Hayashi-Yoshida correlation",
-			HayashiError(HayashiErrorRequirePairedSamples),
-		)
-
-		return hayashi.output
-	}
-
-	correlation, ok := hayashiYoshidaCorrelation(left, right, hayashi.maxInterval)
-
-	if !ok {
-		return hayashi.output
-	}
-
-	hayashi.output = core.Scalar[T](T(correlation))
-
-	return hayashi.output
+	return hayashi.artifact.Read(p)
 }
 
-/*
-Reset clears derived state.
-*/
-func (hayashi *HayashiYoshida[T]) Reset() error {
+func (hayashi *HayashiYoshida) Close() error {
+	return nil
+}
+
+func (hayashi *HayashiYoshida) Reset() error {
 	hayashi.weights = nil
-	hayashi.output = core.Scalar[T](0)
 
 	return nil
 }

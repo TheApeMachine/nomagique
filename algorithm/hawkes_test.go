@@ -15,11 +15,11 @@ func TestHawkes_Observe(testingTB *testing.T) {
 		seed, ok := hawkes.MethodOfMoments(xStream, yStream, nil, 1)
 		So(ok, ShouldBeTrue)
 
-		process := NewHawkes[float64](seed, 1, 1, xStream, yStream, nil)
-		confidence := process.Observe()
+		process := NewHawkes(seed, 1, 1, xStream, yStream, nil)
+		confidence := observeInputs(process)
 
 		Convey("It should report high moment-fit confidence", func() {
-			So(float64(confidence), ShouldBeGreaterThan, 0.5)
+			So(confidence, ShouldBeGreaterThan, 0.5)
 		})
 	})
 }
@@ -28,13 +28,13 @@ func TestHawkes_CrossAsymmetry(testingTB *testing.T) {
 	Convey("Given asymmetric third-order structure between streams", testingTB, func() {
 		xStream := []float64{1, 4, 9, 16}
 		yStream := []float64{1, 2, 3, 4}
-		process := NewHawkes[float64](
+		process := NewHawkes(
 			hawkes.BivariateParams{Beta: 1}, 1, 1, xStream, yStream, nil,
 		)
 		asymmetry := process.CrossAsymmetry()
 
 		Convey("It should expose non-zero asymmetry", func() {
-			So(float64(asymmetry), ShouldNotEqual, 0)
+			So(asymmetry, ShouldNotEqual, 0)
 		})
 	})
 }
@@ -49,11 +49,11 @@ func BenchmarkHawkes_Observe(testingTB *testing.B) {
 		AlphaYY: 0.1,
 		Beta:    1,
 	}
-	process := NewHawkes[float64](params, 1, 1, xStream, yStream, nil)
+	process := NewHawkes(params, 1, 1, xStream, yStream, nil)
 
 	testingTB.ReportAllocs()
 
 	for testingTB.Loop() {
-		_ = process.Observe()
+		_ = observeInputs(process)
 	}
 }

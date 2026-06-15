@@ -1,64 +1,76 @@
 package probability
 
 import (
-	"github.com/theapemachine/nomagique/core"
+	"encoding/binary"
+	"math"
+
+	"github.com/theapemachine/datura"
 )
 
 /*
-EmpiricalRank tracks P(history <= current sample) over a span-derived window.
+Rank tracks P(history <= current sample) over a span-derived window.
 */
-type EmpiricalRank[T ~float64] struct {
-	state  RankState
-	output core.Scalar[T]
+type Rank struct {
+	artifact *datura.Artifact
+	state    RankState
 }
 
 /*
-Rank returns an empirical rank probability dynamic ready from its first observation.
+NewRank returns an empirical rank probability stage ready from its first observation.
 */
-func Rank[T ~float64]() *EmpiricalRank[T] {
-	return &EmpiricalRank[T]{}
+func NewRank() *Rank {
+	return &Rank{
+		artifact: datura.Acquire("rank", datura.Artifact_Type_json),
+	}
 }
 
-/*
-Observe derives the empirical rank probability for the current sample.
-*/
-func (empiricalRank *EmpiricalRank[T]) Observe(inputs ...core.Number[T]) core.Scalar[T] {
-	if len(inputs) == 0 {
-		return empiricalRank.output
+func (rank *Rank) Write(p []byte) (int, error) {
+	return rank.artifact.Write(p)
+}
+
+func (rank *Rank) Read(p []byte) (int, error) {
+	rehydrateArtifact(&rank.artifact, "rank", datura.Artifact_Type_json)
+
+	payload, err := rank.artifact.Payload()
+
+	if err == nil && len(payload) == 8 {
+		sample := math.Float64frombits(binary.BigEndian.Uint64(payload))
+		derived := ObserveRank(&rank.state, sample)
+		out := make([]byte, 8)
+		binary.BigEndian.PutUint64(out, math.Float64bits(derived))
+		_ = rank.artifact.SetPayload(out)
 	}
 
-	sample, ok := inputs[0].(core.Scalar[T])
+	return rank.artifact.Read(p)
+}
+
+func (rank *Rank) Value() float64 {
+	payload, _ := rank.artifact.Payload()
+	value, ok := payloadScalar(payload)
 
 	if !ok {
-		return empiricalRank.output
+		return 0
 	}
 
-	if len(inputs) > 1 {
-		if work, workOK := inputs[1].(core.Scalar[T]); workOK {
-			sample = core.Scalar[T](T(sample) + T(work))
-		}
-	}
+	return value
+}
 
-	empiricalRank.output = core.Scalar[T](T(
-		ObserveRank(&empiricalRank.state, float64(sample)),
-	))
-
-	return empiricalRank.output
+func (rank *Rank) Close() error {
+	return nil
 }
 
 /*
 ObserveSamples runs the exact batch kernel over samples into out.
 */
-func (empiricalRank *EmpiricalRank[T]) ObserveSamples(samples []float64, out []float64) {
-	empiricalRank.state.ObserveSamples(samples, out)
+func (rank *Rank) ObserveSamples(samples []float64, out []float64) {
+	rank.state.ObserveSamples(samples, out)
 }
 
 /*
 Reset clears derived state.
 */
-func (empiricalRank *EmpiricalRank[T]) Reset() error {
-	empiricalRank.state.Reset()
-	empiricalRank.output = core.Scalar[T](0)
+func (rank *Rank) Reset() error {
+	rank.state.Reset()
 
 	return nil
 }

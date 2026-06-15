@@ -1,54 +1,70 @@
 package statistic
 
 import (
+	"encoding/binary"
 	"math"
 
-	"github.com/theapemachine/nomagique/core"
+	"github.com/theapemachine/datura"
 )
 
 /*
 MedianAbsolute measures typical magnitude while ignoring sign.
-
-Each input is converted to its absolute value, then Median runs on that batch.
 */
-type MedianAbsolute[T ~float64] struct {
-	weights []float64
-	output  core.Scalar[T]
+type MedianAbsolute struct {
+	artifact *datura.Artifact
+	weights  []float64
 }
 
 /*
 NewMedianAbsolute creates a median-absolute stage.
 */
-func NewMedianAbsolute[T ~float64](weights []float64) *MedianAbsolute[T] {
-	return &MedianAbsolute[T]{
-		weights: weights,
+func NewMedianAbsolute(weights []float64) *MedianAbsolute {
+	return &MedianAbsolute{
+		artifact: datura.Acquire("median_absolute", datura.Artifact_Type_json),
+		weights:  weights,
 	}
 }
 
-/*
-Observe returns the median absolute value of the input stream.
-*/
-func (medianAbsolute *MedianAbsolute[T]) Observe(inputs ...core.Number[T]) core.Scalar[T] {
-	values := sampleBatch[T](inputs...)
+func (medianAbsolute *MedianAbsolute) Write(p []byte) (int, error) {
+	return medianAbsolute.artifact.Write(p)
+}
+
+func (medianAbsolute *MedianAbsolute) Read(p []byte) (int, error) {
+	payload, err := medianAbsolute.artifact.Payload()
+
+	if err != nil || len(payload) < 8 || len(payload)%8 != 0 {
+		return medianAbsolute.artifact.Read(p)
+	}
+
+	count := len(payload) / 8
+	values := make([]float64, count)
+
+	for index := range count {
+		offset := index * 8
+		values[index] = math.Float64frombits(binary.BigEndian.Uint64(payload[offset : offset+8]))
+	}
 
 	if len(values) == 0 {
-		return medianAbsolute.output
+		return medianAbsolute.artifact.Read(p)
 	}
 
-	absolute := make([]core.Number[T], len(values))
+	absoluteValues := make([]float64, len(values))
 
 	for index, value := range values {
-		absolute[index] = core.Scalar[T](T(math.Abs(value)))
+		absoluteValues[index] = math.Abs(value)
 	}
 
-	medianAbsolute.output = NewMedian[T](medianAbsolute.weights).Observe(absolute...)
+	putFloat64Payload(&medianAbsolute.artifact, "median_absolute", MedianOf(absoluteValues))
 
-	return medianAbsolute.output
+	return medianAbsolute.artifact.Read(p)
 }
 
-func (medianAbsolute *MedianAbsolute[T]) Reset() error {
+func (medianAbsolute *MedianAbsolute) Close() error {
+	return nil
+}
+
+func (medianAbsolute *MedianAbsolute) Reset() error {
 	medianAbsolute.weights = nil
-	medianAbsolute.output = core.Scalar[T](0)
 
 	return nil
 }

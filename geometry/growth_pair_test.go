@@ -4,7 +4,6 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/nomagique/core"
 )
 
 func TestParseGrowthPair(testingTB *testing.T) {
@@ -34,7 +33,7 @@ func TestParseGrowthPair(testingTB *testing.T) {
 			name:        "empty extras",
 			primary:     1,
 			extras:      nil,
-			expectError: core.ErrEmptyInputs,
+			expectError: ErrEmptyInputs,
 		},
 	}
 

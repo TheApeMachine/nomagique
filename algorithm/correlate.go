@@ -4,86 +4,107 @@ import (
 	"math"
 	"time"
 
-	"github.com/theapemachine/nomagique/core"
-	"github.com/theapemachine/nomagique/correlation"
+	"github.com/theapemachine/datura"
+	"gonum.org/v1/gonum/stat"
 )
 
 /*
 Correlate compares synchronous Pearson and asynchronous Hayashi-Yoshida coupling
 between two streams. A positive gap means async overlap exceeds aligned correlation.
 */
-type Correlate[T ~float64] struct {
+type Correlate struct {
+	artifact    *datura.Artifact
 	syncLeft    []float64
 	syncRight   []float64
 	asyncLeft   []float64
 	asyncRight  []float64
 	weights     []float64
 	maxInterval time.Duration
-	pearson     *correlation.Pearson[T]
-	hayashi     *correlation.HayashiYoshida[T]
-	output      core.Scalar[T]
 }
 
 /*
-NewCorrelate creates a dual-correlation dynamic.
+NewCorrelate creates a dual-correlation stage.
 syncLeft and syncRight hold aligned scalar samples; asyncLeft and asyncRight hold
 (time, value) pairs encoded as consecutive numbers per correlation.Sample.
 */
-func NewCorrelate[T ~float64](
+func NewCorrelate(
 	syncLeft, syncRight, asyncLeft, asyncRight, weights []float64,
 	maxInterval time.Duration,
-) *Correlate[T] {
-	return &Correlate[T]{
+) *Correlate {
+	return &Correlate{
+		artifact:    datura.Acquire("correlate", datura.Artifact_Type_json),
 		syncLeft:    syncLeft,
 		syncRight:   syncRight,
 		asyncLeft:   asyncLeft,
 		asyncRight:  asyncRight,
 		weights:     weights,
 		maxInterval: maxInterval,
-		pearson:     correlation.NewPearson[T](weights),
-		hayashi:     correlation.NewHayashiYoshida[T](weights, maxInterval),
 	}
 }
 
-/*
-Observe returns the signed async-minus-sync correlation gap.
-*/
-func (correlate *Correlate[T]) Observe(_ ...core.Number[T]) core.Scalar[T] {
-	correlate.output = core.Scalar[T](T(correlate.Gap()))
+func (correlate *Correlate) Write(p []byte) (int, error) {
+	return correlate.artifact.Write(p)
+}
 
-	return correlate.output
+func (correlate *Correlate) Read(p []byte) (int, error) {
+	rehydrateArtifact(&correlate.artifact, "correlate", datura.Artifact_Type_json)
+
+	gap := correlate.Gap()
+	out := encodePayload(gap)
+	_ = correlate.artifact.SetPayload(out)
+
+	return correlate.artifact.Read(p)
+}
+
+func (correlate *Correlate) Close() error {
+	return nil
 }
 
 /*
 Pearson returns the synchronous Pearson correlation.
 */
-func (correlate *Correlate[T]) Pearson() core.Scalar[T] {
-	inputs := append(
-		samplesToInputs[T](correlate.syncLeft),
-		samplesToInputs[T](correlate.syncRight)...,
-	)
+func (correlate *Correlate) Pearson() float64 {
+	if len(correlate.syncLeft) < 2 || len(correlate.syncRight) < 2 {
+		return 0
+	}
 
-	return correlate.pearson.Observe(inputs...)
+	if len(correlate.syncLeft) != len(correlate.syncRight) {
+		return 0
+	}
+
+	return stat.Correlation(
+		correlate.syncLeft,
+		correlate.syncRight,
+		weightSamples(correlate.weights),
+	)
 }
 
 /*
 Hayashi returns the asynchronous Hayashi-Yoshida correlation.
 */
-func (correlate *Correlate[T]) Hayashi() core.Scalar[T] {
-	inputs := append(
-		samplesToInputs[T](correlate.asyncLeft),
-		samplesToInputs[T](correlate.asyncRight)...,
-	)
+func (correlate *Correlate) Hayashi() float64 {
+	left, leftOK := samplesFromTimeValues(correlate.asyncLeft)
+	right, rightOK := samplesFromTimeValues(correlate.asyncRight)
 
-	return correlate.hayashi.Observe(inputs...)
+	if !leftOK || !rightOK {
+		return 0
+	}
+
+	correlationValue, ok := hayashiCorrelation(left, right, correlate.maxInterval)
+
+	if !ok {
+		return 0
+	}
+
+	return correlationValue
 }
 
 /*
 Gap returns Hayashi correlation minus Pearson correlation.
 */
-func (correlate *Correlate[T]) Gap() float64 {
-	pearsonValue := float64(correlate.Pearson())
-	hayashiValue := float64(correlate.Hayashi())
+func (correlate *Correlate) Gap() float64 {
+	pearsonValue := correlate.Pearson()
+	hayashiValue := correlate.Hayashi()
 
 	if math.IsNaN(pearsonValue) || math.IsNaN(hayashiValue) {
 		return 0
@@ -95,13 +116,8 @@ func (correlate *Correlate[T]) Gap() float64 {
 /*
 Reset clears derived state.
 */
-func (correlate *Correlate[T]) Reset() error {
+func (correlate *Correlate) Reset() error {
 	correlate.weights = nil
-	correlate.output = core.Scalar[T](0)
 
-	if err := correlate.pearson.Reset(); err != nil {
-		return err
-	}
-
-	return correlate.hayashi.Reset()
+	return nil
 }

@@ -21,8 +21,8 @@ func TestStdDev_Observe(testingTB *testing.T) {
 		testCase := testCase
 
 		Convey("Given "+testCase.name, testingTB, func() {
-			stdDev := NewStdDev[float64](nil)
-			got := stdDev.Observe(numberInputs(testCase.samples...)...)
+			stdDev := NewStdDev(nil)
+			got := observeInputs(stdDev, testCase.samples...)
 
 			Convey("It should return the expected standard deviation", func() {
 				So(float64(got), ShouldAlmostEqual, testCase.expect, 1e-12)
@@ -33,8 +33,8 @@ func TestStdDev_Observe(testingTB *testing.T) {
 
 func TestStdDev_Reset(testingTB *testing.T) {
 	Convey("Given an observed stddev", testingTB, func() {
-		stdDev := NewStdDev[float64]([]float64{1, 2})
-		_ = stdDev.Observe(numberInputs(1, 2)...)
+		stdDev := NewStdDev([]float64{1, 2})
+		_ = observeInputs(stdDev, 1, 2)
 
 		So(stdDev.Reset(), ShouldBeNil)
 
@@ -45,12 +45,11 @@ func TestStdDev_Reset(testingTB *testing.T) {
 }
 
 func BenchmarkStdDev_Observe(b *testing.B) {
-	stdDev := NewStdDev[float64](nil)
-	inputs := numberInputs(1, 2, 3, 4, 5)
+	stdDev := NewStdDev(nil)
 
 	b.ReportAllocs()
 
 	for b.Loop() {
-		_ = stdDev.Observe(inputs...)
+		_ = observeInputs(stdDev)
 	}
 }

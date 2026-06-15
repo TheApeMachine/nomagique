@@ -1,59 +1,53 @@
 package learning
 
 import (
-	"github.com/theapemachine/nomagique/core"
+	"github.com/theapemachine/datura"
 )
 
 /*
 TrustWeight is a self-adapting rate from prediction error.
 */
-type TrustWeight[T ~float64] struct {
-	state  WeightState
-	output core.Scalar[T]
+type TrustWeight struct {
+	artifact *datura.Artifact
+	state    WeightState
 }
 
 /*
 Weight returns a trust weight dynamic ready from its first observation.
 */
-func Weight[T ~float64]() *TrustWeight[T] {
-	return &TrustWeight[T]{}
+func Weight() *TrustWeight {
+	return &TrustWeight{
+		artifact: datura.Acquire("weight", datura.Artifact_Type_json),
+	}
 }
 
-/*
-Observe ingests predicted and actual values and returns trust.
-*/
-func (trustWeight *TrustWeight[T]) Observe(inputs ...core.Number[T]) core.Scalar[T] {
-	if len(inputs) == 0 {
-		return trustWeight.output
+func (trustWeight *TrustWeight) Write(p []byte) (int, error) {
+	return trustWeight.artifact.Write(p)
+}
+
+func (trustWeight *TrustWeight) Read(p []byte) (int, error) {
+	values := float64Batch(trustWeight.artifact)
+
+	if len(values) >= 2 {
+		predicted, actual, err := parsePredictedActual(values[0], values[1:])
+
+		if err == nil {
+			derived := ObserveWeight(&trustWeight.state, predicted, actual)
+			putFloat64Payload(&trustWeight.artifact, "weight", derived)
+		}
 	}
 
-	scalars, ok := collectScalars[T](inputs...)
+	return trustWeight.artifact.Read(p)
+}
 
-	if !ok {
-		return trustWeight.output
-	}
-
-	if len(scalars) < 2 {
-		return trustWeight.output
-	}
-
-	predicted, actual, err := parsePredictedActual(scalars[0], scalars[1:])
-
-	if err != nil {
-		return trustWeight.output
-	}
-
-	trustWeight.output = core.Scalar[T](T(
-		ObserveWeight(&trustWeight.state, predicted, actual),
-	))
-
-	return trustWeight.output
+func (trustWeight *TrustWeight) Close() error {
+	return nil
 }
 
 /*
 ObserveSamples runs the exact batch kernel over pairs into out.
 */
-func (trustWeight *TrustWeight[T]) ObserveSamples(
+func (trustWeight *TrustWeight) ObserveSamples(
 	predicted []float64, actual []float64, out []float64,
 ) {
 	trustWeight.state.ObserveSamples(predicted, actual, out)
@@ -62,9 +56,8 @@ func (trustWeight *TrustWeight[T]) ObserveSamples(
 /*
 Reset clears derived state.
 */
-func (trustWeight *TrustWeight[T]) Reset() error {
+func (trustWeight *TrustWeight) Reset() error {
 	trustWeight.state.Reset()
-	trustWeight.output = core.Scalar[T](0)
 
 	return nil
 }

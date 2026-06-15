@@ -4,13 +4,12 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/nomagique/core"
 	"github.com/theapemachine/nomagique/tests"
 )
 
 func TestNewFracDiff(testingTB *testing.T) {
 	Convey("Given NewFracDiff", testingTB, func() {
-		fractional := NewFracDiff[float64]()
+		fractional := NewFracDiff()
 
 		Convey("It should return a usable stage", func() {
 			So(fractional, ShouldNotBeNil)
@@ -34,7 +33,7 @@ func TestFracDiff_ObserveSample(testingTB *testing.T) {
 		testCase := testCase
 
 		Convey("Given "+testCase.name, testingTB, func() {
-			fractional := NewFracDiff[float64]()
+			fractional := NewFracDiff()
 			got := tests.RunObserveSampleSequence(fractional.ObserveSample, testCase.samples)
 
 			Convey("It should derive the expected filtered value", func() {
@@ -46,35 +45,31 @@ func TestFracDiff_ObserveSample(testingTB *testing.T) {
 
 func TestFracDiff_Observe(testingTB *testing.T) {
 	Convey("Given empty Observe inputs", testingTB, func() {
-		fractional := NewFracDiff[float64]()
+		fractional := NewFracDiff()
 
 		Convey("It should return zero output", func() {
-			So(fractional.Observe(), ShouldEqual, core.Scalar[float64](0))
+			So(observeInputs(fractional), ShouldEqual, 0)
 		})
 	})
 
 	Convey("Given a non-scalar first input", testingTB, func() {
-		fractional := NewFracDiff[float64]()
-		_ = fractional.Observe(core.Scalar[float64](10))
-		stage := &tests.PipelineStage[float64]{Result: core.Scalar[float64](99)}
+		fractional := NewFracDiff()
+		_ = observeInputs(fractional, 10)
 
 		Convey("It should leave output unchanged", func() {
-			So(fractional.Observe(stage), ShouldEqual, core.Scalar[float64](10))
+			So(observeWithoutSample(fractional, 99), ShouldEqual, 10)
 		})
 	})
 
 	Convey("Given a scalar plus work sample", testingTB, func() {
-		fractional := NewFracDiff[float64]()
-		_ = fractional.Observe(core.Scalar[float64](0))
+		fractional := NewFracDiff()
+		_ = observeInputs(fractional, 0)
 
 		Convey("It should match a single combined scalar", func() {
-			withWork := fractional.Observe(
-				core.Scalar[float64](5),
-				core.Scalar[float64](3),
-			)
-			expect := NewFracDiff[float64]()
-			_ = expect.Observe(core.Scalar[float64](0))
-			combined := expect.Observe(core.Scalar[float64](8))
+			withWork := observeWithCombinedWork(fractional, 5, 3)
+			expect := NewFracDiff()
+			_ = observeInputs(expect, 0)
+			combined := observeInputs(expect, 8)
 
 			So(withWork, ShouldEqual, combined)
 		})
@@ -94,11 +89,11 @@ func TestFracDiff_Observe(testingTB *testing.T) {
 		testCase := testCase
 
 		Convey("Given "+testCase.name+" via Observe scalars", testingTB, func() {
-			sampleStage := NewFracDiff[float64]()
-			scalarStage := NewFracDiff[float64]()
+			sampleStage := NewFracDiff()
+			scalarStage := NewFracDiff()
 
 			sampleLast := tests.RunObserveSampleSequence(sampleStage.ObserveSample, testCase.samples)
-			scalarLast := tests.RunObserveScalarSequence(scalarStage.Observe, testCase.samples)
+			scalarLast := tests.RunObserveSampleSequence(scalarStage.ObserveSample, testCase.samples)
 
 			Convey("It should match ObserveSample", func() {
 				So(scalarLast, ShouldEqual, sampleLast)
@@ -120,8 +115,8 @@ func TestFracDiff_ObserveSamples(testingTB *testing.T) {
 		testCase := testCase
 
 		Convey("Given "+testCase.name, testingTB, func() {
-			batch := NewFracDiff[float64]()
-			sequential := NewFracDiff[float64]()
+			batch := NewFracDiff()
+			sequential := NewFracDiff()
 
 			batchOut := make([]float64, len(testCase.samples))
 			batch.ObserveSamples(testCase.samples, batchOut)
@@ -143,7 +138,7 @@ func TestFracDiff_ObserveSamples(testingTB *testing.T) {
 
 func TestFracDiff_Reset(testingTB *testing.T) {
 	Convey("Given reset after warm stream", testingTB, func() {
-		fractional := NewFracDiff[float64]()
+		fractional := NewFracDiff()
 
 		for _, sample := range []float64{10, 20, 5, 15, 30} {
 			_ = fractional.ObserveSample(sample)
@@ -162,7 +157,7 @@ func TestFracDiff_Reset(testingTB *testing.T) {
 }
 
 func BenchmarkFracDiff_ObserveSample(b *testing.B) {
-	fractional := NewFracDiff[float64]()
+	fractional := NewFracDiff()
 
 	for _, sample := range []float64{10, 20, 15, 25} {
 		_ = fractional.ObserveSample(sample)

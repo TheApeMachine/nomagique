@@ -1,6 +1,6 @@
 # nomagique — common developer targets
 
-.PHONY: help test bench profile profile-cpu profile-mem profile-block profile-open clean-profiles physics-metallib build
+.PHONY: help test bench profile profile-cpu profile-mem profile-block profile-open clean-profiles physics-metallib build dump
 
 PROFILE_DIR := .profiles
 PKG ?= .
@@ -68,3 +68,5 @@ build: physics-metallib
 	@mkdir -p $(LOG_DIR)
 	go build -o $(SYMM_BIN) .
 
+dump:
+	python3 scripts/dump-repo.py nomagique.txt

@@ -1,98 +1,89 @@
 package algorithm
 
 import (
+	"encoding/binary"
 	"math"
 
-	"github.com/theapemachine/nomagique/core"
+	"github.com/theapemachine/datura"
 	"github.com/theapemachine/nomagique/learning"
 )
 
 /*
 Trust combines forecast scale calibration with adaptive prediction trust.
 */
-type Trust[T ~float64] struct {
-	forecaster *learning.Forecaster[T]
-	weight     *learning.TrustWeight[T]
+type Trust struct {
+	artifact   *datura.Artifact
+	forecast   learning.ForecastState
+	weight     learning.WeightState
 	lastTrust  float64
-	output     core.Scalar[T]
 }
 
 /*
-NewTrust creates a calibration-trust dynamic over predicted-vs-actual pairs.
+NewTrust creates a calibration-trust stage over predicted-vs-actual pairs.
 */
-func NewTrust[T ~float64]() *Trust[T] {
-	return &Trust[T]{
-		forecaster: learning.Forecast[T](),
-		weight:     learning.Weight[T](),
+func NewTrust() *Trust {
+	return &Trust{
+		artifact: datura.Acquire("trust", datura.Artifact_Type_json),
 	}
 }
 
-/*
-Observe ingests a predicted and actual pair and returns trust-weighted calibration.
-*/
-func (trust *Trust[T]) Observe(inputs ...core.Number[T]) core.Scalar[T] {
-	if len(inputs) == 0 {
-		return trust.output
+func (trust *Trust) Write(p []byte) (int, error) {
+	return trust.artifact.Write(p)
+}
+
+func (trust *Trust) Read(p []byte) (int, error) {
+	rehydrateArtifact(&trust.artifact, "trust", datura.Artifact_Type_json)
+
+	payload, err := trust.artifact.Payload()
+
+	if err == nil && len(payload) >= 16 {
+		predicted := math.Float64frombits(binary.BigEndian.Uint64(payload[:8]))
+		actual := math.Float64frombits(binary.BigEndian.Uint64(payload[8:16]))
+		trustValue := learning.ObserveWeight(&trust.weight, predicted, actual)
+		_ = learning.ObserveForecast(&trust.forecast, predicted, actual)
+		trust.lastTrust = trustValue
+
+		scale := trust.forecast.Scale
+		calibration := 1 - math.Abs(1-scale)
+
+		if calibration < 0 {
+			calibration = 0
+		}
+
+		derived := trustValue * calibration
+		out := make([]byte, 8)
+		binary.BigEndian.PutUint64(out, math.Float64bits(derived))
+		_ = trust.artifact.SetPayload(out)
 	}
 
-	scalars, ok := collectScalars[T](inputs...)
+	return trust.artifact.Read(p)
+}
 
-	if !ok {
-		return trust.output
-	}
-
-	if len(scalars) < 2 {
-		return trust.output
-	}
-
-	predicted, actual, err := parsePredictedActual(scalars[0], scalars[1:])
-
-	if err != nil {
-		return trust.output
-	}
-
-	pair := samplesToInputs[T]([]float64{predicted, actual})
-
-	_ = trust.forecaster.Observe(pair...)
-	trustValue := trust.weight.Observe(pair...)
-	trust.lastTrust = float64(trustValue)
-
-	scale := trust.forecaster.Scale()
-	calibration := 1 - math.Abs(1-scale)
-
-	if calibration < 0 {
-		calibration = 0
-	}
-
-	trust.output = core.Scalar[T](T(float64(trustValue) * calibration))
-
-	return trust.output
+func (trust *Trust) Close() error {
+	return nil
 }
 
 /*
 Scale returns the current forecast scale.
 */
-func (trust *Trust[T]) Scale() float64 {
-	return trust.forecaster.Scale()
+func (trust *Trust) Scale() float64 {
+	return trust.forecast.Scale
 }
 
 /*
 Weight returns the current adaptive trust weight.
 */
-func (trust *Trust[T]) Weight() core.Scalar[T] {
-	return core.Scalar[T](T(trust.lastTrust))
+func (trust *Trust) Weight() float64 {
+	return trust.lastTrust
 }
 
 /*
 Reset clears derived state.
 */
-func (trust *Trust[T]) Reset() error {
+func (trust *Trust) Reset() error {
 	trust.lastTrust = 0
-	trust.output = core.Scalar[T](0)
+	trust.forecast.Reset()
+	trust.weight.Reset()
 
-	if err := trust.forecaster.Reset(); err != nil {
-		return err
-	}
-
-	return trust.weight.Reset()
+	return nil
 }

@@ -3,71 +3,65 @@ package geometry
 import (
 	"math"
 
-	"github.com/theapemachine/nomagique/core"
+	"github.com/theapemachine/datura"
 )
 
 /*
 Velocity tracks mean velocity between consecutive observations.
 */
-type Velocity[T ~float64] struct {
-	prev   float64
-	ready  bool
-	output core.Scalar[T]
+type Velocity struct {
+	artifact *datura.Artifact
+	prev     float64
+	ready    bool
+	output   float64
 }
 
 /*
 NewVelocity returns a velocity stage ready from its first observation.
 */
-func NewVelocity[T ~float64]() *Velocity[T] {
-	return &Velocity[T]{}
+func NewVelocity() *Velocity {
+	return &Velocity{
+		artifact: datura.Acquire("velocity", datura.Artifact_Type_json),
+	}
 }
 
-/*
-Observe ingests a mean sample and returns its velocity versus the previous mean.
-*/
-func (velocity *Velocity[T]) Observe(inputs ...core.Number[T]) core.Scalar[T] {
-	if len(inputs) == 0 {
-		return velocity.output
+func (velocity *Velocity) Write(p []byte) (int, error) {
+	return velocity.artifact.Write(p)
+}
+
+func (velocity *Velocity) Read(p []byte) (int, error) {
+	sample, ok := boundaryFloat64(velocity.artifact)
+
+	if ok {
+		velocity.output = velocity.observe(sample)
+		putFloat64Payload(&velocity.artifact, "phase", velocity.output)
 	}
 
-	sample, ok := inputs[0].(core.Scalar[T])
+	return velocity.artifact.Read(p)
+}
 
-	if !ok {
-		return velocity.output
-	}
-
-	if len(inputs) > 1 {
-		if work, workOK := inputs[1].(core.Scalar[T]); workOK {
-			sample = core.Scalar[T](T(sample) + T(work))
-		}
-	}
-
-	velocity.output = core.Scalar[T](T(velocity.observe(float64(sample))))
-
-	return velocity.output
+func (velocity *Velocity) Close() error {
+	return nil
 }
 
 /*
 ObserveSamples writes one velocity per mean into out.
 */
-func (velocity *Velocity[T]) ObserveSamples(means []float64, out []float64) {
+func (velocity *Velocity) ObserveSamples(means []float64, out []float64) {
 	for index, mean := range means {
 		out[index] = velocity.observe(mean)
 	}
 }
 
-/*
-Reset clears derived state.
-*/
-func (velocity *Velocity[T]) Reset() error {
+func (velocity *Velocity) Reset() error {
 	velocity.prev = 0
 	velocity.ready = false
-	velocity.output = core.Scalar[T](0)
+	velocity.output = 0
 
 	return nil
 }
 
-func (velocity *Velocity[T]) observe(mean float64) float64 {
+func (velocity *Velocity) observe(mean float64) float64 {
 	if !velocity.ready {
 		velocity.prev = mean
 		velocity.ready = true
@@ -84,56 +78,50 @@ func (velocity *Velocity[T]) observe(mean float64) float64 {
 /*
 Coupling measures directional alignment of two growth samples in [-1, +1].
 */
-type Coupling[T ~float64] struct {
-	output core.Scalar[T]
+type Coupling struct {
+	artifact *datura.Artifact
+	output   float64
 }
 
 /*
 NewCoupling returns a coupling stage.
 */
-func NewCoupling[T ~float64]() *Coupling[T] {
-	return &Coupling[T]{}
+func NewCoupling() *Coupling {
+	return &Coupling{
+		artifact: datura.Acquire("coupling", datura.Artifact_Type_json),
+	}
 }
 
-/*
-Observe ingests left and right growth values and returns coupling strength.
-*/
-func (coupling *Coupling[T]) Observe(inputs ...core.Number[T]) core.Scalar[T] {
-	if len(inputs) == 0 {
-		return coupling.output
-	}
-
-	scalars, ok := collectScalars[T](inputs...)
-
-	if !ok {
-		return coupling.output
-	}
-
-	if len(scalars) < 2 {
-		return coupling.output
-	}
-
-	leftGrowth, rightGrowth, err := parseGrowthPair(scalars[0], scalars[1:])
-
-	if err != nil {
-		return coupling.output
-	}
-
-	coupling.output = core.Scalar[T](T(coupling.align(leftGrowth, rightGrowth)))
-
-	return coupling.output
+func (coupling *Coupling) Write(p []byte) (int, error) {
+	return coupling.artifact.Write(p)
 }
 
-/*
-Reset clears derived output.
-*/
-func (coupling *Coupling[T]) Reset() error {
-	coupling.output = core.Scalar[T](0)
+func (coupling *Coupling) Read(p []byte) (int, error) {
+	values := float64Batch(coupling.artifact)
+
+	if len(values) >= 2 {
+		leftGrowth, rightGrowth, err := parseGrowthPair(values[0], values[1:])
+
+		if err == nil {
+			coupling.output = coupling.align(leftGrowth, rightGrowth)
+			putFloat64Payload(&coupling.artifact, "phase", coupling.output)
+		}
+	}
+
+	return coupling.artifact.Read(p)
+}
+
+func (coupling *Coupling) Close() error {
+	return nil
+}
+
+func (coupling *Coupling) Reset() error {
+	coupling.output = 0
 
 	return nil
 }
 
-func (coupling *Coupling[T]) align(leftGrowth, rightGrowth float64) float64 {
+func (coupling *Coupling) align(leftGrowth, rightGrowth float64) float64 {
 	absLeft := math.Abs(leftGrowth)
 	absRight := math.Abs(rightGrowth)
 	geometricMean := math.Sqrt(absLeft * absRight)

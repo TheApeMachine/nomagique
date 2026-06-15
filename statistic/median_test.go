@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/nomagique/core"
 )
 
 func TestMedian_Observe(testingTB *testing.T) {
@@ -24,8 +23,8 @@ func TestMedian_Observe(testingTB *testing.T) {
 		testCase := testCase
 
 		Convey("Given "+testCase.name, testingTB, func() {
-			median := NewMedian[float64](nil)
-			got := median.Observe(numberInputs(testCase.samples...)...)
+			median := NewMedian(nil, nil)
+			got := observeInputs(median, testCase.samples...)
 
 			Convey("It should return the expected median", func() {
 				So(float64(got), ShouldEqual, testCase.expect)
@@ -34,8 +33,8 @@ func TestMedian_Observe(testingTB *testing.T) {
 	}
 
 	Convey("Given weighted samples", testingTB, func() {
-		median := NewMedian[float64]([]float64{1, 1, 1, 3})
-		got := median.Observe(numberInputs(1, 1, 1, 3)...)
+		median := NewMedian([]float64{1, 1, 1, 3}, nil)
+		got := observeInputs(median, 1, 1, 1, 3)
 
 		Convey("It should apply weights", func() {
 			So(float64(got), ShouldEqual, 1)
@@ -43,8 +42,8 @@ func TestMedian_Observe(testingTB *testing.T) {
 	})
 
 	Convey("Given mismatched weights", testingTB, func() {
-		median := NewMedian[float64]([]float64{1, 1})
-		got := median.Observe(numberInputs(1, 2, 3)...)
+		median := NewMedian([]float64{1, 1}, nil)
+		got := observeInputs(median, 1, 2, 3)
 
 		Convey("It should leave output unchanged", func() {
 			So(float64(got), ShouldEqual, 0)
@@ -52,12 +51,8 @@ func TestMedian_Observe(testingTB *testing.T) {
 	})
 
 	Convey("Given non-finite samples", testingTB, func() {
-		median := NewMedian[float64](nil)
-		got := median.Observe(
-			core.Scalar[float64](1),
-			core.Scalar[float64](math.NaN()),
-			core.Scalar[float64](3),
-		)
+		median := NewMedian(nil, nil)
+		got := observeInputs(median, 1, math.NaN(), 3)
 
 		Convey("It should return NaN", func() {
 			So(math.IsNaN(float64(got)), ShouldBeTrue)
@@ -75,8 +70,8 @@ func TestMedianOf(testingTB *testing.T) {
 
 func TestMedian_Reset(testingTB *testing.T) {
 	Convey("Given an observed median", testingTB, func() {
-		median := NewMedian[float64]([]float64{1})
-		_ = median.Observe(numberInputs(1)...)
+		median := NewMedian([]float64{1}, nil)
+		_ = observeInputs(median, 1)
 
 		So(median.Reset(), ShouldBeNil)
 
@@ -87,12 +82,11 @@ func TestMedian_Reset(testingTB *testing.T) {
 }
 
 func BenchmarkMedian_Observe(b *testing.B) {
-	median := NewMedian[float64](nil)
-	inputs := numberInputs(3, 1, 2, 4, 5)
+	median := NewMedian(nil, nil)
 
 	b.ReportAllocs()
 
 	for b.Loop() {
-		_ = median.Observe(inputs...)
+		_ = observeInputs(median)
 	}
 }

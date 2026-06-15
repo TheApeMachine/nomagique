@@ -38,14 +38,14 @@ func TestModePartition_Observe(t *testing.T) {
 	t.Parallel()
 
 	Convey("Given no participants", t, func() {
-		partition := NewModePartition[float64](0.5, nil, nil, nil)
+		partition := NewModePartition(0.5, nil, nil, nil)
 
-		So(float64(partition.Observe()), ShouldEqual, 0)
+		So(float64(observeInputs(partition)), ShouldEqual, 0)
 		So(partition.Snap(), ShouldBeNil)
 	})
 
 	Convey("Given participants with pairwise coupling at threshold", t, func() {
-		partition := NewModePartition[float64](
+		partition := NewModePartition(
 			1.0,
 			[]float64{10, 20, 30},
 			[]float64{1, 2, 4},
@@ -55,7 +55,7 @@ func TestModePartition_Observe(t *testing.T) {
 				0, 0, 1,
 			},
 		)
-		energy := partition.Observe()
+		energy := observeInputs(partition)
 
 		So(float64(energy), ShouldEqual, 4)
 		So(len(partition.Snap().Modes()), ShouldEqual, 2)
@@ -63,7 +63,7 @@ func TestModePartition_Observe(t *testing.T) {
 	})
 
 	Convey("Given coupled participants", t, func() {
-		partition := NewModePartition[float64](
+		partition := NewModePartition(
 			1,
 			[]float64{10, 20, 30},
 			[]float64{1, 2, 4},
@@ -73,7 +73,7 @@ func TestModePartition_Observe(t *testing.T) {
 				0, 0, 1,
 			},
 		)
-		energy := partition.Observe()
+		energy := observeInputs(partition)
 
 		Convey("It should return dominant mode energy", func() {
 			So(float64(energy), ShouldEqual, 4)
@@ -82,7 +82,7 @@ func TestModePartition_Observe(t *testing.T) {
 	})
 
 	Convey("Given mismatched stream lengths", t, func() {
-		partition := NewModePartition[float64](
+		partition := NewModePartition(
 			1,
 			[]float64{10, 20},
 			[]float64{1},
@@ -90,14 +90,14 @@ func TestModePartition_Observe(t *testing.T) {
 		)
 
 		Convey("It should return zero output", func() {
-			So(float64(partition.Observe()), ShouldEqual, 0)
+			So(float64(observeInputs(partition)), ShouldEqual, 0)
 		})
 	})
 }
 
 func TestModePartition_Reset(t *testing.T) {
 	Convey("Given an observed mode partition", t, func() {
-		partition := NewModePartition[float64](
+		partition := NewModePartition(
 			1,
 			[]float64{10, 20, 30},
 			[]float64{1, 2, 4},
@@ -107,7 +107,7 @@ func TestModePartition_Reset(t *testing.T) {
 				0, 0, 1,
 			},
 		)
-		_ = partition.Observe()
+		_ = observeInputs(partition)
 
 		So(partition.Reset(), ShouldBeNil)
 
@@ -138,11 +138,11 @@ func BenchmarkModePartition_Observe(testingTB *testing.B) {
 		}
 	}
 
-	partition := NewModePartition[float64](0.9, origins, energies, matrix)
+	partition := NewModePartition(0.9, origins, energies, matrix)
 
 	testingTB.ReportAllocs()
 
 	for testingTB.Loop() {
-		_ = partition.Observe()
+		_ = observeInputs(partition)
 	}
 }

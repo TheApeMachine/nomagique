@@ -1,59 +1,53 @@
 package learning
 
 import (
-	"github.com/theapemachine/nomagique/core"
+	"github.com/theapemachine/datura"
 )
 
 /*
-Calibrator maps predicted and actual pairs into calibration samples.
+Calibrator tracks calibration sample ratio from predicted-vs-actual pairs.
 */
-type Calibrator[T ~float64] struct {
-	state  SampleRatioState
-	output core.Scalar[T]
+type Calibrator struct {
+	artifact *datura.Artifact
+	state    SampleRatioState
 }
 
 /*
 SampleRatio returns a calibration dynamic ready from its first observation.
 */
-func SampleRatio[T ~float64]() *Calibrator[T] {
-	return &Calibrator[T]{}
+func SampleRatio() *Calibrator {
+	return &Calibrator{
+		artifact: datura.Acquire("sample-ratio", datura.Artifact_Type_json),
+	}
 }
 
-/*
-Observe derives the calibration sample for a predicted and actual pair.
-*/
-func (calibrator *Calibrator[T]) Observe(inputs ...core.Number[T]) core.Scalar[T] {
-	if len(inputs) == 0 {
-		return calibrator.output
+func (calibrator *Calibrator) Write(p []byte) (int, error) {
+	return calibrator.artifact.Write(p)
+}
+
+func (calibrator *Calibrator) Read(p []byte) (int, error) {
+	values := float64Batch(calibrator.artifact)
+
+	if len(values) >= 2 {
+		predicted, actual, err := parsePredictedActual(values[0], values[1:])
+
+		if err == nil {
+			derived := ObserveSampleRatio(&calibrator.state, predicted, actual)
+			putFloat64Payload(&calibrator.artifact, "calibrator", derived)
+		}
 	}
 
-	scalars, ok := collectScalars[T](inputs...)
+	return calibrator.artifact.Read(p)
+}
 
-	if !ok {
-		return calibrator.output
-	}
-
-	if len(scalars) < 2 {
-		return calibrator.output
-	}
-
-	predicted, actual, err := parsePredictedActual(scalars[0], scalars[1:])
-
-	if err != nil {
-		return calibrator.output
-	}
-
-	calibrator.output = core.Scalar[T](T(
-		ObserveSampleRatio(&calibrator.state, predicted, actual),
-	))
-
-	return calibrator.output
+func (calibrator *Calibrator) Close() error {
+	return nil
 }
 
 /*
 ObserveSamples runs the exact batch kernel over pairs into out.
 */
-func (calibrator *Calibrator[T]) ObserveSamples(
+func (calibrator *Calibrator) ObserveSamples(
 	predicted []float64, actual []float64, out []float64,
 ) {
 	calibrator.state.ObserveSamples(predicted, actual, out)
@@ -62,9 +56,8 @@ func (calibrator *Calibrator[T]) ObserveSamples(
 /*
 Reset clears derived state.
 */
-func (calibrator *Calibrator[T]) Reset() error {
+func (calibrator *Calibrator) Reset() error {
 	calibrator.state.Reset()
-	calibrator.output = core.Scalar[T](0)
 
 	return nil
 }

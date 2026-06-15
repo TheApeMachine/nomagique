@@ -1,44 +1,55 @@
 package statistic
 
 import (
-	"github.com/theapemachine/nomagique/core"
+	"encoding/binary"
+	"math"
+
+	"github.com/theapemachine/datura"
 	"gonum.org/v1/gonum/floats"
 )
 
 /*
-Min returns the smallest value in a batch passed to Observe.
-
-Stateless snapshot reducer — useful for floor liquidity, minimum spread, or any
-best-case-in-set step. Min implements core.Number. Empty input returns zero.
+Min returns the smallest value in a batch passed to Read.
 */
-type Min[T ~float64] struct {
-	output core.Scalar[T]
+type Min struct {
+	artifact *datura.Artifact
 }
 
 /*
 NewMin creates a min stage.
 */
-func NewMin[T ~float64]() *Min[T] {
-	return &Min[T]{}
+func NewMin() *Min {
+	return &Min{
+		artifact: datura.Acquire("min", datura.Artifact_Type_json),
+	}
 }
 
-/*
-Observe returns the minimum of the input stream.
-*/
-func (min *Min[T]) Observe(inputs ...core.Number[T]) core.Scalar[T] {
-	values := sampleBatch[T](inputs...)
+func (min *Min) Write(p []byte) (int, error) {
+	return min.artifact.Write(p)
+}
 
-	if len(values) == 0 {
-		return min.output
+func (min *Min) Read(p []byte) (int, error) {
+	payload, err := min.artifact.Payload()
+
+	if err == nil && len(payload) >= 8 && len(payload)%8 == 0 {
+		count := len(payload) / 8
+		values := make([]float64, count)
+
+		for index := range count {
+			offset := index * 8
+			values[index] = math.Float64frombits(binary.BigEndian.Uint64(payload[offset : offset+8]))
+		}
+
+		putFloat64Payload(&min.artifact, "min", floats.Min(values))
 	}
 
-	min.output = core.Scalar[T](T(floats.Min(values)))
-
-	return min.output
+	return min.artifact.Read(p)
 }
 
-func (min *Min[T]) Reset() error {
-	min.output = core.Scalar[T](0)
+func (min *Min) Close() error {
+	return nil
+}
 
+func (min *Min) Reset() error {
 	return nil
 }

@@ -1,45 +1,55 @@
 package statistic
 
 import (
-	"github.com/theapemachine/nomagique/core"
+	"encoding/binary"
+	"math"
+
+	"github.com/theapemachine/datura"
 	"gonum.org/v1/gonum/floats"
 )
 
 /*
-Max returns the largest value in a batch passed to Observe.
-
-Like Min, it is a stateless snapshot reducer over whatever scalars you feed it in
-one call — useful for peak energy, best bid depth, or any worst case in this set.
-Max implements core.Number. Empty input returns zero.
+Max returns the largest value in a batch passed to Read.
 */
-type Max[T ~float64] struct {
-	output core.Scalar[T]
+type Max struct {
+	artifact *datura.Artifact
 }
 
 /*
 NewMax creates a max stage.
 */
-func NewMax[T ~float64]() *Max[T] {
-	return &Max[T]{}
+func NewMax() *Max {
+	return &Max{
+		artifact: datura.Acquire("max", datura.Artifact_Type_json),
+	}
 }
 
-/*
-Observe returns the maximum of the input stream.
-*/
-func (max *Max[T]) Observe(inputs ...core.Number[T]) core.Scalar[T] {
-	values := sampleBatch[T](inputs...)
+func (max *Max) Write(p []byte) (int, error) {
+	return max.artifact.Write(p)
+}
 
-	if len(values) == 0 {
-		return max.output
+func (max *Max) Read(p []byte) (int, error) {
+	payload, err := max.artifact.Payload()
+
+	if err == nil && len(payload) >= 8 && len(payload)%8 == 0 {
+		count := len(payload) / 8
+		values := make([]float64, count)
+
+		for index := range count {
+			offset := index * 8
+			values[index] = math.Float64frombits(binary.BigEndian.Uint64(payload[offset : offset+8]))
+		}
+
+		putFloat64Payload(&max.artifact, "max", floats.Max(values))
 	}
 
-	max.output = core.Scalar[T](T(floats.Max(values)))
-
-	return max.output
+	return max.artifact.Read(p)
 }
 
-func (max *Max[T]) Reset() error {
-	max.output = core.Scalar[T](0)
+func (max *Max) Close() error {
+	return nil
+}
 
+func (max *Max) Reset() error {
 	return nil
 }

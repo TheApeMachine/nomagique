@@ -1,54 +1,71 @@
 package statistic
 
 import (
-	"github.com/theapemachine/nomagique/core"
+	"encoding/binary"
+	"math"
+
+	"github.com/theapemachine/datura"
 	"gonum.org/v1/gonum/stat"
 )
 
 /*
 StdDev computes the sample standard deviation of a stream of numbers.
-
-Optional weights turn the stream into a weighted dispersion when some
-observations carry more evidence than others.
 */
-type StdDev[T ~float64] struct {
-	weights []float64
-	output  core.Scalar[T]
+type StdDev struct {
+	artifact *datura.Artifact
+	weights  []float64
 }
 
 /*
 NewStdDev creates a standard-deviation stage.
 */
-func NewStdDev[T ~float64](weights []float64) *StdDev[T] {
-	return &StdDev[T]{
-		weights: weights,
+func NewStdDev(weights []float64) *StdDev {
+	return &StdDev{
+		artifact: datura.Acquire("stddev", datura.Artifact_Type_json),
+		weights:  weights,
 	}
 }
 
-/*
-Observe returns the sample standard deviation of the input stream.
-*/
-func (stdDev *StdDev[T]) Observe(inputs ...core.Number[T]) core.Scalar[T] {
-	values := sampleBatch[T](inputs...)
-
-	if len(values) == 0 {
-		return stdDev.output
-	}
-
-	weights := stdDev.weights
-
-	if len(weights) == 0 {
-		weights = nil
-	}
-
-	stdDev.output = core.Scalar[T](T(stat.StdDev(values, weights)))
-
-	return stdDev.output
+func (stdDev *StdDev) Write(p []byte) (int, error) {
+	return stdDev.artifact.Write(p)
 }
 
-func (stdDev *StdDev[T]) Reset() error {
+func (stdDev *StdDev) Read(p []byte) (int, error) {
+	payload, err := stdDev.artifact.Payload()
+
+	if err == nil && len(payload) >= 8 && len(payload)%8 == 0 {
+		count := len(payload) / 8
+		values := make([]float64, count)
+
+		for index := range count {
+			offset := index * 8
+			values[index] = math.Float64frombits(binary.BigEndian.Uint64(payload[offset : offset+8]))
+		}
+
+		if count < 2 {
+			putFloat64Payload(&stdDev.artifact, "stddev", 0)
+
+			return stdDev.artifact.Read(p)
+		}
+
+		weights := stdDev.weights
+
+		if len(weights) == 0 {
+			weights = nil
+		}
+
+		putFloat64Payload(&stdDev.artifact, "stddev", stat.StdDev(values, weights))
+	}
+
+	return stdDev.artifact.Read(p)
+}
+
+func (stdDev *StdDev) Close() error {
+	return nil
+}
+
+func (stdDev *StdDev) Reset() error {
 	stdDev.weights = nil
-	stdDev.output = core.Scalar[T](0)
 
 	return nil
 }

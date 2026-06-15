@@ -1,93 +1,101 @@
 package adaptive
 
 import (
+	"encoding/binary"
 	"math"
 
-	"github.com/theapemachine/nomagique/core"
+	"github.com/theapemachine/datura"
 )
 
 /*
 Momentum tracks a signed unit-normalized move relative to the running range.
 */
-type Momentum[T ~float64] struct {
-	Prev   float64
-	Min    float64
-	Max    float64
-	Ready  bool
-	output core.Scalar[T]
+type Momentum struct {
+	artifact *datura.Artifact
+	Prev     float64
+	Min      float64
+	Max      float64
+	Ready    bool
 }
 
 /*
 NewMomentum returns a momentum stage ready to bootstrap from its first observation.
 */
-func NewMomentum[T ~float64](initial ...core.Number[T]) *Momentum[T] {
-	momentum := &Momentum[T]{}
-
-	if len(initial) > 0 {
-		momentum.output = core.Scalar[T](0).Observe(initial...)
+func NewMomentum() *Momentum {
+	return &Momentum{
+		artifact: datura.Acquire("momentum", datura.Artifact_Type_json),
 	}
-
-	return momentum
 }
 
-/*
-Observe absorbs the carried sample and returns signed normalized momentum.
-*/
-func (momentum *Momentum[T]) Observe(inputs ...core.Number[T]) core.Scalar[T] {
-	if len(inputs) == 0 {
-		return momentum.output
+func (momentum *Momentum) Write(p []byte) (int, error) {
+	return momentum.artifact.Write(p)
+}
+
+func (momentum *Momentum) Read(p []byte) (int, error) {
+	payload, err := momentum.artifact.Payload()
+
+	if err == nil && len(payload) == 8 {
+		sample := math.Float64frombits(binary.BigEndian.Uint64(payload))
+		derived := momentum.step(sample)
+		assignScalarPayload(&momentum.artifact, "momentum", derived)
 	}
 
-	sample, ok := inputs[0].(core.Scalar[T])
+	return momentum.artifact.Read(p)
+}
 
-	if !ok {
-		return momentum.output
-	}
-
-	if len(inputs) > 1 {
-		if work, workOK := inputs[1].(core.Scalar[T]); workOK {
-			sample = core.Scalar[T](T(sample) + T(work))
-		}
-	}
-
-	momentum.output = core.Scalar[T](T(momentum.observe(float64(sample))))
-
-	return momentum.output
+func (momentum *Momentum) Close() error {
+	return nil
 }
 
 /*
 ObserveSample ingests one raw sample through the momentum kernel.
 */
-func (momentum *Momentum[T]) ObserveSample(sample T) T {
-	derived := T(momentum.observe(float64(sample)))
-	momentum.output = core.Scalar[T](derived)
-
-	return derived
+func (momentum *Momentum) ObserveSample(sample float64) float64 {
+	return momentum.readSampleViaArtifact(sample)
 }
 
 /*
 ObserveSamples writes one derived value per sample into out.
 */
-func (momentum *Momentum[T]) ObserveSamples(samples []T, out []T) {
+func (momentum *Momentum) ObserveSamples(samples []float64, out []float64) {
 	for index, sample := range samples {
 		out[index] = momentum.ObserveSample(sample)
 	}
 }
 
 /*
-Reset clears derived state so the next Observe bootstraps again.
+Reset clears derived state so the next Read bootstraps again.
 */
-func (momentum *Momentum[T]) Reset() error {
+func (momentum *Momentum) Reset() error {
 	momentum.Prev = 0
 	momentum.Min = 0
 	momentum.Max = 0
 	momentum.Ready = false
-	momentum.output = core.Scalar[T](0)
 
 	return nil
 }
 
-func (momentum *Momentum[T]) observe(sample float64) float64 {
+func (momentum *Momentum) readSampleViaArtifact(sample float64) float64 {
+	inbound := datura.Acquire("momentum-in", datura.Artifact_Type_json)
+	payload := make([]byte, 8)
+	binary.BigEndian.PutUint64(payload, math.Float64bits(sample))
+	_ = inbound.SetPayload(payload)
+	buf, _ := inbound.Message().Marshal()
+	_, _ = momentum.Write(buf)
+	outBuf := make([]byte, 4096)
+	_, _ = momentum.Read(outBuf)
+	outbound := datura.Acquire("stage-out", datura.Artifact_Type_json)
+	_, _ = outbound.Write(outBuf)
+	readPayload, _ := outbound.Payload()
+
+	if len(readPayload) != 8 {
+		return 0
+	}
+
+	return math.Float64frombits(binary.BigEndian.Uint64(readPayload))
+}
+
+func (momentum *Momentum) step(sample float64) float64 {
 	if !momentum.Ready {
 		momentum.Prev = sample
 		momentum.Min = sample
@@ -97,10 +105,10 @@ func (momentum *Momentum[T]) observe(sample float64) float64 {
 		return 0
 	}
 
-	return momentum.observeReady(sample)
+	return momentum.stepReady(sample)
 }
 
-func (momentum *Momentum[T]) observeReady(sample float64) float64 {
+func (momentum *Momentum) stepReady(sample float64) float64 {
 	momentum.Min = math.Min(momentum.Min, sample)
 	momentum.Max = math.Max(momentum.Max, sample)
 
@@ -116,4 +124,11 @@ func (momentum *Momentum[T]) observeReady(sample float64) float64 {
 	momentum.Prev = sample
 
 	return signed
+}
+
+/*
+Value returns the last derived scalar without re-processing the stage.
+*/
+func (momentum *Momentum) Value() float64 {
+	return valueFromArtifact(momentum.artifact)
 }

@@ -4,7 +4,6 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/nomagique/core"
 )
 
 func TestParsePredictedActual(testingTB *testing.T) {
@@ -34,13 +33,13 @@ func TestParsePredictedActual(testingTB *testing.T) {
 			name:        "zero predicted",
 			primary:     0,
 			extras:      []float64{10},
-			expectError: core.ErrZeroPredicted,
+			expectError: ErrZeroPredicted,
 		},
 		{
 			name:        "empty extras",
 			primary:     10,
 			extras:      nil,
-			expectError: core.ErrEmptyInputs,
+			expectError: ErrEmptyInputs,
 		},
 	}
 

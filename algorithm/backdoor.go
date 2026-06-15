@@ -1,14 +1,15 @@
 package algorithm
 
 import (
+	"github.com/theapemachine/datura"
 	"github.com/theapemachine/nomagique/causal"
-	"github.com/theapemachine/nomagique/core"
 )
 
 /*
 Backdoor estimates a linear backdoor-adjusted treatment effect from aligned node streams.
 */
-type Backdoor[T ~float64] struct {
+type Backdoor struct {
+	artifact    *datura.Artifact
 	target      int
 	treatment   int
 	controls    []int
@@ -17,23 +18,23 @@ type Backdoor[T ~float64] struct {
 	association float64
 	effect      float64
 	condition   float64
-	output      core.Scalar[T]
 }
 
 /*
 NewBackdoor creates a backdoor estimator over per-node streams.
 */
-func NewBackdoor[T ~float64](
+func NewBackdoor(
 	target, treatment int,
 	controls []int,
 	streams [][]float64,
 	minRows int,
-) *Backdoor[T] {
+) *Backdoor {
 	if minRows <= 0 {
 		minRows = 12
 	}
 
-	return &Backdoor[T]{
+	return &Backdoor{
+		artifact:  datura.Acquire("backdoor", datura.Artifact_Type_json),
 		target:    target,
 		treatment: treatment,
 		controls:  append([]int(nil), controls...),
@@ -42,16 +43,19 @@ func NewBackdoor[T ~float64](
 	}
 }
 
-/*
-Observe rebuilds the node table and returns the backdoor effect magnitude.
-*/
-func (backdoor *Backdoor[T]) Observe(_ ...core.Number[T]) core.Scalar[T] {
+func (backdoor *Backdoor) Write(p []byte) (int, error) {
+	return backdoor.artifact.Write(p)
+}
+
+func (backdoor *Backdoor) Read(p []byte) (int, error) {
+	rehydrateArtifact(&backdoor.artifact, "backdoor", datura.Artifact_Type_json)
+
 	table, ok := backdoor.nodeTable()
 
 	if !ok {
 		backdoor.clearReadings()
 
-		return backdoor.output
+		return backdoor.artifact.Read(p)
 	}
 
 	association, assocErr := table.Association(backdoor.treatment)
@@ -75,43 +79,47 @@ func (backdoor *Backdoor[T]) Observe(_ ...core.Number[T]) core.Scalar[T] {
 	backdoor.association = association
 	backdoor.effect = effect
 	backdoor.condition = condition
-	backdoor.output = core.Scalar[T](T(effect))
+	out := encodePayload(effect)
+	_ = backdoor.artifact.SetPayload(out)
 
-	return backdoor.output
+	return backdoor.artifact.Read(p)
+}
+
+func (backdoor *Backdoor) Close() error {
+	return nil
 }
 
 /*
-Association returns the raw Pearson association from the last Observe call.
+Association returns the raw Pearson association from the last Read call.
 */
-func (backdoor *Backdoor[T]) Association() core.Scalar[T] {
-	return core.Scalar[T](T(backdoor.association))
+func (backdoor *Backdoor) Association() float64 {
+	return backdoor.association
 }
 
 /*
-Effect returns the backdoor-adjusted effect from the last Observe call.
+Effect returns the backdoor-adjusted effect from the last Read call.
 */
-func (backdoor *Backdoor[T]) Effect() core.Scalar[T] {
-	return core.Scalar[T](T(backdoor.effect))
+func (backdoor *Backdoor) Effect() float64 {
+	return backdoor.effect
 }
 
 /*
 ConditionNumber returns the treatment-target pair condition estimate.
 */
-func (backdoor *Backdoor[T]) ConditionNumber() core.Scalar[T] {
-	return core.Scalar[T](T(backdoor.condition))
+func (backdoor *Backdoor) ConditionNumber() float64 {
+	return backdoor.condition
 }
 
 /*
 Reset clears derived state.
 */
-func (backdoor *Backdoor[T]) Reset() error {
+func (backdoor *Backdoor) Reset() error {
 	backdoor.clearReadings()
-	backdoor.output = core.Scalar[T](0)
 
 	return nil
 }
 
-func (backdoor *Backdoor[T]) nodeTable() (causal.NodeTable, bool) {
+func (backdoor *Backdoor) nodeTable() (causal.NodeTable, bool) {
 	rows, ok := zipNodeRows(backdoor.streams)
 
 	if !ok {
@@ -127,7 +135,7 @@ func (backdoor *Backdoor[T]) nodeTable() (causal.NodeTable, bool) {
 	return table, true
 }
 
-func (backdoor *Backdoor[T]) clearReadings() {
+func (backdoor *Backdoor) clearReadings() {
 	backdoor.association = 0
 	backdoor.effect = 0
 	backdoor.condition = 0

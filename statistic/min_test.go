@@ -22,8 +22,8 @@ func TestMin_Observe(testingTB *testing.T) {
 		testCase := testCase
 
 		Convey("Given "+testCase.name, testingTB, func() {
-			minStage := NewMin[float64]()
-			got := minStage.Observe(numberInputs(testCase.samples...)...)
+			minStage := NewMin()
+			got := observeInputs(minStage, testCase.samples...)
 
 			Convey("It should return the expected minimum", func() {
 				So(float64(got), ShouldEqual, testCase.expect)
@@ -34,24 +34,23 @@ func TestMin_Observe(testingTB *testing.T) {
 
 func TestMin_Reset(testingTB *testing.T) {
 	Convey("Given an observed min", testingTB, func() {
-		minStage := NewMin[float64]()
-		_ = minStage.Observe(numberInputs(3, 1)...)
+		minStage := NewMin()
+		_ = observeInputs(minStage, 3, 1)
 
 		So(minStage.Reset(), ShouldBeNil)
 
 		Convey("It should clear output", func() {
-			So(float64(minStage.Observe()), ShouldEqual, 0)
+			So(float64(observeInputs(minStage)), ShouldEqual, 0)
 		})
 	})
 }
 
 func BenchmarkMin_Observe(b *testing.B) {
-	minStage := NewMin[float64]()
-	inputs := numberInputs(3, 1, 4, 2)
+	minStage := NewMin()
 
 	b.ReportAllocs()
 
 	for b.Loop() {
-		_ = minStage.Observe(inputs...)
+		_ = observeInputs(minStage)
 	}
 }

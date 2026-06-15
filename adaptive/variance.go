@@ -1,86 +1,75 @@
 package adaptive
 
 import (
+	"encoding/binary"
 	"math"
 
-	"github.com/theapemachine/nomagique/core"
+	"github.com/theapemachine/datura"
 )
 
 /*
 Variance tracks an adaptive mean and variance from the observed sample stream.
 */
-type Variance[T ~float64] struct {
-	Mean   float64
-	Var    float64
-	Prev   float64
-	Min    float64
-	Max    float64
-	Rate   float64
-	Ready  bool
-	output core.Scalar[T]
+type Variance struct {
+	artifact *datura.Artifact
+	Mean     float64
+	Var      float64
+	Prev     float64
+	Min      float64
+	Max      float64
+	Rate     float64
+	Ready    bool
 }
 
 /*
 NewVariance returns a variance stage ready to bootstrap from its first observation.
 */
-func NewVariance[T ~float64](initial ...core.Number[T]) *Variance[T] {
-	variance := &Variance[T]{}
-
-	if len(initial) > 0 {
-		variance.output = core.Scalar[T](0).Observe(initial...)
+func NewVariance() *Variance {
+	return &Variance{
+		artifact: datura.Acquire("variance", datura.Artifact_Type_json),
 	}
-
-	return variance
 }
 
-/*
-Observe absorbs the carried sample and returns the variance estimate.
-*/
-func (variance *Variance[T]) Observe(inputs ...core.Number[T]) core.Scalar[T] {
-	if len(inputs) == 0 {
-		return variance.output
+func (variance *Variance) Write(p []byte) (int, error) {
+	return variance.artifact.Write(p)
+}
+
+func (variance *Variance) Read(p []byte) (int, error) {
+	payload, err := variance.artifact.Payload()
+
+	if err == nil && len(payload) == 8 {
+		sample := math.Float64frombits(binary.BigEndian.Uint64(payload))
+		derived := variance.step(sample)
+		assignScalarPayload(&variance.artifact, "variance", derived)
 	}
 
-	sample, ok := inputs[0].(core.Scalar[T])
+	return variance.artifact.Read(p)
+}
 
-	if !ok {
-		return variance.output
-	}
-
-	if len(inputs) > 1 {
-		if work, workOK := inputs[1].(core.Scalar[T]); workOK {
-			sample = core.Scalar[T](T(sample) + T(work))
-		}
-	}
-
-	variance.output = core.Scalar[T](T(variance.observe(float64(sample))))
-
-	return variance.output
+func (variance *Variance) Close() error {
+	return nil
 }
 
 /*
 ObserveSample ingests one raw sample through the variance kernel.
 */
-func (variance *Variance[T]) ObserveSample(sample T) T {
-	derived := T(variance.observe(float64(sample)))
-	variance.output = core.Scalar[T](derived)
-
-	return derived
+func (variance *Variance) ObserveSample(sample float64) float64 {
+	return variance.readSampleViaArtifact(sample)
 }
 
 /*
 ObserveSamples writes one derived value per sample into out.
 */
-func (variance *Variance[T]) ObserveSamples(samples []T, out []T) {
+func (variance *Variance) ObserveSamples(samples []float64, out []float64) {
 	for index, sample := range samples {
 		out[index] = variance.ObserveSample(sample)
 	}
 }
 
 /*
-Reset clears derived state so the next Observe bootstraps again.
+Reset clears derived state so the next Read bootstraps again.
 */
-func (variance *Variance[T]) Reset() error {
+func (variance *Variance) Reset() error {
 	variance.Mean = 0
 	variance.Var = 0
 	variance.Prev = 0
@@ -88,12 +77,31 @@ func (variance *Variance[T]) Reset() error {
 	variance.Max = 0
 	variance.Rate = 0
 	variance.Ready = false
-	variance.output = core.Scalar[T](0)
 
 	return nil
 }
 
-func (variance *Variance[T]) observe(sample float64) float64 {
+func (variance *Variance) readSampleViaArtifact(sample float64) float64 {
+	inbound := datura.Acquire("variance-in", datura.Artifact_Type_json)
+	payload := make([]byte, 8)
+	binary.BigEndian.PutUint64(payload, math.Float64bits(sample))
+	_ = inbound.SetPayload(payload)
+	buf, _ := inbound.Message().Marshal()
+	_, _ = variance.Write(buf)
+	outBuf := make([]byte, 4096)
+	_, _ = variance.Read(outBuf)
+	outbound := datura.Acquire("stage-out", datura.Artifact_Type_json)
+	_, _ = outbound.Write(outBuf)
+	readPayload, _ := outbound.Payload()
+
+	if len(readPayload) != 8 {
+		return 0
+	}
+
+	return math.Float64frombits(binary.BigEndian.Uint64(readPayload))
+}
+
+func (variance *Variance) step(sample float64) float64 {
 	if !variance.Ready {
 		variance.Mean = sample
 		variance.Var = 0
@@ -105,10 +113,10 @@ func (variance *Variance[T]) observe(sample float64) float64 {
 		return 0
 	}
 
-	return variance.observeReady(sample)
+	return variance.stepReady(sample)
 }
 
-func (variance *Variance[T]) observeReady(sample float64) float64 {
+func (variance *Variance) stepReady(sample float64) float64 {
 	variance.Min = math.Min(variance.Min, sample)
 	variance.Max = math.Max(variance.Max, sample)
 
@@ -128,4 +136,11 @@ func (variance *Variance[T]) observeReady(sample float64) float64 {
 	variance.Prev = sample
 
 	return variance.Var
+}
+
+/*
+Value returns the last derived scalar without re-processing the stage.
+*/
+func (variance *Variance) Value() float64 {
+	return valueFromArtifact(variance.artifact)
 }

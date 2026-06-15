@@ -18,10 +18,10 @@ func TestProcrustes_Observe(t *testing.T) {
 			matA := randomMatrix(nSamples, nDim, 42)
 			matB := copyMatrix(matA)
 
-			stage, err := NewProcrustesFromRows[float64](matA, matB, nSamples, nDim)
+			stage, err := NewProcrustesFromRows(matA, matB, nSamples, nDim)
 			So(err, ShouldBeNil)
 
-			residual := stage.Observe()
+			residual := observeInputs(stage)
 			So(stage.Err(), ShouldBeNil)
 
 			Convey("It should return R ≈ I with near-zero residual", func() {
@@ -51,10 +51,10 @@ func TestProcrustes_Observe(t *testing.T) {
 			knownR := knownRotation90(nDim)
 			matB := applyRotation(knownR, matA, nSamples, nDim)
 
-			stage, err := NewProcrustesFromRows[float64](matA, matB, nSamples, nDim)
+			stage, err := NewProcrustesFromRows(matA, matB, nSamples, nDim)
 			So(err, ShouldBeNil)
 
-			_ = stage.Observe()
+			_ = observeInputs(stage)
 			So(stage.Err(), ShouldBeNil)
 
 			Convey("It should recover the known rotation with low residual", func() {
@@ -73,8 +73,8 @@ func TestProcrustes_Observe(t *testing.T) {
 			Convey("It should error on dimension mismatch", func() {
 				denseA := mat.NewDense(1, 2, []float64{1, 2})
 				denseB := mat.NewDense(2, 2, []float64{1, 2, 3, 4})
-				stage := NewProcrustes[float64](denseA, denseB)
-				_ = stage.Observe()
+				stage := NewProcrustes(denseA, denseB)
+				_ = observeInputs(stage)
 
 				So(stage.Err(), ShouldNotBeNil)
 			})
@@ -86,8 +86,8 @@ func TestProcrustes_Observe(t *testing.T) {
 				So(err, ShouldBeNil)
 				denseB, err := denseFromRows(matB, 4, 2)
 				So(err, ShouldBeNil)
-				stage := NewProcrustes[float64](denseA, denseB)
-				_ = stage.Observe()
+				stage := NewProcrustes(denseA, denseB)
+				_ = observeInputs(stage)
 
 				So(stage.Err(), ShouldNotBeNil)
 			})
@@ -97,7 +97,7 @@ func TestProcrustes_Observe(t *testing.T) {
 
 func TestProcrustes_Decompose(t *testing.T) {
 	Convey("Given the Jacobi SVD decomposition", t, func() {
-		stage := NewProcrustes[float64](nil, nil)
+		stage := NewProcrustes(nil, nil)
 
 		Convey("When decomposing a known diagonal matrix", func() {
 			dense := mat.NewDense(3, 3, []float64{
@@ -159,7 +159,7 @@ func BenchmarkProcrustes_Observe(b *testing.B) {
 
 	matA := randomMatrix(nSamples, nDim, 1337)
 	matB := randomMatrix(nSamples, nDim, 7331)
-	stage, err := NewProcrustesFromRows[float64](matA, matB, nSamples, nDim)
+	stage, err := NewProcrustesFromRows(matA, matB, nSamples, nDim)
 
 	if err != nil {
 		b.Fatal(err)
@@ -168,7 +168,7 @@ func BenchmarkProcrustes_Observe(b *testing.B) {
 	b.ReportAllocs()
 
 	for b.Loop() {
-		_ = stage.Observe()
+		_ = observeInputs(stage)
 	}
 }
 
@@ -181,7 +181,7 @@ func BenchmarkProcrustes_Decompose(b *testing.B) {
 		b.Fatal(err)
 	}
 
-	stage := NewProcrustes[float64](nil, nil)
+	stage := NewProcrustes(nil, nil)
 
 	b.ReportAllocs()
 

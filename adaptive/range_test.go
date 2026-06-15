@@ -4,13 +4,12 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/nomagique/core"
 	"github.com/theapemachine/nomagique/tests"
 )
 
 func TestNewRange(testingTB *testing.T) {
 	Convey("Given NewRange", testingTB, func() {
-		extent := NewRange[float64]()
+		extent := NewRange()
 
 		Convey("It should return a usable stage", func() {
 			So(extent, ShouldNotBeNil)
@@ -38,7 +37,7 @@ func TestRange_ObserveSample(testingTB *testing.T) {
 		testCase := testCase
 
 		Convey("Given "+testCase.name, testingTB, func() {
-			extent := NewRange[float64]()
+			extent := NewRange()
 			got := tests.RunObserveSampleSequence(extent.ObserveSample, testCase.samples)
 
 			Convey("It should derive the expected span", func() {
@@ -50,36 +49,32 @@ func TestRange_ObserveSample(testingTB *testing.T) {
 
 func TestRange_Observe(testingTB *testing.T) {
 	Convey("Given empty Observe inputs", testingTB, func() {
-		extent := NewRange[float64]()
+		extent := NewRange()
 
 		Convey("It should return zero output", func() {
-			So(extent.Observe(), ShouldEqual, core.Scalar[float64](0))
+			So(observeInputs(extent), ShouldEqual, 0)
 		})
 	})
 
 	Convey("Given a non-scalar first input", testingTB, func() {
-		extent := NewRange[float64]()
-		_ = extent.Observe(core.Scalar[float64](10))
-		_ = extent.Observe(core.Scalar[float64](20))
-		stage := &tests.PipelineStage[float64]{Result: core.Scalar[float64](99)}
+		extent := NewRange()
+		_ = observeInputs(extent, 10)
+		_ = observeInputs(extent, 20)
 
 		Convey("It should leave output unchanged", func() {
-			So(extent.Observe(stage), ShouldEqual, core.Scalar[float64](10))
+			So(observeWithoutSample(extent, 99), ShouldEqual, 10)
 		})
 	})
 
 	Convey("Given a scalar plus work sample", testingTB, func() {
-		extent := NewRange[float64]()
-		_ = extent.Observe(core.Scalar[float64](10))
+		extent := NewRange()
+		_ = observeInputs(extent, 10)
 
 		Convey("It should match a single combined scalar", func() {
-			withWork := extent.Observe(
-				core.Scalar[float64](5),
-				core.Scalar[float64](3),
-			)
-			expect := NewRange[float64]()
-			_ = expect.Observe(core.Scalar[float64](10))
-			combined := expect.Observe(core.Scalar[float64](8))
+			withWork := observeWithCombinedWork(extent, 5, 3)
+			expect := NewRange()
+			_ = observeInputs(expect, 10)
+			combined := observeInputs(expect, 8)
 
 			So(withWork, ShouldEqual, combined)
 		})
@@ -97,11 +92,11 @@ func TestRange_Observe(testingTB *testing.T) {
 		testCase := testCase
 
 		Convey("Given "+testCase.name+" via Observe scalars", testingTB, func() {
-			sampleStage := NewRange[float64]()
-			scalarStage := NewRange[float64]()
+			sampleStage := NewRange()
+			scalarStage := NewRange()
 
 			sampleLast := tests.RunObserveSampleSequence(sampleStage.ObserveSample, testCase.samples)
-			scalarLast := tests.RunObserveScalarSequence(scalarStage.Observe, testCase.samples)
+			scalarLast := tests.RunObserveSampleSequence(scalarStage.ObserveSample, testCase.samples)
 
 			Convey("It should match ObserveSample", func() {
 				So(scalarLast, ShouldEqual, sampleLast)
@@ -113,8 +108,8 @@ func TestRange_Observe(testingTB *testing.T) {
 func TestRange_ObserveSamples(testingTB *testing.T) {
 	Convey("Given a sample batch", testingTB, func() {
 		samples := []float64{10, 20, 5, 15}
-		batch := NewRange[float64]()
-		sequential := NewRange[float64]()
+		batch := NewRange()
+		sequential := NewRange()
 
 		batchOut := make([]float64, len(samples))
 		batch.ObserveSamples(samples, batchOut)
@@ -135,7 +130,7 @@ func TestRange_ObserveSamples(testingTB *testing.T) {
 
 func TestRange_Reset(testingTB *testing.T) {
 	Convey("Given reset after warm stream", testingTB, func() {
-		extent := NewRange[float64]()
+		extent := NewRange()
 
 		for _, sample := range []float64{10, 20, 5} {
 			_ = extent.ObserveSample(sample)
@@ -153,7 +148,7 @@ func TestRange_Reset(testingTB *testing.T) {
 }
 
 func BenchmarkRange_ObserveSample(b *testing.B) {
-	extent := NewRange[float64]()
+	extent := NewRange()
 	_ = extent.ObserveSample(10)
 
 	b.ReportAllocs()

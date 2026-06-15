@@ -1,23 +1,28 @@
 package vector
 
 import (
+	"io"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/nomagique"
-	"github.com/theapemachine/nomagique/core"
 	"github.com/theapemachine/nomagique/tests"
 )
+
+func pipelineSample(stage io.ReadWriter, sample float64) float64 {
+	value, _ := tests.PipelineSample([]io.ReadWriter{stage}, sample)
+
+	return value
+}
 
 func TestNewFeatureNode(testingTB *testing.T) {
 	Convey("Given a valid feature index", testingTB, func() {
 		extractor, err := newPairExtractor()
 		So(err, ShouldBeNil)
 
-		diffNode, err := NewFeatureNode[float64](extractor, testDiffFeature)
+		diffNode := NewFeatureNode(extractor, testDiffFeature)
 
 		Convey("It should return a usable node", func() {
-			So(err, ShouldBeNil)
 			So(diffNode, ShouldNotBeNil)
 		})
 	})
@@ -48,10 +53,10 @@ func TestNewFeatureNode(testingTB *testing.T) {
 
 		Convey("Given "+testCase.name, testingTB, func() {
 			extractor, featureIndex := testCase.setup()
-			_, err := NewFeatureNode[float64](extractor, featureIndex)
+			node := NewFeatureNode(extractor, featureIndex)
 
-			Convey("It should return an error", func() {
-				So(err, ShouldNotBeNil)
+			Convey("It should return nil", func() {
+				So(node, ShouldBeNil)
 			})
 		})
 	}
@@ -78,13 +83,12 @@ func TestFeatureNode_Observe(testingTB *testing.T) {
 			extractor, err := newPairExtractor()
 			So(err, ShouldBeNil)
 
-			_ = extractor.SetInput(testLeftChannel, testCase.left)
-			_ = extractor.SetInput(testRightChannel, testCase.right)
+			extractor.SetInput(testLeftChannel, testCase.left)
+			extractor.SetInput(testRightChannel, testCase.right)
 
-			featureNode, err := NewFeatureNode[float64](extractor, testCase.featureIdx)
-			So(err, ShouldBeNil)
+			featureNode := NewFeatureNode(extractor, testCase.featureIdx)
 
-			got := featureNode.Observe()
+			got := observeInputs(featureNode)
 
 			Convey("It should expose the derived feature", func() {
 				So(float64(got), ShouldEqual, testCase.expect)
@@ -95,31 +99,28 @@ func TestFeatureNode_Observe(testingTB *testing.T) {
 	Convey("Given empty Observe after warm inputs", testingTB, func() {
 		extractor := mustPairExtractor(testingTB)
 
-		_ = extractor.SetInput(testLeftChannel, 8)
-		_ = extractor.SetInput(testRightChannel, 2)
+		extractor.SetInput(testLeftChannel, 8)
+		extractor.SetInput(testRightChannel, 2)
 
-		diffNode, err := NewFeatureNode[float64](extractor, testDiffFeature)
-		So(err, ShouldBeNil)
+		diffNode := NewFeatureNode(extractor, testDiffFeature)
 
 		Convey("It should refresh from extractor state", func() {
-			So(float64(diffNode.Observe()), ShouldEqual, 6)
+			So(float64(observeInputs(diffNode)), ShouldEqual, 6)
 		})
 	})
 
 	Convey("Given a non-scalar input", testingTB, func() {
 		extractor := mustPairExtractor(testingTB)
 
-		_ = extractor.SetInput(testLeftChannel, 10)
-		_ = extractor.SetInput(testRightChannel, 4)
+		extractor.SetInput(testLeftChannel, 10)
+		extractor.SetInput(testRightChannel, 4)
 
-		diffNode, err := NewFeatureNode[float64](extractor, testDiffFeature)
-		So(err, ShouldBeNil)
+		diffNode := NewFeatureNode(extractor, testDiffFeature)
 
-		_ = diffNode.Observe()
-		stage := &tests.PipelineStage[float64]{Result: core.Scalar[float64](99)}
+		observeInputs(diffNode)
 
 		Convey("It should still return the derived feature", func() {
-			So(float64(diffNode.Observe(stage)), ShouldEqual, 6)
+			So(float64(observeWithoutSample(diffNode, 0)), ShouldEqual, 6)
 		})
 	})
 
@@ -138,22 +139,15 @@ func TestFeatureNode_Observe(testingTB *testing.T) {
 		Convey("Given slot updates for "+testCase.name, testingTB, func() {
 			extractor := mustPairExtractor(testingTB)
 
-			leftSlot, err := NewInputSlot[float64](extractor, testLeftChannel)
-			So(err, ShouldBeNil)
+			leftSlot := NewInputSlot(extractor, testLeftChannel)
 
-			rightSlot, err := NewInputSlot[float64](extractor, testRightChannel)
-			So(err, ShouldBeNil)
+			rightSlot := NewInputSlot(extractor, testRightChannel)
 
-			sumNode, err := NewFeatureNode[float64](extractor, testSumFeature)
-			So(err, ShouldBeNil)
+			sumNode := NewFeatureNode(extractor, testSumFeature)
 
-			sampleSum := float64(
-				core.Scalar[float64](testCase.left).Observe(leftSlot),
-			)
-			scalarSum := float64(
-				core.Scalar[float64](testCase.right).Observe(rightSlot),
-			)
-			featureSum := float64(sumNode.Observe())
+			sampleSum := pipelineSample(leftSlot, testCase.left)
+			scalarSum := pipelineSample(rightSlot, testCase.right)
+			featureSum := float64(observeInputs(sumNode))
 
 			Convey("It should derive the sum from updated channels", func() {
 				So(sampleSum, ShouldEqual, testCase.left)
@@ -168,19 +162,18 @@ func TestFeatureNode_Reset(testingTB *testing.T) {
 	Convey("Given an observed node", testingTB, func() {
 		extractor := mustPairExtractor(testingTB)
 
-		_ = extractor.SetInput(testLeftChannel, 10)
-		_ = extractor.SetInput(testRightChannel, 4)
+		extractor.SetInput(testLeftChannel, 10)
+		extractor.SetInput(testRightChannel, 4)
 
-		diffNode, err := NewFeatureNode[float64](extractor, testDiffFeature)
-		So(err, ShouldBeNil)
+		diffNode := NewFeatureNode(extractor, testDiffFeature)
 
-		_ = diffNode.Observe()
+		observeInputs(diffNode)
 
 		Convey("When reset", func() {
 			So(diffNode.Reset(), ShouldBeNil)
 
 			Convey("It should succeed without clearing extractor state", func() {
-				So(float64(diffNode.Observe()), ShouldEqual, 6)
+				So(float64(observeInputs(diffNode)), ShouldEqual, 6)
 			})
 		})
 	})
@@ -190,22 +183,21 @@ func TestFeatureNode_Number(testingTB *testing.T) {
 	Convey("Given a composed product number", testingTB, func() {
 		extractor := mustPairExtractor(testingTB)
 
-		leftSlot, err := NewInputSlot[float64](extractor, testLeftChannel)
-		So(err, ShouldBeNil)
+		leftSlot := NewInputSlot(extractor, testLeftChannel)
 
-		rightSlot, err := NewInputSlot[float64](extractor, testRightChannel)
-		So(err, ShouldBeNil)
+		rightSlot := NewInputSlot(extractor, testRightChannel)
 
-		productNode, err := NewFeatureNode[float64](extractor, testProductFeature)
-		So(err, ShouldBeNil)
+		productNode := NewFeatureNode(extractor, testProductFeature)
 
-		_ = leftSlot.Observe(core.Scalar[float64](10))
-		_ = rightSlot.Observe(core.Scalar[float64](3))
+		observeInputs(leftSlot, 10)
+		observeInputs(rightSlot, 3)
 
-		product := nomagique.Number(productNode)
+		So(nomagique.Number(productNode), ShouldBeNil)
+
+		got := observeInputs(productNode)
 
 		Convey("It should observe through the registered pipeline", func() {
-			So(product, ShouldEqual, 30)
+			So(got, ShouldEqual, 30)
 		})
 	})
 }
@@ -213,18 +205,13 @@ func TestFeatureNode_Number(testingTB *testing.T) {
 func BenchmarkFeatureNode_Observe(b *testing.B) {
 	extractor := mustPairExtractor(b)
 
-	_ = extractor.SetInput(testLeftChannel, 100)
-	_ = extractor.SetInput(testRightChannel, 3)
+	extractor.SetInput(testLeftChannel, 100)
+	extractor.SetInput(testRightChannel, 3)
 
-	diffNode, err := NewFeatureNode[float64](extractor, testDiffFeature)
-
-	if err != nil {
-		b.Fatal(err)
-	}
-
+	diffNode := NewFeatureNode(extractor, testDiffFeature)
 	b.ReportAllocs()
 
 	for b.Loop() {
-		_ = diffNode.Observe()
+		observeInputs(diffNode)
 	}
 }

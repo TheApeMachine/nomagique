@@ -21,8 +21,8 @@ func TestBackdoor_Observe(testingTB *testing.T) {
 		}
 
 		streams := [][]float64{nodeZero, nodeOne, nodeTwo, nodeThree}
-		backdoor := NewBackdoor[float64](3, 2, []int{0, 1}, streams, 12)
-		effect := backdoor.Observe()
+		backdoor := NewBackdoor(3, 2, []int{0, 1}, streams, 12)
+		effect := observeInputs(backdoor)
 
 		Convey("It should return a finite backdoor effect", func() {
 			So(float64(effect), ShouldNotEqual, 0)
@@ -46,11 +46,11 @@ func BenchmarkBackdoor_Observe(testingTB *testing.B) {
 	}
 
 	streams := [][]float64{nodeZero, nodeOne, nodeTwo, nodeThree}
-	backdoor := NewBackdoor[float64](3, 2, []int{0, 1}, streams, 12)
+	backdoor := NewBackdoor(3, 2, []int{0, 1}, streams, 12)
 
 	testingTB.ReportAllocs()
 
 	for testingTB.Loop() {
-		_ = backdoor.Observe()
+		_ = observeInputs(backdoor)
 	}
 }

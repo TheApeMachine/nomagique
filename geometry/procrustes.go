@@ -3,7 +3,7 @@ package geometry
 import (
 	"fmt"
 
-	"github.com/theapemachine/nomagique/core"
+	"github.com/theapemachine/datura"
 	"gonum.org/v1/gonum/mat"
 )
 
@@ -18,31 +18,27 @@ type ProcrustesResult struct {
 /*
 Procrustes computes the orthogonal alignment between two sample matrices.
 */
-type Procrustes[T ~float64] struct {
-	matA   mat.Matrix
-	matB   mat.Matrix
-	result ProcrustesResult
-	err    error
-	output core.Scalar[T]
+type Procrustes struct {
+	artifact *datura.Artifact
+	matA     mat.Matrix
+	matB     mat.Matrix
+	result   ProcrustesResult
+	err      error
+	output   float64
 }
 
-/*
-NewProcrustes binds two sample matrices for alignment on Observe.
-*/
-func NewProcrustes[T ~float64](matA, matB mat.Matrix) *Procrustes[T] {
-	return &Procrustes[T]{
-		matA: matA,
-		matB: matB,
+func NewProcrustes(matA, matB mat.Matrix) *Procrustes {
+	return &Procrustes{
+		artifact: datura.Acquire("procrustes", datura.Artifact_Type_json),
+		matA:     matA,
+		matB:     matB,
 	}
 }
 
-/*
-NewProcrustesFromRows builds sample matrices from row-major slices.
-*/
-func NewProcrustesFromRows[T ~float64](
+func NewProcrustesFromRows(
 	rowsA, rowsB [][]float64,
 	nSamples, nDim int,
-) (*Procrustes[T], error) {
+) (*Procrustes, error) {
 	denseA, err := denseFromRows(rowsA, nSamples, nDim)
 
 	if err != nil {
@@ -55,61 +51,59 @@ func NewProcrustesFromRows[T ~float64](
 		return nil, err
 	}
 
-	return NewProcrustes[T](denseA, denseB), nil
+	return NewProcrustes(denseA, denseB), nil
 }
 
-/*
-Observe aligns configured matrices and returns the squared Frobenius residual.
-*/
-func (procrustes *Procrustes[T]) Observe(_ ...core.Number[T]) core.Scalar[T] {
+func (procrustes *Procrustes) Write(p []byte) (int, error) {
+	return procrustes.artifact.Write(p)
+}
+
+func (procrustes *Procrustes) Read(p []byte) (int, error) {
 	procrustes.result, procrustes.err = procrustes.align(procrustes.matA, procrustes.matB)
 
 	if procrustes.err != nil {
-		procrustes.output = core.Scalar[T](0)
+		procrustes.output = 0
+		putFloat64Payload(&procrustes.artifact, "procrustes", procrustes.output)
 
-		return procrustes.output
+		return procrustes.artifact.Read(p)
 	}
 
-	procrustes.output = core.Scalar[T](T(procrustes.result.Residual))
+	procrustes.output = procrustes.result.Residual
+	putFloat64Payload(&procrustes.artifact, "procrustes", procrustes.output)
 
-	return procrustes.output
+	return procrustes.artifact.Read(p)
 }
 
-/*
-Result returns the last alignment result.
-*/
-func (procrustes *Procrustes[T]) Result() ProcrustesResult {
+func (procrustes *Procrustes) Close() error {
+	return nil
+}
+
+func (procrustes *Procrustes) Result() ProcrustesResult {
 	return procrustes.result
 }
 
 /*
 Err returns the last alignment error.
 */
-func (procrustes *Procrustes[T]) Err() error {
+func (procrustes *Procrustes) Err() error {
 	return procrustes.err
 }
 
-/*
-Reset clears derived state.
-*/
-func (procrustes *Procrustes[T]) Reset() error {
+func (procrustes *Procrustes) Reset() error {
 	procrustes.result = ProcrustesResult{}
 	procrustes.err = nil
-	procrustes.output = core.Scalar[T](0)
+	procrustes.output = 0
 
 	return nil
 }
 
-/*
-Decompose runs thin SVD on matrix.
-*/
-func (procrustes *Procrustes[T]) Decompose(matrix mat.Matrix) (
+func (procrustes *Procrustes) Decompose(matrix mat.Matrix) (
 	*mat.Dense, []float64, *mat.Dense, error,
 ) {
 	return procrustes.jacobiSVD(matrix)
 }
 
-func (procrustes *Procrustes[T]) align(matA, matB mat.Matrix) (ProcrustesResult, error) {
+func (procrustes *Procrustes) align(matA, matB mat.Matrix) (ProcrustesResult, error) {
 	nSamples, nDim := matA.Dims()
 	rowsB, colsB := matB.Dims()
 
@@ -171,7 +165,7 @@ func (procrustes *Procrustes[T]) align(matA, matB mat.Matrix) (ProcrustesResult,
 	}, nil
 }
 
-func (procrustes *Procrustes[T]) jacobiSVD(matrix mat.Matrix) (
+func (procrustes *Procrustes) jacobiSVD(matrix mat.Matrix) (
 	*mat.Dense, []float64, *mat.Dense, error,
 ) {
 	rows, cols := matrix.Dims()

@@ -16,7 +16,7 @@ func TestCalibrate_Observe(testingTB *testing.T) {
 			target[index] = 2*feature[index] + 1
 		}
 
-		calibrate, err := NewCalibrate[float64](
+		calibrate, err := NewCalibrate(
 			[][]float64{feature},
 			target,
 			1000,
@@ -25,7 +25,7 @@ func TestCalibrate_Observe(testingTB *testing.T) {
 
 		So(err, ShouldBeNil)
 
-		residual := calibrate.Observe()
+		residual := observeInputs(calibrate)
 
 		Convey("It should converge to a small residual", func() {
 			So(float64(residual), ShouldBeLessThan, 0.25)
@@ -37,7 +37,7 @@ func TestCalibrate_Observe(testingTB *testing.T) {
 
 func TestNewCalibrate(testingTB *testing.T) {
 	Convey("Given no feature streams", testingTB, func() {
-		_, err := NewCalibrate[float64](nil, []float64{1}, 1000, 1)
+		_, err := NewCalibrate(nil, []float64{1}, 1000, 1)
 
 		Convey("It should return an error", func() {
 			So(err, ShouldNotBeNil)
@@ -54,7 +54,7 @@ func BenchmarkCalibrate_Observe(testingTB *testing.B) {
 		target[index] = 2*feature[index] + 1
 	}
 
-	calibrate, err := NewCalibrate[float64](
+	calibrate, err := NewCalibrate(
 		[][]float64{feature},
 		target,
 		1000,
@@ -68,6 +68,6 @@ func BenchmarkCalibrate_Observe(testingTB *testing.B) {
 	testingTB.ReportAllocs()
 
 	for testingTB.Loop() {
-		_ = calibrate.Observe()
+		_ = observeInputs(calibrate)
 	}
 }

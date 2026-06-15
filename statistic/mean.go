@@ -1,54 +1,65 @@
 package statistic
 
 import (
-	"github.com/theapemachine/nomagique/core"
+	"encoding/binary"
+	"math"
+
+	"github.com/theapemachine/datura"
 	"gonum.org/v1/gonum/stat"
 )
 
 /*
-Mean computes the arithmetic average of every sample in one Observe call.
-
-Optional weights emphasize selected samples. Compose inside nomagique.Number(...)
-or call Observe directly with boundary scalars.
+Mean computes the arithmetic average of every sample in one Read call.
 */
-type Mean[T ~float64] struct {
-	weights []float64
-	output  core.Scalar[T]
+type Mean struct {
+	artifact *datura.Artifact
+	weights  []float64
 }
 
 /*
 NewMean creates a mean stage.
 */
-func NewMean[T ~float64](weights []float64) *Mean[T] {
-	return &Mean[T]{
-		weights: weights,
+func NewMean(weights []float64) *Mean {
+	return &Mean{
+		artifact: datura.Acquire("mean", datura.Artifact_Type_json),
+		weights:  weights,
 	}
 }
 
-/*
-Observe computes the mean of a stream of numbers.
-*/
-func (mean *Mean[T]) Observe(inputs ...core.Number[T]) core.Scalar[T] {
-	values := sampleBatch[T](inputs...)
-
-	if len(values) == 0 {
-		return mean.output
-	}
-
-	weights := mean.weights
-
-	if len(weights) == 0 {
-		weights = nil
-	}
-
-	mean.output = core.Scalar[T](T(stat.Mean(values, weights)))
-
-	return mean.output
+func (mean *Mean) Write(p []byte) (int, error) {
+	return mean.artifact.Write(p)
 }
 
-func (mean *Mean[T]) Reset() error {
+func (mean *Mean) Read(p []byte) (int, error) {
+	payload, err := mean.artifact.Payload()
+
+	if err == nil && len(payload) >= 8 && len(payload)%8 == 0 {
+		count := len(payload) / 8
+		values := make([]float64, count)
+
+		for index := range count {
+			offset := index * 8
+			values[index] = math.Float64frombits(binary.BigEndian.Uint64(payload[offset : offset+8]))
+		}
+
+		weights := mean.weights
+
+		if len(weights) == 0 {
+			weights = nil
+		}
+
+		putFloat64Payload(&mean.artifact, "mean", stat.Mean(values, weights))
+	}
+
+	return mean.artifact.Read(p)
+}
+
+func (mean *Mean) Close() error {
+	return nil
+}
+
+func (mean *Mean) Reset() error {
 	mean.weights = nil
-	mean.output = core.Scalar[T](0)
 
 	return nil
 }

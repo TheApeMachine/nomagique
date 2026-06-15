@@ -4,7 +4,6 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/nomagique/core"
 )
 
 func TestParsePredictedActual(testingTB *testing.T) {
@@ -34,7 +33,7 @@ func TestParsePredictedActual(testingTB *testing.T) {
 			name:        "zero predicted in work pair",
 			primary:     0,
 			extras:      []float64{0, 10},
-			expectError: core.ErrZeroPredicted,
+			expectError: ErrZeroPredicted,
 		},
 	}
 
@@ -87,7 +86,7 @@ func TestParseBernoulliOutcome(testingTB *testing.T) {
 			name:        "invalid raw outcome",
 			primary:     1.5,
 			extras:      nil,
-			expectError: core.ErrInvalidOutcome,
+			expectError: ErrInvalidOutcome,
 		},
 	}
 

@@ -1,85 +1,109 @@
 package probability
 
 import (
-	"github.com/theapemachine/nomagique/core"
+	"encoding/binary"
+	"math"
+
+	"github.com/theapemachine/datura"
 )
 
 /*
-Posterior tracks a Beta posterior mean from Bernoulli outcomes.
+Bernoulli tracks a Beta posterior mean from Bernoulli outcomes.
 */
-type Posterior[T ~float64] struct {
-	state  BetaState
-	output core.Scalar[T]
+type Bernoulli struct {
+	artifact *datura.Artifact
+	state    BetaState
 }
 
 /*
-Bernoulli returns a Beta-Bernoulli dynamic ready from its first observation.
+NewBernoulli returns a Beta-Bernoulli stage ready from its first observation.
 */
-func Bernoulli[T ~float64]() *Posterior[T] {
-	return &Posterior[T]{}
+func NewBernoulli() *Bernoulli {
+	return &Bernoulli{
+		artifact: datura.Acquire("bernoulli", datura.Artifact_Type_json),
+	}
 }
 
-/*
-Observe ingests either a unit-interval outcome or a predicted and actual pair.
-*/
-func (posterior *Posterior[T]) Observe(inputs ...core.Number[T]) core.Scalar[T] {
-	if len(inputs) == 0 {
-		return posterior.output
-	}
+func (bernoulli *Bernoulli) Write(p []byte) (int, error) {
+	return bernoulli.artifact.Write(p)
+}
 
-	scalars, ok := collectScalars[T](inputs...)
+func (bernoulli *Bernoulli) Read(p []byte) (int, error) {
+	rehydrateArtifact(&bernoulli.artifact, "bernoulli", datura.Artifact_Type_json)
 
-	if !ok {
-		return posterior.output
-	}
+	payload, err := bernoulli.artifact.Payload()
 
-	if len(scalars) >= 2 {
-		predicted, actual, err := parsePredictedActual(scalars[0], scalars[1:])
+	if err == nil && len(payload) >= 8 {
+		samples := payloadSamples(payload)
 
-		if err != nil {
-			return posterior.output
+		if len(samples) >= 2 {
+			predicted, actual, parseErr := parsePredictedActual(samples[0], samples[1:])
+
+			if parseErr == nil {
+				derived := ObserveBetaPair(&bernoulli.state, predicted, actual)
+				out := make([]byte, 8)
+				binary.BigEndian.PutUint64(out, math.Float64bits(derived))
+				_ = bernoulli.artifact.SetPayload(out)
+			}
 		}
 
-		posterior.output = core.Scalar[T](T(
-			ObserveBetaPair(&posterior.state, predicted, actual),
-		))
+		if len(samples) == 1 {
+			outcome, parseErr := parseBernoulliOutcome(samples[0], nil)
 
-		return posterior.output
+			if parseErr == nil {
+				derived := ObserveBeta(&bernoulli.state, outcome)
+				out := make([]byte, 8)
+				binary.BigEndian.PutUint64(out, math.Float64bits(derived))
+				_ = bernoulli.artifact.SetPayload(out)
+			}
+
+			if parseErr != nil {
+				out := make([]byte, 8)
+				binary.BigEndian.PutUint64(out, math.Float64bits(0))
+				_ = bernoulli.artifact.SetPayload(out)
+			}
+		}
 	}
 
-	outcome, err := parseBernoulliOutcome(scalars[0], nil)
+	return bernoulli.artifact.Read(p)
+}
 
-	if err != nil {
-		return posterior.output
+func (bernoulli *Bernoulli) Value() float64 {
+	payload, _ := bernoulli.artifact.Payload()
+	value, ok := payloadScalar(payload)
+
+	if !ok {
+		return 0
 	}
 
-	posterior.output = core.Scalar[T](T(ObserveBeta(&posterior.state, outcome)))
+	return value
+}
 
-	return posterior.output
+func (bernoulli *Bernoulli) Close() error {
+	return nil
 }
 
 /*
 ObserveSamples runs the exact batch kernel over outcomes into out.
 */
-func (posterior *Posterior[T]) ObserveSamples(outcomes []float64, out []float64) {
-	posterior.state.ObserveSamples(outcomes, out)
+func (bernoulli *Bernoulli) ObserveSamples(outcomes []float64, out []float64) {
+	bernoulli.state.ObserveSamples(outcomes, out)
 }
 
 /*
 ObservePairSamples runs the exact batch kernel over pairs into out.
 */
-func (posterior *Posterior[T]) ObservePairSamples(
+func (bernoulli *Bernoulli) ObservePairSamples(
 	predicted []float64, actual []float64, out []float64,
 ) {
-	posterior.state.ObservePairSamples(predicted, actual, out)
+	bernoulli.state.ObservePairSamples(predicted, actual, out)
 }
 
 /*
 Reset clears derived state.
 */
-func (posterior *Posterior[T]) Reset() error {
-	posterior.state.Reset()
-	posterior.output = core.Scalar[T](0)
+func (bernoulli *Bernoulli) Reset() error {
+	bernoulli.state.Reset()
 
 	return nil
 }

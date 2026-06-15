@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/nomagique/core"
+	"github.com/theapemachine/datura"
 )
 
 func TestTransitionMatrixSurprise(testingTB *testing.T) {
@@ -67,18 +67,18 @@ func TestTransitionMatrixReset(testingTB *testing.T) {
 	})
 }
 
-func TestTransitionSurprise_Observe(testingTB *testing.T) {
+func TestTransitionSurprise_Read(testingTB *testing.T) {
 	Convey("Given a padded observation through TransitionSurprise", testingTB, func() {
-		stage := TransitionSurprise[float64](5, 0.1)
+		stage := NewTransitionSurprise(5, 0.1)
 		matrix := stage.matrix
 		observed := matrix.PadObserved([]float64{0.25, 0.25, 0.25, 0.25}, 0)
-		inputs := make([]core.Number[float64], len(observed))
+		inbound := datura.Acquire("transition-test", datura.Artifact_Type_json)
+		pokeFloatList(inbound, "classifier.probabilities", observed)
+		pokeInt(inbound, "classifier.category", 1)
+		buf, _ := inbound.Message().Marshal()
+		_, _ = stage.Write(buf)
 
-		for index, probability := range observed {
-			inputs[index] = core.Scalar[float64](probability)
-		}
-
-		got := float64(stage.Observe(inputs...))
+		got := readScalar(stage)
 
 		Convey("It should return finite surprisal", func() {
 			So(math.IsNaN(got), ShouldBeFalse)
@@ -88,7 +88,7 @@ func TestTransitionSurprise_Observe(testingTB *testing.T) {
 
 func TestTransitionSurprise_Reset(testingTB *testing.T) {
 	Convey("Given a reset transition stage", testingTB, func() {
-		stage := TransitionSurprise[float64](5, 0.1)
+		stage := NewTransitionSurprise(5, 0.1)
 		stage.matrix.Update(2)
 
 		err := stage.Reset()
@@ -100,20 +100,20 @@ func TestTransitionSurprise_Reset(testingTB *testing.T) {
 	})
 }
 
-func BenchmarkTransitionSurprise_Observe(testingTB *testing.B) {
-	stage := TransitionSurprise[float64](5, 0.1)
+func BenchmarkTransitionSurprise_Read(testingTB *testing.B) {
+	stage := NewTransitionSurprise(5, 0.1)
 	matrix := stage.matrix
 	observed := matrix.PadObserved([]float64{0.4, 0.3, 0.2, 0.1}, 0)
-	inputs := make([]core.Number[float64], len(observed))
-
-	for index, probability := range observed {
-		inputs[index] = core.Scalar[float64](probability)
-	}
+	inbound := datura.Acquire("transition-bench", datura.Artifact_Type_json)
+	pokeFloatList(inbound, "classifier.probabilities", observed)
+	pokeInt(inbound, "classifier.category", 2)
+	buf, _ := inbound.Message().Marshal()
 
 	testingTB.ReportAllocs()
 
 	for testingTB.Loop() {
-		_ = stage.Observe(inputs...)
+		_, _ = stage.Write(buf)
+		_ = readScalar(stage)
 	}
 }
 

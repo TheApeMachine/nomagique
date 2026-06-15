@@ -1,49 +1,62 @@
 package statistic
 
 import (
+	"encoding/binary"
 	"math"
 	"sort"
 
+	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/nomagique/core"
 	"gonum.org/v1/gonum/stat"
 )
 
 /*
 Quantile computes a sample quantile using gonum's stat.Quantile interpolation.
-LinInterp matches linear interpolation between order statistics; Empirical uses
-the step-function empirical distribution.
 */
-type Quantile[T ~float64] struct {
+type Quantile struct {
+	artifact   *datura.Artifact
 	percentile float64
 	kind       stat.CumulantKind
 	weights    []float64
-	output     core.Scalar[T]
 }
 
 /*
 NewQuantile creates a quantile stage at percentile in [0, 1].
 */
-func NewQuantile[T ~float64](
+func NewQuantile(
 	percentile float64,
 	kind stat.CumulantKind,
 	weights []float64,
-) *Quantile[T] {
-	return &Quantile[T]{
+) *Quantile {
+	return &Quantile{
+		artifact:   datura.Acquire("quantile", datura.Artifact_Type_json),
 		percentile: percentile,
 		kind:       kind,
 		weights:    weights,
 	}
 }
 
-/*
-Observe sorts the input stream and returns the configured quantile.
-*/
-func (quantile *Quantile[T]) Observe(inputs ...core.Number[T]) core.Scalar[T] {
-	values := sampleBatch[T](inputs...)
+func (quantile *Quantile) Write(p []byte) (int, error) {
+	return quantile.artifact.Write(p)
+}
+
+func (quantile *Quantile) Read(p []byte) (int, error) {
+	payload, err := quantile.artifact.Payload()
+
+	if err != nil || len(payload) < 8 || len(payload)%8 != 0 {
+		return quantile.artifact.Read(p)
+	}
+
+	count := len(payload) / 8
+	values := make([]float64, count)
+
+	for index := range count {
+		offset := index * 8
+		values[index] = math.Float64frombits(binary.BigEndian.Uint64(payload[offset : offset+8]))
+	}
 
 	if len(values) == 0 {
-		return quantile.output
+		return quantile.artifact.Read(p)
 	}
 
 	weights := quantile.weights
@@ -55,61 +68,61 @@ func (quantile *Quantile[T]) Observe(inputs ...core.Number[T]) core.Scalar[T] {
 				QuantileError(QuantileErrorWeightLengthMismatch),
 			)
 
-			return quantile.output
+			return quantile.artifact.Read(p)
 		}
 
 		sortedValues, sortedWeights, ok := sortWeightedSamples(values, weights)
 
 		if !ok {
-			quantile.output = core.Scalar[T](T(math.NaN()))
+			putFloat64Payload(&quantile.artifact, "quantile", math.NaN())
 
-			return quantile.output
+			return quantile.artifact.Read(p)
 		}
 
-		quantile.output = quantile.quantileOf(sortedValues, sortedWeights)
+		putFloat64Payload(&quantile.artifact, "quantile", quantile.quantileOf(sortedValues, sortedWeights))
 
-		return quantile.output
+		return quantile.artifact.Read(p)
 	}
 
 	sort.Float64s(values)
-	quantile.output = quantile.quantileOf(values, nil)
 
-	return quantile.output
+	putFloat64Payload(&quantile.artifact, "quantile", quantile.quantileOf(values, nil))
+
+	return quantile.artifact.Read(p)
 }
 
-func (quantile *Quantile[T]) Reset() error {
+func (quantile *Quantile) Close() error {
+	return nil
+}
+
+func (quantile *Quantile) Reset() error {
 	quantile.weights = nil
-	quantile.output = core.Scalar[T](0)
 
 	return nil
 }
 
-func (quantile *Quantile[T]) quantileOf(
+func (quantile *Quantile) quantileOf(
 	sorted []float64, weights []float64,
-) core.Scalar[T] {
+) float64 {
 	if quantile.percentile <= 0 {
-		return core.Scalar[T](T(sorted[0]))
+		return sorted[0]
 	}
 
 	if quantile.percentile >= 1 {
-		return core.Scalar[T](T(sorted[len(sorted)-1]))
+		return sorted[len(sorted)-1]
 	}
 
 	if weights == nil {
 		for _, value := range sorted {
 			if math.IsNaN(value) || math.IsInf(value, 0) {
-				return core.Scalar[T](T(math.NaN()))
+				return math.NaN()
 			}
 		}
 
-		return core.Scalar[T](T(
-			stat.Quantile(quantile.percentile, quantile.kind, sorted, nil),
-		))
+		return stat.Quantile(quantile.percentile, quantile.kind, sorted, nil)
 	}
 
-	return core.Scalar[T](T(
-		stat.Quantile(quantile.percentile, quantile.kind, sorted, weights),
-	))
+	return stat.Quantile(quantile.percentile, quantile.kind, sorted, weights)
 }
 
 func sortWeightedSamples(values, weights []float64) ([]float64, []float64, bool) {

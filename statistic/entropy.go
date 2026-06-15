@@ -1,41 +1,55 @@
 package statistic
 
 import (
+	"encoding/binary"
 	"math"
 
+	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/nomagique/core"
 	"gonum.org/v1/gonum/floats"
 	"gonum.org/v1/gonum/stat"
 )
 
 /*
 Entropy computes Shannon entropy of a normalized mass distribution.
-Non-positive masses are floored before normalization.
 */
-type Entropy[T ~float64] struct {
-	floor  float64
-	output core.Scalar[T]
+type Entropy struct {
+	artifact *datura.Artifact
+	floor    float64
 }
 
 /*
 NewEntropy creates an entropy stage.
 floor may be zero to derive a per-sample floor from each observation.
 */
-func NewEntropy[T ~float64](floor float64) *Entropy[T] {
-	return &Entropy[T]{
-		floor: floor,
+func NewEntropy(floor float64) *Entropy {
+	return &Entropy{
+		artifact: datura.Acquire("entropy", datura.Artifact_Type_json),
+		floor:    floor,
 	}
 }
 
-/*
-Observe returns entropy of the normalized input masses.
-*/
-func (entropy *Entropy[T]) Observe(inputs ...core.Number[T]) core.Scalar[T] {
-	values := sampleBatch[T](inputs...)
+func (entropy *Entropy) Write(p []byte) (int, error) {
+	return entropy.artifact.Write(p)
+}
+
+func (entropy *Entropy) Read(p []byte) (int, error) {
+	payload, err := entropy.artifact.Payload()
+
+	if err != nil || len(payload) < 8 || len(payload)%8 != 0 {
+		return entropy.artifact.Read(p)
+	}
+
+	count := len(payload) / 8
+	values := make([]float64, count)
+
+	for index := range count {
+		offset := index * 8
+		values[index] = math.Float64frombits(binary.BigEndian.Uint64(payload[offset : offset+8]))
+	}
 
 	if len(values) == 0 {
-		return entropy.output
+		return entropy.artifact.Read(p)
 	}
 
 	probabilities, ok := entropy.normalizedProbabilities(values)
@@ -46,21 +60,23 @@ func (entropy *Entropy[T]) Observe(inputs ...core.Number[T]) core.Scalar[T] {
 			EntropyError(EntropyErrorNonFiniteMass),
 		)
 
-		return entropy.output
+		return entropy.artifact.Read(p)
 	}
 
-	entropy.output = core.Scalar[T](T(stat.Entropy(probabilities)))
+	putFloat64Payload(&entropy.artifact, "entropy", stat.Entropy(probabilities))
 
-	return entropy.output
+	return entropy.artifact.Read(p)
 }
 
-func (entropy *Entropy[T]) Reset() error {
-	entropy.output = core.Scalar[T](0)
-
+func (entropy *Entropy) Close() error {
 	return nil
 }
 
-func (entropy *Entropy[T]) normalizedProbabilities(values []float64) ([]float64, bool) {
+func (entropy *Entropy) Reset() error {
+	return nil
+}
+
+func (entropy *Entropy) normalizedProbabilities(values []float64) ([]float64, bool) {
 	floor := entropy.probabilityFloor(values)
 	total := 0.0
 
@@ -92,7 +108,7 @@ func (entropy *Entropy[T]) normalizedProbabilities(values []float64) ([]float64,
 	return probabilities, true
 }
 
-func (entropy *Entropy[T]) probabilityFloor(values []float64) float64 {
+func (entropy *Entropy) probabilityFloor(values []float64) float64 {
 	if entropy.floor > 0 {
 		return entropy.floor
 	}

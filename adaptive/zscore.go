@@ -1,90 +1,83 @@
 package adaptive
 
 import (
+	"encoding/binary"
 	"math"
 
-	"github.com/theapemachine/nomagique/core"
+	"github.com/theapemachine/datura"
 )
 
 /*
 ZScore tracks adaptive scale for a normalized surprise score.
 */
-type ZScore[T ~float64] struct {
-	Mean   float64
-	Var    float64
-	Prev   float64
-	Min    float64
-	Max    float64
-	Rate   float64
-	Ready  bool
-	output core.Scalar[T]
+type ZScore struct {
+	artifact *datura.Artifact
+	Mean     float64
+	Var      float64
+	Prev     float64
+	Min      float64
+	Max      float64
+	Rate     float64
+	Ready    bool
 }
 
 /*
 NewZScore returns a z-score stage ready to bootstrap from its first observation.
 */
-func NewZScore[T ~float64](initial ...core.Number[T]) *ZScore[T] {
-	surprise := &ZScore[T]{}
-
-	if len(initial) > 0 {
-		surprise.output = core.Scalar[T](0).Observe(initial...)
+func NewZScore() *ZScore {
+	return &ZScore{
+		artifact: datura.Acquire("zscore", datura.Artifact_Type_json),
 	}
-
-	return surprise
 }
 
-/*
-Observe absorbs the carried sample and returns the z-score.
-*/
-func (surprise *ZScore[T]) Observe(inputs ...core.Number[T]) core.Scalar[T] {
-	if len(inputs) == 0 {
-		return surprise.output
-	}
+func (surprise *ZScore) Write(p []byte) (int, error) {
+	return surprise.artifact.Write(p)
+}
 
-	sample, ok := inputs[0].(core.Scalar[T])
+func (surprise *ZScore) Read(p []byte) (int, error) {
+	payload, err := surprise.artifact.Payload()
 
-	if !ok {
-		return surprise.output
-	}
+	if err == nil && len(payload) >= 8 {
+		sample := math.Float64frombits(binary.BigEndian.Uint64(payload[:8]))
+		anchor := 0.0
+		hasAnchor := false
 
-	anchor := 0.0
-	hasAnchor := false
-
-	if len(inputs) > 1 {
-		if anchorSample, anchorOK := inputs[1].(core.Scalar[T]); anchorOK {
-			anchor = float64(anchorSample)
+		if len(payload) >= 16 {
+			anchor = math.Float64frombits(binary.BigEndian.Uint64(payload[8:16]))
 			hasAnchor = true
 		}
+
+		derived := surprise.step(sample, anchor, hasAnchor)
+		assignScalarPayload(&surprise.artifact, "zscore", derived)
 	}
 
-	surprise.output = core.Scalar[T](T(surprise.observe(float64(sample), anchor, hasAnchor)))
+	return surprise.artifact.Read(p)
+}
 
-	return surprise.output
+func (surprise *ZScore) Close() error {
+	return nil
 }
 
 /*
 ObserveSample ingests one raw sample through the z-score kernel.
 */
-func (surprise *ZScore[T]) ObserveSample(sample T) T {
-	derived := T(surprise.observe(float64(sample), 0, false))
-	surprise.output = core.Scalar[T](derived)
-
-	return derived
+func (surprise *ZScore) ObserveSample(sample float64) float64 {
+	return surprise.readSampleViaArtifact(sample)
 }
 
 /*
 ObserveSamples writes one derived value per sample into out.
 */
-func (surprise *ZScore[T]) ObserveSamples(samples []T, out []T) {
+func (surprise *ZScore) ObserveSamples(samples []float64, out []float64) {
 	for index, sample := range samples {
 		out[index] = surprise.ObserveSample(sample)
 	}
 }
 
 /*
-Reset clears derived state so the next Observe bootstraps again.
+Reset clears derived state so the next Read bootstraps again.
 */
-func (surprise *ZScore[T]) Reset() error {
+func (surprise *ZScore) Reset() error {
 	surprise.Mean = 0
 	surprise.Var = 0
 	surprise.Prev = 0
@@ -92,12 +85,31 @@ func (surprise *ZScore[T]) Reset() error {
 	surprise.Max = 0
 	surprise.Rate = 0
 	surprise.Ready = false
-	surprise.output = core.Scalar[T](0)
 
 	return nil
 }
 
-func (surprise *ZScore[T]) observe(sample float64, anchorMean float64, hasAnchorMean bool) float64 {
+func (surprise *ZScore) readSampleViaArtifact(sample float64) float64 {
+	inbound := datura.Acquire("zscore-in", datura.Artifact_Type_json)
+	payload := make([]byte, 8)
+	binary.BigEndian.PutUint64(payload, math.Float64bits(sample))
+	_ = inbound.SetPayload(payload)
+	buf, _ := inbound.Message().Marshal()
+	_, _ = surprise.Write(buf)
+	outBuf := make([]byte, 4096)
+	_, _ = surprise.Read(outBuf)
+	outbound := datura.Acquire("stage-out", datura.Artifact_Type_json)
+	_, _ = outbound.Write(outBuf)
+	readPayload, _ := outbound.Payload()
+
+	if len(readPayload) != 8 {
+		return 0
+	}
+
+	return math.Float64frombits(binary.BigEndian.Uint64(readPayload))
+}
+
+func (surprise *ZScore) step(sample float64, anchorMean float64, hasAnchorMean bool) float64 {
 	if !surprise.Ready {
 		surprise.Mean = sample
 		surprise.Var = 0
@@ -109,10 +121,10 @@ func (surprise *ZScore[T]) observe(sample float64, anchorMean float64, hasAnchor
 		return 0
 	}
 
-	return surprise.observeReady(sample, anchorMean, hasAnchorMean)
+	return surprise.stepReady(sample, anchorMean, hasAnchorMean)
 }
 
-func (surprise *ZScore[T]) observeReady(
+func (surprise *ZScore) stepReady(
 	sample float64, anchorMean float64, hasAnchorMean bool,
 ) float64 {
 	surprise.Min = math.Min(surprise.Min, sample)
@@ -148,4 +160,11 @@ func (surprise *ZScore[T]) observeReady(
 	}
 
 	return deviation / math.Sqrt(surprise.Var)
+}
+
+/*
+Value returns the last derived scalar without re-processing the stage.
+*/
+func (surprise *ZScore) Value() float64 {
+	return valueFromArtifact(surprise.artifact)
 }

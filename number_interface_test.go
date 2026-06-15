@@ -1,12 +1,13 @@
 package nomagique_test
 
 import (
+	"io"
 	"testing"
 	"time"
 
+	"github.com/theapemachine/datura/transport"
 	"github.com/theapemachine/nomagique/adaptive"
 	"github.com/theapemachine/nomagique/algorithm"
-	"github.com/theapemachine/nomagique/core"
 	"github.com/theapemachine/nomagique/correlation"
 	"github.com/theapemachine/nomagique/geometry"
 	"github.com/theapemachine/nomagique/learning"
@@ -16,89 +17,97 @@ import (
 	"github.com/theapemachine/nomagique/vector"
 )
 
-func assignNumber(stage core.Number[float64]) {
+func assignStage(stage io.ReadWriter) {
 	_ = stage
 }
 
 func TestNumberInterfaceCompile(testingTB *testing.T) {
-	assignNumber(adaptive.NewEMA[float64]())
-	assignNumber(adaptive.NewDelta[float64]())
-	assignNumber(adaptive.NewZScore[float64]())
-	assignNumber(adaptive.NewFracDiff[float64]())
-	assignNumber(adaptive.NewMomentum[float64]())
-	assignNumber(adaptive.NewCompression[float64]())
-	assignNumber(adaptive.NewVariance[float64]())
-	assignNumber(adaptive.NewRange[float64]())
-	assignNumber(adaptive.NewAccumulator[float64]())
-	assignNumber(adaptive.NewTimeElastic[float64](time.Hour, 1e-6))
+	assignStage(adaptive.NewEMA())
+	assignStage(adaptive.NewDelta())
+	assignStage(adaptive.NewZScore())
+	assignStage(adaptive.NewFracDiff())
+	assignStage(adaptive.NewMomentum())
+	assignStage(adaptive.NewCompression())
+	assignStage(adaptive.NewVariance())
+	assignStage(adaptive.NewRange())
+	assignStage(adaptive.NewAccumulator())
+	assignStage(adaptive.NewTimeElastic(time.Hour, 1e-6))
 
-	assignNumber(statistic.NewMean[float64](nil))
-	assignNumber(statistic.NewMedian[float64](nil))
-	assignNumber(statistic.NewSum[float64]())
-	assignNumber(statistic.NewMin[float64]())
-	assignNumber(statistic.NewMax[float64]())
-	assignNumber(statistic.NewStdDev[float64](nil))
-	assignNumber(statistic.NewEntropy[float64](0))
-	assignNumber(statistic.NewMedianAbsolute[float64](nil))
+	assignStage(statistic.NewMean(nil))
+	assignStage(statistic.NewMedian(nil, nil))
+	assignStage(statistic.NewSum())
+	assignStage(statistic.NewMin())
+	assignStage(statistic.NewMax())
+	assignStage(statistic.NewStdDev(nil))
+	assignStage(statistic.NewEntropy(0))
+	assignStage(statistic.NewMedianAbsolute(nil))
 
-	assignNumber(probability.CUSUM[float64]())
-	assignNumber(probability.Bernoulli[float64]())
-	assignNumber(probability.Rank[float64]())
-	assignNumber(probability.TransitionSurprise[float64](5, 0.1))
+	assignStage(probability.NewCUSUM())
+	assignStage(probability.NewBernoulli())
+	assignStage(probability.NewRank())
+	assignStage(probability.NewTransitionSurprise(5, 0.1))
 
-	assignNumber(learning.Forecast[float64]())
-	assignNumber(learning.Weight[float64]())
-	assignNumber(learning.SampleRatio[float64]())
+	classifier := probability.NewClassifier(
+		logic.NewConstant(0.1),
+		logic.NewConstant(0.2),
+	)
 
-	rls, err := learning.NewRLS[float64](1, 1000)
+	if classifier == nil {
+		testingTB.Fatal("classifier required")
+	}
+
+	assignStage(classifier)
+
+	assignStage(learning.Forecast())
+	assignStage(learning.Weight())
+	assignStage(learning.SampleRatio())
+
+	rls, err := learning.NewRLS(1, 1000)
 
 	if err != nil {
 		testingTB.Fatal(err)
 	}
 
-	assignNumber(rls)
+	assignStage(rls)
 
-	assignNumber(geometry.NewVelocity[float64]())
-	assignNumber(geometry.NewCoupling[float64]())
-	assignNumber(geometry.NewModePartition[float64](
+	assignStage(geometry.NewVelocity())
+	assignStage(geometry.NewCoupling())
+	assignStage(geometry.NewModePartition(
 		0.5,
 		[]float64{1, 2},
 		[]float64{1, 2},
 		[]float64{1, 0, 0, 1},
 	))
 
-	assignNumber(geometry.NewProcrustes[float64](nil, nil))
+	assignStage(geometry.NewProcrustes(nil, nil))
 
-	assignNumber(geometry.NewRotor[float64]())
-	assignNumber(geometry.NewTranslator[float64]())
+	assignStage(geometry.NewRotor())
+	assignStage(geometry.NewTranslator())
 
 	var motor geometry.Multivector
 
 	motor.FromRotation(0, 1, 0, 0)
-	assignNumber(geometry.NewSandwich[float64](motor))
+	assignStage(geometry.NewSandwich(motor))
 
-	assignNumber(correlation.NewPearson[float64](nil))
-	assignNumber(correlation.NewCovariance[float64](nil))
-	assignNumber(correlation.NewIntervalSeries[float64](8))
-	assignNumber(correlation.NewWindowSet[float64](8))
-	assignNumber(correlation.NewContagion[float64](
+	assignStage(correlation.NewPearson(nil))
+	assignStage(correlation.NewCovariance(nil))
+	assignStage(correlation.NewIntervalSeries(8))
+	assignStage(correlation.NewWindowSet(8))
+	assignStage(correlation.NewContagion(
 		nil,
 		correlation.TierWindows{},
 		correlation.ContagionConfig{},
 	))
 
-	assignNumber(algorithm.NewTrust[float64]())
+	assignStage(algorithm.NewTrust())
+	assignStage(transport.NewThrough(0))
 
-	assignNumber(logic.NewAnd[float64]())
-	assignNumber(logic.NewOr[float64]())
-	assignNumber(logic.NewNot[float64]())
-	assignNumber(logic.NewXor[float64]())
-	assignNumber(logic.NewCompare[float64]())
-	assignNumber(logic.NewSelect[float64]())
-	assignNumber(logic.NewGate[float64]())
-	assignNumber(logic.NewMux[float64](2))
-	assignNumber(logic.NewFirstMatch[float64]())
-	assignNumber(logic.NewLatch[float64]())
+	assignStage(logic.NewCircuit(logic.Rules{
+		{
+			Condition: logic.True{Operand: true},
+			Then:      logic.NewConstant(1),
+		},
+	}))
 }
 
 func TestNumberInterfaceVectorCompile(testingTB *testing.T) {
@@ -110,20 +119,11 @@ func TestNumberInterfaceVectorCompile(testingTB *testing.T) {
 		testingTB.Fatal(err)
 	}
 
-	assignNumber(extractor)
+	assignStage(extractor)
 
-	inputSlot, err := vector.NewInputSlot[float64](extractor, 0)
+	inputSlot := vector.NewInputSlot(extractor, 0)
+	featureNode := vector.NewFeatureNode(extractor, 0)
 
-	if err != nil {
-		testingTB.Fatal(err)
-	}
-
-	featureNode, err := vector.NewFeatureNode[float64](extractor, 0)
-
-	if err != nil {
-		testingTB.Fatal(err)
-	}
-
-	assignNumber(inputSlot)
-	assignNumber(featureNode)
+	assignStage(inputSlot)
+	assignStage(featureNode)
 }

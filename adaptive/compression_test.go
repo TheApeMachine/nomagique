@@ -4,13 +4,12 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/nomagique/core"
 	"github.com/theapemachine/nomagique/tests"
 )
 
 func TestNewCompression(testingTB *testing.T) {
 	Convey("Given NewCompression", testingTB, func() {
-		compression := NewCompression[float64]()
+		compression := NewCompression()
 
 		Convey("It should return a usable stage", func() {
 			So(compression, ShouldNotBeNil)
@@ -38,7 +37,7 @@ func TestCompression_ObserveSample(testingTB *testing.T) {
 		testCase := testCase
 
 		Convey("Given "+testCase.name, testingTB, func() {
-			compression := NewCompression[float64]()
+			compression := NewCompression()
 			got := tests.RunObserveSampleSequence(compression.ObserveSample, testCase.samples)
 
 			Convey("It should derive the expected score", func() {
@@ -50,36 +49,32 @@ func TestCompression_ObserveSample(testingTB *testing.T) {
 
 func TestCompression_Observe(testingTB *testing.T) {
 	Convey("Given empty Observe inputs", testingTB, func() {
-		compression := NewCompression[float64]()
+		compression := NewCompression()
 
 		Convey("It should return zero output", func() {
-			So(compression.Observe(), ShouldEqual, core.Scalar[float64](0))
+			So(observeInputs(compression), ShouldEqual, 0)
 		})
 	})
 
 	Convey("Given a non-scalar first input", testingTB, func() {
-		compression := NewCompression[float64]()
-		_ = compression.Observe(core.Scalar[float64](10))
-		_ = compression.Observe(core.Scalar[float64](5))
-		stage := &tests.PipelineStage[float64]{Result: core.Scalar[float64](99)}
+		compression := NewCompression()
+		_ = observeInputs(compression, 10)
+		_ = observeInputs(compression, 5)
 
 		Convey("It should leave output unchanged", func() {
-			So(compression.Observe(stage), ShouldEqual, core.Scalar[float64](0.5))
+			So(observeWithoutSample(compression, 99), ShouldEqual, 0.5)
 		})
 	})
 
 	Convey("Given a scalar plus work sample", testingTB, func() {
-		compression := NewCompression[float64]()
-		_ = compression.Observe(core.Scalar[float64](10))
+		compression := NewCompression()
+		_ = observeInputs(compression, 10)
 
 		Convey("It should match a single combined scalar", func() {
-			withWork := compression.Observe(
-				core.Scalar[float64](2),
-				core.Scalar[float64](3),
-			)
-			expect := NewCompression[float64]()
-			_ = expect.Observe(core.Scalar[float64](10))
-			combined := expect.Observe(core.Scalar[float64](5))
+			withWork := observeWithCombinedWork(compression, 2, 3)
+			expect := NewCompression()
+			_ = observeInputs(expect, 10)
+			combined := observeInputs(expect, 5)
 
 			So(withWork, ShouldEqual, combined)
 		})
@@ -97,11 +92,11 @@ func TestCompression_Observe(testingTB *testing.T) {
 		testCase := testCase
 
 		Convey("Given "+testCase.name+" via Observe scalars", testingTB, func() {
-			sampleStage := NewCompression[float64]()
-			scalarStage := NewCompression[float64]()
+			sampleStage := NewCompression()
+			scalarStage := NewCompression()
 
 			sampleLast := tests.RunObserveSampleSequence(sampleStage.ObserveSample, testCase.samples)
-			scalarLast := tests.RunObserveScalarSequence(scalarStage.Observe, testCase.samples)
+			scalarLast := tests.RunObserveSampleSequence(scalarStage.ObserveSample, testCase.samples)
 
 			Convey("It should match ObserveSample", func() {
 				So(scalarLast, ShouldEqual, sampleLast)
@@ -113,11 +108,11 @@ func TestCompression_Observe(testingTB *testing.T) {
 func TestCompression_ObserveSamples(testingTB *testing.T) {
 	Convey("Given a sample batch after bootstrap", testingTB, func() {
 		samples := []float64{5, 3, 8, 2}
-		batch := NewCompression[float64]()
-		sequential := NewCompression[float64]()
+		batch := NewCompression()
+		sequential := NewCompression()
 
-		_ = batch.Observe(core.Scalar[float64](10))
-		_ = sequential.Observe(core.Scalar[float64](10))
+		_ = observeInputs(batch, 10)
+		_ = observeInputs(sequential, 10)
 
 		batchOut := make([]float64, len(samples))
 		batch.ObserveSamples(samples, batchOut)
@@ -138,7 +133,7 @@ func TestCompression_ObserveSamples(testingTB *testing.T) {
 
 func TestCompression_Reset(testingTB *testing.T) {
 	Convey("Given reset after compression", testingTB, func() {
-		compression := NewCompression[float64]()
+		compression := NewCompression()
 
 		for _, sample := range []float64{10, 5, 3} {
 			_ = compression.ObserveSample(sample)
@@ -156,7 +151,7 @@ func TestCompression_Reset(testingTB *testing.T) {
 }
 
 func BenchmarkCompression_ObserveSample(b *testing.B) {
-	compression := NewCompression[float64]()
+	compression := NewCompression()
 	_ = compression.ObserveSample(10)
 
 	b.ReportAllocs()

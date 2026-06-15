@@ -1,18 +1,17 @@
 package statistic
 
 import (
+	"encoding/binary"
 	"fmt"
+	"math"
 
-	"github.com/theapemachine/nomagique/core"
+	"github.com/theapemachine/datura"
 	"gonum.org/v1/gonum/stat"
 )
 
 /*
 FastSlowRatio compares the mean rate in the trailing fast window to the mean
 rate in the preceding slow window.
-
-A spike after a quiet baseline yields a high ratio without a hard cap; a zero
-slow baseline is smoothed by recentRate * epsilon.
 */
 type FastSlowRatio struct {
 	fastWindow int
@@ -124,57 +123,61 @@ func InvertedFastSlowRate(samples []float64, fastWindow int, epsilon float64) fl
 /*
 FastSlow compares trailing fast-window mean rate to the preceding slow window.
 */
-type FastSlow[T ~float64] struct {
-	stream []float64
-	ratio  *FastSlowRatio
-	output core.Scalar[T]
+type FastSlow struct {
+	artifact *datura.Artifact
+	ratio    *FastSlowRatio
 }
 
 /*
-NewFastSlow creates a breakout-ratio stage over a configured stream.
+NewFastSlow creates a breakout-ratio stage.
 */
-func NewFastSlow[T ~float64](
-	stream []float64, fastWindow int, epsilon float64,
-) *FastSlow[T] {
-	return &FastSlow[T]{
-		stream: stream,
-		ratio:  NewFastSlowRatio(fastWindow, epsilon),
+func NewFastSlow(fastWindow int, epsilon float64) *FastSlow {
+	return &FastSlow{
+		artifact: datura.Acquire("fast_slow", datura.Artifact_Type_json),
+		ratio:    NewFastSlowRatio(fastWindow, epsilon),
 	}
 }
 
 /*
-NewInvertedFastSlow creates a compression-ratio stage over a configured stream.
+NewInvertedFastSlow creates a compression-ratio stage.
 */
-func NewInvertedFastSlow[T ~float64](
-	stream []float64, fastWindow int, epsilon float64,
-) *FastSlow[T] {
-	return &FastSlow[T]{
-		stream: stream,
-		ratio:  NewInvertedFastSlowRatio(fastWindow, epsilon),
+func NewInvertedFastSlow(fastWindow int, epsilon float64) *FastSlow {
+	return &FastSlow{
+		artifact: datura.Acquire("fast_slow", datura.Artifact_Type_json),
+		ratio:    NewInvertedFastSlowRatio(fastWindow, epsilon),
 	}
 }
 
-/*
-Observe returns the configured fast/slow ratio for the stream history.
-*/
-func (fastSlow *FastSlow[T]) Observe(_ ...core.Number[T]) core.Scalar[T] {
-	value, err := fastSlow.ratio.Next(0, fastSlow.stream...)
-
-	if err != nil {
-		return fastSlow.output
-	}
-
-	fastSlow.output = core.Scalar[T](T(value))
-
-	return fastSlow.output
+func (fastSlow *FastSlow) Write(p []byte) (int, error) {
+	return fastSlow.artifact.Write(p)
 }
 
-/*
-Reset clears derived state.
-*/
-func (fastSlow *FastSlow[T]) Reset() error {
-	fastSlow.stream = nil
-	fastSlow.output = core.Scalar[T](0)
+func (fastSlow *FastSlow) Read(p []byte) (int, error) {
+	payload, err := fastSlow.artifact.Payload()
 
+	if err == nil && len(payload) >= 8 && len(payload)%8 == 0 {
+		count := len(payload) / 8
+		stream := make([]float64, count)
+
+		for index := range count {
+			offset := index * 8
+			stream[index] = math.Float64frombits(binary.BigEndian.Uint64(payload[offset : offset+8]))
+		}
+
+		value, computeErr := fastSlow.ratio.Next(0, stream...)
+
+		if computeErr == nil {
+			putFloat64Payload(&fastSlow.artifact, "fast_slow", value)
+		}
+	}
+
+	return fastSlow.artifact.Read(p)
+}
+
+func (fastSlow *FastSlow) Close() error {
+	return nil
+}
+
+func (fastSlow *FastSlow) Reset() error {
 	return nil
 }

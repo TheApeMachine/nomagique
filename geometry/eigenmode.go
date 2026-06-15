@@ -3,7 +3,7 @@ package geometry
 import (
 	"math"
 
-	"github.com/theapemachine/nomagique/core"
+	"github.com/theapemachine/datura"
 )
 
 /*
@@ -127,23 +127,25 @@ type PhaseMode struct {
 ModePartition partitions participants into eigenmodes from origin, energy, and coupling streams.
 The coupling stream is a row-major N×N affinity matrix aligned to participant order.
 */
-type ModePartition[T ~float64] struct {
+type ModePartition struct {
+	artifact  *datura.Artifact
 	threshold float64
 	origins   []float64
 	energies  []float64
 	coupling  []float64
 	snap      *EigenSnap
-	output    core.Scalar[T]
+	output    float64
 }
 
 /*
 NewModePartition creates an eigenmode partition stage over configured streams.
 */
-func NewModePartition[T ~float64](
+func NewModePartition(
 	threshold float64,
 	origins, energies, coupling []float64,
-) *ModePartition[T] {
-	return &ModePartition[T]{
+) *ModePartition {
+	return &ModePartition{
+		artifact:  datura.Acquire("mode-partition", datura.Artifact_Type_json),
 		threshold: threshold,
 		origins:   origins,
 		energies:  energies,
@@ -151,51 +153,56 @@ func NewModePartition[T ~float64](
 	}
 }
 
-/*
-Observe returns the dominant mode energy after partitioning participants.
-*/
-func (partition *ModePartition[T]) Observe(_ ...core.Number[T]) core.Scalar[T] {
+func (partition *ModePartition) Write(p []byte) (int, error) {
+	return partition.artifact.Write(p)
+}
+
+func (partition *ModePartition) Read(p []byte) (int, error) {
 	participants, couplingFn, ok := partition.participantsAndCoupling()
 
 	if !ok {
 		partition.snap = nil
-		partition.output = core.Scalar[T](0)
+		partition.output = 0
+		putFloat64Payload(&partition.artifact, "partition", partition.output)
 
-		return partition.output
+		return partition.artifact.Read(p)
 	}
 
 	modes, dominant := partition.partition(participants, couplingFn)
 	partition.snap = NewEigenSnap(modes, dominant)
 
 	if dominant < 0 {
-		partition.output = core.Scalar[T](0)
+		partition.output = 0
+		putFloat64Payload(&partition.artifact, "partition", partition.output)
 
-		return partition.output
+		return partition.artifact.Read(p)
 	}
 
-	partition.output = core.Scalar[T](T(modes[dominant].Energy()))
+	partition.output = modes[dominant].Energy()
+	putFloat64Payload(&partition.artifact, "partition", partition.output)
 
-	return partition.output
+	return partition.artifact.Read(p)
+}
+
+func (partition *ModePartition) Close() error {
+	return nil
 }
 
 /*
 Snap returns the last eigenmode partition.
 */
-func (partition *ModePartition[T]) Snap() *EigenSnap {
+func (partition *ModePartition) Snap() *EigenSnap {
 	return partition.snap
 }
 
-/*
-Reset clears derived state.
-*/
-func (partition *ModePartition[T]) Reset() error {
+func (partition *ModePartition) Reset() error {
 	partition.snap = nil
-	partition.output = core.Scalar[T](0)
+	partition.output = 0
 
 	return nil
 }
 
-func (partition *ModePartition[T]) partition(
+func (partition *ModePartition) partition(
 	participants []ModeParticipant,
 	couplingFn func(leftOrigin, rightOrigin uint64) float64,
 ) ([]Eigenmode, int) {
@@ -246,7 +253,7 @@ func (partition *ModePartition[T]) partition(
 	return modes, dominantIdx
 }
 
-func (partition *ModePartition[T]) participantsAndCoupling() (
+func (partition *ModePartition) participantsAndCoupling() (
 	[]ModeParticipant, func(uint64, uint64) float64, bool,
 ) {
 	origins := partition.origins
@@ -284,6 +291,19 @@ func (partition *ModePartition[T]) participantsAndCoupling() (
 	}
 
 	return participants, couplingFn, true
+}
+
+/*
+DetectModes partitions participants into eigenmodes using a coupling callback.
+*/
+func DetectModes(
+	participants []ModeParticipant,
+	threshold float64,
+	couplingFn func(leftOrigin, rightOrigin uint64) float64,
+) ([]Eigenmode, int) {
+	partition := &ModePartition{threshold: threshold}
+
+	return partition.partition(participants, couplingFn)
 }
 
 func originIndex(origins []float64, origin uint64) int {

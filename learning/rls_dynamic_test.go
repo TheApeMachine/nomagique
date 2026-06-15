@@ -4,12 +4,11 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/nomagique/core"
 )
 
 func TestNewRLS(testingTB *testing.T) {
 	Convey("Given NewRLS", testingTB, func() {
-		stage, err := NewRLS[float64](2, 1000)
+		stage, err := NewRLS(2, 1000)
 
 		Convey("It should return a usable stage", func() {
 			So(err, ShouldBeNil)
@@ -20,13 +19,10 @@ func TestNewRLS(testingTB *testing.T) {
 
 func TestRLS_Observe(testingTB *testing.T) {
 	Convey("Given feature and target scalars", testingTB, func() {
-		stage, err := NewRLS[float64](1, 1000)
+		stage, err := NewRLS(1, 1000)
 		So(err, ShouldBeNil)
 
-		got := float64(stage.Observe(
-			core.Scalar[float64](2),
-			core.Scalar[float64](4),
-		))
+		got := float64(observeWithWork(stage, 2, 4))
 
 		Convey("It should derive a finite prediction", func() {
 			So(got, ShouldBeGreaterThan, 0)
@@ -36,12 +32,9 @@ func TestRLS_Observe(testingTB *testing.T) {
 
 func TestRLS_Reset(testingTB *testing.T) {
 	Convey("Given a reset RLS stage", testingTB, func() {
-		stage, err := NewRLS[float64](1, 1000)
+		stage, err := NewRLS(1, 1000)
 		So(err, ShouldBeNil)
-		_ = stage.Observe(
-			core.Scalar[float64](1),
-			core.Scalar[float64](2),
-		)
+		_ = observeWithWork(stage, 1, 2)
 
 		resetErr := stage.Reset()
 
@@ -53,7 +46,7 @@ func TestRLS_Reset(testingTB *testing.T) {
 }
 
 func BenchmarkRLS_Observe(testingTB *testing.B) {
-	stage, err := NewRLS[float64](3, 1000)
+	stage, err := NewRLS(3, 1000)
 
 	if err != nil {
 		testingTB.Fatal(err)
@@ -62,11 +55,6 @@ func BenchmarkRLS_Observe(testingTB *testing.B) {
 	testingTB.ReportAllocs()
 
 	for testingTB.Loop() {
-		_ = stage.Observe(
-			core.Scalar[float64](1),
-			core.Scalar[float64](2),
-			core.Scalar[float64](3),
-			core.Scalar[float64](6),
-		)
+		_ = observeInputs(stage, 1, 2, 3, 6)
 	}
 }

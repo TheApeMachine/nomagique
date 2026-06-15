@@ -4,7 +4,6 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/nomagique/core"
 )
 
 func TestPearson_Observe(testingTB *testing.T) {
@@ -29,8 +28,8 @@ func TestPearson_Observe(testingTB *testing.T) {
 		testCase := testCase
 
 		Convey("Given "+testCase.name, testingTB, func() {
-			pearson := NewPearson[float64](nil)
-			got := pearson.Observe(numberInputs(testCase.inputs...)...)
+			pearson := NewPearson(nil)
+			got := observeInputs(pearson, testCase.inputs...)
 
 			Convey("It should return the expected correlation", func() {
 				So(float64(got), ShouldEqual, testCase.expect)
@@ -39,16 +38,16 @@ func TestPearson_Observe(testingTB *testing.T) {
 	}
 
 	Convey("Given empty Observe inputs", testingTB, func() {
-		pearson := NewPearson[float64](nil)
+		pearson := NewPearson(nil)
 
 		Convey("It should return zero output", func() {
-			So(pearson.Observe(), ShouldEqual, core.Scalar[float64](0))
+			So(observeInputs(pearson), ShouldEqual, 0)
 		})
 	})
 
 	Convey("Given fewer than two inputs", testingTB, func() {
-		pearson := NewPearson[float64](nil)
-		got := pearson.Observe(core.Scalar[float64](1))
+		pearson := NewPearson(nil)
+		got := observeInputs(pearson, 1)
 
 		Convey("It should return zero", func() {
 			So(float64(got), ShouldEqual, 0)
@@ -56,8 +55,8 @@ func TestPearson_Observe(testingTB *testing.T) {
 	})
 
 	Convey("Given odd input count", testingTB, func() {
-		pearson := NewPearson[float64](nil)
-		got := pearson.Observe(numberInputs(1, 2, 3)...)
+		pearson := NewPearson(nil)
+		got := observeInputs(pearson, 1, 2, 3)
 
 		Convey("It should return zero", func() {
 			So(float64(got), ShouldEqual, 0)
@@ -67,27 +66,23 @@ func TestPearson_Observe(testingTB *testing.T) {
 
 func TestPearson_Reset(testingTB *testing.T) {
 	Convey("Given an observed Pearson stage", testingTB, func() {
-		pearson := NewPearson[float64](nil)
-		_ = pearson.Observe(numberInputs(1, 2, 1, 2)...)
+		pearson := NewPearson(nil)
+		_ = observeInputs(pearson, 1, 2, 1, 2)
 
 		So(pearson.Reset(), ShouldBeNil)
 
 		Convey("It should clear output", func() {
-			So(float64(pearson.Observe()), ShouldEqual, 0)
+			So(float64(observeInputs(pearson)), ShouldEqual, 0)
 		})
 	})
 }
 
 func BenchmarkPearson_Observe(testingTB *testing.B) {
-	pearson := NewPearson[float64](nil)
-	inputs := splitInputs(
-		[]float64{1, 2, 3, 4},
-		[]float64{2, 4, 6, 8},
-	)
-
-	testingTB.ReportAllocs()
-
+	pearson := NewPearson(nil)
 	for testingTB.Loop() {
-		_ = pearson.Observe(inputs...)
+		_ = observeSplit(pearson,
+			[]float64{1, 2, 3, 4},
+			[]float64{2, 4, 6, 8},
+		)
 	}
 }

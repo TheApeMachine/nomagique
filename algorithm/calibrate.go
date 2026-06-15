@@ -3,14 +3,15 @@ package algorithm
 import (
 	"math"
 
-	"github.com/theapemachine/nomagique/core"
+	"github.com/theapemachine/datura"
 	"github.com/theapemachine/nomagique/learning"
 )
 
 /*
 Calibrate fits an online RLS model from aligned feature and target streams.
 */
-type Calibrate[T ~float64] struct {
+type Calibrate struct {
+	artifact         *datura.Artifact
 	features         [][]float64
 	target           []float64
 	filter           *learning.RLSFilter
@@ -18,20 +19,19 @@ type Calibrate[T ~float64] struct {
 	forgettingFactor float64
 	lastResidual     float64
 	lastCondition    float64
-	output           core.Scalar[T]
 }
 
 /*
-NewCalibrate creates an RLS calibration dynamic over feature streams and one target stream.
+NewCalibrate creates an RLS calibration stage over feature streams and one target stream.
 initialVariance and forgettingFactor are forwarded to learning.RLSFilter.
 */
-func NewCalibrate[T ~float64](
+func NewCalibrate(
 	features [][]float64,
 	target []float64,
 	initialVariance, forgettingFactor float64,
-) (*Calibrate[T], error) {
+) (*Calibrate, error) {
 	if len(features) == 0 {
-		return nil, core.ErrEmptyInputs
+		return nil, ErrEmptyInputs
 	}
 
 	if initialVariance <= 0 {
@@ -52,7 +52,8 @@ func NewCalibrate[T ~float64](
 		return nil, setErr
 	}
 
-	return &Calibrate[T]{
+	return &Calibrate{
+		artifact:         datura.Acquire("calibrate", datura.Artifact_Type_json),
 		features:         features,
 		target:           target,
 		filter:           filter,
@@ -61,18 +62,20 @@ func NewCalibrate[T ~float64](
 	}, nil
 }
 
-/*
-Observe replays stream history through the RLS filter and returns the last absolute residual.
-*/
-func (calibrate *Calibrate[T]) Observe(_ ...core.Number[T]) core.Scalar[T] {
+func (calibrate *Calibrate) Write(p []byte) (int, error) {
+	return calibrate.artifact.Write(p)
+}
+
+func (calibrate *Calibrate) Read(p []byte) (int, error) {
+	rehydrateArtifact(&calibrate.artifact, "calibrate", datura.Artifact_Type_json)
+
 	rows, ok := zipFeatureTargetRows(calibrate.features, calibrate.target)
 
 	if !ok {
 		calibrate.lastResidual = 0
 		calibrate.lastCondition = 0
-		calibrate.output = core.Scalar[T](0)
 
-		return calibrate.output
+		return calibrate.artifact.Read(p)
 	}
 
 	calibrate.filter.Reset()
@@ -83,9 +86,8 @@ func (calibrate *Calibrate[T]) Observe(_ ...core.Number[T]) core.Scalar[T] {
 		if observeErr != nil {
 			calibrate.lastResidual = 0
 			calibrate.lastCondition = 0
-			calibrate.output = core.Scalar[T](0)
 
-			return calibrate.output
+			return calibrate.artifact.Read(p)
 		}
 
 		if rowIndex == len(rows)-1 {
@@ -94,93 +96,54 @@ func (calibrate *Calibrate[T]) Observe(_ ...core.Number[T]) core.Scalar[T] {
 			if residualErr != nil {
 				calibrate.lastResidual = 0
 				calibrate.lastCondition = calibrate.filter.ConditionNumberBound()
-				calibrate.output = core.Scalar[T](0)
 
-				return calibrate.output
+				return calibrate.artifact.Read(p)
 			}
 
 			calibrate.lastResidual = math.Abs(residual)
 			calibrate.lastCondition = calibrate.filter.ConditionNumberBound()
-			calibrate.output = core.Scalar[T](T(calibrate.lastResidual))
+			out := encodePayload(calibrate.lastResidual)
+			_ = calibrate.artifact.SetPayload(out)
 
-			return calibrate.output
+			return calibrate.artifact.Read(p)
 		}
 	}
 
-	calibrate.output = core.Scalar[T](0)
+	return calibrate.artifact.Read(p)
+}
 
-	return calibrate.output
+func (calibrate *Calibrate) Close() error {
+	return nil
 }
 
 /*
-Residual returns the absolute residual from the last Observe call.
+Residual returns the absolute residual from the last Read call.
 */
-func (calibrate *Calibrate[T]) Residual() core.Scalar[T] {
-	return core.Scalar[T](T(calibrate.lastResidual))
+func (calibrate *Calibrate) Residual() float64 {
+	return calibrate.lastResidual
 }
 
 /*
-ConditionNumber returns the covariance condition bound from the last Observe call.
+ConditionNumber returns the covariance condition bound from the last Read call.
 */
-func (calibrate *Calibrate[T]) ConditionNumber() core.Scalar[T] {
-	return core.Scalar[T](T(calibrate.lastCondition))
+func (calibrate *Calibrate) ConditionNumber() float64 {
+	return calibrate.lastCondition
 }
 
 /*
 Coefficients returns a copy of the current RLS coefficients including intercept.
 */
-func (calibrate *Calibrate[T]) Coefficients() []float64 {
+func (calibrate *Calibrate) Coefficients() []float64 {
 	return calibrate.filter.Coefficients()
 }
 
 /*
 Reset clears derived state and restores the RLS filter.
 */
-func (calibrate *Calibrate[T]) Reset() error {
+func (calibrate *Calibrate) Reset() error {
 	calibrate.lastResidual = 0
 	calibrate.lastCondition = 0
-	calibrate.output = core.Scalar[T](0)
 	calibrate.filter.Reset()
 
 	return nil
-}
-
-type featureTargetRow struct {
-	features []float64
-	target   float64
-}
-
-func zipFeatureTargetRows(
-	features [][]float64, target []float64,
-) ([]featureTargetRow, bool) {
-	if len(features) == 0 {
-		return nil, false
-	}
-
-	rowCount := len(features[0])
-
-	if rowCount == 0 || len(target) != rowCount {
-		return nil, false
-	}
-
-	rows := make([]featureTargetRow, rowCount)
-
-	for rowIndex := range rows {
-		rowFeatures := make([]float64, len(features))
-
-		for featureIndex, featureStream := range features {
-			if len(featureStream) != rowCount {
-				return nil, false
-			}
-
-			rowFeatures[featureIndex] = featureStream[rowIndex]
-		}
-
-		rows[rowIndex] = featureTargetRow{
-			features: rowFeatures,
-			target:   target[rowIndex],
-		}
-	}
-
-	return rows, true
 }

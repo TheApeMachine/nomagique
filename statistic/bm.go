@@ -1,53 +1,82 @@
 package statistic
 
 import (
+	"encoding/binary"
+	"math"
+
+	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/nomagique/core"
 	"gonum.org/v1/gonum/stat"
 )
 
 /*
 BivariateMoment computes E[(x - mu_x)^r (y - mu_y)^s] for two configured streams.
 */
-type BivariateMoment[T ~float64] struct {
-	r       T
-	s       T
-	x       []float64
-	y       []float64
-	weights []float64
-	output  core.Scalar[T]
+type BivariateMoment struct {
+	artifact *datura.Artifact
+	r        float64
+	s        float64
+	weights  []float64
 }
 
 /*
 NewBivariateMoment creates a bivariate moment stage at exponents r and s.
+Payload carries aligned x then y samples as big-endian float64 values.
 */
-func NewBivariateMoment[T ~float64](
-	r, s T, x, y, weights []float64,
-) *BivariateMoment[T] {
-	return &BivariateMoment[T]{
-		r:       r,
-		s:       s,
-		x:       x,
-		y:       y,
-		weights: weights,
+func NewBivariateMoment(
+	r, s float64,
+	weights []float64,
+) *BivariateMoment {
+	return &BivariateMoment{
+		artifact: datura.Acquire("bivariate_moment", datura.Artifact_Type_json),
+		r:        r,
+		s:        s,
+		weights:  weights,
 	}
 }
 
 /*
 Powers returns the mixed-moment exponents r and s.
 */
-func (bivariateMoment *BivariateMoment[T]) Powers() (r T, s T) {
+func (bivariateMoment *BivariateMoment) Powers() (r float64, s float64) {
 	return bivariateMoment.r, bivariateMoment.s
 }
 
-/*
-Observe computes the mixed moment for the configured streams.
-*/
-func (bivariateMoment *BivariateMoment[T]) Observe(inputs ...core.Number[T]) core.Scalar[T] {
-	_ = inputs
+func (bivariateMoment *BivariateMoment) Write(p []byte) (int, error) {
+	return bivariateMoment.artifact.Write(p)
+}
 
-	xValues := bivariateMoment.x
-	yValues := bivariateMoment.y
+func (bivariateMoment *BivariateMoment) Read(p []byte) (int, error) {
+	payload, err := bivariateMoment.artifact.Payload()
+
+	if err != nil || len(payload) < 16 || len(payload)%8 != 0 {
+		return bivariateMoment.artifact.Read(p)
+	}
+
+	count := len(payload) / 8
+
+	if count%2 != 0 {
+		errnie.Err(
+			errnie.Validation, "unable to compute bivariate moment",
+			BivariateMomentError(BivariateMomentErrorInvalidStreams),
+		)
+
+		putFloat64Payload(&bivariateMoment.artifact, "bivariate_moment", 0)
+
+		return bivariateMoment.artifact.Read(p)
+	}
+
+	half := count / 2
+	xValues := make([]float64, half)
+	yValues := make([]float64, half)
+
+	for index := range half {
+		xOffset := index * 8
+		yOffset := (index + half) * 8
+		xValues[index] = math.Float64frombits(binary.BigEndian.Uint64(payload[xOffset : xOffset+8]))
+		yValues[index] = math.Float64frombits(binary.BigEndian.Uint64(payload[yOffset : yOffset+8]))
+	}
+
 	weights := bivariateMoment.weights
 
 	if len(weights) == 0 {
@@ -60,7 +89,9 @@ func (bivariateMoment *BivariateMoment[T]) Observe(inputs ...core.Number[T]) cor
 			BivariateMomentError(BivariateMomentErrorInvalidStreams),
 		)
 
-		return bivariateMoment.output
+		putFloat64Payload(&bivariateMoment.artifact, "bivariate_moment", 0)
+
+		return bivariateMoment.artifact.Read(p)
 	}
 
 	if len(weights) != 0 && len(weights) != len(xValues) {
@@ -69,25 +100,27 @@ func (bivariateMoment *BivariateMoment[T]) Observe(inputs ...core.Number[T]) cor
 			BivariateMomentError(BivariateMomentErrorWeightLengthMismatch),
 		)
 
-		return bivariateMoment.output
+		putFloat64Payload(&bivariateMoment.artifact, "bivariate_moment", 0)
+
+		return bivariateMoment.artifact.Read(p)
 	}
 
-	bivariateMoment.output = core.Scalar[T](T(
-		stat.BivariateMoment(
-			float64(bivariateMoment.r), float64(bivariateMoment.s),
-			xValues, yValues, weights,
-		),
-	))
+	moment := stat.BivariateMoment(
+		bivariateMoment.r, bivariateMoment.s,
+		xValues, yValues, weights,
+	)
 
-	return bivariateMoment.output
+	putFloat64Payload(&bivariateMoment.artifact, "bivariateMoment", moment)
+
+	return bivariateMoment.artifact.Read(p)
 }
 
-/*
-Reset clears derived state.
-*/
-func (bivariateMoment *BivariateMoment[T]) Reset() error {
+func (bivariateMoment *BivariateMoment) Close() error {
+	return nil
+}
+
+func (bivariateMoment *BivariateMoment) Reset() error {
 	bivariateMoment.weights = nil
-	bivariateMoment.output = core.Scalar[T](0)
 
 	return nil
 }

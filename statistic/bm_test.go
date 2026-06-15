@@ -4,48 +4,107 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/nomagique"
 )
 
 func TestBivariateMoment_Observe(testingTB *testing.T) {
-	Convey("Given aligned x and y streams", testingTB, func() {
-		value := NewBivariateMoment(
-			1, 1,
-			nomagique.Numbers(1, 2, 3),
-			nomagique.Numbers(2, 4, 6),
+	Convey("Given aligned streams", testingTB, func() {
+		bivariateMoment := NewBivariateMoment(
+			1.0, 1.0,
+			[]float64{1, 2, 3, 4},
+			[]float64{2, 5, 7, 10},
 			nil,
-		).Observe()
+		)
+		got := bivariateMoment.Observe()
 
-		Convey("It should return the sample covariance", func() {
-			So(float64(value), ShouldAlmostEqual, 4.0/3.0, 1e-9)
+		Convey("It should return the expected central mixed moment", func() {
+			So(float64(got), ShouldEqual, 3.25)
 		})
 	})
 
-	Convey("Given mismatched stream lengths", testingTB, func() {
-		value := NewBivariateMoment(
-			1, 1,
-			nomagique.Numbers(1, 2, 3),
-			nomagique.Numbers(2, 4),
-			nil,
-		).Observe()
+	errorCases := []struct {
+		name string
+		x    []float64
+		y    []float64
+	}{
+		{"too few samples", []float64{1}, []float64{2}},
+		{"length mismatch", []float64{1, 2, 3}, []float64{1, 2}},
+	}
 
-		Convey("It should return zero", func() {
-			So(float64(value), ShouldEqual, 0)
+	for _, testCase := range errorCases {
+		testCase := testCase
+
+		Convey("Given "+testCase.name, testingTB, func() {
+			bivariateMoment := NewBivariateMoment(
+				1.0, 1.0, testCase.x, testCase.y, nil,
+			)
+
+			Convey("It should leave output at zero", func() {
+				So(float64(bivariateMoment.Observe()), ShouldEqual, 0)
+			})
+		})
+	}
+
+	Convey("Given mismatched weights", testingTB, func() {
+		bivariateMoment := NewBivariateMoment(
+			1.0, 1.0,
+			[]float64{1, 2, 3},
+			[]float64{2, 4, 6},
+			[]float64{1, 1},
+		)
+
+		Convey("It should leave output at zero", func() {
+			So(float64(bivariateMoment.Observe()), ShouldEqual, 0)
 		})
 	})
 }
 
-func BenchmarkBivariateMoment_Observe(testingTB *testing.B) {
+func TestBivariateMoment_Powers(testingTB *testing.T) {
+	Convey("Given exponent configuration", testingTB, func() {
+		bivariateMoment := NewBivariateMoment(
+			2.0, 1.0,
+			[]float64{1, 2, 3},
+			[]float64{2, 4, 6},
+			nil,
+		)
+
+		rPower, sPower := bivariateMoment.Powers()
+
+		Convey("It should expose configured powers", func() {
+			So(rPower, ShouldEqual, 2)
+			So(sPower, ShouldEqual, 1)
+		})
+	})
+}
+
+func TestBivariateMoment_Reset(testingTB *testing.T) {
+	Convey("Given an observed bivariate moment", testingTB, func() {
+		bivariateMoment := NewBivariateMoment(
+			1.0, 1.0,
+			[]float64{1, 2, 3},
+			[]float64{2, 4, 6},
+			[]float64{1, 1, 1},
+		)
+		_ = bivariateMoment.Observe()
+
+		So(bivariateMoment.Reset(), ShouldBeNil)
+
+		Convey("It should clear weights", func() {
+			So(bivariateMoment.weights, ShouldBeNil)
+		})
+	})
+}
+
+func BenchmarkBivariateMoment_Observe(b *testing.B) {
 	bivariateMoment := NewBivariateMoment(
-		1, 1,
-		nomagique.Numbers(1, 2, 3, 4, 5, 6),
-		nomagique.Numbers(2, 4, 6, 8, 10, 12),
+		2.0, 1.0,
+		[]float64{1, 2, 3, 4, 5, 6},
+		[]float64{2, 4, 6, 8, 10, 12},
 		nil,
 	)
 
-	testingTB.ReportAllocs()
+	b.ReportAllocs()
 
-	for testingTB.Loop() {
+	for b.Loop() {
 		_ = bivariateMoment.Observe()
 	}
 }

@@ -7,62 +7,53 @@ import (
 /*
 TrustWeight is a self-adapting rate from prediction error.
 */
-type TrustWeight struct {
-	stageParser *core.StageParser
-	state       WeightState
+type TrustWeight[T ~float64] struct {
+	state  WeightState
+	output core.Scalar[T]
 }
 
 /*
 Weight returns a trust weight dynamic ready from its first observation.
 */
-func Weight() *TrustWeight {
-	return &TrustWeight{
-		stageParser: core.NewStageParser(),
-	}
+func Weight[T ~float64]() *TrustWeight[T] {
+	return &TrustWeight[T]{}
 }
 
 /*
 Observe ingests predicted and actual values and returns trust.
 */
-func (trustWeight *TrustWeight) Observe(
-	inputs ...core.Number,
-) core.Float64 {
-	out, work, err := trustWeight.stageParser.Parse(inputs)
-
-	if err != nil {
-		return 0
+func (trustWeight *TrustWeight[T]) Observe(inputs ...core.Number[T]) core.Scalar[T] {
+	if len(inputs) == 0 {
+		return trustWeight.output
 	}
 
-	result, err := trustWeight.Apply(out, work)
+	scalars, ok := collectScalars[T](inputs...)
 
-	if err != nil {
-		return 0
+	if !ok {
+		return trustWeight.output
 	}
 
-	return result
-}
-
-/*
-Apply runs one pipeline stage without allocating number inputs.
-*/
-func (trustWeight *TrustWeight) Apply(
-	out core.Float64, work []core.Float64,
-) (core.Float64, error) {
-	predicted, actual, err := parsePredictedActual(out, work)
-
-	if err != nil {
-		return 0, err
+	if len(scalars) < 2 {
+		return trustWeight.output
 	}
 
-	return core.Float64(
+	predicted, actual, err := parsePredictedActual(scalars[0], scalars[1:])
+
+	if err != nil {
+		return trustWeight.output
+	}
+
+	trustWeight.output = core.Scalar[T](T(
 		ObserveWeight(&trustWeight.state, predicted, actual),
-	), nil
+	))
+
+	return trustWeight.output
 }
 
 /*
 ObserveSamples runs the exact batch kernel over pairs into out.
 */
-func (trustWeight *TrustWeight) ObserveSamples(
+func (trustWeight *TrustWeight[T]) ObserveSamples(
 	predicted []float64, actual []float64, out []float64,
 ) {
 	trustWeight.state.ObserveSamples(predicted, actual, out)
@@ -71,7 +62,9 @@ func (trustWeight *TrustWeight) ObserveSamples(
 /*
 Reset clears derived state.
 */
-func (trustWeight *TrustWeight) Reset() error {
+func (trustWeight *TrustWeight[T]) Reset() error {
 	trustWeight.state.Reset()
+	trustWeight.output = core.Scalar[T](0)
+
 	return nil
 }

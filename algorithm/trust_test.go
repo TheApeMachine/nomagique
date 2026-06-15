@@ -9,14 +9,20 @@ import (
 
 func TestTrust_Observe(testingTB *testing.T) {
 	Convey("Given accurate predicted and actual pairs", testingTB, func() {
-		trust := NewTrust()
+		trust := NewTrust[float64]()
 
 		for step := 0; step < 16; step++ {
 			predicted := float64(step + 10)
-			_ = trust.Observe(core.Float64(predicted), core.Float64(predicted))
+			_ = trust.Observe(
+				core.Scalar[float64](predicted),
+				core.Scalar[float64](predicted),
+			)
 		}
 
-		score := trust.Observe(core.Float64(26), core.Float64(26))
+		score := trust.Observe(
+			core.Scalar[float64](26),
+			core.Scalar[float64](26),
+		)
 
 		Convey("It should return positive trust-weighted calibration", func() {
 			So(float64(score), ShouldBeGreaterThan, 0)
@@ -26,10 +32,15 @@ func TestTrust_Observe(testingTB *testing.T) {
 }
 
 func BenchmarkTrust_Observe(testingTB *testing.B) {
-	trust := NewTrust()
+	trust := NewTrust[float64]()
+
+	testingTB.ReportAllocs()
 
 	for testingTB.Loop() {
 		step := float64(testingTB.N % 16)
-		_ = trust.Observe(core.Float64(step+1), core.Float64((step+1)*2))
+		_ = trust.Observe(
+			core.Scalar[float64](step+1),
+			core.Scalar[float64]((step+1)*2),
+		)
 	}
 }

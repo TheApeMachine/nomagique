@@ -1,7 +1,6 @@
 package statistic
 
 import (
-	"github.com/theapemachine/nomagique"
 	"github.com/theapemachine/nomagique/core"
 	"gonum.org/v1/gonum/floats"
 )
@@ -9,30 +8,37 @@ import (
 /*
 Sum adds every sample in one Observe call.
 
-Plain-language example: three trade sizes (1.2, 0.8, 3.0) sum to 5.0. There is no
-memory between calls — each Observe is a fresh total over its inputs.
-
-Sum implements core.Number and fits early in pipelines that later divide by a count
-(Mean) or compare against a threshold. Empty input returns zero.
+Example: three samples (1.2, 0.8, 3.0) sum to 5.0. There is no memory between
+calls — each Observe is a fresh total over its inputs.
 */
-type Sum struct{}
+type Sum[T ~float64] struct {
+	output core.Scalar[T]
+}
 
 /*
-NewSum creates a sum dynamic.
+NewSum creates a sum stage.
 */
-func NewSum() *Sum {
-	return &Sum{}
+func NewSum[T ~float64]() *Sum[T] {
+	return &Sum[T]{}
 }
 
 /*
 Observe returns the sum of the input stream.
 */
-func (sum *Sum) Observe(inputs ...core.Number) core.Float64 {
-	values := nomagique.Samples(core.Numbers(inputs))
+func (sum *Sum[T]) Observe(inputs ...core.Number[T]) core.Scalar[T] {
+	values := sampleBatch[T](inputs...)
 
-	return core.Float64(floats.Sum(values))
+	if len(values) == 0 {
+		return sum.output
+	}
+
+	sum.output = core.Scalar[T](T(floats.Sum(values)))
+
+	return sum.output
 }
 
-func (sum *Sum) Reset() error {
+func (sum *Sum[T]) Reset() error {
+	sum.output = core.Scalar[T](0)
+
 	return nil
 }

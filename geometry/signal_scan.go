@@ -65,10 +65,9 @@ func ScanZeroRun(words []uint64) (startBit, length int) {
 }
 
 /*
-ScanOneRun finds the longest contiguous run of one bits — the merge signal.
+ScanOneRun finds the longest contiguous run of one bits across uint64 words.
 Where AND of two token regions produces a long one-run, both Values agree
-densely at that position, identifying a convergence point suitable for
-consolidation rather than cancellation.
+densely at that position.
 */
 func ScanOneRun(words []uint64) (startBit, length int) {
 	bestStart, bestLen := 0, 0
@@ -129,12 +128,9 @@ func ScanOneRun(words []uint64) (startBit, length int) {
 
 /*
 RunLabel maps a zero-run's starting bit position to a deterministic 16-bit
-label hash. The start position encodes the structural fingerprint: two pairs
-of Values that share structure at the same bit position produce the same label,
-so the vote aggregation in Unsupervised.labelCommunity converges naturally.
-
-The length influences the hash to distinguish short incidental matches from
-long structural ones at the same offset.
+label hash. The start position encodes the structural fingerprint: two Values
+that share structure at the same bit position produce the same label. Length
+influences the hash to distinguish short incidental matches from long ones.
 */
 func RunLabel(startBit, length int) uint16 {
 	combined := uint32(startBit)<<9 | uint32(length&0x1FF)

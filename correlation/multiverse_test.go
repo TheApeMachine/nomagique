@@ -8,19 +8,18 @@ import (
 
 func TestMultiverse_Observe(testingTB *testing.T) {
 	Convey("Given correlated window sets", testingTB, func() {
-		first := NewWindowSet(16)
-		second := NewWindowSet(16)
+		first := NewWindowSet[float64](16)
+		second := NewWindowSet[float64](16)
 
 		for step := range 16 {
-			nanos := int64((step + 1) * 1_000)
-			first.Observe(nanos, 100+float64(step)*0.1)
-			second.Observe(nanos, 50+float64(step)*0.05)
+			observeEpochLevel(first, int64((step+1)*1_000), 100+float64(step)*0.1)
+			observeEpochLevel(second, int64((step+1)*1_000), 50+float64(step)*0.05)
 		}
 
-		multiverse := NewMultiverse(
-			[]*WindowSet{first, second},
+		multiverse := NewMultiverse[float64](
+			[]*WindowSet[float64]{first, second},
 			TierWindows{Fast: 4, Medium: 8, Slow: 16},
-			ContagionConfig{MinSamples: 2, SymbolCap: 2, AdaptiveSigma: 2},
+			ContagionConfig{MinSamples: 2, MemberCap: 2, AdaptiveSigma: 2},
 		)
 
 		coupling := multiverse.Observe()
@@ -34,22 +33,22 @@ func TestMultiverse_Observe(testingTB *testing.T) {
 }
 
 func BenchmarkMultiverse_Observe(testingTB *testing.B) {
-	sets := make([]*WindowSet, 8)
+	sets := make([]*WindowSet[float64], 8)
 
 	for index := range sets {
-		set := NewWindowSet(32)
+		set := NewWindowSet[float64](32)
 
 		for step := range 32 {
-			set.Observe(int64((step+1)*1_000), 100+float64(index)+float64(step)*0.01)
+			observeEpochLevel(set, int64((step+1)*1_000), 100+float64(index)+float64(step)*0.01)
 		}
 
 		sets[index] = set
 	}
 
-	multiverse := NewMultiverse(
+	multiverse := NewMultiverse[float64](
 		sets,
 		TierWindows{Fast: 8, Medium: 16, Slow: 32},
-		ContagionConfig{MinSamples: 4, SymbolCap: 8},
+		ContagionConfig{MinSamples: 4, MemberCap: 8},
 	)
 
 	testingTB.ReportAllocs()

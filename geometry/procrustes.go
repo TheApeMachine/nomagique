@@ -3,14 +3,12 @@ package geometry
 import (
 	"fmt"
 
+	"github.com/theapemachine/nomagique/core"
 	"gonum.org/v1/gonum/mat"
 )
 
 /*
-ProcrustesResult holds the outcome of an orthogonal Procrustes alignment
-between two embedding spaces. R is the nDim×nDim rotation matrix that
-minimizes ||R·A − B||_F², and Residual is the squared Frobenius norm of
-the post-alignment error.
+ProcrustesResult holds the outcome of an orthogonal Procrustes alignment.
 */
 type ProcrustesResult struct {
 	R        *mat.Dense
@@ -18,17 +16,105 @@ type ProcrustesResult struct {
 }
 
 /*
-Procrustes computes the orthogonal Procrustes alignment between sample matrices
-A and B (both nSamples × nDim). Finds the rotation R minimizing ||R·A − B||²
-via SVD of M = Bᵀ·A, then R = U·Vᵀ. A sign correction on the last column of U
-enforces det(R) = +1 (proper rotation).
+Procrustes computes the orthogonal alignment between two sample matrices.
 */
-func Procrustes(matA, matB mat.Matrix) (*ProcrustesResult, error) {
+type Procrustes[T ~float64] struct {
+	matA   mat.Matrix
+	matB   mat.Matrix
+	result ProcrustesResult
+	err    error
+	output core.Scalar[T]
+}
+
+/*
+NewProcrustes binds two sample matrices for alignment on Observe.
+*/
+func NewProcrustes[T ~float64](matA, matB mat.Matrix) *Procrustes[T] {
+	return &Procrustes[T]{
+		matA: matA,
+		matB: matB,
+	}
+}
+
+/*
+NewProcrustesFromRows builds sample matrices from row-major slices.
+*/
+func NewProcrustesFromRows[T ~float64](
+	rowsA, rowsB [][]float64,
+	nSamples, nDim int,
+) (*Procrustes[T], error) {
+	denseA, err := denseFromRows(rowsA, nSamples, nDim)
+
+	if err != nil {
+		return nil, err
+	}
+
+	denseB, err := denseFromRows(rowsB, nSamples, nDim)
+
+	if err != nil {
+		return nil, err
+	}
+
+	return NewProcrustes[T](denseA, denseB), nil
+}
+
+/*
+Observe aligns configured matrices and returns the squared Frobenius residual.
+*/
+func (procrustes *Procrustes[T]) Observe(_ ...core.Number[T]) core.Scalar[T] {
+	procrustes.result, procrustes.err = procrustes.align(procrustes.matA, procrustes.matB)
+
+	if procrustes.err != nil {
+		procrustes.output = core.Scalar[T](0)
+
+		return procrustes.output
+	}
+
+	procrustes.output = core.Scalar[T](T(procrustes.result.Residual))
+
+	return procrustes.output
+}
+
+/*
+Result returns the last alignment result.
+*/
+func (procrustes *Procrustes[T]) Result() ProcrustesResult {
+	return procrustes.result
+}
+
+/*
+Err returns the last alignment error.
+*/
+func (procrustes *Procrustes[T]) Err() error {
+	return procrustes.err
+}
+
+/*
+Reset clears derived state.
+*/
+func (procrustes *Procrustes[T]) Reset() error {
+	procrustes.result = ProcrustesResult{}
+	procrustes.err = nil
+	procrustes.output = core.Scalar[T](0)
+
+	return nil
+}
+
+/*
+Decompose runs thin SVD on matrix.
+*/
+func (procrustes *Procrustes[T]) Decompose(matrix mat.Matrix) (
+	*mat.Dense, []float64, *mat.Dense, error,
+) {
+	return procrustes.jacobiSVD(matrix)
+}
+
+func (procrustes *Procrustes[T]) align(matA, matB mat.Matrix) (ProcrustesResult, error) {
 	nSamples, nDim := matA.Dims()
 	rowsB, colsB := matB.Dims()
 
 	if nSamples < 1 || nDim < 1 || rowsB != nSamples || colsB != nDim {
-		return nil, ProcrustesError("dimension mismatch")
+		return ProcrustesResult{}, procrustesError("dimension mismatch")
 	}
 
 	var bTranspose mat.Dense
@@ -39,10 +125,10 @@ func Procrustes(matA, matB mat.Matrix) (*ProcrustesResult, error) {
 
 	cross.Mul(&bTranspose, matA)
 
-	uMat, _, vMat, svdErr := JacobiSVD(&cross)
+	uMat, _, vMat, svdErr := procrustes.jacobiSVD(&cross)
 
 	if svdErr != nil {
-		return nil, svdErr
+		return ProcrustesResult{}, svdErr
 	}
 
 	var vTranspose mat.Dense
@@ -79,23 +165,20 @@ func Procrustes(matA, matB mat.Matrix) (*ProcrustesResult, error) {
 
 	residual := mat.Norm(&diff, 2)
 
-	return &ProcrustesResult{
+	return ProcrustesResult{
 		R:        &rotation,
 		Residual: residual * residual,
 	}, nil
 }
 
-/*
-JacobiSVD computes the thin SVD of an m×n matrix (m ≥ n). The name is
-historical: the implementation uses gonum/mat.SVD rather than Jacobi sweeps.
-Returns U (m×n), singular values Σ (length n, descending), and V (n×n).
-*/
-func JacobiSVD(matrix mat.Matrix) (*mat.Dense, []float64, *mat.Dense, error) {
+func (procrustes *Procrustes[T]) jacobiSVD(matrix mat.Matrix) (
+	*mat.Dense, []float64, *mat.Dense, error,
+) {
 	rows, cols := matrix.Dims()
 
 	if rows < cols {
-		return nil, nil, nil, ProcrustesError(fmt.Sprintf(
-			"JacobiSVD requires rows ≥ cols, got %d × %d", rows, cols,
+		return nil, nil, nil, procrustesError(fmt.Sprintf(
+			"jacobiSVD requires rows ≥ cols, got %d × %d", rows, cols,
 		))
 	}
 
@@ -106,7 +189,7 @@ func JacobiSVD(matrix mat.Matrix) (*mat.Dense, []float64, *mat.Dense, error) {
 	var svd mat.SVD
 
 	if !svd.Factorize(&dense, mat.SVDThin) {
-		return nil, nil, nil, ProcrustesError("SVD factorization failed")
+		return nil, nil, nil, procrustesError("SVD factorization failed")
 	}
 
 	sigma := svd.Values(nil)
@@ -119,19 +202,16 @@ func JacobiSVD(matrix mat.Matrix) (*mat.Dense, []float64, *mat.Dense, error) {
 	return &uDense, sigma, &vDense, nil
 }
 
-/*
-DenseFromRows builds an nSamples × nDim matrix from a row-major slice-of-slices.
-*/
-func DenseFromRows(rows [][]float64, nSamples, nDim int) (*mat.Dense, error) {
+func denseFromRows(rows [][]float64, nSamples, nDim int) (*mat.Dense, error) {
 	if len(rows) != nSamples {
-		return nil, ProcrustesError("row count mismatch")
+		return nil, procrustesError("row count mismatch")
 	}
 
 	data := make([]float64, nSamples*nDim)
 
-	for rowIdx := 0; rowIdx < nSamples; rowIdx++ {
+	for rowIdx := range nSamples {
 		if len(rows[rowIdx]) != nDim {
-			return nil, ProcrustesError("column count mismatch")
+			return nil, procrustesError("column count mismatch")
 		}
 
 		copy(data[rowIdx*nDim:(rowIdx+1)*nDim], rows[rowIdx])
@@ -150,4 +230,8 @@ Error implements the error interface for ProcrustesError.
 */
 func (err ProcrustesError) Error() string {
 	return string(err)
+}
+
+func procrustesError(message string) ProcrustesError {
+	return ProcrustesError(message)
 }

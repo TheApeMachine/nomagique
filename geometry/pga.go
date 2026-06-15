@@ -29,12 +29,11 @@ the dual bivector: x→e23, y→e31, z→e12 (Hodge dual of the rotation axis).
 func MotorFromAxisAngle(axisX, axisY, axisZ, angle float64) *Motor {
 	norm := math.Sqrt(axisX*axisX + axisY*axisY + axisZ*axisZ)
 
-	return NewMotor(Rotor(
-		angle,
-		axisZ/norm,
-		axisY/norm,
-		axisX/norm,
-	))
+	var rotor Multivector
+
+	rotor.FromRotation(angle, axisZ/norm, axisY/norm, axisX/norm)
+
+	return NewMotor(rotor)
 }
 
 /*
@@ -42,7 +41,11 @@ MotorFromTranslation creates a pure translation motor from a displacement
 vector. The resulting motor is T = 1 + ½(dx·e01 + dy·e02 + dz·e03).
 */
 func MotorFromTranslation(dx, dy, dz float64) *Motor {
-	return NewMotor(Translator(dx, dy, dz))
+	var translator Multivector
+
+	translator.FromTranslation(dx, dy, dz)
+
+	return NewMotor(translator)
 }
 
 /*

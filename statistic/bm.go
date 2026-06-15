@@ -2,7 +2,6 @@ package statistic
 
 import (
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/nomagique"
 	"github.com/theapemachine/nomagique/core"
 	"gonum.org/v1/gonum/stat"
 )
@@ -10,21 +9,22 @@ import (
 /*
 BivariateMoment computes E[(x - mu_x)^r (y - mu_y)^s] for two configured streams.
 */
-type BivariateMoment struct {
-	r       float64
-	s       float64
-	x       core.Numbers
-	y       core.Numbers
-	weights core.Numbers
+type BivariateMoment[T ~float64] struct {
+	r       T
+	s       T
+	x       []float64
+	y       []float64
+	weights []float64
+	output  core.Scalar[T]
 }
 
 /*
-NewBivariateMoment creates a bivariate moment dynamic at exponents r and s.
+NewBivariateMoment creates a bivariate moment stage at exponents r and s.
 */
-func NewBivariateMoment(
-	r, s float64, x, y, weights core.Numbers,
-) *BivariateMoment {
-	return &BivariateMoment{
+func NewBivariateMoment[T ~float64](
+	r, s T, x, y, weights []float64,
+) *BivariateMoment[T] {
+	return &BivariateMoment[T]{
 		r:       r,
 		s:       s,
 		x:       x,
@@ -36,19 +36,19 @@ func NewBivariateMoment(
 /*
 Powers returns the mixed-moment exponents r and s.
 */
-func (bivariateMoment *BivariateMoment) Powers() (r float64, s float64) {
+func (bivariateMoment *BivariateMoment[T]) Powers() (r T, s T) {
 	return bivariateMoment.r, bivariateMoment.s
 }
 
 /*
 Observe computes the mixed moment for the configured streams.
 */
-func (bivariateMoment *BivariateMoment) Observe(inputs ...core.Number) core.Float64 {
+func (bivariateMoment *BivariateMoment[T]) Observe(inputs ...core.Number[T]) core.Scalar[T] {
 	_ = inputs
 
-	xValues := nomagique.Samples(bivariateMoment.x)
-	yValues := nomagique.Samples(bivariateMoment.y)
-	weights := nomagique.Samples(bivariateMoment.weights)
+	xValues := bivariateMoment.x
+	yValues := bivariateMoment.y
+	weights := bivariateMoment.weights
 
 	if len(weights) == 0 {
 		weights = nil
@@ -60,7 +60,7 @@ func (bivariateMoment *BivariateMoment) Observe(inputs ...core.Number) core.Floa
 			BivariateMomentError(BivariateMomentErrorInvalidStreams),
 		)
 
-		return 0
+		return bivariateMoment.output
 	}
 
 	if len(weights) != 0 && len(weights) != len(xValues) {
@@ -69,21 +69,26 @@ func (bivariateMoment *BivariateMoment) Observe(inputs ...core.Number) core.Floa
 			BivariateMomentError(BivariateMomentErrorWeightLengthMismatch),
 		)
 
-		return 0
+		return bivariateMoment.output
 	}
 
-	return core.Float64(
+	bivariateMoment.output = core.Scalar[T](T(
 		stat.BivariateMoment(
-			bivariateMoment.r, bivariateMoment.s, xValues, yValues, weights,
+			float64(bivariateMoment.r), float64(bivariateMoment.s),
+			xValues, yValues, weights,
 		),
-	)
+	))
+
+	return bivariateMoment.output
 }
 
 /*
 Reset clears derived state.
 */
-func (bivariateMoment *BivariateMoment) Reset() error {
+func (bivariateMoment *BivariateMoment[T]) Reset() error {
 	bivariateMoment.weights = nil
+	bivariateMoment.output = core.Scalar[T](0)
+
 	return nil
 }
 

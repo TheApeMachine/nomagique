@@ -1,7 +1,6 @@
 package statistic
 
 import (
-	"github.com/theapemachine/nomagique"
 	"github.com/theapemachine/nomagique/core"
 	"gonum.org/v1/gonum/floats"
 )
@@ -12,28 +11,34 @@ Min returns the smallest value in a batch passed to Observe.
 Stateless snapshot reducer — useful for floor liquidity, minimum spread, or any
 best-case-in-set step. Min implements core.Number. Empty input returns zero.
 */
-type Min struct{}
+type Min[T ~float64] struct {
+	output core.Scalar[T]
+}
 
 /*
-NewMin creates a min dynamic.
+NewMin creates a min stage.
 */
-func NewMin() *Min {
-	return &Min{}
+func NewMin[T ~float64]() *Min[T] {
+	return &Min[T]{}
 }
 
 /*
 Observe returns the minimum of the input stream.
 */
-func (min *Min) Observe(inputs ...core.Number) core.Float64 {
-	values := nomagique.Samples(core.Numbers(inputs))
+func (min *Min[T]) Observe(inputs ...core.Number[T]) core.Scalar[T] {
+	values := sampleBatch[T](inputs...)
 
 	if len(values) == 0 {
-		return 0
+		return min.output
 	}
 
-	return core.Float64(floats.Min(values))
+	min.output = core.Scalar[T](T(floats.Min(values)))
+
+	return min.output
 }
 
-func (min *Min) Reset() error {
+func (min *Min[T]) Reset() error {
+	min.output = core.Scalar[T](0)
+
 	return nil
 }

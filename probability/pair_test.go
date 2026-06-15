@@ -8,55 +8,107 @@ import (
 )
 
 func TestParsePredictedActual(testingTB *testing.T) {
-	Convey("Given out plus one work sample", testingTB, func() {
-		predicted, actual, err := parsePredictedActual(core.Float64(10), []core.Float64{12})
+	cases := []struct {
+		name            string
+		primary         float64
+		extras          []float64
+		expectPredicted float64
+		expectActual    float64
+		expectError     error
+	}{
+		{
+			name:            "primary plus one extra",
+			primary:         10,
+			extras:          []float64{12},
+			expectPredicted: 10,
+			expectActual:    12,
+		},
+		{
+			name:            "two extras ignore primary",
+			primary:         0,
+			extras:          []float64{10, 12},
+			expectPredicted: 10,
+			expectActual:    12,
+		},
+		{
+			name:        "zero predicted in work pair",
+			primary:     0,
+			extras:      []float64{0, 10},
+			expectError: core.ErrZeroPredicted,
+		},
+	}
 
-		Convey("It should treat out as predicted and work as actual", func() {
-			So(err, ShouldBeNil)
-			So(predicted, ShouldEqual, 10)
-			So(actual, ShouldEqual, 12)
+	for _, testCase := range cases {
+		testCase := testCase
+
+		Convey("Given "+testCase.name, testingTB, func() {
+			predicted, actual, err := parsePredictedActual(
+				testCase.primary, testCase.extras,
+			)
+
+			if testCase.expectError != nil {
+				Convey("It should return the expected error", func() {
+					So(err, ShouldEqual, testCase.expectError)
+				})
+
+				return
+			}
+
+			Convey("It should parse predicted and actual", func() {
+				So(err, ShouldBeNil)
+				So(predicted, ShouldEqual, testCase.expectPredicted)
+				So(actual, ShouldEqual, testCase.expectActual)
+			})
 		})
-	})
-
-	Convey("Given zero predicted in work pair", testingTB, func() {
-		_, _, err := parsePredictedActual(
-			core.Float64(0),
-			[]core.Float64{0, 10},
-		)
-
-		Convey("It should return ErrZeroPredicted", func() {
-			So(err, ShouldEqual, core.ErrZeroPredicted)
-		})
-	})
+	}
 }
 
 func TestParseBernoulliOutcome(testingTB *testing.T) {
-	Convey("Given predicted and actual in work", testingTB, func() {
-		outcome, err := parseBernoulliOutcome(
-			core.Float64(0),
-			[]core.Float64{10, 12},
-		)
+	cases := []struct {
+		name        string
+		primary     float64
+		extras      []float64
+		expect      float64
+		expectError error
+	}{
+		{
+			name:    "pair success",
+			primary: 0,
+			extras:  []float64{10, 12},
+			expect:  1,
+		},
+		{
+			name:    "raw probability",
+			primary: 0.75,
+			extras:  nil,
+			expect:  0.75,
+		},
+		{
+			name:        "invalid raw outcome",
+			primary:     1.5,
+			extras:      nil,
+			expectError: core.ErrInvalidOutcome,
+		},
+	}
 
-		Convey("It should emit success when actual meets predicted", func() {
-			So(err, ShouldBeNil)
-			So(outcome, ShouldEqual, 1)
+	for _, testCase := range cases {
+		testCase := testCase
+
+		Convey("Given "+testCase.name, testingTB, func() {
+			outcome, err := parseBernoulliOutcome(testCase.primary, testCase.extras)
+
+			if testCase.expectError != nil {
+				Convey("It should return the expected error", func() {
+					So(err, ShouldEqual, testCase.expectError)
+				})
+
+				return
+			}
+
+			Convey("It should return the expected outcome", func() {
+				So(err, ShouldBeNil)
+				So(outcome, ShouldEqual, testCase.expect)
+			})
 		})
-	})
-
-	Convey("Given a raw probability in out", testingTB, func() {
-		outcome, err := parseBernoulliOutcome(core.Float64(0.75), nil)
-
-		Convey("It should pass through valid outcomes", func() {
-			So(err, ShouldBeNil)
-			So(outcome, ShouldEqual, 0.75)
-		})
-	})
-
-	Convey("Given an invalid raw outcome", testingTB, func() {
-		_, err := parseBernoulliOutcome(core.Float64(1.5), nil)
-
-		Convey("It should return ErrInvalidOutcome", func() {
-			So(err, ShouldEqual, core.ErrInvalidOutcome)
-		})
-	})
+	}
 }

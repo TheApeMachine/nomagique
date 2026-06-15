@@ -4,10 +4,9 @@ import (
 	"math"
 
 	"github.com/theapemachine/nomagique/causal"
-	"github.com/theapemachine/nomagique/core"
 )
 
-func deriveLadderBandwidth(streams []core.Numbers, treatmentNode int) float64 {
+func deriveLadderBandwidth(streams [][]float64, treatmentNode int) float64 {
 	rows, ok := zipNodeRows(streams)
 
 	if !ok || treatmentNode < 0 || treatmentNode >= len(rows[0]) {
@@ -50,7 +49,7 @@ func deriveLadderBandwidth(streams []core.Numbers, treatmentNode int) float64 {
 	return 1.06 * math.Sqrt(variance) * math.Pow(float64(len(values)), -0.2)
 }
 
-func deriveConfoundFraction(streams []core.Numbers, treatmentNode int) float64 {
+func deriveConfoundFraction(streams [][]float64, treatmentNode int) float64 {
 	rows, ok := zipNodeRows(streams)
 
 	if !ok || treatmentNode < 0 || treatmentNode >= len(rows[0]) {
@@ -93,7 +92,7 @@ func deriveConfoundFraction(streams []core.Numbers, treatmentNode int) float64 {
 	return math.Min(0.5, math.Sqrt(variance)/mean)
 }
 
-func applyDerivedLadderConfig(config causal.LadderConfig, streams []core.Numbers) causal.LadderConfig {
+func applyDerivedLadderConfig(config causal.LadderConfig, streams [][]float64) causal.LadderConfig {
 	if config.KernelBandwidth <= 0 {
 		config.KernelBandwidth = deriveLadderBandwidth(streams, config.TreatmentNormal)
 	}

@@ -8,10 +8,10 @@ import (
 
 func TestWindowSetSnapshot(testingTB *testing.T) {
 	Convey("Given a window set", testingTB, func() {
-		windowSet := NewWindowSet(16)
+		windowSet := NewWindowSet[float64](16)
 
 		for index := range 13 {
-			windowSet.Observe(int64((index+1)*1_000), 100+float64(index))
+			observeEpochLevel(windowSet, int64((index+1)*1_000), 100+float64(index))
 		}
 
 		snapshot := windowSet.Snapshot(TierWindows{

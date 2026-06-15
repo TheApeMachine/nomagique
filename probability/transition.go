@@ -1,7 +1,7 @@
 package probability
 
 import (
-	"github.com/theapemachine/nomagique"
+	"github.com/theapemachine/nomagique/core"
 	"github.com/theapemachine/nomagique/statistic"
 )
 
@@ -49,12 +49,19 @@ func (matrix *TransitionMatrix) Surprise(observed []float64) (float64, error) {
 		rowSum += count
 	}
 
-	inputs := append(
-		nomagique.Numbers(observed...),
-		nomagique.Numbers(row...)...,
-	)
+	inputs := make([]core.Number[float64], 0, len(observed)+len(row))
 
-	divergence := float64(statistic.NewKLDivergence(nil, rowSum, 0).Observe(inputs...))
+	for _, probability := range observed {
+		inputs = append(inputs, core.Scalar[float64](probability))
+	}
+
+	for _, probability := range row {
+		inputs = append(inputs, core.Scalar[float64](probability))
+	}
+
+	divergence := float64(
+		statistic.NewKLDivergence[float64](nil, rowSum, 0).Observe(inputs...),
+	)
 
 	return divergence, nil
 }
@@ -107,4 +114,17 @@ func (matrix *TransitionMatrix) PadObserved(
 	}
 
 	return padded
+}
+
+/*
+Reset clears transition counts back to the smoothing prior.
+*/
+func (matrix *TransitionMatrix) Reset() {
+	for row := range matrix.counts {
+		for column := range matrix.counts[row] {
+			matrix.counts[row][column] = matrix.smoothingAlpha
+		}
+	}
+
+	matrix.lastCategory = 0
 }

@@ -3,17 +3,16 @@ package statistic
 import (
 	"fmt"
 
-	"github.com/theapemachine/nomagique"
 	"github.com/theapemachine/nomagique/core"
+	"gonum.org/v1/gonum/stat"
 )
 
 /*
 FastSlowRatio compares the mean rate in the trailing fast window to the mean
 rate in the preceding slow window.
 
-Trading example: fast window = last three trade arrivals per second, slow window
-= the prior baseline window. A spike after quiet trading yields a high ratio
-without a hard cap; a zero slow baseline is smoothed by recentRate * epsilon.
+A spike after a quiet baseline yields a high ratio without a hard cap; a zero
+slow baseline is smoothed by recentRate * epsilon.
 */
 type FastSlowRatio struct {
 	fastWindow int
@@ -72,13 +71,13 @@ func FastSlowRate(samples []float64, fastWindow int, epsilon float64) float64 {
 	}
 
 	slowCount := sampleCount - fastWindow
-	recentRate := float64(NewMean(nil).Observe(nomagique.Numbers(samples[sampleCount-fastWindow:]...)...))
+	recentRate := stat.Mean(samples[sampleCount-fastWindow:], nil)
 
 	if slowCount <= 0 {
 		return 1.0
 	}
 
-	olderRate := float64(NewMean(nil).Observe(nomagique.Numbers(samples[:slowCount]...)...))
+	olderRate := stat.Mean(samples[:slowCount], nil)
 
 	if olderRate <= 0 {
 		olderRate = recentRate * epsilon
@@ -103,7 +102,7 @@ func InvertedFastSlowRate(samples []float64, fastWindow int, epsilon float64) fl
 	}
 
 	slowCount := sampleCount - fastWindow
-	recentRate := float64(NewMean(nil).Observe(nomagique.Numbers(samples[sampleCount-fastWindow:]...)...))
+	recentRate := stat.Mean(samples[sampleCount-fastWindow:], nil)
 
 	if recentRate <= 0 {
 		return 0.0
@@ -113,7 +112,7 @@ func InvertedFastSlowRate(samples []float64, fastWindow int, epsilon float64) fl
 		return 0.0
 	}
 
-	olderRate := float64(NewMean(nil).Observe(nomagique.Numbers(samples[:slowCount]...)...))
+	olderRate := stat.Mean(samples[:slowCount], nil)
 
 	if olderRate <= 0 {
 		olderRate = recentRate * epsilon
@@ -125,26 +124,31 @@ func InvertedFastSlowRate(samples []float64, fastWindow int, epsilon float64) fl
 /*
 FastSlow compares trailing fast-window mean rate to the preceding slow window.
 */
-type FastSlow struct {
-	stream core.Numbers
+type FastSlow[T ~float64] struct {
+	stream []float64
 	ratio  *FastSlowRatio
+	output core.Scalar[T]
 }
 
 /*
-NewFastSlow creates a breakout-ratio dynamic over a configured stream.
+NewFastSlow creates a breakout-ratio stage over a configured stream.
 */
-func NewFastSlow(stream core.Numbers, fastWindow int, epsilon float64) *FastSlow {
-	return &FastSlow{
+func NewFastSlow[T ~float64](
+	stream []float64, fastWindow int, epsilon float64,
+) *FastSlow[T] {
+	return &FastSlow[T]{
 		stream: stream,
 		ratio:  NewFastSlowRatio(fastWindow, epsilon),
 	}
 }
 
 /*
-NewInvertedFastSlow creates a compression-ratio dynamic over a configured stream.
+NewInvertedFastSlow creates a compression-ratio stage over a configured stream.
 */
-func NewInvertedFastSlow(stream core.Numbers, fastWindow int, epsilon float64) *FastSlow {
-	return &FastSlow{
+func NewInvertedFastSlow[T ~float64](
+	stream []float64, fastWindow int, epsilon float64,
+) *FastSlow[T] {
+	return &FastSlow[T]{
 		stream: stream,
 		ratio:  NewInvertedFastSlowRatio(fastWindow, epsilon),
 	}
@@ -153,21 +157,24 @@ func NewInvertedFastSlow(stream core.Numbers, fastWindow int, epsilon float64) *
 /*
 Observe returns the configured fast/slow ratio for the stream history.
 */
-func (fastSlow *FastSlow) Observe(_ ...core.Number) core.Float64 {
-	samples := nomagique.Samples(fastSlow.stream)
-	value, err := fastSlow.ratio.Next(0, samples...)
+func (fastSlow *FastSlow[T]) Observe(_ ...core.Number[T]) core.Scalar[T] {
+	value, err := fastSlow.ratio.Next(0, fastSlow.stream...)
 
 	if err != nil {
-		return 0
+		return fastSlow.output
 	}
 
-	return core.Float64(value)
+	fastSlow.output = core.Scalar[T](T(value))
+
+	return fastSlow.output
 }
 
 /*
 Reset clears derived state.
 */
-func (fastSlow *FastSlow) Reset() error {
+func (fastSlow *FastSlow[T]) Reset() error {
 	fastSlow.stream = nil
+	fastSlow.output = core.Scalar[T](0)
+
 	return nil
 }

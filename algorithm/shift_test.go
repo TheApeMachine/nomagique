@@ -4,14 +4,15 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/nomagique"
 )
 
 func TestShift_Observe(testingTB *testing.T) {
 	Convey("Given matching reference and live distributions", testingTB, func() {
-		reference := nomagique.Numbers(1, 1, 1, 1)
-		live := nomagique.Numbers(1, 1, 1, 1)
-		shift := NewShift(reference, live, nil, 0, 0)
+		shift := NewShift[float64](
+			[]float64{1, 1, 1, 1},
+			[]float64{1, 1, 1, 1},
+			nil, 0, 0,
+		)
 		divergence := shift.Observe()
 
 		Convey("It should return zero drift", func() {
@@ -20,9 +21,11 @@ func TestShift_Observe(testingTB *testing.T) {
 	})
 
 	Convey("Given diverging reference and live distributions", testingTB, func() {
-		reference := nomagique.Numbers(4, 1, 1, 1)
-		live := nomagique.Numbers(1, 1, 1, 4)
-		shift := NewShift(reference, live, nil, 0, 0)
+		shift := NewShift[float64](
+			[]float64{4, 1, 1, 1},
+			[]float64{1, 1, 1, 4},
+			nil, 0, 0,
+		)
 		divergence := shift.Observe()
 
 		Convey("It should return positive drift", func() {
@@ -32,9 +35,13 @@ func TestShift_Observe(testingTB *testing.T) {
 }
 
 func BenchmarkShift_Observe(testingTB *testing.B) {
-	reference := nomagique.Numbers(1, 2, 3, 4)
-	live := nomagique.Numbers(1, 1, 2, 4)
-	shift := NewShift(reference, live, nil, 0, 0)
+	shift := NewShift[float64](
+		[]float64{1, 2, 3, 4},
+		[]float64{1, 1, 2, 4},
+		nil, 0, 0,
+	)
+
+	testingTB.ReportAllocs()
 
 	for testingTB.Loop() {
 		_ = shift.Observe()

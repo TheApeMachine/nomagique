@@ -1,75 +1,119 @@
 package adaptive
 
 import (
+	"math"
+
 	"github.com/theapemachine/nomagique/core"
 )
 
 /*
-Impulse tracks signed normalized momentum relative to the running range.
+Momentum tracks a signed unit-normalized move relative to the running range.
 */
-type Impulse struct {
-	stageParser *core.StageParser
-	state       MomentumState
+type Momentum[T ~float64] struct {
+	Prev   float64
+	Min    float64
+	Max    float64
+	Ready  bool
+	output core.Scalar[T]
 }
 
 /*
-Momentum returns a signed momentum dynamic ready from its first observation.
+NewMomentum returns a momentum stage ready to bootstrap from its first observation.
 */
-func Momentum() *Impulse {
-	return &Impulse{
-		stageParser: core.NewStageParser(),
+func NewMomentum[T ~float64](initial ...core.Number[T]) *Momentum[T] {
+	momentum := &Momentum[T]{}
+
+	if len(initial) > 0 {
+		momentum.output = core.Scalar[T](0).Observe(initial...)
+	}
+
+	return momentum
+}
+
+/*
+Observe absorbs the carried sample and returns signed normalized momentum.
+*/
+func (momentum *Momentum[T]) Observe(inputs ...core.Number[T]) core.Scalar[T] {
+	if len(inputs) == 0 {
+		return momentum.output
+	}
+
+	sample, ok := inputs[0].(core.Scalar[T])
+
+	if !ok {
+		return momentum.output
+	}
+
+	if len(inputs) > 1 {
+		if work, workOK := inputs[1].(core.Scalar[T]); workOK {
+			sample = core.Scalar[T](T(sample) + T(work))
+		}
+	}
+
+	momentum.output = core.Scalar[T](T(momentum.observe(float64(sample))))
+
+	return momentum.output
+}
+
+/*
+ObserveSample ingests one raw sample through the momentum kernel.
+*/
+func (momentum *Momentum[T]) ObserveSample(sample T) T {
+	derived := T(momentum.observe(float64(sample)))
+	momentum.output = core.Scalar[T](derived)
+
+	return derived
+}
+
+/*
+ObserveSamples writes one derived value per sample into out.
+*/
+func (momentum *Momentum[T]) ObserveSamples(samples []T, out []T) {
+	for index, sample := range samples {
+		out[index] = momentum.ObserveSample(sample)
 	}
 }
 
 /*
-Observe derives signed normalized momentum for the current sample.
+Reset clears derived state so the next Observe bootstraps again.
 */
-func (impulse *Impulse) Observe(
-	inputs ...core.Number,
-) core.Float64 {
-	out, work, err := impulse.stageParser.Parse(inputs)
+func (momentum *Momentum[T]) Reset() error {
+	momentum.Prev = 0
+	momentum.Min = 0
+	momentum.Max = 0
+	momentum.Ready = false
+	momentum.output = core.Scalar[T](0)
 
-	if err != nil {
-		return 0
-	}
-
-	result, err := impulse.Apply(out, work)
-
-	if err != nil {
-		return 0
-	}
-
-	return result
-}
-
-/*
-Apply runs one pipeline stage without allocating number inputs.
-*/
-func (impulse *Impulse) Apply(
-	out core.Float64, work []core.Float64,
-) (core.Float64, error) {
-	sample := float64(out)
-
-	if len(work) > 0 {
-		sample = float64(out) + float64(work[0])
-	}
-
-	return core.Float64(impulse.state.Observe(sample)), nil
-}
-
-/*
-ObserveSamples runs the exact batch kernel over samples into out.
-*/
-func (impulse *Impulse) ObserveSamples(
-	samples []float64, out []float64,
-) {
-	impulse.state.ObserveSamples(samples, out)
-}
-
-/*
-Reset clears derived state.
-*/
-func (impulse *Impulse) Reset() error {
-	impulse.state.Reset()
 	return nil
+}
+
+func (momentum *Momentum[T]) observe(sample float64) float64 {
+	if !momentum.Ready {
+		momentum.Prev = sample
+		momentum.Min = sample
+		momentum.Max = sample
+		momentum.Ready = true
+
+		return 0
+	}
+
+	return momentum.observeReady(sample)
+}
+
+func (momentum *Momentum[T]) observeReady(sample float64) float64 {
+	momentum.Min = math.Min(momentum.Min, sample)
+	momentum.Max = math.Max(momentum.Max, sample)
+
+	span := momentum.Max - momentum.Min
+
+	if span == 0 {
+		momentum.Prev = sample
+
+		return 0
+	}
+
+	signed := (sample - momentum.Prev) / span
+	momentum.Prev = sample
+
+	return signed
 }

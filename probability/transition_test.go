@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/nomagique/core"
 )
 
 func TestTransitionMatrixSurprise(testingTB *testing.T) {
@@ -50,6 +51,70 @@ func TestTransitionMatrixUpdate(testingTB *testing.T) {
 			So(matrix.lastCategory, ShouldEqual, 2)
 		})
 	})
+}
+
+func TestTransitionMatrixReset(testingTB *testing.T) {
+	Convey("Given a reset transition matrix", testingTB, func() {
+		matrix := NewTransitionMatrix(5, 0.1)
+		matrix.Update(2)
+
+		matrix.Reset()
+
+		Convey("It should restore the smoothing prior", func() {
+			So(matrix.lastCategory, ShouldEqual, 0)
+			So(matrix.counts[0][0], ShouldEqual, 0.1)
+		})
+	})
+}
+
+func TestTransitionSurprise_Observe(testingTB *testing.T) {
+	Convey("Given a padded observation through TransitionSurprise", testingTB, func() {
+		stage := TransitionSurprise[float64](5, 0.1)
+		matrix := stage.matrix
+		observed := matrix.PadObserved([]float64{0.25, 0.25, 0.25, 0.25}, 0)
+		inputs := make([]core.Number[float64], len(observed))
+
+		for index, probability := range observed {
+			inputs[index] = core.Scalar[float64](probability)
+		}
+
+		got := float64(stage.Observe(inputs...))
+
+		Convey("It should return finite surprisal", func() {
+			So(math.IsNaN(got), ShouldBeFalse)
+		})
+	})
+}
+
+func TestTransitionSurprise_Reset(testingTB *testing.T) {
+	Convey("Given a reset transition stage", testingTB, func() {
+		stage := TransitionSurprise[float64](5, 0.1)
+		stage.matrix.Update(2)
+
+		err := stage.Reset()
+
+		Convey("It should clear matrix state", func() {
+			So(err, ShouldBeNil)
+			So(stage.matrix.lastCategory, ShouldEqual, 0)
+		})
+	})
+}
+
+func BenchmarkTransitionSurprise_Observe(testingTB *testing.B) {
+	stage := TransitionSurprise[float64](5, 0.1)
+	matrix := stage.matrix
+	observed := matrix.PadObserved([]float64{0.4, 0.3, 0.2, 0.1}, 0)
+	inputs := make([]core.Number[float64], len(observed))
+
+	for index, probability := range observed {
+		inputs[index] = core.Scalar[float64](probability)
+	}
+
+	testingTB.ReportAllocs()
+
+	for testingTB.Loop() {
+		_ = stage.Observe(inputs...)
+	}
 }
 
 func BenchmarkTransitionMatrixSurprise(testingTB *testing.B) {

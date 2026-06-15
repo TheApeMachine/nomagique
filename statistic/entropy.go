@@ -4,7 +4,6 @@ import (
 	"math"
 
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/nomagique"
 	"github.com/theapemachine/nomagique/core"
 	"gonum.org/v1/gonum/floats"
 	"gonum.org/v1/gonum/stat"
@@ -14,16 +13,17 @@ import (
 Entropy computes Shannon entropy of a normalized mass distribution.
 Non-positive masses are floored before normalization.
 */
-type Entropy struct {
-	floor float64
+type Entropy[T ~float64] struct {
+	floor  float64
+	output core.Scalar[T]
 }
 
 /*
-NewEntropy creates an entropy dynamic.
+NewEntropy creates an entropy stage.
 floor may be zero to derive a per-sample floor from each observation.
 */
-func NewEntropy(floor float64) *Entropy {
-	return &Entropy{
+func NewEntropy[T ~float64](floor float64) *Entropy[T] {
+	return &Entropy[T]{
 		floor: floor,
 	}
 }
@@ -31,11 +31,11 @@ func NewEntropy(floor float64) *Entropy {
 /*
 Observe returns entropy of the normalized input masses.
 */
-func (entropy *Entropy) Observe(inputs ...core.Number) core.Float64 {
-	values := nomagique.Samples(core.Numbers(inputs))
+func (entropy *Entropy[T]) Observe(inputs ...core.Number[T]) core.Scalar[T] {
+	values := sampleBatch[T](inputs...)
 
 	if len(values) == 0 {
-		return 0
+		return entropy.output
 	}
 
 	probabilities, ok := entropy.normalizedProbabilities(values)
@@ -46,17 +46,21 @@ func (entropy *Entropy) Observe(inputs ...core.Number) core.Float64 {
 			EntropyError(EntropyErrorNonFiniteMass),
 		)
 
-		return 0
+		return entropy.output
 	}
 
-	return core.Float64(stat.Entropy(probabilities))
+	entropy.output = core.Scalar[T](T(stat.Entropy(probabilities)))
+
+	return entropy.output
 }
 
-func (entropy *Entropy) Reset() error {
+func (entropy *Entropy[T]) Reset() error {
+	entropy.output = core.Scalar[T](0)
+
 	return nil
 }
 
-func (entropy *Entropy) normalizedProbabilities(values []float64) ([]float64, bool) {
+func (entropy *Entropy[T]) normalizedProbabilities(values []float64) ([]float64, bool) {
 	floor := entropy.probabilityFloor(values)
 	total := 0.0
 
@@ -88,7 +92,7 @@ func (entropy *Entropy) normalizedProbabilities(values []float64) ([]float64, bo
 	return probabilities, true
 }
 
-func (entropy *Entropy) probabilityFloor(values []float64) float64 {
+func (entropy *Entropy[T]) probabilityFloor(values []float64) float64 {
 	if entropy.floor > 0 {
 		return entropy.floor
 	}

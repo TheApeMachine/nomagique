@@ -4,7 +4,6 @@ import (
 	"math"
 
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/nomagique"
 	"github.com/theapemachine/nomagique/core"
 	"gonum.org/v1/gonum/stat"
 )
@@ -14,21 +13,22 @@ KLDivergence computes sum(q_i * log(q_i / p_i)) for aligned distributions.
 Inputs split into observed and expected halves; lengths may differ inside each half.
 When expectedSum or floor on the receiver are zero, they are derived from the samples.
 */
-type KLDivergence struct {
-	weights     core.Numbers
+type KLDivergence[T ~float64] struct {
+	weights     []float64
 	expectedSum float64
 	floor       float64
+	output      core.Scalar[T]
 }
 
 /*
-NewKLDivergence creates a KL divergence dynamic.
+NewKLDivergence creates a KL divergence stage.
 expectedSum and floor may be zero to derive them from each observation.
 */
-func NewKLDivergence(
-	weights core.Numbers,
+func NewKLDivergence[T ~float64](
+	weights []float64,
 	expectedSum, floor float64,
-) *KLDivergence {
-	return &KLDivergence{
+) *KLDivergence[T] {
+	return &KLDivergence[T]{
 		weights:     weights,
 		expectedSum: expectedSum,
 		floor:       floor,
@@ -38,7 +38,7 @@ func NewKLDivergence(
 /*
 Observe computes KL divergence between observed and expected sample halves.
 */
-func (kl *KLDivergence) Observe(inputs ...core.Number) core.Float64 {
+func (kl *KLDivergence[T]) Observe(inputs ...core.Number[T]) core.Scalar[T] {
 	count := len(inputs)
 
 	if count < 2 {
@@ -47,7 +47,7 @@ func (kl *KLDivergence) Observe(inputs ...core.Number) core.Float64 {
 			KLError(KLErrorRequireAtLeastTwoInputs),
 		)
 
-		return 0
+		return kl.output
 	}
 
 	if count%2 != 0 {
@@ -56,31 +56,35 @@ func (kl *KLDivergence) Observe(inputs ...core.Number) core.Float64 {
 			KLError(KLErrorRequireEqualLength),
 		)
 
-		return 0
+		return kl.output
 	}
 
 	half := count / 2
-	observed := nomagique.Samples(core.Numbers(inputs[:half]))
-	expected := nomagique.Samples(core.Numbers(inputs[half:]))
+	observed := sampleBatch[T](inputs[:half]...)
+	expected := sampleBatch[T](inputs[half:]...)
 
 	divergence, ok := kl.divergence(observed, expected)
 
 	if !ok {
-		return 0
+		return kl.output
 	}
 
-	return core.Float64(divergence)
+	kl.output = core.Scalar[T](T(divergence))
+
+	return kl.output
 }
 
 /*
 Reset clears derived state.
 */
-func (kl *KLDivergence) Reset() error {
+func (kl *KLDivergence[T]) Reset() error {
 	kl.weights = nil
+	kl.output = core.Scalar[T](0)
+
 	return nil
 }
 
-func (kl *KLDivergence) divergence(observed, expected []float64) (float64, bool) {
+func (kl *KLDivergence[T]) divergence(observed, expected []float64) (float64, bool) {
 	for _, value := range observed {
 		if math.IsNaN(value) || math.IsInf(value, 0) {
 			errnie.Err(
@@ -182,7 +186,7 @@ func (kl *KLDivergence) divergence(observed, expected []float64) (float64, bool)
 	return divergence, true
 }
 
-func (kl *KLDivergence) probabilityFloor(
+func (kl *KLDivergence[T]) probabilityFloor(
 	observed, expected []float64, width int,
 ) float64 {
 	if kl.floor > 0 {

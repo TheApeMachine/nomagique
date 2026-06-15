@@ -4,61 +4,173 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/nomagique/core"
+	"github.com/theapemachine/nomagique/tests"
 )
 
-func TestBuildFracDiffWeights_maxLag(testingTB *testing.T) {
-	Convey("Given zero span with reference threshold", testingTB, func() {
-		weights, width := buildFracDiffWeights(0.5, 0, 10, nil)
+func TestNewFracDiff(testingTB *testing.T) {
+	Convey("Given NewFracDiff", testingTB, func() {
+		fractional := NewFracDiff[float64]()
 
-		Convey("It should exhaust the range-derived max lag", func() {
-			So(width, ShouldEqual, 2)
-			So(len(weights), ShouldEqual, 2)
+		Convey("It should return a usable stage", func() {
+			So(fractional, ShouldNotBeNil)
+			So(fractional.Ready, ShouldBeFalse)
 		})
 	})
 }
 
-func TestFracDiffOutput(testingTB *testing.T) {
-	Convey("Given a partial history window", testingTB, func() {
-		state := FracDiffState{
-			Width:   3,
-			Count:   1,
-			Head:    0,
-			History: []float64{5},
-			Weights: []float64{1, -0.5, 0.1},
-		}
+func TestFracDiff_ObserveSample(testingTB *testing.T) {
+	cases := []struct {
+		name    string
+		samples []float64
+		expect  float64
+	}{
+		{"bootstrap echo", []float64{10}, 10},
+		{"collapsed repeat", []float64{10, 10, 10}, 10},
+		{"second sample moves", []float64{0, 10}, 10},
+	}
 
-		Convey("It should only convolve available lags", func() {
-			So(fracDiffOutput(&state), ShouldEqual, 5)
+	for _, testCase := range cases {
+		testCase := testCase
+
+		Convey("Given "+testCase.name, testingTB, func() {
+			fractional := NewFracDiff[float64]()
+			got := tests.RunObserveSampleSequence(fractional.ObserveSample, testCase.samples)
+
+			Convey("It should derive the expected filtered value", func() {
+				So(got, ShouldEqual, testCase.expect)
+			})
+		})
+	}
+}
+
+func TestFracDiff_Observe(testingTB *testing.T) {
+	Convey("Given empty Observe inputs", testingTB, func() {
+		fractional := NewFracDiff[float64]()
+
+		Convey("It should return zero output", func() {
+			So(fractional.Observe(), ShouldEqual, core.Scalar[float64](0))
 		})
 	})
 
-	Convey("Given weights and history", testingTB, func() {
-		state := FracDiffState{
-			Ready:   true,
-			Width:   2,
-			Head:    1,
-			Count:   2,
-			History: []float64{10, 12},
-			Weights: []float64{1, -0.4},
-		}
+	Convey("Given a non-scalar first input", testingTB, func() {
+		fractional := NewFracDiff[float64]()
+		_ = fractional.Observe(core.Scalar[float64](10))
+		stage := &tests.PipelineStage[float64]{Result: core.Scalar[float64](99)}
 
-		Convey("It should apply newest-first weights", func() {
-			So(fracDiffOutput(&state), ShouldAlmostEqual, 8, 1e-12)
+		Convey("It should leave output unchanged", func() {
+			So(fractional.Observe(stage), ShouldEqual, core.Scalar[float64](10))
 		})
 	})
 
-	Convey("Given a wrapped ring index", testingTB, func() {
-		state := FracDiffState{
-			Width:   2,
-			Count:   2,
-			Head:    0,
-			History: []float64{10, 12},
-			Weights: []float64{1, -0.4},
+	Convey("Given a scalar plus work sample", testingTB, func() {
+		fractional := NewFracDiff[float64]()
+		_ = fractional.Observe(core.Scalar[float64](0))
+
+		Convey("It should match a single combined scalar", func() {
+			withWork := fractional.Observe(
+				core.Scalar[float64](5),
+				core.Scalar[float64](3),
+			)
+			expect := NewFracDiff[float64]()
+			_ = expect.Observe(core.Scalar[float64](0))
+			combined := expect.Observe(core.Scalar[float64](8))
+
+			So(withWork, ShouldEqual, combined)
+		})
+	})
+
+	pathCases := []struct {
+		name    string
+		samples []float64
+	}{
+		{"volatile swing", []float64{10, 1, 20, 2, 15, 30}},
+		{"monotone climb", []float64{1, 2, 3, 4, 5, 6, 7, 8}},
+		{"adversarial spike", []float64{0, 0, 100, 0, 0}},
+		{"negative range", []float64{-10, 10, -5, 5, 0}},
+	}
+
+	for _, testCase := range pathCases {
+		testCase := testCase
+
+		Convey("Given "+testCase.name+" via Observe scalars", testingTB, func() {
+			sampleStage := NewFracDiff[float64]()
+			scalarStage := NewFracDiff[float64]()
+
+			sampleLast := tests.RunObserveSampleSequence(sampleStage.ObserveSample, testCase.samples)
+			scalarLast := tests.RunObserveScalarSequence(scalarStage.Observe, testCase.samples)
+
+			Convey("It should match ObserveSample", func() {
+				So(scalarLast, ShouldEqual, sampleLast)
+			})
+		})
+	}
+}
+
+func TestFracDiff_ObserveSamples(testingTB *testing.T) {
+	cases := []struct {
+		name    string
+		samples []float64
+	}{
+		{"short batch", []float64{10, 20, 15}},
+		{"long batch", []float64{1, 2, 3, 4, 5, 6, 7, 8, 9, 10}},
+	}
+
+	for _, testCase := range cases {
+		testCase := testCase
+
+		Convey("Given "+testCase.name, testingTB, func() {
+			batch := NewFracDiff[float64]()
+			sequential := NewFracDiff[float64]()
+
+			batchOut := make([]float64, len(testCase.samples))
+			batch.ObserveSamples(testCase.samples, batchOut)
+
+			seqOut := make([]float64, len(testCase.samples))
+
+			for index, sample := range testCase.samples {
+				seqOut[index] = sequential.ObserveSample(sample)
+			}
+
+			Convey("It should match sequential ObserveSample", func() {
+				for index := range testCase.samples {
+					So(batchOut[index], ShouldEqual, seqOut[index])
+				}
+			})
+		})
+	}
+}
+
+func TestFracDiff_Reset(testingTB *testing.T) {
+	Convey("Given reset after warm stream", testingTB, func() {
+		fractional := NewFracDiff[float64]()
+
+		for _, sample := range []float64{10, 20, 5, 15, 30} {
+			_ = fractional.ObserveSample(sample)
 		}
 
-		Convey("It should read older lags across the buffer end", func() {
-			So(fracDiffOutput(&state), ShouldAlmostEqual, 5.2, 1e-12)
+		So(fractional.Reset(), ShouldBeNil)
+
+		got := fractional.ObserveSample(99)
+
+		Convey("It should bootstrap again", func() {
+			So(got, ShouldEqual, 99)
+			So(fractional.Ready, ShouldBeTrue)
+			So(fractional.History, ShouldNotBeNil)
 		})
 	})
 }
 
+func BenchmarkFracDiff_ObserveSample(b *testing.B) {
+	fractional := NewFracDiff[float64]()
+
+	for _, sample := range []float64{10, 20, 15, 25} {
+		_ = fractional.ObserveSample(sample)
+	}
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = fractional.ObserveSample(11)
+	}
+}

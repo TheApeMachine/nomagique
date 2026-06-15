@@ -7,69 +7,60 @@ import (
 /*
 Forecaster learns a multiplicative scale from settled predicted-vs-actual outcomes.
 */
-type Forecaster struct {
-	stageParser *core.StageParser
-	state       ForecastState
+type Forecaster[T ~float64] struct {
+	state  ForecastState
+	output core.Scalar[T]
 }
 
 /*
 Forecast returns a scale-learning dynamic ready from its first observation.
 */
-func Forecast() *Forecaster {
-	return &Forecaster{
-		stageParser: core.NewStageParser(),
-	}
+func Forecast[T ~float64]() *Forecaster[T] {
+	return &Forecaster[T]{}
 }
 
 /*
 Scale returns the current multiplicative scale for parameter feedback.
 */
-func (forecaster *Forecaster) Scale() float64 {
+func (forecaster *Forecaster[T]) Scale() float64 {
 	return forecaster.state.Scale
 }
 
 /*
 Observe updates scale from a predicted and actual pair.
 */
-func (forecaster *Forecaster) Observe(
-	inputs ...core.Number,
-) core.Float64 {
-	out, work, err := forecaster.stageParser.Parse(inputs)
-
-	if err != nil {
-		return 0
+func (forecaster *Forecaster[T]) Observe(inputs ...core.Number[T]) core.Scalar[T] {
+	if len(inputs) == 0 {
+		return forecaster.output
 	}
 
-	result, err := forecaster.Apply(out, work)
+	scalars, ok := collectScalars[T](inputs...)
 
-	if err != nil {
-		return 0
+	if !ok {
+		return forecaster.output
 	}
 
-	return result
-}
-
-/*
-Apply runs one pipeline stage without allocating number inputs.
-*/
-func (forecaster *Forecaster) Apply(
-	out core.Float64, work []core.Float64,
-) (core.Float64, error) {
-	predicted, actual, err := parsePredictedActual(out, work)
-
-	if err != nil {
-		return 0, err
+	if len(scalars) < 2 {
+		return forecaster.output
 	}
 
-	return core.Float64(
+	predicted, actual, err := parsePredictedActual(scalars[0], scalars[1:])
+
+	if err != nil {
+		return forecaster.output
+	}
+
+	forecaster.output = core.Scalar[T](T(
 		ObserveForecast(&forecaster.state, predicted, actual),
-	), nil
+	))
+
+	return forecaster.output
 }
 
 /*
 ObserveSamples runs the exact batch kernel over pairs into out.
 */
-func (forecaster *Forecaster) ObserveSamples(
+func (forecaster *Forecaster[T]) ObserveSamples(
 	predicted []float64, actual []float64, out []float64,
 ) {
 	forecaster.state.ObserveSamples(predicted, actual, out)
@@ -78,7 +69,9 @@ func (forecaster *Forecaster) ObserveSamples(
 /*
 Reset clears derived state.
 */
-func (forecaster *Forecaster) Reset() error {
+func (forecaster *Forecaster[T]) Reset() error {
 	forecaster.state.Reset()
+	forecaster.output = core.Scalar[T](0)
+
 	return nil
 }

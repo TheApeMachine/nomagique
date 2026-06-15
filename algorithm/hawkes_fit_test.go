@@ -5,7 +5,6 @@ import (
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/nomagique"
 	"github.com/theapemachine/nomagique/hawkes"
 )
 
@@ -25,12 +24,7 @@ func TestHawkesFit_Observe(testingTB *testing.T) {
 		}
 
 		horizon := float64(start.Add(4 * time.Second).UnixNano())
-		fitProcess := NewHawkesFit(
-			nomagique.Numbers(xTimes...),
-			nomagique.Numbers(yTimes...),
-			horizon,
-			hawkes.BivariateFit{},
-		)
+		fitProcess := NewHawkesFit[float64](xTimes, yTimes, horizon, hawkes.BivariateFit{})
 
 		excitation := fitProcess.Observe()
 		fit, ok := fitProcess.Fit()
@@ -54,12 +48,9 @@ func BenchmarkHawkesFit_Observe(testingTB *testing.B) {
 	}
 
 	horizon := float64(start.Add(4 * time.Second).UnixNano())
-	fitProcess := NewHawkesFit(
-		nomagique.Numbers(xTimes...),
-		nomagique.Numbers(yTimes...),
-		horizon,
-		hawkes.BivariateFit{},
-	)
+	fitProcess := NewHawkesFit[float64](xTimes, yTimes, horizon, hawkes.BivariateFit{})
+
+	testingTB.ReportAllocs()
 
 	for testingTB.Loop() {
 		_ = fitProcess.Observe()

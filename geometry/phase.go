@@ -1,51 +1,152 @@
 package geometry
 
-import "math"
+import (
+	"math"
+
+	"github.com/theapemachine/nomagique/core"
+)
 
 /*
-Phase provides phase-space coupling and velocity computations for
-surprisal dynamics. Two nodes whose surprisal velocities move in the
-same direction are phase-coupled; the strength of that coupling
-determines whether the field treats them as part of the same
-emergent eigenmode.
+Velocity tracks mean velocity between consecutive observations.
 */
-type Phase struct{}
-
-/*
-NewPhase constructs a Phase instance.
-*/
-func NewPhase() *Phase {
-	return &Phase{}
+type Velocity[T ~float64] struct {
+	prev   float64
+	ready  bool
+	output core.Scalar[T]
 }
 
 /*
-Coupling is directional alignment of two surprisal velocities, in [-1,+1].
-With magnitudes large enough to clear magEps, (left*right)/(|left|*|right|)
-collapses to sign(left)*sign(right): co-moving growth is +1, opposing signs
-−1, and either side ~0 yields ~0. Field code treats this as a sign factor
-in weights such as coupling * (1 + phaseCoupling): +1 boosts, −1 dampens.
-
-magEps (0.01) gates out near-zero geometric mean so quiescent nodes do not
-inject noisy coupling.
+NewVelocity returns a velocity stage ready from its first observation.
 */
-func (phase *Phase) Coupling(leftGrowth float64, rightGrowth float64) float64 {
-	const magEps = 0.01
+func NewVelocity[T ~float64]() *Velocity[T] {
+	return &Velocity[T]{}
+}
 
-	geometricMean := math.Sqrt(math.Abs(leftGrowth) * math.Abs(rightGrowth))
+/*
+Observe ingests a mean sample and returns its velocity versus the previous mean.
+*/
+func (velocity *Velocity[T]) Observe(inputs ...core.Number[T]) core.Scalar[T] {
+	if len(inputs) == 0 {
+		return velocity.output
+	}
 
-	if geometricMean < magEps {
+	sample, ok := inputs[0].(core.Scalar[T])
+
+	if !ok {
+		return velocity.output
+	}
+
+	if len(inputs) > 1 {
+		if work, workOK := inputs[1].(core.Scalar[T]); workOK {
+			sample = core.Scalar[T](T(sample) + T(work))
+		}
+	}
+
+	velocity.output = core.Scalar[T](T(velocity.observe(float64(sample))))
+
+	return velocity.output
+}
+
+/*
+ObserveSamples writes one velocity per mean into out.
+*/
+func (velocity *Velocity[T]) ObserveSamples(means []float64, out []float64) {
+	for index, mean := range means {
+		out[index] = velocity.observe(mean)
+	}
+}
+
+/*
+Reset clears derived state.
+*/
+func (velocity *Velocity[T]) Reset() error {
+	velocity.prev = 0
+	velocity.ready = false
+	velocity.output = core.Scalar[T](0)
+
+	return nil
+}
+
+func (velocity *Velocity[T]) observe(mean float64) float64 {
+	if !velocity.ready {
+		velocity.prev = mean
+		velocity.ready = true
+
+		return 0
+	}
+
+	derived := mean - velocity.prev
+	velocity.prev = mean
+
+	return derived
+}
+
+/*
+Coupling measures directional alignment of two growth samples in [-1, +1].
+*/
+type Coupling[T ~float64] struct {
+	output core.Scalar[T]
+}
+
+/*
+NewCoupling returns a coupling stage.
+*/
+func NewCoupling[T ~float64]() *Coupling[T] {
+	return &Coupling[T]{}
+}
+
+/*
+Observe ingests left and right growth values and returns coupling strength.
+*/
+func (coupling *Coupling[T]) Observe(inputs ...core.Number[T]) core.Scalar[T] {
+	if len(inputs) == 0 {
+		return coupling.output
+	}
+
+	scalars, ok := collectScalars[T](inputs...)
+
+	if !ok {
+		return coupling.output
+	}
+
+	if len(scalars) < 2 {
+		return coupling.output
+	}
+
+	leftGrowth, rightGrowth, err := parseGrowthPair(scalars[0], scalars[1:])
+
+	if err != nil {
+		return coupling.output
+	}
+
+	coupling.output = core.Scalar[T](T(coupling.align(leftGrowth, rightGrowth)))
+
+	return coupling.output
+}
+
+/*
+Reset clears derived output.
+*/
+func (coupling *Coupling[T]) Reset() error {
+	coupling.output = core.Scalar[T](0)
+
+	return nil
+}
+
+func (coupling *Coupling[T]) align(leftGrowth, rightGrowth float64) float64 {
+	absLeft := math.Abs(leftGrowth)
+	absRight := math.Abs(rightGrowth)
+	geometricMean := math.Sqrt(absLeft * absRight)
+
+	if geometricMean == 0 {
+		return 0
+	}
+
+	relativeFloor := (absLeft * absRight) / (absLeft + absRight + math.SmallestNonzeroFloat64)
+
+	if geometricMean*geometricMean < relativeFloor {
 		return 0
 	}
 
 	return (leftGrowth * rightGrowth) / (geometricMean * geometricMean)
-}
-
-/*
-Velocity returns the phase velocity of a node given its current and
-previous surprisal means. Positive velocity means surprisal is
-increasing (the node is encountering more novel input); negative
-means it is converging.
-*/
-func (phase *Phase) Velocity(surprisalMean float64, surprisalPrev float64) float64 {
-	return surprisalMean - surprisalPrev
 }

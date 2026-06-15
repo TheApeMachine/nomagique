@@ -3,7 +3,6 @@ package algorithm
 import (
 	"time"
 
-	"github.com/theapemachine/nomagique"
 	"github.com/theapemachine/nomagique/core"
 	"github.com/theapemachine/nomagique/hawkes"
 )
@@ -11,27 +10,28 @@ import (
 /*
 HawkesFit estimates bivariate Hawkes parameters from timestamp arrival streams.
 */
-type HawkesFit struct {
-	xTimes        core.Numbers
-	yTimes        core.Numbers
+type HawkesFit[T ~float64] struct {
+	xTimes        []float64
+	yTimes        []float64
 	horizon       time.Time
 	prior         hawkes.BivariateFit
 	estimator     *hawkes.BivariateEstimator
 	fit           hawkes.BivariateFit
 	spectralRadii []float64
 	asymmetries   []float64
+	output        core.Scalar[T]
 }
 
 /*
 NewHawkesFit creates a timestamp-stream Hawkes fit dynamic.
 horizonUnixNano is the observation horizon in Unix nanoseconds.
 */
-func NewHawkesFit(
-	xTimes, yTimes core.Numbers,
+func NewHawkesFit[T ~float64](
+	xTimes, yTimes []float64,
 	horizonUnixNano float64,
 	prior hawkes.BivariateFit,
-) *HawkesFit {
-	return &HawkesFit{
+) *HawkesFit[T] {
+	return &HawkesFit[T]{
 		xTimes:    xTimes,
 		yTimes:    yTimes,
 		horizon:   time.Unix(0, int64(horizonUnixNano)),
@@ -43,17 +43,17 @@ func NewHawkesFit(
 /*
 Observe fits the stream and returns dominant-side excitation ratio λ/μ.
 */
-func (hawkesFit *HawkesFit) Observe(_ ...core.Number) core.Float64 {
+func (hawkesFit *HawkesFit[T]) Observe(_ ...core.Number[T]) core.Scalar[T] {
 	stream, ok := hawkesFit.arrivalStream()
 
 	if !ok {
-		return 0
+		return hawkesFit.output
 	}
 
 	hawkesFit.fit = hawkesFit.estimator.Fit(stream, hawkesFit.horizon)
 
 	if !hawkesFit.fit.Valid() {
-		return 0
+		return hawkesFit.output
 	}
 
 	hawkesFit.recordFitGates()
@@ -61,55 +61,59 @@ func (hawkesFit *HawkesFit) Observe(_ ...core.Number) core.Float64 {
 	asymmetry := hawkesFit.fit.Asymmetry(false)
 
 	if asymmetry > 0 && hawkesFit.fit.MuX > 0 {
-		return core.Float64(hawkesFit.fit.IntensityX / hawkesFit.fit.MuX)
+		hawkesFit.output = core.Scalar[T](T(hawkesFit.fit.IntensityX / hawkesFit.fit.MuX))
+
+		return hawkesFit.output
 	}
 
 	if hawkesFit.fit.MuY > 0 {
-		return core.Float64(hawkesFit.fit.IntensityY / hawkesFit.fit.MuY)
+		hawkesFit.output = core.Scalar[T](T(hawkesFit.fit.IntensityY / hawkesFit.fit.MuY))
+
+		return hawkesFit.output
 	}
 
-	return 0
+	return hawkesFit.output
 }
 
 /*
 Fit returns the last MLE fit from Observe.
 */
-func (hawkesFit *HawkesFit) Fit() (hawkes.BivariateFit, bool) {
+func (hawkesFit *HawkesFit[T]) Fit() (hawkes.BivariateFit, bool) {
 	return hawkesFit.fit, hawkesFit.fit.Valid()
 }
 
 /*
 Asymmetry returns normalized intensity excess on the requested side.
 */
-func (hawkesFit *HawkesFit) Asymmetry(preferY bool) core.Float64 {
-	return core.Float64(hawkesFit.fit.Asymmetry(preferY))
+func (hawkesFit *HawkesFit[T]) Asymmetry(preferY bool) core.Scalar[T] {
+	return core.Scalar[T](T(hawkesFit.fit.Asymmetry(preferY)))
 }
 
 /*
 SpectralRadius returns the fitted branching spectral radius.
 */
-func (hawkesFit *HawkesFit) SpectralRadius() core.Float64 {
-	return core.Float64(hawkesFit.fit.SpectralRadius)
+func (hawkesFit *HawkesFit[T]) SpectralRadius() core.Scalar[T] {
+	return core.Scalar[T](T(hawkesFit.fit.SpectralRadius))
 }
 
 /*
 Category returns the classified fit regime and confidence.
 */
-func (hawkesFit *HawkesFit) Category(preferY bool) (hawkes.FitCategory, core.Float64) {
+func (hawkesFit *HawkesFit[T]) Category(preferY bool) (hawkes.FitCategory, core.Scalar[T]) {
 	gates, gatesReady := hawkes.FitGatesFromHistory(hawkesFit.spectralRadii, hawkesFit.asymmetries)
 
 	if !gatesReady {
-		return hawkes.FitCategoryOrganic, 0
+		return hawkes.FitCategoryOrganic, core.Scalar[T](0)
 	}
 
 	category, confidence := hawkes.ClassifyFit(
 		hawkesFit.fit, hawkesFit.fit.Asymmetry(preferY), preferY, gates,
 	)
 
-	return category, core.Float64(confidence)
+	return category, core.Scalar[T](T(confidence))
 }
 
-func (hawkesFit *HawkesFit) recordFitGates() {
+func (hawkesFit *HawkesFit[T]) recordFitGates() {
 	if hawkesFit.fit.SpectralRadius <= 0 {
 		return
 	}
@@ -139,16 +143,17 @@ func appendRingFloat(values []float64, value float64, capacity int) []float64 {
 /*
 Reset clears derived state.
 */
-func (hawkesFit *HawkesFit) Reset() error {
+func (hawkesFit *HawkesFit[T]) Reset() error {
 	hawkesFit.fit = hawkes.BivariateFit{}
+	hawkesFit.output = core.Scalar[T](0)
 	hawkesFit.estimator = hawkes.NewBivariateEstimator(hawkesFit.prior)
 
 	return nil
 }
 
-func (hawkesFit *HawkesFit) arrivalStream() (hawkes.ArrivalStream, bool) {
-	xTimes := samplesToTimes(nomagique.Samples(hawkesFit.xTimes))
-	yTimes := samplesToTimes(nomagique.Samples(hawkesFit.yTimes))
+func (hawkesFit *HawkesFit[T]) arrivalStream() (hawkes.ArrivalStream, bool) {
+	xTimes := samplesToTimes(hawkesFit.xTimes)
+	yTimes := samplesToTimes(hawkesFit.yTimes)
 
 	if len(xTimes)+len(yTimes) < 2 {
 		return hawkes.ArrivalStream{}, false

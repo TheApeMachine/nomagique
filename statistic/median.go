@@ -5,7 +5,6 @@ import (
 	"sort"
 
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/nomagique"
 	"github.com/theapemachine/nomagique/core"
 	"gonum.org/v1/gonum/stat"
 )
@@ -16,15 +15,16 @@ Unweighted samples use the conventional order-statistic definition: the middle
 value for odd lengths and the average of the two central values for even lengths.
 Weighted samples delegate to gonum's empirical quantile at p=0.5.
 */
-type Median struct {
-	weights core.Numbers
+type Median[T ~float64] struct {
+	weights []float64
+	output  core.Scalar[T]
 }
 
 /*
-NewMedian creates a new median dynamic.
+NewMedian creates a median stage.
 */
-func NewMedian(weights core.Numbers) *Median {
-	return &Median{
+func NewMedian[T ~float64](weights []float64) *Median[T] {
+	return &Median[T]{
 		weights: weights,
 	}
 }
@@ -32,17 +32,19 @@ func NewMedian(weights core.Numbers) *Median {
 /*
 Observe computes the median of a stream of numbers.
 */
-func (median *Median) Observe(inputs ...core.Number) core.Float64 {
-	values := nomagique.Samples(core.Numbers(inputs))
+func (median *Median[T]) Observe(inputs ...core.Number[T]) core.Scalar[T] {
+	values := sampleBatch[T](inputs...)
 
 	if len(values) == 0 {
-		return 0
+		return median.output
 	}
 
-	weights := nomagique.Samples(median.weights)
+	weights := median.weights
 
 	if len(weights) == 0 {
-		return core.Float64(medianOf(values))
+		median.output = core.Scalar[T](T(medianOf(values)))
+
+		return median.output
 	}
 
 	if len(weights) != len(values) {
@@ -51,14 +53,18 @@ func (median *Median) Observe(inputs ...core.Number) core.Float64 {
 			MedianError(MedianErrorWeightLengthMismatch),
 		)
 
-		return 0
+		return median.output
 	}
 
-	return core.Float64(weightedMedian(values, weights))
+	median.output = core.Scalar[T](T(weightedMedian(values, weights)))
+
+	return median.output
 }
 
-func (median *Median) Reset() error {
+func (median *Median[T]) Reset() error {
 	median.weights = nil
+	median.output = core.Scalar[T](0)
+
 	return nil
 }
 
@@ -70,6 +76,12 @@ func MedianOf(values []float64) float64 {
 }
 
 func medianOf(values []float64) float64 {
+	for _, value := range values {
+		if math.IsNaN(value) || math.IsInf(value, 0) {
+			return math.NaN()
+		}
+	}
+
 	sort.Float64s(values)
 
 	middle := len(values) / 2

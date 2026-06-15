@@ -4,16 +4,28 @@ import (
 	"github.com/theapemachine/nomagique/core"
 )
 
-func parsePredictedActual(
-	out core.Float64, work []core.Float64,
-) (float64, float64, error) {
-	if len(work) == 0 {
-		return 0, 0, core.ErrEmptyInputs
+func collectScalars[T ~float64](inputs ...core.Number[T]) ([]float64, bool) {
+	scalars := make([]float64, 0, len(inputs))
+
+	for _, input := range inputs {
+		scalar, ok := input.(core.Scalar[T])
+
+		if !ok {
+			return nil, false
+		}
+
+		scalars = append(scalars, float64(scalar))
 	}
 
-	if len(work) >= 2 {
-		predicted := float64(work[0])
-		actual := float64(work[1])
+	return scalars, true
+}
+
+func parsePredictedActual(
+	primary float64, extras []float64,
+) (float64, float64, error) {
+	if len(extras) >= 2 {
+		predicted := extras[0]
+		actual := extras[1]
 
 		if predicted == 0 {
 			return 0, 0, core.ErrZeroPredicted
@@ -22,8 +34,12 @@ func parsePredictedActual(
 		return predicted, actual, nil
 	}
 
-	predicted := float64(out)
-	actual := float64(work[0])
+	if len(extras) == 0 {
+		return 0, 0, core.ErrEmptyInputs
+	}
+
+	predicted := primary
+	actual := extras[0]
 
 	if predicted == 0 {
 		return 0, 0, core.ErrZeroPredicted

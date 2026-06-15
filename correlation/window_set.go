@@ -1,5 +1,9 @@
 package correlation
 
+import (
+	"github.com/theapemachine/nomagique/core"
+)
+
 /*
 TierWindows names fast, medium, and slow interval counts for multi-scale reads.
 */
@@ -12,48 +16,59 @@ type TierWindows struct {
 /*
 WindowSnapshot holds independent tier views materialized from one live series.
 */
-type WindowSnapshot struct {
-	Fast   *IntervalSeries
-	Medium *IntervalSeries
-	Slow   *IntervalSeries
+type WindowSnapshot[T ~float64] struct {
+	Fast   *IntervalSeries[T]
+	Medium *IntervalSeries[T]
+	Slow   *IntervalSeries[T]
 }
 
 /*
 WindowSet holds one live interval series and materializes tier views on demand.
-
-WindowSet.Observe(nanos, price) is a feed adapter, not core.Number. Push trade
-prints here, then pass WindowSnapshot into correlation stages such as Multiverse.
 */
-type WindowSet struct {
-	series *IntervalSeries
+type WindowSet[T ~float64] struct {
+	series *IntervalSeries[T]
+	output core.Scalar[T]
 }
 
 /*
 NewWindowSet creates a window set backed by a bounded interval series.
 */
-func NewWindowSet(capacity int) *WindowSet {
-	return &WindowSet{
-		series: NewIntervalSeries(capacity),
+func NewWindowSet[T ~float64](capacity int) *WindowSet[T] {
+	return &WindowSet[T]{
+		series: NewIntervalSeries[T](capacity),
 	}
 }
 
 /*
-Observe folds one trade print into the live series.
-
-This is not core.Number.Observe — it accepts raw timestamp and price directly.
+Observe ingests epoch nanoseconds and a positive level as two scalar inputs.
 */
-func (windowSet *WindowSet) Observe(nanos int64, price float64) {
+func (windowSet *WindowSet[T]) Observe(inputs ...core.Number[T]) core.Scalar[T] {
 	if windowSet == nil || windowSet.series == nil {
-		return
+		return core.Scalar[T](0)
 	}
 
-	windowSet.series.Observe(nanos, price)
+	windowSet.output = windowSet.series.Observe(inputs...)
+
+	return windowSet.output
+}
+
+/*
+Reset clears the live interval history.
+*/
+func (windowSet *WindowSet[T]) Reset() error {
+	if windowSet == nil || windowSet.series == nil {
+		return nil
+	}
+
+	windowSet.output = core.Scalar[T](0)
+
+	return windowSet.series.Reset()
 }
 
 /*
 Series returns the live interval accumulator.
 */
-func (windowSet *WindowSet) Series() *IntervalSeries {
+func (windowSet *WindowSet[T]) Series() *IntervalSeries[T] {
 	if windowSet == nil {
 		return nil
 	}
@@ -64,12 +79,12 @@ func (windowSet *WindowSet) Series() *IntervalSeries {
 /*
 Snapshot clones fast, medium, and slow tier views from the current live history.
 */
-func (windowSet *WindowSet) Snapshot(tiers TierWindows) WindowSnapshot {
+func (windowSet *WindowSet[T]) Snapshot(tiers TierWindows) WindowSnapshot[T] {
 	if windowSet == nil || windowSet.series == nil {
-		return WindowSnapshot{}
+		return WindowSnapshot[T]{}
 	}
 
-	return WindowSnapshot{
+	return WindowSnapshot[T]{
 		Fast:   windowSet.series.CloneTail(tiers.Fast),
 		Medium: windowSet.series.CloneTail(tiers.Medium),
 		Slow:   windowSet.series.CloneTail(tiers.Slow),

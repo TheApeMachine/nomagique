@@ -4,8 +4,6 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/nomagique"
-	"github.com/theapemachine/nomagique/core"
 )
 
 func TestBackdoor_Observe(testingTB *testing.T) {
@@ -22,13 +20,8 @@ func TestBackdoor_Observe(testingTB *testing.T) {
 			nodeThree[index] = float64(index) * 0.05
 		}
 
-		streams := []core.Numbers{
-			nomagique.Numbers(nodeZero...),
-			nomagique.Numbers(nodeOne...),
-			nomagique.Numbers(nodeTwo...),
-			nomagique.Numbers(nodeThree...),
-		}
-		backdoor := NewBackdoor(3, 2, []int{0, 1}, streams, 12)
+		streams := [][]float64{nodeZero, nodeOne, nodeTwo, nodeThree}
+		backdoor := NewBackdoor[float64](3, 2, []int{0, 1}, streams, 12)
 		effect := backdoor.Observe()
 
 		Convey("It should return a finite backdoor effect", func() {
@@ -52,13 +45,10 @@ func BenchmarkBackdoor_Observe(testingTB *testing.B) {
 		nodeThree[index] = float64(index) * 0.05
 	}
 
-	streams := []core.Numbers{
-		nomagique.Numbers(nodeZero...),
-		nomagique.Numbers(nodeOne...),
-		nomagique.Numbers(nodeTwo...),
-		nomagique.Numbers(nodeThree...),
-	}
-	backdoor := NewBackdoor(3, 2, []int{0, 1}, streams, 12)
+	streams := [][]float64{nodeZero, nodeOne, nodeTwo, nodeThree}
+	backdoor := NewBackdoor[float64](3, 2, []int{0, 1}, streams, 12)
+
+	testingTB.ReportAllocs()
 
 	for testingTB.Loop() {
 		_ = backdoor.Observe()

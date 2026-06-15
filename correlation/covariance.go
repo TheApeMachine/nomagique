@@ -2,7 +2,6 @@ package correlation
 
 import (
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/nomagique"
 	"github.com/theapemachine/nomagique/core"
 	"gonum.org/v1/gonum/stat"
 )
@@ -10,15 +9,16 @@ import (
 /*
 Covariance computes sample covariance between two configured streams.
 */
-type Covariance struct {
-	weights core.Numbers
+type Covariance[T ~float64] struct {
+	weights []float64
+	output  core.Scalar[T]
 }
 
 /*
 NewCovariance creates a covariance dynamic.
 */
-func NewCovariance(weights core.Numbers) *Covariance {
-	return &Covariance{
+func NewCovariance[T ~float64](weights []float64) *Covariance[T] {
+	return &Covariance[T]{
 		weights: weights,
 	}
 }
@@ -26,7 +26,7 @@ func NewCovariance(weights core.Numbers) *Covariance {
 /*
 Observe computes covariance between equal halves of the input stream.
 */
-func (covariance *Covariance) Observe(inputs ...core.Number) core.Float64 {
+func (covariance *Covariance[T]) Observe(inputs ...core.Number[T]) core.Scalar[T] {
 	count := len(inputs)
 
 	if count < 2 {
@@ -35,7 +35,7 @@ func (covariance *Covariance) Observe(inputs ...core.Number) core.Float64 {
 			CovarianceError(CovarianceErrorRequireAtLeastTwoInputs),
 		)
 
-		return 0
+		return covariance.output
 	}
 
 	if count%2 != 0 {
@@ -44,26 +44,27 @@ func (covariance *Covariance) Observe(inputs ...core.Number) core.Float64 {
 			CovarianceError(CovarianceErrorRequireEqualLength),
 		)
 
-		return 0
+		return covariance.output
 	}
 
 	half := count / 2
-	left := nomagique.Samples(core.Numbers(inputs[:half]))
-	right := nomagique.Samples(core.Numbers(inputs[half:]))
-	weights := nomagique.Samples(covariance.weights)
+	left := sampleBatch[T](inputs[:half]...)
+	right := sampleBatch[T](inputs[half:]...)
 
-	if len(weights) == 0 {
-		weights = nil
-	}
+	covariance.output = core.Scalar[T](T(stat.Covariance(
+		left, right, weightSamples(covariance.weights),
+	)))
 
-	return core.Float64(stat.Covariance(left, right, weights))
+	return covariance.output
 }
 
 /*
 Reset clears derived state.
 */
-func (covariance *Covariance) Reset() error {
+func (covariance *Covariance[T]) Reset() error {
 	covariance.weights = nil
+	covariance.output = core.Scalar[T](0)
+
 	return nil
 }
 

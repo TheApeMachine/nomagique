@@ -8,34 +8,55 @@ import (
 )
 
 func TestParseGrowthPair(testingTB *testing.T) {
-	Convey("Given out plus one work sample", testingTB, func() {
-		left, right, err := parseGrowthPair(core.Float64(2), []core.Float64{3})
+	cases := []struct {
+		name        string
+		primary     float64
+		extras      []float64
+		expectLeft  float64
+		expectRight float64
+		expectError error
+	}{
+		{
+			name:        "primary plus one extra",
+			primary:     2,
+			extras:      []float64{3},
+			expectLeft:  2,
+			expectRight: 3,
+		},
+		{
+			name:        "two extras ignore primary",
+			primary:     0,
+			extras:      []float64{1.5, -0.5},
+			expectLeft:  1.5,
+			expectRight: -0.5,
+		},
+		{
+			name:        "empty extras",
+			primary:     1,
+			extras:      nil,
+			expectError: core.ErrEmptyInputs,
+		},
+	}
 
-		Convey("It should treat out as left and work as right", func() {
-			So(err, ShouldBeNil)
-			So(left, ShouldEqual, 2)
-			So(right, ShouldEqual, 3)
+	for _, testCase := range cases {
+		testCase := testCase
+
+		Convey("Given "+testCase.name, testingTB, func() {
+			left, right, err := parseGrowthPair(testCase.primary, testCase.extras)
+
+			if testCase.expectError != nil {
+				Convey("It should return the expected error", func() {
+					So(err, ShouldEqual, testCase.expectError)
+				})
+
+				return
+			}
+
+			Convey("It should parse left and right growth", func() {
+				So(err, ShouldBeNil)
+				So(left, ShouldEqual, testCase.expectLeft)
+				So(right, ShouldEqual, testCase.expectRight)
+			})
 		})
-	})
-
-	Convey("Given two work samples", testingTB, func() {
-		left, right, err := parseGrowthPair(
-			core.Float64(0),
-			[]core.Float64{1.5, -0.5},
-		)
-
-		Convey("It should read both operands from work", func() {
-			So(err, ShouldBeNil)
-			So(left, ShouldEqual, 1.5)
-			So(right, ShouldEqual, -0.5)
-		})
-	})
-
-	Convey("Given empty work", testingTB, func() {
-		_, _, err := parseGrowthPair(core.Float64(1), nil)
-
-		Convey("It should return ErrEmptyInputs", func() {
-			So(err, ShouldEqual, core.ErrEmptyInputs)
-		})
-	})
+	}
 }

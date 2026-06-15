@@ -1,7 +1,6 @@
 package algorithm
 
 import (
-	"github.com/theapemachine/nomagique"
 	"github.com/theapemachine/nomagique/core"
 	"github.com/theapemachine/nomagique/statistic"
 )
@@ -9,53 +8,57 @@ import (
 /*
 Shift measures distribution drift between a reference stream and a live stream via KL divergence.
 */
-type Shift struct {
-	reference  core.Numbers
-	live       core.Numbers
-	weights    core.Numbers
-	divergence *statistic.KLDivergence
+type Shift[T ~float64] struct {
+	reference  []float64
+	live       []float64
+	weights    []float64
+	divergence *statistic.KLDivergence[T]
+	output     core.Scalar[T]
 }
 
 /*
 NewShift creates a distribution-shift dynamic over reference and live streams.
 expectedSum and floor are forwarded to statistic.KLDivergence; zero values are derived per call.
 */
-func NewShift(
-	reference, live, weights core.Numbers,
+func NewShift[T ~float64](
+	reference, live, weights []float64,
 	expectedSum, floor float64,
-) *Shift {
-	return &Shift{
+) *Shift[T] {
+	return &Shift[T]{
 		reference:  reference,
 		live:       live,
 		weights:    weights,
-		divergence: statistic.NewKLDivergence(weights, expectedSum, floor),
+		divergence: statistic.NewKLDivergence[T](weights, expectedSum, floor),
 	}
 }
 
 /*
 Observe returns KL divergence from reference (expected) to live (observed).
 */
-func (shift *Shift) Observe(_ ...core.Number) core.Float64 {
-	reference := nomagique.Samples(shift.reference)
-	live := nomagique.Samples(shift.live)
+func (shift *Shift[T]) Observe(_ ...core.Number[T]) core.Scalar[T] {
+	reference := shift.reference
+	live := shift.live
 
 	if len(reference) == 0 || len(live) == 0 {
-		return 0
+		return shift.output
 	}
 
 	inputs := append(
-		nomagique.Numbers(live...),
-		nomagique.Numbers(reference...)...,
+		samplesToInputs[T](live),
+		samplesToInputs[T](reference)...,
 	)
 
-	return shift.divergence.Observe(inputs...)
+	shift.output = shift.divergence.Observe(inputs...)
+
+	return shift.output
 }
 
 /*
 Reset clears derived state.
 */
-func (shift *Shift) Reset() error {
+func (shift *Shift[T]) Reset() error {
 	shift.weights = nil
+	shift.output = core.Scalar[T](0)
 
 	return shift.divergence.Reset()
 }

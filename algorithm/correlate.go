@@ -4,7 +4,6 @@ import (
 	"math"
 	"time"
 
-	"github.com/theapemachine/nomagique"
 	"github.com/theapemachine/nomagique/core"
 	"github.com/theapemachine/nomagique/correlation"
 )
@@ -13,15 +12,16 @@ import (
 Correlate compares synchronous Pearson and asynchronous Hayashi-Yoshida coupling
 between two streams. A positive gap means async overlap exceeds aligned correlation.
 */
-type Correlate struct {
-	syncLeft    core.Numbers
-	syncRight   core.Numbers
-	asyncLeft   core.Numbers
-	asyncRight  core.Numbers
-	weights     core.Numbers
+type Correlate[T ~float64] struct {
+	syncLeft    []float64
+	syncRight   []float64
+	asyncLeft   []float64
+	asyncRight  []float64
+	weights     []float64
 	maxInterval time.Duration
-	pearson     *correlation.Pearson
-	hayashi     *correlation.HayashiYoshida
+	pearson     *correlation.Pearson[T]
+	hayashi     *correlation.HayashiYoshida[T]
+	output      core.Scalar[T]
 }
 
 /*
@@ -29,36 +29,39 @@ NewCorrelate creates a dual-correlation dynamic.
 syncLeft and syncRight hold aligned scalar samples; asyncLeft and asyncRight hold
 (time, value) pairs encoded as consecutive numbers per correlation.Sample.
 */
-func NewCorrelate(
-	syncLeft, syncRight, asyncLeft, asyncRight, weights core.Numbers,
+func NewCorrelate[T ~float64](
+	syncLeft, syncRight, asyncLeft, asyncRight, weights []float64,
 	maxInterval time.Duration,
-) *Correlate {
-	return &Correlate{
+) *Correlate[T] {
+	return &Correlate[T]{
 		syncLeft:    syncLeft,
 		syncRight:   syncRight,
 		asyncLeft:   asyncLeft,
 		asyncRight:  asyncRight,
 		weights:     weights,
 		maxInterval: maxInterval,
-		pearson:     correlation.NewPearson(weights),
-		hayashi:     correlation.NewHayashiYoshida(weights, maxInterval),
+		pearson:     correlation.NewPearson[T](weights),
+		hayashi:     correlation.NewHayashiYoshida[T](weights, maxInterval),
 	}
 }
 
 /*
 Observe returns the signed async-minus-sync correlation gap.
 */
-func (correlate *Correlate) Observe(_ ...core.Number) core.Float64 {
-	return core.Float64(correlate.Gap())
+func (correlate *Correlate[T]) Observe(_ ...core.Number[T]) core.Scalar[T] {
+	correlate.output = core.Scalar[T](T(correlate.Gap()))
+
+	return correlate.output
 }
 
 /*
 Pearson returns the synchronous Pearson correlation.
 */
-func (correlate *Correlate) Pearson() core.Float64 {
-	left := nomagique.Samples(correlate.syncLeft)
-	right := nomagique.Samples(correlate.syncRight)
-	inputs := append(samplesToInputs(left), samplesToInputs(right)...)
+func (correlate *Correlate[T]) Pearson() core.Scalar[T] {
+	inputs := append(
+		samplesToInputs[T](correlate.syncLeft),
+		samplesToInputs[T](correlate.syncRight)...,
+	)
 
 	return correlate.pearson.Observe(inputs...)
 }
@@ -66,28 +69,19 @@ func (correlate *Correlate) Pearson() core.Float64 {
 /*
 Hayashi returns the asynchronous Hayashi-Yoshida correlation.
 */
-func (correlate *Correlate) Hayashi() core.Float64 {
-	left := nomagique.Samples(correlate.asyncLeft)
-	right := nomagique.Samples(correlate.asyncRight)
-	inputs := append(samplesToInputs(left), samplesToInputs(right)...)
+func (correlate *Correlate[T]) Hayashi() core.Scalar[T] {
+	inputs := append(
+		samplesToInputs[T](correlate.asyncLeft),
+		samplesToInputs[T](correlate.asyncRight)...,
+	)
 
 	return correlate.hayashi.Observe(inputs...)
-}
-
-func samplesToInputs(samples []float64) []core.Number {
-	inputs := make([]core.Number, len(samples))
-
-	for index, sample := range samples {
-		inputs[index] = core.Float64(sample)
-	}
-
-	return inputs
 }
 
 /*
 Gap returns Hayashi correlation minus Pearson correlation.
 */
-func (correlate *Correlate) Gap() float64 {
+func (correlate *Correlate[T]) Gap() float64 {
 	pearsonValue := float64(correlate.Pearson())
 	hayashiValue := float64(correlate.Hayashi())
 
@@ -101,8 +95,9 @@ func (correlate *Correlate) Gap() float64 {
 /*
 Reset clears derived state.
 */
-func (correlate *Correlate) Reset() error {
+func (correlate *Correlate[T]) Reset() error {
 	correlate.weights = nil
+	correlate.output = core.Scalar[T](0)
 
 	if err := correlate.pearson.Reset(); err != nil {
 		return err

@@ -3,7 +3,7 @@ package hawkes
 import (
 	"math"
 
-	"github.com/theapemachine/nomagique"
+	"github.com/theapemachine/nomagique/core"
 	"github.com/theapemachine/nomagique/statistic"
 	"gonum.org/v1/gonum/stat"
 )
@@ -11,7 +11,7 @@ import (
 const minFitGateHistory = 4
 
 /*
-FitGates carries symbol-local saturation and frenzy thresholds derived from fit history.
+FitGates carries series-local saturation and frenzy thresholds derived from fit history.
 */
 type FitGates struct {
 	SaturationRadius float64
@@ -34,7 +34,9 @@ func FitGatesFromHistory(spectralRadii, asymmetries []float64) (FitGates, bool) 
 	}
 
 	saturationRadius := float64(
-		statistic.NewQuantile(0.9, stat.LinInterp, nil).Observe(nomagique.Numbers(spectralRadii...)...),
+		statistic.NewQuantile[float64](0.9, stat.LinInterp, nil).Observe(
+			numberInputs(spectralRadii...)...,
+		),
 	)
 	absAsymmetries := make([]float64, len(asymmetries))
 
@@ -43,7 +45,9 @@ func FitGatesFromHistory(spectralRadii, asymmetries []float64) (FitGates, bool) 
 	}
 
 	frenzyAsymmetry := float64(
-		statistic.NewQuantile(0.25, stat.LinInterp, nil).Observe(nomagique.Numbers(absAsymmetries...)...),
+		statistic.NewQuantile[float64](0.25, stat.LinInterp, nil).Observe(
+			numberInputs(absAsymmetries...)...,
+		),
 	)
 
 	if saturationRadius <= 0 || frenzyAsymmetry <= 0 {
@@ -54,4 +58,14 @@ func FitGatesFromHistory(spectralRadii, asymmetries []float64) (FitGates, bool) 
 		SaturationRadius: saturationRadius,
 		FrenzyAsymmetry:  frenzyAsymmetry,
 	}, true
+}
+
+func numberInputs(series ...float64) []core.Number[float64] {
+	inputs := make([]core.Number[float64], len(series))
+
+	for index, sample := range series {
+		inputs[index] = core.Scalar[float64](sample)
+	}
+
+	return inputs
 }

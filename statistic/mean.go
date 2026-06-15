@@ -1,7 +1,6 @@
 package statistic
 
 import (
-	"github.com/theapemachine/nomagique"
 	"github.com/theapemachine/nomagique/core"
 	"gonum.org/v1/gonum/stat"
 )
@@ -9,19 +8,19 @@ import (
 /*
 Mean computes the arithmetic average of every sample in one Observe call.
 
-Trading example: average session change across symbols fed in one batch. Optional
-weights let you emphasize liquid names. Mean implements core.Number; compose it
-inside nomagique.Number(...) or call Observe directly with boundary scalars.
+Optional weights emphasize selected samples. Compose inside nomagique.Number(...)
+or call Observe directly with boundary scalars.
 */
-type Mean struct {
-	weights core.Numbers
+type Mean[T ~float64] struct {
+	weights []float64
+	output  core.Scalar[T]
 }
 
 /*
-NewMean creates a new mean dynamic.
+NewMean creates a mean stage.
 */
-func NewMean(weights core.Numbers) *Mean {
-	return &Mean{
+func NewMean[T ~float64](weights []float64) *Mean[T] {
+	return &Mean[T]{
 		weights: weights,
 	}
 }
@@ -29,18 +28,27 @@ func NewMean(weights core.Numbers) *Mean {
 /*
 Observe computes the mean of a stream of numbers.
 */
-func (mean *Mean) Observe(inputs ...core.Number) core.Float64 {
-	values := nomagique.Samples(core.Numbers(inputs))
-	weights := nomagique.Samples(mean.weights)
+func (mean *Mean[T]) Observe(inputs ...core.Number[T]) core.Scalar[T] {
+	values := sampleBatch[T](inputs...)
+
+	if len(values) == 0 {
+		return mean.output
+	}
+
+	weights := mean.weights
 
 	if len(weights) == 0 {
 		weights = nil
 	}
 
-	return core.Float64(stat.Mean(values, weights))
+	mean.output = core.Scalar[T](T(stat.Mean(values, weights)))
+
+	return mean.output
 }
 
-func (mean *Mean) Reset() error {
+func (mean *Mean[T]) Reset() error {
 	mean.weights = nil
+	mean.output = core.Scalar[T](0)
+
 	return nil
 }

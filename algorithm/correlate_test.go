@@ -5,22 +5,17 @@ import (
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/nomagique"
 )
 
 func TestCorrelate_Observe(testingTB *testing.T) {
 	Convey("Given positively coupled sync and async streams", testingTB, func() {
-		syncLeft := nomagique.Numbers(1, 2, 3, 4, 5, 6)
-		syncRight := nomagique.Numbers(2, 4, 6, 8, 10, 12)
-		asyncLeft := nomagique.Numbers(
-			0, 100, 1, 110, 2, 121, 3, 133.1,
-		)
-		asyncRight := nomagique.Numbers(
-			0, 50, 1, 55, 2, 60.5, 3, 66.55,
-		)
-
-		correlate := NewCorrelate(
-			syncLeft, syncRight, asyncLeft, asyncRight, nil, time.Second,
+		correlate := NewCorrelate[float64](
+			[]float64{1, 2, 3, 4, 5, 6},
+			[]float64{2, 4, 6, 8, 10, 12},
+			[]float64{0, 100, 1, 110, 2, 121, 3, 133.1},
+			[]float64{0, 50, 1, 55, 2, 60.5, 3, 66.55},
+			nil,
+			time.Second,
 		)
 
 		pearson := correlate.Pearson()
@@ -39,17 +34,16 @@ func TestCorrelate_Observe(testingTB *testing.T) {
 }
 
 func BenchmarkCorrelate_Observe(testingTB *testing.B) {
-	syncLeft := nomagique.Numbers(1, 2, 3, 4, 5, 6, 7, 8)
-	syncRight := nomagique.Numbers(2, 4, 6, 8, 10, 12, 14, 16)
-	asyncLeft := nomagique.Numbers(
-		0, 100, 1, 110, 2, 120, 3, 130, 4, 140, 5, 150, 6, 160, 7, 170,
+	correlate := NewCorrelate[float64](
+		[]float64{1, 2, 3, 4, 5, 6, 7, 8},
+		[]float64{2, 4, 6, 8, 10, 12, 14, 16},
+		[]float64{0, 100, 1, 110, 2, 120, 3, 130, 4, 140, 5, 150, 6, 160, 7, 170},
+		[]float64{0, 100, 1, 120, 2, 140, 3, 160, 4, 180, 5, 200, 6, 220, 7, 240},
+		nil,
+		time.Second,
 	)
-	asyncRight := nomagique.Numbers(
-		0, 100, 1, 120, 2, 140, 3, 160, 4, 180, 5, 200, 6, 220, 7, 240,
-	)
-	correlate := NewCorrelate(
-		syncLeft, syncRight, asyncLeft, asyncRight, nil, time.Second,
-	)
+
+	testingTB.ReportAllocs()
 
 	for testingTB.Loop() {
 		_ = correlate.Observe()

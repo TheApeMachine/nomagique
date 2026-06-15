@@ -3,7 +3,7 @@ package correlation
 import (
 	"math"
 
-	"github.com/theapemachine/nomagique"
+	"github.com/theapemachine/nomagique/core"
 	"github.com/theapemachine/nomagique/statistic"
 	"gonum.org/v1/gonum/stat"
 )
@@ -18,34 +18,41 @@ type TierReadings struct {
 }
 
 /*
-ContagionConfig controls cross-universe coupling estimation.
+ContagionConfig controls cross-member coupling estimation.
 */
 type ContagionConfig struct {
 	MinSamples     int
-	SymbolCap      int
+	MemberCap      int
 	AdaptiveSigma  float64
 	SpreadCapacity int
 }
 
 /*
-Contagion estimates universe coupling from multi-tier Hayashi-Yoshida snapshots and
-adapts the published reading from fast-medium-slow spread dynamics.
+Contagion estimates ensemble coupling from multi-tier interval snapshots and adapts
+the published reading from fast-medium-slow spread dynamics.
 */
-type Contagion struct {
-	config ContagionConfig
-	spread spreadRing
+type Contagion[T ~float64] struct {
+	windowSets []*WindowSet[T]
+	tiers      TierWindows
+	config     ContagionConfig
+	spread     spreadRing
+	output     core.Scalar[T]
 }
 
 /*
-NewContagion creates a contagion estimator with normalized defaults for zero fields.
+NewContagion wires window sets into a coupling estimator.
 */
-func NewContagion(config ContagionConfig) *Contagion {
+func NewContagion[T ~float64](
+	windowSets []*WindowSet[T],
+	tiers TierWindows,
+	config ContagionConfig,
+) *Contagion[T] {
 	if config.MinSamples <= 0 {
 		config.MinSamples = 16
 	}
 
-	if config.SymbolCap <= 0 {
-		config.SymbolCap = 16
+	if config.MemberCap <= 0 {
+		config.MemberCap = 16
 	}
 
 	if config.AdaptiveSigma <= 0 {
@@ -56,24 +63,95 @@ func NewContagion(config ContagionConfig) *Contagion {
 		config.SpreadCapacity = 64
 	}
 
-	return &Contagion{
-		config: config,
-		spread: newSpreadRing(config.SpreadCapacity),
+	return &Contagion[T]{
+		windowSets: windowSets,
+		tiers:      tiers,
+		config:     config,
+		spread:     newSpreadRing(config.SpreadCapacity),
 	}
 }
 
 /*
-Observe ingests one cross-section of window snapshots and returns the adaptive coupling.
+Observe materializes tier snapshots from every window set and returns adaptive coupling.
 */
-func (contagion *Contagion) Observe(snapshots []WindowSnapshot) float64 {
+func (contagion *Contagion[T]) Observe(_ ...core.Number[T]) core.Scalar[T] {
 	if contagion == nil {
-		return 0
+		return core.Scalar[T](0)
+	}
+
+	snapshots := contagion.snapshots()
+
+	if len(snapshots) == 0 {
+		return contagion.output
+	}
+
+	contagion.output = core.Scalar[T](T(contagion.observeSnapshots(snapshots)))
+
+	return contagion.output
+}
+
+/*
+Reset clears spread history.
+*/
+func (contagion *Contagion[T]) Reset() error {
+	if contagion == nil {
+		return nil
+	}
+
+	contagion.spread = newSpreadRing(contagion.config.SpreadCapacity)
+	contagion.output = core.Scalar[T](0)
+
+	return nil
+}
+
+/*
+TierReadings returns the latest median pairwise readings before adaptive selection.
+*/
+func (contagion *Contagion[T]) TierReadings() TierReadings {
+	snapshots := contagion.snapshots()
+
+	if len(snapshots) == 0 {
+		return TierReadings{}
 	}
 
 	fastSeries, mediumSeries, slowSeries := CollectTierSeries(
 		snapshots,
 		contagion.config.MinSamples,
-		contagion.config.SymbolCap,
+		contagion.config.MemberCap,
+	)
+
+	return TierReadingsFromSeries(fastSeries, mediumSeries, slowSeries)
+}
+
+func (contagion *Contagion[T]) snapshots() []WindowSnapshot[T] {
+	if contagion == nil {
+		return nil
+	}
+
+	snapshots := make([]WindowSnapshot[T], 0, len(contagion.windowSets))
+
+	for _, windowSet := range contagion.windowSets {
+		if windowSet == nil {
+			continue
+		}
+
+		snapshot := windowSet.Snapshot(contagion.tiers)
+
+		if snapshot.Fast == nil && snapshot.Medium == nil && snapshot.Slow == nil {
+			continue
+		}
+
+		snapshots = append(snapshots, snapshot)
+	}
+
+	return snapshots
+}
+
+func (contagion *Contagion[T]) observeSnapshots(snapshots []WindowSnapshot[T]) float64 {
+	fastSeries, mediumSeries, slowSeries := CollectTierSeries(
+		snapshots,
+		contagion.config.MinSamples,
+		contagion.config.MemberCap,
 	)
 
 	readings := TierReadingsFromSeries(fastSeries, mediumSeries, slowSeries)
@@ -87,24 +165,24 @@ func (contagion *Contagion) Observe(snapshots []WindowSnapshot) float64 {
 
 /*
 CollectTierSeries gathers fast, medium, and slow interval series that satisfy minSamples
-until each tier reaches symbolCap or snapshots are exhausted.
+until each tier reaches memberCap or snapshots are exhausted.
 */
-func CollectTierSeries(
-	snapshots []WindowSnapshot,
+func CollectTierSeries[T ~float64](
+	snapshots []WindowSnapshot[T],
 	minSamples int,
-	symbolCap int,
-) (fastSeries, mediumSeries, slowSeries []*IntervalSeries) {
+	memberCap int,
+) (fastSeries, mediumSeries, slowSeries []*IntervalSeries[T]) {
 	if minSamples <= 0 {
 		minSamples = 1
 	}
 
-	if symbolCap <= 0 {
-		symbolCap = 1
+	if memberCap <= 0 {
+		memberCap = 1
 	}
 
-	fastSeries = make([]*IntervalSeries, 0, symbolCap)
-	mediumSeries = make([]*IntervalSeries, 0, symbolCap)
-	slowSeries = make([]*IntervalSeries, 0, symbolCap)
+	fastSeries = make([]*IntervalSeries[T], 0, memberCap)
+	mediumSeries = make([]*IntervalSeries[T], 0, memberCap)
+	slowSeries = make([]*IntervalSeries[T], 0, memberCap)
 
 	for _, snapshot := range snapshots {
 		if series := snapshot.Fast; series != nil && series.Len() >= minSamples {
@@ -129,7 +207,7 @@ func CollectTierSeries(
 			minCount = len(slowSeries)
 		}
 
-		if minCount >= symbolCap {
+		if minCount >= memberCap {
 			break
 		}
 	}
@@ -140,8 +218,8 @@ func CollectTierSeries(
 /*
 TierReadingsFromSeries computes median absolute pairwise correlation per tier.
 */
-func TierReadingsFromSeries(
-	fastSeries, mediumSeries, slowSeries []*IntervalSeries,
+func TierReadingsFromSeries[T ~float64](
+	fastSeries, mediumSeries, slowSeries []*IntervalSeries[T],
 ) TierReadings {
 	return TierReadings{
 		Fast:   MedianPairwiseAbsCorrelation(fastSeries),
@@ -152,9 +230,9 @@ func TierReadingsFromSeries(
 
 /*
 MedianPairwiseAbsCorrelation returns the median absolute Hayashi-Yoshida correlation
-across all symbol pairs in the slice.
+across all series pairs in the slice.
 */
-func MedianPairwiseAbsCorrelation(series []*IntervalSeries) float64 {
+func MedianPairwiseAbsCorrelation[T ~float64](series []*IntervalSeries[T]) float64 {
 	if len(series) < 2 {
 		return 0
 	}
@@ -177,12 +255,18 @@ func MedianPairwiseAbsCorrelation(series []*IntervalSeries) float64 {
 		return 0
 	}
 
-	return float64(statistic.NewQuantile(0.5, stat.LinInterp, nil).Observe(
-		nomagique.Numbers(correlations...)...,
-	))
+	inputs := make([]core.Number[float64], len(correlations))
+
+	for index, correlation := range correlations {
+		inputs[index] = core.Scalar[float64](correlation)
+	}
+
+	return float64(
+		statistic.NewQuantile[float64](0.5, stat.LinInterp, nil).Observe(inputs...),
+	)
 }
 
-func (contagion *Contagion) adaptive(readings TierReadings) float64 {
+func (contagion *Contagion[T]) adaptive(readings TierReadings) float64 {
 	if readings.Fast <= 0 && readings.Medium <= 0 {
 		return readings.Slow
 	}

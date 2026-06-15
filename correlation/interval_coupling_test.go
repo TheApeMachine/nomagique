@@ -8,15 +8,15 @@ import (
 
 func TestIntervalCoupling_Observe(testingTB *testing.T) {
 	Convey("Given proportional interval histories", testingTB, func() {
-		left := NewIntervalSeries(8)
-		right := NewIntervalSeries(8)
+		left := NewIntervalSeries[float64](8)
+		right := NewIntervalSeries[float64](8)
 
-		left.Observe(1_000, 100)
-		left.Observe(2_000, 110)
-		right.Observe(1_000, 50)
-		right.Observe(2_000, 55)
+		observeEpochLevel(left, 1_000, 100)
+		observeEpochLevel(left, 2_000, 110)
+		observeEpochLevel(right, 1_000, 50)
+		observeEpochLevel(right, 2_000, 55)
 
-		coupling := NewIntervalCoupling(left, right)
+		coupling := NewIntervalCoupling[float64](left, right)
 		value := coupling.Observe()
 
 		Convey("It should estimate unit correlation", func() {
@@ -26,16 +26,15 @@ func TestIntervalCoupling_Observe(testingTB *testing.T) {
 }
 
 func BenchmarkIntervalCoupling_Observe(testingTB *testing.B) {
-	left := NewIntervalSeries(64)
-	right := NewIntervalSeries(64)
+	left := NewIntervalSeries[float64](64)
+	right := NewIntervalSeries[float64](64)
 
 	for step := range 64 {
-		nanos := int64((step + 1) * 1_000)
-		left.Observe(nanos, 100+float64(step)*0.1)
-		right.Observe(nanos, 50+float64(step)*0.05)
+		observeEpochLevel(left, int64((step+1)*1_000), 100+float64(step)*0.1)
+		observeEpochLevel(right, int64((step+1)*1_000), 50+float64(step)*0.05)
 	}
 
-	coupling := NewIntervalCoupling(left, right)
+	coupling := NewIntervalCoupling[float64](left, right)
 
 	testingTB.ReportAllocs()
 

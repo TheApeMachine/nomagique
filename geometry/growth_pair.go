@@ -5,15 +5,15 @@ import (
 )
 
 func parseGrowthPair(
-	out core.Float64, work []core.Float64,
+	primary float64, extras []float64,
 ) (float64, float64, error) {
-	if len(work) == 0 {
+	if len(extras) >= 2 {
+		return extras[0], extras[1], nil
+	}
+
+	if len(extras) == 0 {
 		return 0, 0, core.ErrEmptyInputs
 	}
 
-	if len(work) >= 2 {
-		return float64(work[0]), float64(work[1]), nil
-	}
-
-	return float64(out), float64(work[0]), nil
+	return primary, extras[0], nil
 }

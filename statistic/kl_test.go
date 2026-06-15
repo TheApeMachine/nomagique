@@ -5,77 +5,84 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/nomagique"
 	"github.com/theapemachine/nomagique/core"
 )
 
 func TestKLDivergence_Observe(testingTB *testing.T) {
-	Convey("Given matching observed and expected halves", testingTB, func() {
-		kl := NewKLDivergence(nil, 0, 0)
+	Convey("Given aligned observed and expected halves", testingTB, func() {
+		kl := NewKLDivergence[float64](nil, 0, 0)
 		inputs := append(
-			nomagique.Numbers(1, 1),
-			nomagique.Numbers(1, 1)...,
+			numberInputs(0.25, 0.25, 0.25, 0.25),
+			numberInputs(0.25, 0.25, 0.25, 0.25)...,
 		)
-		value := kl.Observe(inputs...)
+		got := kl.Observe(inputs...)
 
-		Convey("It should return zero divergence", func() {
-			So(float64(value), ShouldEqual, 0)
+		Convey("It should return zero divergence for identical distributions", func() {
+			So(float64(got), ShouldEqual, 0)
 		})
 	})
 
-	Convey("Given fewer than two inputs", testingTB, func() {
-		value := NewKLDivergence(nil, 0, 0).Observe(nomagique.Numbers(1)...)
+	errorCases := []struct {
+		name   string
+		inputs []core.Number[float64]
+	}{
+		{"single input", numberInputs(1)},
+		{"odd input count", numberInputs(1, 2, 3)},
+		{"non-finite observed", []core.Number[float64]{
+			core.Scalar[float64](1),
+			core.Scalar[float64](math.NaN()),
+			core.Scalar[float64](1),
+			core.Scalar[float64](1),
+		}},
+	}
 
-		Convey("It should return zero", func() {
-			So(float64(value), ShouldEqual, 0)
+	for _, testCase := range errorCases {
+		testCase := testCase
+
+		Convey("Given "+testCase.name, testingTB, func() {
+			kl := NewKLDivergence[float64](nil, 0, 0)
+			got := kl.Observe(testCase.inputs...)
+
+			Convey("It should leave output unchanged", func() {
+				So(float64(got), ShouldEqual, 0)
+			})
 		})
-	})
+	}
 
-	Convey("Given an odd input count", testingTB, func() {
-		value := NewKLDivergence(nil, 0, 0).Observe(
-			nomagique.Numbers(1, 1, 1)...,
-		)
+	Convey("Given mismatched halves with floor", testingTB, func() {
+		kl := NewKLDivergence[float64](nil, 1, 1e-6)
+		inputs := append(numberInputs(1, 0), numberInputs(0, 1)...)
+		got := kl.Observe(inputs...)
 
-		Convey("It should return zero", func() {
-			So(float64(value), ShouldEqual, 0)
-		})
-	})
-
-	Convey("Given a non-finite observed sample", testingTB, func() {
-		inputs := append(
-			[]core.Number{core.Float64(1), core.Float64(math.NaN())},
-			nomagique.Numbers(1, 1)...,
-		)
-		value := NewKLDivergence(nil, 0, 0).Observe(inputs...)
-
-		Convey("It should return zero", func() {
-			So(float64(value), ShouldEqual, 0)
-		})
-	})
-
-	Convey("Given batch halves wired through Observe", testingTB, func() {
-		inputs := append(
-			nomagique.Numbers(0.25, 0.25, 0.25, 0.25),
-			nomagique.Numbers(0.25, 0.25, 0.25, 0.25)...,
-		)
-		value := NewKLDivergence(nil, 1, 1e-6).Observe(inputs...)
-
-		Convey("It should return zero divergence", func() {
-			So(float64(value), ShouldAlmostEqual, 0, 1e-6)
+		Convey("It should still return a finite divergence", func() {
+			So(float64(got), ShouldBeGreaterThan, 0)
 		})
 	})
 }
 
-func BenchmarkKLDivergence_Observe(testingTB *testing.B) {
-	kl := NewKLDivergence(nil, 0, 0)
+func TestKLDivergence_Reset(testingTB *testing.T) {
+	Convey("Given an observed KL stage", testingTB, func() {
+		kl := NewKLDivergence[float64]([]float64{1}, 0, 0)
+		_ = kl.Observe(append(numberInputs(1, 1), numberInputs(1, 1)...)...)
+
+		So(kl.Reset(), ShouldBeNil)
+
+		Convey("It should clear weights", func() {
+			So(kl.weights, ShouldBeNil)
+		})
+	})
+}
+
+func BenchmarkKLDivergence_Observe(b *testing.B) {
+	kl := NewKLDivergence[float64](nil, 0, 0)
 	inputs := append(
-		nomagique.Numbers(1, 2, 3, 4),
-		nomagique.Numbers(1, 1, 2, 4)...,
+		numberInputs(0.25, 0.25, 0.25, 0.25),
+		numberInputs(0.2, 0.2, 0.3, 0.3)...,
 	)
 
-	testingTB.ReportAllocs()
+	b.ReportAllocs()
 
-	for testingTB.Loop() {
+	for b.Loop() {
 		_ = kl.Observe(inputs...)
 	}
 }

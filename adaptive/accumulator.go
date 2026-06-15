@@ -1,7 +1,3 @@
-/*
-Package adaptive provides dynamics whose parameters emerge from the observed signal.
-Hot-path kernels and pipeline bindings for adaptive signal dynamics.
-*/
 package adaptive
 
 import (
@@ -9,71 +5,86 @@ import (
 )
 
 /*
-Integrator is a capacitor that integrates signed signal strength with no bounds.
+Accumulator integrates signed signal strength into a level with no bounds.
 */
-type Integrator struct {
-	stageParser *core.StageParser
-	state       AccumulatorState
+type Accumulator[T ~float64] struct {
+	Level  float64
+	output core.Scalar[T]
 }
 
 /*
-Accumulator returns an integrator ready from its first observation.
+NewAccumulator returns an accumulator stage ready for its first observation.
 */
-func Accumulator() *Integrator {
-	return &Integrator{
-		stageParser: core.NewStageParser(),
+func NewAccumulator[T ~float64](initial ...core.Number[T]) *Accumulator[T] {
+	accumulator := &Accumulator[T]{}
+
+	if len(initial) > 0 {
+		accumulator.output = core.Scalar[T](0).Observe(initial...)
 	}
+
+	return accumulator
 }
 
 /*
-Observe absorbs a pipeline stage input and updates the integrated level.
+Observe absorbs the carried sample and integrates it into the level.
 */
-func (integrator *Integrator) Observe(
-	inputs ...core.Number,
-) core.Float64 {
-	out, work, err := integrator.stageParser.Parse(inputs)
-
-	if err != nil {
-		return 0
+func (accumulator *Accumulator[T]) Observe(inputs ...core.Number[T]) core.Scalar[T] {
+	if len(inputs) == 0 {
+		return accumulator.output
 	}
 
-	result, err := integrator.Apply(out, work)
+	sample, ok := inputs[0].(core.Scalar[T])
 
-	if err != nil {
-		return 0
+	if !ok {
+		return accumulator.output
 	}
 
-	return result
+	if len(inputs) > 1 {
+		if work, workOK := inputs[1].(core.Scalar[T]); workOK {
+			sample = core.Scalar[T](T(sample) + T(work))
+		}
+	}
+
+	accumulator.output = core.Scalar[T](T(accumulator.observe(float64(sample))))
+
+	return accumulator.output
 }
 
 /*
-Apply runs one pipeline stage without allocating number inputs.
+ObserveSample ingests one raw sample through the accumulator kernel.
 */
-func (integrator *Integrator) Apply(
-	out core.Float64, work []core.Float64,
-) (core.Float64, error) {
-	sample := float64(out)
+func (accumulator *Accumulator[T]) ObserveSample(sample T) T {
+	derived := T(accumulator.observe(float64(sample)))
+	accumulator.output = core.Scalar[T](derived)
 
-	if len(work) > 0 {
-		sample = float64(out) + float64(work[0])
-	}
-
-	return core.Float64(integrator.state.Observe(sample)), nil
+	return derived
 }
 
 /*
-ObserveSamples runs the exact batch kernel over samples into out.
+ObserveSamples writes one derived value per sample into out.
 */
-func (integrator *Integrator) ObserveSamples(
-	samples []float64, out []float64,
-) {
-	integrator.state.ObserveSamples(samples, out)
+func (accumulator *Accumulator[T]) ObserveSamples(samples []T, out []T) {
+	for index, sample := range samples {
+		out[index] = accumulator.ObserveSample(sample)
+	}
 }
 
 /*
 Reset clears derived state.
 */
-func (integrator *Integrator) Reset() error {
-	integrator.state.Reset()
+func (accumulator *Accumulator[T]) Reset() error {
+	accumulator.Level = 0
+	accumulator.output = core.Scalar[T](0)
+
 	return nil
+}
+
+func (accumulator *Accumulator[T]) observe(sample float64) float64 {
+	if sample == 0 {
+		return accumulator.Level
+	}
+
+	accumulator.Level += sample
+
+	return accumulator.Level
 }

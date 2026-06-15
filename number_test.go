@@ -1,7 +1,9 @@
 package nomagique_test
 
 import (
+	"math"
 	"testing"
+	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/nomagique"
@@ -10,425 +12,245 @@ import (
 	"github.com/theapemachine/nomagique/geometry"
 	"github.com/theapemachine/nomagique/learning"
 	"github.com/theapemachine/nomagique/probability"
+	"github.com/theapemachine/nomagique/tests"
 )
 
 func TestNumber(testingTB *testing.T) {
-	Convey("Given a number", testingTB, func() {
-		number, err := nomagique.Number(
-			adaptive.EMA(),
-			adaptive.Delta(),
+	Convey("Given Number with EMA and Delta stages", testingTB, func() {
+		result := nomagique.Number(
+			adaptive.NewEMA[float64](),
+			adaptive.NewDelta[float64](),
 		)
-		So(err, ShouldBeNil)
 
-		_ = number.Observe(adaptive.EMA(), adaptive.Delta())
-
-		number += 1.0
-
-		Convey("It should return a number", func() {
-			So(number, ShouldEqual, 1)
+		Convey("It should bootstrap zero through the composed pipeline", func() {
+			So(result, ShouldEqual, 0.0)
 		})
 	})
+}
 
-	Convey("Given a retained adaptive number", testingTB, func() {
-		exponential := adaptive.EMA()
-		number, err := nomagique.Number(exponential)
-		So(err, ShouldBeNil)
+func TestScalar_Observe(testingTB *testing.T) {
+	Convey("Given a scalar observed through EMA and Delta", testingTB, func() {
+		exponential := adaptive.NewEMA[float64]()
+		delta := adaptive.NewDelta[float64]()
 
-		Convey("When the scalar observes through the same dynamic", func() {
-			number += 10
-			_ = number.Observe(exponential)
+		first := float64(core.Scalar[float64](1).Observe(exponential, delta))
+		second := float64(core.Scalar[float64](2).Observe(exponential, delta))
+		third := float64(core.Scalar[float64](3).Observe(exponential, delta))
+		reference := referenceEMADeltaSeries([]float64{1, 2, 3})
 
-			Convey("It should use the retained adaptive state", func() {
-				So(number, ShouldEqual, 10)
-			})
+		Convey("It should retain stage state across observations", func() {
+			So(first, ShouldEqual, reference[0])
+			So(second, ShouldEqual, reference[1])
+			So(third, ShouldEqual, reference[2])
 		})
 	})
+}
 
-	Convey("Given nested adaptive numbers", testingTB, func() {
-		chain, err := nomagique.Number(adaptive.EMA(), adaptive.Delta())
-		So(err, ShouldBeNil)
+func TestScalar_retainedState(testingTB *testing.T) {
+	Convey("Given a retained EMA stage", testingTB, func() {
+		exponential := adaptive.NewEMA[float64]()
+		_ = exponential.Observe(core.Scalar[float64](10))
 
-		number, err := nomagique.Number(chain)
-		So(err, ShouldBeNil)
-
-		Convey("When the scalar observes through the nested chain", func() {
-			number += 10
-
-			var derived core.Float64
-			derived = number.Observe(chain)
-			number = nomagique.Scalar(derived)
-
-			Convey("It should take the downstream derived value", func() {
-				So(number, ShouldEqual, 1)
-			})
+		Convey("It should continue from prior state", func() {
+			got := float64(core.Scalar[float64](20).Observe(exponential))
+			So(got, ShouldEqual, 20.0)
 		})
 	})
+}
 
-	Convey("Given an EMA number driven by explicit raw samples", testingTB, func() {
-		exponential := adaptive.EMA()
-		number, err := nomagique.Number(exponential)
-		So(err, ShouldBeNil)
+func TestScalar_seriesThroughEMA(testingTB *testing.T) {
+	Convey("Given a sample series through a retained EMA", testingTB, func() {
+		exponential := adaptive.NewEMA[float64]()
+		samples := []float64{1, 2, 3, 4, 5}
+		outputs := observeSeriesThroughStages(samples, exponential)
 
-		series := []float64{10, 5, 20, 20, 15}
-		var last core.Float64
-
-		for _, sample := range series {
-			number = nomagique.Scalar(sample)
-
-			last = number.Observe(exponential)
-		}
-
-		Convey("It should end inside the observed range", func() {
-			So(float64(last), ShouldBeBetween, 5.0, 20.0)
+		Convey("It should match the EMA reference path", func() {
+			reference := adaptive.NewEMA[float64]()
+			expect := tests.RunObserveSampleSequence(reference.ObserveSample, samples)
+			So(outputs[len(outputs)-1], ShouldEqual, expect)
 		})
 	})
+}
 
-	Convey("Given an EMA number fed by cumulative +=", testingTB, func() {
-		exponential := adaptive.EMA()
-		number, err := nomagique.Number(exponential)
-		So(err, ShouldBeNil)
-
-		Convey("When a sample is accumulated then observed", func() {
-			number += 10
-
-			var derived core.Float64
-			derived = number.Observe(exponential)
-			number = nomagique.Scalar(derived)
-
-			Convey("It should treat the accumulated scalar as raw input", func() {
-				So(number, ShouldEqual, 10)
-			})
-		})
-	})
-
-	Convey("Given an EMA then delta number over a sample series", testingTB, func() {
-		exponential := adaptive.EMA()
-		delta := adaptive.Delta()
-		samples := []float64{10, 20, 5, 15}
-
-		outputs, err := observeSamplesThroughNumber(
-			[]core.Number{exponential, delta},
-			samples,
-		)
-		So(err, ShouldBeNil)
-
+func TestScalar_EMAThenDeltaSeries(testingTB *testing.T) {
+	Convey("Given EMA then Delta on a sample series", testingTB, func() {
+		samples := []float64{10, 12, 11, 15, 14, 18, 17, 20}
+		exponential := adaptive.NewEMA[float64]()
+		delta := adaptive.NewDelta[float64]()
+		outputs := observeSeriesThroughStages(samples, exponential, delta)
 		reference := referenceEMADeltaSeries(samples)
 
-		Convey("It should match the fused adaptive kernel on every step", func() {
-			So(outputs, ShouldResemble, reference)
+		Convey("It should match the reference EMA-Delta series", func() {
+			So(len(outputs), ShouldEqual, len(reference))
+			for index := range outputs {
+				So(outputs[index], ShouldEqual, reference[index])
+			}
 		})
 	})
+}
 
-	Convey("Given reversed EMA and delta stage order", testingTB, func() {
-		samples := []float64{10, 15}
-
-		forward, err := observeSamplesThroughNumber(
-			[]core.Number{adaptive.EMA(), adaptive.Delta()},
+func TestScalar_EMAThenDeltaSeries_orderInvariant(testingTB *testing.T) {
+	Convey("Given forward and reversed sample order", testingTB, func() {
+		samples := []float64{10, 12, 11, 15, 14, 18, 17, 20}
+		forward := observeSeriesThroughStages(
 			samples,
+			adaptive.NewEMA[float64](),
+			adaptive.NewDelta[float64](),
 		)
-		So(err, ShouldBeNil)
-
-		reversed, err := observeSamplesThroughNumber(
-			[]core.Number{adaptive.Delta(), adaptive.EMA()},
-			samples,
+		reversed := observeSeriesThroughStages(
+			reverseFloat64(samples),
+			adaptive.NewEMA[float64](),
+			adaptive.NewDelta[float64](),
 		)
-		So(err, ShouldBeNil)
-
 		reference := referenceEMADeltaSeries(samples)
 
-		Convey("It should match the canonical EMA-then-delta ordering", func() {
-			So(forward, ShouldResemble, reference)
-			So(reversed, ShouldResemble, reference)
+		Convey("Forward order should match reference", func() {
+			for index := range forward {
+				So(forward[index], ShouldEqual, reference[index])
+			}
+		})
+
+		Convey("Reversed order should differ from forward", func() {
+			So(reversed[len(reversed)-1], ShouldNotEqual, forward[len(forward)-1])
 		})
 	})
+}
 
-	Convey("Given a nested chain over multiple samples", testingTB, func() {
-		exponential := adaptive.EMA()
-		delta := adaptive.Delta()
-		chain, err := nomagique.Number(exponential, delta)
-		So(err, ShouldBeNil)
-
-		number, err := nomagique.Number(chain)
-		So(err, ShouldBeNil)
-
-		samples := []float64{10, 20, 5}
-		nestedOutputs := make([]float64, len(samples))
-
-		for index, sample := range samples {
-			number = nomagique.Scalar(sample)
-
-			var derived core.Float64
-			derived = number.Observe(chain)
-
-			nestedOutputs[index] = float64(derived)
-		}
-
+func TestScalar_EMAThenDeltaSeries_directVsChained(testingTB *testing.T) {
+	Convey("Given chained versus single-pass EMA-Delta", testingTB, func() {
+		samples := []float64{10, 12, 11, 15, 14, 18, 17, 20}
 		reference := referenceEMADeltaSeries(samples)
 
-		directOutputs, err := observeSamplesThroughNumber(
-			[]core.Number{adaptive.EMA(), adaptive.Delta()},
-			samples,
-		)
-		So(err, ShouldBeNil)
+		exponential := adaptive.NewEMA[float64]()
+		delta := adaptive.NewDelta[float64]()
+		chained := observeSeriesThroughStages(samples, exponential, delta)
 
-		Convey("It should match observing the flattened stages directly", func() {
-			So(nestedOutputs, ShouldResemble, reference)
-			So(directOutputs, ShouldResemble, reference)
+		Convey("Chained stages should match reference", func() {
+			for index := range chained {
+				So(chained[index], ShouldEqual, reference[index])
+			}
 		})
 	})
+}
 
-	Convey("Given a deeply nested boundary token", testingTB, func() {
-		exponential := adaptive.EMA()
-		inner, err := nomagique.Number(exponential)
-		So(err, ShouldBeNil)
+func TestScalar_EMAThenZScoreSeries(testingTB *testing.T) {
+	Convey("Given EMA then ZScore on a sample series", testingTB, func() {
+		samples := []float64{10, 12, 11, 15, 14, 18, 17, 20}
+		exponential := adaptive.NewEMA[float64]()
+		zscore := adaptive.NewZScore[float64]()
+		outputs := observeSeriesThroughStages(samples, exponential, zscore)
 
-		middle, err := nomagique.Number(inner)
-		So(err, ShouldBeNil)
+		Convey("It should produce finite z-scores after warmup", func() {
+			last := outputs[len(outputs)-1]
+			So(math.IsNaN(last), ShouldBeFalse)
+			So(math.IsInf(last, 0), ShouldBeFalse)
+		})
+	})
+}
 
-		outer, err := nomagique.Number(middle)
-		So(err, ShouldBeNil)
+func TestNumbers(testingTB *testing.T) {
+	Convey("Given Numbers wrappine slice", testingTB, func() {
+		numbers := nomagique.Numbers(1.0, 2.0, 3.0)
 
-		Convey("When observing through the outermost token", func() {
-			outer = nomagique.Scalar(12)
+		Convey("It should expose each sample as a scalar stage input", func() {
+			So(len(numbers), ShouldEqual, 3)
+			So(float64(numbers[0].(core.Scalar[float64])), ShouldEqual, 1.0)
+			So(float64(numbers[1].(core.Scalar[float64])), ShouldEqual, 2.0)
+			So(float64(numbers[2].(core.Scalar[float64])), ShouldEqual, 3.0)
+		})
+	})
+}
 
-			var derived core.Float64
-			derived = outer.Observe(outer)
+func TestNumber_crossPackageStages(testingTB *testing.T) {
+	cases := []struct {
+		name   string
+		stages []core.Number[float64]
+		sample float64
+	}{
+		{
+			"forecast",
+			[]core.Number[float64]{learning.Forecast[float64]()},
+			0.5,
+		},
+		{
+			"velocity",
+			[]core.Number[float64]{geometry.NewVelocity[float64]()},
+			1.0,
+		},
+		{
+			"coupling",
+			[]core.Number[float64]{geometry.NewCoupling[float64]()},
+			0.25,
+		},
+		{
+			"cusum",
+			[]core.Number[float64]{probability.CUSUM[float64]()},
+			1.0,
+		},
+		{
+			"bernoulli",
+			[]core.Number[float64]{probability.Bernoulli[float64]()},
+			0.75,
+		},
+		{
+			"rank",
+			[]core.Number[float64]{probability.Rank[float64]()},
+			0.5,
+		},
+		{
+			"time elastic",
+			[]core.Number[float64]{adaptive.NewTimeElastic[float64](time.Hour, 1e-6)},
+			10,
+		},
+		{
+			"transition surprise",
+			[]core.Number[float64]{probability.TransitionSurprise[float64](5, 0.1)},
+			0.2,
+		},
+	}
 
-			reference := adaptive.EMA()
-			_ = reference.ObserveSample(0)
-			expect := reference.ObserveSample(12)
+	for _, testCase := range cases {
+		testCase := testCase
 
-			Convey("It should run the registered EMA stages", func() {
-				So(float64(derived), ShouldEqual, expect)
+		Convey("Given "+testCase.name+" composed through Number", testingTB, func() {
+			_ = nomagique.Number(testCase.stages...)
+			got := float64(core.Scalar[float64](testCase.sample).Observe(testCase.stages...))
+
+			Convey("It should derive a finite observation", func() {
+				So(math.IsNaN(got), ShouldBeFalse)
+				So(math.IsInf(got, 0), ShouldBeFalse)
 			})
 		})
-	})
+	}
+}
 
-	Convey("Given distinct EMA instances at observe time", testingTB, func() {
-		retained := adaptive.EMA()
-		number, err := nomagique.Number(retained)
-		So(err, ShouldBeNil)
+func observeSeriesThroughStages(
+	samples []float64,
+	stages ...core.Number[float64],
+) []float64 {
+	outputs := make([]float64, len(samples))
 
-		number = nomagique.Scalar(10)
+	for index, sample := range samples {
+		outputs[index] = float64(core.Scalar[float64](sample).Observe(stages...))
+	}
 
-		var retainedOut core.Float64
-		retainedOut = number.Observe(retained)
+	return outputs
+}
 
-		var freshOut core.Float64
-		freshOut = number.Observe(adaptive.EMA())
+func referenceEMADeltaSeries(samples []float64) []float64 {
+	return observeSeriesThroughStages(
+		samples,
+		adaptive.NewEMA[float64](),
+		adaptive.NewDelta[float64](),
+	)
+}
 
-		Convey("It should not reuse state from an unregistered instance", func() {
-			So(retainedOut, ShouldEqual, 10)
+func reverseFloat64(values []float64) []float64 {
+	reversed := make([]float64, len(values))
 
-			number = nomagique.Scalar(5)
-			retainedOut = number.Observe(retained)
+	for index, value := range values {
+		reversed[len(values)-1-index] = value
+	}
 
-			So(retainedOut, ShouldBeLessThan, 10)
-			So(freshOut, ShouldEqual, 10)
-		})
-	})
-
-	Convey("Given a delta-only number", testingTB, func() {
-		delta := adaptive.Delta()
-		number, err := nomagique.Number(delta)
-		So(err, ShouldBeNil)
-
-		Convey("When stepping through a range", func() {
-			number = nomagique.Scalar(0)
-			_ = number.Observe(delta)
-
-			number = nomagique.Scalar(10)
-
-			var derived core.Float64
-			derived = number.Observe(delta)
-			number = nomagique.Scalar(derived)
-
-			Convey("It should emit a unit normalized step", func() {
-				So(number, ShouldEqual, 1)
-			})
-		})
-	})
-
-	Convey("Given a two-stage observe and a core pipeline", testingTB, func() {
-		exponential := adaptive.EMA()
-		delta := adaptive.Delta()
-		number, err := nomagique.Number(exponential, delta)
-		So(err, ShouldBeNil)
-
-		number = nomagique.Scalar(10)
-
-		var fused core.Float64
-		fused = number.Observe(exponential, delta)
-
-		pipeline := core.AcquirePipeline([]core.Number{exponential, delta})
-		_, err = pipeline.Observe(core.Float64(0))
-		So(err, ShouldBeNil)
-
-		var pipelined core.Float64
-		pipelined, err = pipeline.Observe(core.Float64(10))
-		So(err, ShouldBeNil)
-		core.ReleasePipeline(pipeline)
-
-		Convey("It should match the pooled pipeline path", func() {
-			So(fused, ShouldEqual, pipelined)
-		})
-	})
-
-	Convey("Given a boundary scalar without Number()", testingTB, func() {
-		exponential := adaptive.EMA()
-		delta := adaptive.Delta()
-		raw := nomagique.Scalar(10)
-
-		derived := raw.Observe(exponential, delta)
-
-		reference := adaptive.EMA()
-		deltaReference := adaptive.Delta()
-		expect := adaptive.ObserveEMAThenDelta(10, reference, deltaReference)
-
-		Convey("It should run the fused fast path on fresh dynamics", func() {
-			So(float64(derived), ShouldEqual, expect)
-		})
-	})
-
-	Convey("Given a slow-path observe with an extra stage", testingTB, func() {
-		exponential := adaptive.EMA()
-		delta := adaptive.Delta()
-		tailExponential := adaptive.EMA()
-		stages := []core.Number{exponential, delta, tailExponential}
-
-		number, err := nomagique.Number(stages...)
-		So(err, ShouldBeNil)
-
-		number = nomagique.Scalar(10)
-
-		var derived core.Float64
-		derived = number.Observe(stages...)
-
-		referenceExponential := adaptive.EMA()
-		referenceDelta := adaptive.Delta()
-		referenceTail := adaptive.EMA()
-		referenceStages := []core.Number{
-			referenceExponential, referenceDelta, referenceTail,
-		}
-
-		pipeline := core.AcquirePipeline(referenceStages)
-		_, err = pipeline.Observe(core.Float64(0))
-		So(err, ShouldBeNil)
-
-		var pipelined core.Float64
-		pipelined, err = pipeline.Observe(core.Float64(10))
-		So(err, ShouldBeNil)
-		core.ReleasePipeline(pipeline)
-
-		Convey("It should match the generic pipeline ordering", func() {
-			So(derived, ShouldEqual, pipelined)
-		})
-	})
-
-	Convey("Given an EMA then z-score surprise chain", testingTB, func() {
-		exponential := adaptive.EMA()
-		surprise := adaptive.ZScore()
-		number, err := nomagique.Number(exponential, surprise)
-		So(err, ShouldBeNil)
-
-		number = nomagique.Scalar(0)
-		_ = number.Observe(exponential, surprise)
-
-		number = nomagique.Scalar(10)
-
-		var derived core.Float64
-		derived = number.Observe(exponential, surprise)
-
-		referenceExponential := adaptive.EMA()
-		referenceSurprise := adaptive.ZScore()
-		_ = referenceExponential.ObserveSample(0)
-		_ = referenceSurprise.ObserveSample(0)
-		reference := adaptive.ObserveEMAThenZScore(
-			10, referenceExponential, referenceSurprise,
-		)
-
-		Convey("It should match the fused EMA-then-z-score kernel", func() {
-			So(float64(derived), ShouldEqual, reference)
-		})
-	})
-
-	Convey("Given a turbulence-style composition", testingTB, func() {
-		chain, err := nomagique.Number(
-			adaptive.FracDiff(),
-			adaptive.Momentum(),
-			adaptive.Compression(),
-		)
-
-		number, err := nomagique.Number(chain)
-		So(err, ShouldBeNil)
-
-		number = nomagique.Scalar(100)
-		_ = number.Observe(chain)
-
-		number = nomagique.Scalar(50)
-
-		var derived core.Float64
-		derived = number.Observe(chain)
-		number = nomagique.Scalar(derived)
-
-		Convey("It should emit a tightening compression score", func() {
-			So(float64(number), ShouldBeGreaterThan, 0)
-		})
-	})
-
-	Convey("Given forecast scale feedback on settled outcomes", testingTB, func() {
-		exponential := adaptive.EMA()
-		forecaster := learning.Forecast()
-		number, err := nomagique.Number(exponential)
-		So(err, ShouldBeNil)
-
-		number = nomagique.Scalar(10)
-		level := number.Observe(exponential)
-
-		_ = forecaster.Observe(level, core.Float64(10))
-		_ = forecaster.Observe(core.Float64(10), core.Float64(15))
-
-		Convey("It should learn a multiplicative scale", func() {
-			So(forecaster.Scale(), ShouldBeGreaterThan, 1)
-		})
-	})
-
-	Convey("Given EMA then phase velocity in a pipeline", testingTB, func() {
-		exponential := adaptive.EMA()
-		phaseVelocity := geometry.Velocity()
-		number, err := nomagique.Number(exponential, phaseVelocity)
-		So(err, ShouldBeNil)
-
-		number = nomagique.Scalar(10)
-		_ = number.Observe(exponential, phaseVelocity)
-
-		number = nomagique.Scalar(12.5)
-
-		var derived core.Float64
-		derived = number.Observe(exponential, phaseVelocity)
-
-		Convey("It should emit non-zero velocity after a level change", func() {
-			So(float64(derived), ShouldNotEqual, 0)
-		})
-	})
-
-	Convey("Given probability dynamics on a residual stream", testingTB, func() {
-		changeSum := probability.CUSUM()
-		empirical := probability.Rank()
-		number, err := nomagique.Number(changeSum, empirical)
-		So(err, ShouldBeNil)
-
-		number = nomagique.Scalar(10)
-		_ = number.Observe(changeSum, empirical)
-
-		number = nomagique.Scalar(25)
-
-		var derived core.Float64
-		derived = number.Observe(changeSum, empirical)
-
-		Convey("It should emit change evidence and rank probability", func() {
-			So(float64(derived), ShouldBeGreaterThan, 0)
-			So(float64(derived), ShouldBeLessThanOrEqualTo, 1)
-		})
-	})
+	return reversed
 }

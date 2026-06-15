@@ -90,7 +90,6 @@ Algorithm:
 type EigenModeToroidal struct {
 	ctx       context.Context
 	cancel    context.CancelFunc
-	phaser    *Phase
 	phase     [512]float64
 	frequency []float64
 	affinity  []uint64
@@ -103,7 +102,6 @@ func NewEigenModeToroidal(opts ...eigenOpts) (*EigenModeToroidal, error) {
 	emt := &EigenModeToroidal{
 		phase:     [512]float64{},
 		frequency: []float64{},
-		phaser:    NewPhase(),
 	}
 
 	for _, opt := range opts {
@@ -120,10 +118,6 @@ func NewEigenModeToroidal(opts ...eigenOpts) (*EigenModeToroidal, error) {
 
 	if emt.affinity == nil {
 		return nil, fmt.Errorf("eigenmode toroidal: affinity is required")
-	}
-
-	if emt.phaser == nil {
-		return nil, fmt.Errorf("eigenmode toroidal: phaser is required")
 	}
 
 	return emt, nil

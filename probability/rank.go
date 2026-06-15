@@ -7,67 +7,58 @@ import (
 /*
 EmpiricalRank tracks P(history <= current sample) over a span-derived window.
 */
-type EmpiricalRank struct {
-	stageParser *core.StageParser
-	state       RankState
+type EmpiricalRank[T ~float64] struct {
+	state  RankState
+	output core.Scalar[T]
 }
 
 /*
 Rank returns an empirical rank probability dynamic ready from its first observation.
 */
-func Rank() *EmpiricalRank {
-	return &EmpiricalRank{
-		stageParser: core.NewStageParser(),
-	}
+func Rank[T ~float64]() *EmpiricalRank[T] {
+	return &EmpiricalRank[T]{}
 }
 
 /*
 Observe derives the empirical rank probability for the current sample.
 */
-func (empiricalRank *EmpiricalRank) Observe(
-	inputs ...core.Number,
-) core.Float64 {
-	out, work, err := empiricalRank.stageParser.Parse(inputs)
-
-	if err != nil {
-		return 0
+func (empiricalRank *EmpiricalRank[T]) Observe(inputs ...core.Number[T]) core.Scalar[T] {
+	if len(inputs) == 0 {
+		return empiricalRank.output
 	}
 
-	result, err := empiricalRank.Apply(out, work)
+	sample, ok := inputs[0].(core.Scalar[T])
 
-	if err != nil {
-		return 0
+	if !ok {
+		return empiricalRank.output
 	}
 
-	return result
-}
-
-/*
-Apply runs one pipeline stage without allocating number inputs.
-*/
-func (empiricalRank *EmpiricalRank) Apply(
-	out core.Float64, work []core.Float64,
-) (core.Float64, error) {
-	sample := float64(out)
-
-	if len(work) > 0 {
-		sample = float64(out) + float64(work[0])
+	if len(inputs) > 1 {
+		if work, workOK := inputs[1].(core.Scalar[T]); workOK {
+			sample = core.Scalar[T](T(sample) + T(work))
+		}
 	}
 
-	return core.Float64(ObserveRank(&empiricalRank.state, sample)), nil
+	empiricalRank.output = core.Scalar[T](T(
+		ObserveRank(&empiricalRank.state, float64(sample)),
+	))
+
+	return empiricalRank.output
 }
 
 /*
 ObserveSamples runs the exact batch kernel over samples into out.
 */
-func (empiricalRank *EmpiricalRank) ObserveSamples(samples []float64, out []float64) {
+func (empiricalRank *EmpiricalRank[T]) ObserveSamples(samples []float64, out []float64) {
 	empiricalRank.state.ObserveSamples(samples, out)
 }
 
 /*
 Reset clears derived state.
 */
-func (empiricalRank *EmpiricalRank) Reset() error {
+func (empiricalRank *EmpiricalRank[T]) Reset() error {
 	empiricalRank.state.Reset()
+	empiricalRank.output = core.Scalar[T](0)
+
 	return nil
 }

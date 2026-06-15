@@ -7,7 +7,7 @@ import (
 
 /*
 FeedbackTuner applies top-down prediction feedback to a surprise threshold and
-classifier weights exactly once per newer sample set for a matching symbol.
+classifier weights exactly once per newer sample set for a matching member.
 
 Tuning rates derive from the current sample count and forecast scale.
 */
@@ -26,8 +26,8 @@ func NewFeedbackTuner() *FeedbackTuner {
 Apply adjusts threshold and logits when feedback arrives for a newer sample window.
 */
 func (tuner *FeedbackTuner) Apply(
-	symbol string,
-	feedbackSymbol string,
+	member string,
+	feedbackMember string,
 	samples int,
 	mse float64,
 	scale float64,
@@ -38,7 +38,7 @@ func (tuner *FeedbackTuner) Apply(
 		return false, nil
 	}
 
-	if feedbackSymbol != symbol {
+	if feedbackMember != member {
 		return false, nil
 	}
 

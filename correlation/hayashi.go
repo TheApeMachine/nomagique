@@ -13,19 +13,20 @@ HayashiYoshida estimates asynchronous high-frequency correlation with a sliding
 sweep over overlapping return intervals. It does not require both series to
 share the same observation grid.
 */
-type HayashiYoshida struct {
-	weights     core.Numbers
+type HayashiYoshida[T ~float64] struct {
+	weights     []float64
 	maxInterval time.Duration
+	output      core.Scalar[T]
 }
 
 /*
 NewHayashiYoshida creates a Hayashi-Yoshida correlation dynamic.
 When maxInterval is zero, consecutive sample spacing is not capped.
 */
-func NewHayashiYoshida(
-	weights core.Numbers, maxInterval time.Duration,
-) *HayashiYoshida {
-	return &HayashiYoshida{
+func NewHayashiYoshida[T ~float64](
+	weights []float64, maxInterval time.Duration,
+) *HayashiYoshida[T] {
+	return &HayashiYoshida[T]{
 		weights:     weights,
 		maxInterval: maxInterval,
 	}
@@ -35,7 +36,7 @@ func NewHayashiYoshida(
 Observe computes Hayashi-Yoshida correlation between two encoded sample streams.
 Inputs are split into equal halves; each half is a sequence of (time, value) pairs.
 */
-func (hayashi *HayashiYoshida) Observe(inputs ...core.Number) core.Float64 {
+func (hayashi *HayashiYoshida[T]) Observe(inputs ...core.Number[T]) core.Scalar[T] {
 	count := len(inputs)
 
 	if count < 2 {
@@ -44,7 +45,7 @@ func (hayashi *HayashiYoshida) Observe(inputs ...core.Number) core.Float64 {
 			HayashiError(HayashiErrorRequireAtLeastTwoInputs),
 		)
 
-		return 0
+		return hayashi.output
 	}
 
 	if count%2 != 0 {
@@ -53,12 +54,12 @@ func (hayashi *HayashiYoshida) Observe(inputs ...core.Number) core.Float64 {
 			HayashiError(HayashiErrorRequireEqualLength),
 		)
 
-		return 0
+		return hayashi.output
 	}
 
 	half := count / 2
 
-	left, leftOK := samplesFromNumbers(core.Numbers(inputs[:half]))
+	left, leftOK := samplesFromScalars(sampleBatch[T](inputs[:half]...))
 
 	if !leftOK {
 		errnie.Err(
@@ -66,10 +67,10 @@ func (hayashi *HayashiYoshida) Observe(inputs ...core.Number) core.Float64 {
 			HayashiError(HayashiErrorRequirePairedSamples),
 		)
 
-		return 0
+		return hayashi.output
 	}
 
-	right, rightOK := samplesFromNumbers(core.Numbers(inputs[half:]))
+	right, rightOK := samplesFromScalars(sampleBatch[T](inputs[half:]...))
 
 	if !rightOK {
 		errnie.Err(
@@ -77,23 +78,27 @@ func (hayashi *HayashiYoshida) Observe(inputs ...core.Number) core.Float64 {
 			HayashiError(HayashiErrorRequirePairedSamples),
 		)
 
-		return 0
+		return hayashi.output
 	}
 
 	correlation, ok := hayashiYoshidaCorrelation(left, right, hayashi.maxInterval)
 
 	if !ok {
-		return 0
+		return hayashi.output
 	}
 
-	return core.Float64(correlation)
+	hayashi.output = core.Scalar[T](T(correlation))
+
+	return hayashi.output
 }
 
 /*
 Reset clears derived state.
 */
-func (hayashi *HayashiYoshida) Reset() error {
+func (hayashi *HayashiYoshida[T]) Reset() error {
 	hayashi.weights = nil
+	hayashi.output = core.Scalar[T](0)
+
 	return nil
 }
 
@@ -211,6 +216,6 @@ const (
 
 type HayashiError string
 
-func (error HayashiError) Error() string {
-	return string(error)
+func (hayashiError HayashiError) Error() string {
+	return string(hayashiError)
 }

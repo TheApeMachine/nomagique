@@ -4,32 +4,51 @@ package core
 Number is a reactive numeric primitive. Observe applies pipeline stages to the
 carried sample; Reset clears derived state.
 */
-type Number interface {
-	Observe(...Number) Float64
+type Number[T ~float64] interface {
+	Observe(...Number[T]) Scalar[T]
 	Reset() error
 }
 
 /*
-Numbers is a slice of numbers.
+Scalar is a reactive numeric primitive. Observe applies pipeline stages to the
+carried sample; Reset clears derived state.
 */
-type Numbers []Number
+type Scalar[T ~float64] float64
 
 /*
-Float64 converts the numbers to a slice of float64s.
+Observe applies the given numbers to the receiver.
 */
-func (numbers Numbers) Float64() []float64 {
-	floats := make([]float64, len(numbers))
-
-	for index, number := range numbers {
-		sample, isBoundary := number.(Float64)
-
-		if isBoundary {
-			floats[index] = float64(sample)
-			continue
-		}
-
-		floats[index] = float64(number.Observe())
+func (scalar Scalar[T]) Observe(stages ...Number[T]) Scalar[T] {
+	for _, stage := range stages {
+		scalar = stage.Observe(scalar)
 	}
 
-	return floats
+	return scalar
+}
+
+func (scalar Scalar[T]) Reset() error {
+	return nil
+}
+
+/*
+Scalars is a slice of scalars.
+*/
+type Scalars[T ~float64] []Scalar[T]
+
+/*
+Observe applies the given scalars to the receiver.
+*/
+func (scalars Scalars[T]) Observe(stages ...Number[T]) Scalars[T] {
+	for index, scalar := range scalars {
+		scalars[index] = scalar.Observe(stages...)
+	}
+
+	return scalars
+}
+
+/*
+Reset clears derived state.
+*/
+func (scalars Scalars[T]) Reset() error {
+	return nil
 }

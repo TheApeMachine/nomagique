@@ -34,83 +34,115 @@ func TestEigenmodeEnergy(t *testing.T) {
 	})
 }
 
-func TestDetectModes(t *testing.T) {
+func TestModePartition_Observe(t *testing.T) {
 	t.Parallel()
 
 	Convey("Given no participants", t, func() {
-		modes, dominant := DetectModes(nil, 0.5, func(a, b uint64) float64 { return 0 })
+		partition := NewModePartition[float64](0.5, nil, nil, nil)
 
-		So(len(modes), ShouldEqual, 0)
-		So(dominant, ShouldEqual, -1)
+		So(float64(partition.Observe()), ShouldEqual, 0)
+		So(partition.Snap(), ShouldBeNil)
 	})
 
 	Convey("Given participants with pairwise coupling at threshold", t, func() {
-		participants := []ModeParticipant{
-			{Origin: 10, Energy: 1},
-			{Origin: 20, Energy: 2},
-			{Origin: 30, Energy: 4},
-		}
+		partition := NewModePartition[float64](
+			1.0,
+			[]float64{10, 20, 30},
+			[]float64{1, 2, 4},
+			[]float64{
+				1, 1, 0,
+				1, 1, 0,
+				0, 0, 1,
+			},
+		)
+		energy := partition.Observe()
 
-		couple := func(a, b uint64) float64 {
-			if a == 10 && b == 20 || a == 20 && b == 10 {
-				return 1
+		So(float64(energy), ShouldEqual, 4)
+		So(len(partition.Snap().Modes()), ShouldEqual, 2)
+		So(len(partition.Snap().Modes()[0].Members()), ShouldEqual, 2)
+	})
+
+	Convey("Given coupled participants", t, func() {
+		partition := NewModePartition[float64](
+			1,
+			[]float64{10, 20, 30},
+			[]float64{1, 2, 4},
+			[]float64{
+				1, 1, 0,
+				1, 1, 0,
+				0, 0, 1,
+			},
+		)
+		energy := partition.Observe()
+
+		Convey("It should return dominant mode energy", func() {
+			So(float64(energy), ShouldEqual, 4)
+			So(len(partition.Snap().Modes()), ShouldEqual, 2)
+		})
+	})
+
+	Convey("Given mismatched stream lengths", t, func() {
+		partition := NewModePartition[float64](
+			1,
+			[]float64{10, 20},
+			[]float64{1},
+			[]float64{1, 0, 0, 1},
+		)
+
+		Convey("It should return zero output", func() {
+			So(float64(partition.Observe()), ShouldEqual, 0)
+		})
+	})
+}
+
+func TestModePartition_Reset(t *testing.T) {
+	Convey("Given an observed mode partition", t, func() {
+		partition := NewModePartition[float64](
+			1,
+			[]float64{10, 20, 30},
+			[]float64{1, 2, 4},
+			[]float64{
+				1, 1, 0,
+				1, 1, 0,
+				0, 0, 1,
+			},
+		)
+		_ = partition.Observe()
+
+		So(partition.Reset(), ShouldBeNil)
+
+		Convey("It should clear snap", func() {
+			So(partition.Snap(), ShouldBeNil)
+		})
+	})
+}
+
+func BenchmarkModePartition_Observe(testingTB *testing.B) {
+	size := 16
+	origins := make([]float64, size)
+	energies := make([]float64, size)
+	matrix := make([]float64, size*size)
+
+	for index := range origins {
+		origins[index] = float64(index + 1)
+		energies[index] = float64(index%5 + 1)
+
+		for col := range size {
+			value := 0.0
+
+			if (index+col)%3 == 0 {
+				value = 1
 			}
 
-			return 0
+			matrix[index*size+col] = value
 		}
-
-		modes, dominant := DetectModes(participants, 1.0, couple)
-
-		So(len(modes), ShouldEqual, 2)
-		So(dominant, ShouldEqual, 1)
-		So(modes[1].Energy(), ShouldEqual, 4)
-		So(len(modes[0].members), ShouldEqual, 2)
-	})
-}
-
-func TestPhaseModeFromDominant(t *testing.T) {
-	t.Parallel()
-
-	Convey("phaseModeFromDominant maps PhaseMode fields", t, func() {
-		d := PhaseMode{
-			Index:         3,
-			Amplitude:     200,
-			Concentration: 0.42,
-		}
-
-		mode := phaseModeFromDominant(d)
-
-		So(mode.Index, ShouldEqual, 3)
-		So(mode.Amplitude, ShouldEqual, 200)
-		So(mode.Concentration, ShouldEqual, 0.42)
-	})
-}
-
-func BenchmarkDetectModes(b *testing.B) {
-	participants := make([]ModeParticipant, 64)
-
-	for idx := range participants {
-		participants[idx] = ModeParticipant{Origin: uint64(idx + 1), Energy: float64(idx%7 + 1)}
 	}
 
-	couple := func(a, b uint64) float64 {
-		if (a+b)%3 == 0 {
-			return 1
-		}
+	partition := NewModePartition[float64](0.9, origins, energies, matrix)
 
-		return 0
+	testingTB.ReportAllocs()
+
+	for testingTB.Loop() {
+		_ = partition.Observe()
 	}
-
-	var modes []Eigenmode
-
-	var dominant int
-
-	b.ResetTimer()
-
-	for b.Loop() {
-		modes, dominant = DetectModes(participants, 0.7, couple)
-	}
-
-	_ = modes
-	_ = dominant
 }

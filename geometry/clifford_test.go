@@ -5,12 +5,13 @@ import (
 	"testing"
 
 	gc "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/nomagique/core"
 )
 
 func TestRotorConstruction(t *testing.T) {
 	gc.Convey("Given the Rotor constructor", t, func() {
 		gc.Convey("When constructing a 90° rotation around e12", func() {
-			rotor := Rotor(math.Pi/2, 1, 0, 0)
+			rotor := rotationMV(math.Pi/2, 1, 0, 0)
 
 			gc.Convey("It should have cos(π/4) as scalar and sin(π/4) as e12", func() {
 				gc.So(rotor[MvScalar], gc.ShouldAlmostEqual, math.Cos(math.Pi/4), 1e-12)
@@ -25,7 +26,7 @@ func TestRotorConstruction(t *testing.T) {
 		})
 
 		gc.Convey("When constructing a 360° rotation", func() {
-			rotor := Rotor(2*math.Pi, 0, 0, 1)
+			rotor := rotationMV(2*math.Pi, 0, 0, 1)
 
 			gc.Convey("It should be approximately -1 (double cover of SO(3))", func() {
 				gc.So(rotor[MvScalar], gc.ShouldAlmostEqual, -1.0, 1e-12)
@@ -34,7 +35,7 @@ func TestRotorConstruction(t *testing.T) {
 		})
 
 		gc.Convey("When constructing a zero-angle rotation", func() {
-			rotor := Rotor(0, 1, 0, 0)
+			rotor := rotationMV(0, 1, 0, 0)
 
 			gc.Convey("It should be the identity (scalar = 1)", func() {
 				gc.So(rotor[MvScalar], gc.ShouldAlmostEqual, 1.0, 1e-12)
@@ -47,7 +48,7 @@ func TestRotorConstruction(t *testing.T) {
 func TestTranslatorConstruction(t *testing.T) {
 	gc.Convey("Given the Translator constructor", t, func() {
 		gc.Convey("When constructing a translation by (2, 4, 6)", func() {
-			trans := Translator(2, 4, 6)
+			trans := translationMV(2, 4, 6)
 
 			gc.Convey("It should store half the displacement in the ideal bivectors", func() {
 				gc.So(trans[MvScalar], gc.ShouldEqual, 1)
@@ -176,7 +177,7 @@ func TestGeometricProduct(t *testing.T) {
 		})
 
 		gc.Convey("When computing unit rotor self-product R·R†", func() {
-			rotor := Rotor(math.Pi/3, 0, 0, 1)
+			rotor := rotationMV(math.Pi/3, 0, 0, 1)
 			rev := rotor.Reverse()
 			product := rotor.GeometricProduct(rev)
 
@@ -208,7 +209,7 @@ func TestGeometricProduct(t *testing.T) {
 
 func TestSandwich(t *testing.T) {
 	gc.Convey("Given a 90° rotation rotor around the e23 axis", t, func() {
-		rotor := Rotor(math.Pi/2, 0, 0, 1)
+		rotor := rotationMV(math.Pi/2, 0, 0, 1)
 		target := Multivector{0, 0, 0, 0, 1, 0, 0, 0}
 
 		gc.Convey("When sandwiching the e12 bivector", func() {
@@ -224,7 +225,7 @@ func TestSandwich(t *testing.T) {
 	})
 
 	gc.Convey("Given a 180° rotation rotor around the e12 axis", t, func() {
-		rotor := Rotor(math.Pi, 1, 0, 0)
+		rotor := rotationMV(math.Pi, 1, 0, 0)
 		target := Multivector{0, 0, 0, 0, 0, 1, 0, 0}
 
 		gc.Convey("When sandwiching the e31 bivector", func() {
@@ -253,7 +254,7 @@ func TestNormalize(t *testing.T) {
 	})
 
 	gc.Convey("Given an already-unit rotor", t, func() {
-		rotor := Rotor(1.23, 0, 1, 0)
+		rotor := rotationMV(1.23, 0, 1, 0)
 		norm := rotor.Normalize()
 
 		gc.Convey("It should remain unchanged after normalization", func() {
@@ -266,11 +267,11 @@ func TestNormalize(t *testing.T) {
 
 func TestCompose(t *testing.T) {
 	gc.Convey("Given two 90° rotors around e12", t, func() {
-		rot90 := Rotor(math.Pi/2, 1, 0, 0)
+		rot90 := rotationMV(math.Pi/2, 1, 0, 0)
 		composed := rot90.Compose(rot90)
 
 		gc.Convey("When composed", func() {
-			direct180 := Rotor(math.Pi, 1, 0, 0)
+			direct180 := rotationMV(math.Pi, 1, 0, 0)
 
 			gc.Convey("It should equal a single 180° rotation", func() {
 				for idx := range 8 {
@@ -281,9 +282,100 @@ func TestCompose(t *testing.T) {
 	})
 }
 
+func TestRotorFromAxis_Observe(testingTB *testing.T) {
+	gc.Convey("Given axis-angle scalars", testingTB, func() {
+		stage := NewRotor[float64]()
+		scalar := stage.Observe(
+			core.Scalar[float64](0),
+			core.Scalar[float64](1),
+			core.Scalar[float64](0),
+			core.Scalar[float64](0),
+		)
+
+		gc.Convey("It should return cos(θ/2)", func() {
+			gc.So(float64(scalar), gc.ShouldEqual, 1)
+			gc.So(stage.Multivector()[MvScalar], gc.ShouldEqual, 1)
+		})
+	})
+}
+
+func TestTranslatorFromDisplacement_Observe(testingTB *testing.T) {
+	gc.Convey("Given displacement scalars", testingTB, func() {
+		stage := NewTranslator[float64]()
+		scalar := stage.Observe(
+			core.Scalar[float64](2),
+			core.Scalar[float64](4),
+			core.Scalar[float64](6),
+		)
+
+		gc.Convey("It should return unit scalar", func() {
+			gc.So(float64(scalar), gc.ShouldEqual, 1)
+			gc.So(stage.Multivector()[MvScalar], gc.ShouldEqual, 1)
+		})
+	})
+}
+
+func TestSandwichTransform_Observe(testingTB *testing.T) {
+	gc.Convey("Given a configured motor and target components", testingTB, func() {
+		motor := rotationMV(0, 1, 0, 0)
+		stage := NewSandwich[float64](motor)
+		scalar := stage.Observe(
+			core.Scalar[float64](1),
+			core.Scalar[float64](0),
+			core.Scalar[float64](0),
+			core.Scalar[float64](0),
+			core.Scalar[float64](0),
+			core.Scalar[float64](0),
+			core.Scalar[float64](0),
+			core.Scalar[float64](0),
+		)
+
+		gc.Convey("It should return the transformed scalar component", func() {
+			gc.So(float64(scalar), gc.ShouldEqual, 1)
+		})
+	})
+}
+
+func BenchmarkRotorFromAxis_Observe(testingTB *testing.B) {
+	stage := NewRotor[float64]()
+	inputs := []core.Number[float64]{
+		core.Scalar[float64](0),
+		core.Scalar[float64](1),
+		core.Scalar[float64](0),
+		core.Scalar[float64](0),
+	}
+
+	testingTB.ReportAllocs()
+
+	for testingTB.Loop() {
+		_ = stage.Observe(inputs...)
+	}
+}
+
+func BenchmarkSandwichTransform_Observe(testingTB *testing.B) {
+	motor := rotationMV(0, 1, 0, 0)
+	stage := NewSandwich[float64](motor)
+	inputs := []core.Number[float64]{
+		core.Scalar[float64](1),
+		core.Scalar[float64](0),
+		core.Scalar[float64](0),
+		core.Scalar[float64](0),
+		core.Scalar[float64](0),
+		core.Scalar[float64](0),
+		core.Scalar[float64](0),
+		core.Scalar[float64](0),
+	}
+
+	testingTB.ReportAllocs()
+
+	for testingTB.Loop() {
+		_ = stage.Observe(inputs...)
+	}
+}
+
 func BenchmarkGeometricProduct(b *testing.B) {
-	mvA := Rotor(0.7, 0.577, 0.577, 0.577)
-	mvB := Rotor(1.2, 0, 0.707, 0.707)
+	mvA := rotationMV(0.7, 0.577, 0.577, 0.577)
+	mvB := rotationMV(1.2, 0, 0.707, 0.707)
 
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -294,7 +386,7 @@ func BenchmarkGeometricProduct(b *testing.B) {
 }
 
 func BenchmarkSandwich(b *testing.B) {
-	rotor := Rotor(0.7, 0.577, 0.577, 0.577)
+	rotor := rotationMV(0.7, 0.577, 0.577, 0.577)
 	target := Multivector{0, 0, 0, 0, 1, 0, 0, 0}
 
 	b.ReportAllocs()
@@ -314,4 +406,20 @@ func BenchmarkNormalize(b *testing.B) {
 	for range b.N {
 		_ = mv.Normalize()
 	}
+}
+
+func rotationMV(angle, axisE12, axisE31, axisE23 float64) Multivector {
+	var multivector Multivector
+
+	multivector.FromRotation(angle, axisE12, axisE31, axisE23)
+
+	return multivector
+}
+
+func translationMV(dx, dy, dz float64) Multivector {
+	var multivector Multivector
+
+	multivector.FromTranslation(dx, dy, dz)
+
+	return multivector
 }

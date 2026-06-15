@@ -3,64 +3,55 @@ package statistic
 import (
 	"sync"
 
-	"github.com/theapemachine/nomagique"
 	"github.com/theapemachine/nomagique/core"
 )
 
 /*
-Panel is a live registry of keyed numeric samples — think of it as a row in a
-spreadsheet where each row is an asset (or any member) and the cell holds that
-member's latest reading.
+Panel is a live registry of keyed numeric samples.
 
-Trading example: one row per symbol, each cell holding that symbol's session
-change percent. The panel itself does not compute a summary; it only remembers
-the latest value for every member so downstream stages can aggregate across the
-universe.
+Each member key maps to that member's latest reading. The panel does not compute
+a summary; it only remembers the latest value for every member so downstream
+stages can aggregate across the collection.
 
-Panel implements core.Number. Feed it through nomagique.Number(...) or call
-Observe directly with two inputs: member key, then sample value. Keys are
-float64 identifiers (callers map strings or indices to keys). The returned
-value is the sample that was just stored.
+Feed Panel through nomagique.Number(...) or call Observe with two inputs: member
+key, then sample value. Keys are float64 identifiers. The returned value is the
+sample that was just stored.
 */
-type Panel struct {
+type Panel[T ~float64] struct {
 	values sync.Map
+	output core.Scalar[T]
 }
 
 /*
 Observe registers or updates one member's latest sample.
 
 Inputs (in order):
- 1. member key — which row in the panel (e.g. a numeric symbol id)
- 2. sample value — the reading to store (e.g. change percent, return, volume)
+ 1. member key
+ 2. sample value
 
-Fewer than two inputs returns zero and stores nothing. This keeps the panel
-usable inside a nomagique pipeline without silent partial writes.
-
-Typical usage outside a composed Number:
-
-	panel.Observe(nomagique.Scalar(memberKey), nomagique.Scalar(changePct))
+Fewer than two scalar inputs returns the prior output and stores nothing.
 */
-func (panel *Panel) Observe(inputs ...core.Number) core.Float64 {
-	samples := nomagique.Samples(core.Numbers(inputs))
+func (panel *Panel[T]) Observe(inputs ...core.Number[T]) core.Scalar[T] {
+	memberKey, sampleValue, ok := pairScalars(inputs...)
 
-	if len(samples) < 2 {
-		return 0
+	if !ok {
+		return panel.output
 	}
 
-	memberKey := samples[0]
-	panel.values.Store(memberKey, samples[1])
+	panel.values.Store(memberKey, sampleValue)
+	panel.output = core.Scalar[T](T(sampleValue))
 
-	return core.Float64(samples[1])
+	return panel.output
 }
 
 /*
 Reset clears every stored member sample.
 
-Use when the universe rolls (new session, subscription change) so stale keys do
-not leak into later cross-section reads.
+Use when the member set rolls so stale keys do not leak into later reads.
 */
-func (panel *Panel) Reset() error {
+func (panel *Panel[T]) Reset() error {
 	panel.values = sync.Map{}
+	panel.output = core.Scalar[T](0)
 
 	return nil
 }
@@ -71,22 +62,18 @@ member?"
 
 Given a Panel of member samples, it collects every value except the excluded
 member key and passes those peer values to Median. This is the usual way to
-estimate macro or cross-section drift without letting a symbol vote on its own
-baseline — e.g. median change of all other symbols while measuring one asset's
-local causal story.
+estimate cross-section drift without letting one member vote on its own baseline.
 
 Compose with nomagique.Number:
 
-	panel := statistic.Panel{}
+	panel := statistic.Panel[float64]{}
 	leaveOneOut := statistic.NewLeaveOneOutMedian(&panel)
-	macro, _ := nomagique.Number(leaveOneOut)
-
-Register peers on the panel, then query with the excluded key as the boundary
-scalar observed through the composed Number.
+	macro := nomagique.Number(leaveOneOut)
 */
-type LeaveOneOutMedian struct {
-	panel  *Panel
-	median *Median
+type LeaveOneOutMedian[T ~float64] struct {
+	panel  *Panel[T]
+	median *Median[T]
+	output core.Scalar[T]
 }
 
 /*
@@ -96,46 +83,43 @@ The same Panel pointer must be shared between registration (Panel.Observe) and
 aggregation (LeaveOneOutMedian.Observe). One panel can feed many composed
 Numbers as long as they all reference the same underlying registry.
 */
-func NewLeaveOneOutMedian(panel *Panel) *LeaveOneOutMedian {
-	return &LeaveOneOutMedian{
+func NewLeaveOneOutMedian[T ~float64](panel *Panel[T]) *LeaveOneOutMedian[T] {
+	return &LeaveOneOutMedian[T]{
 		panel:  panel,
-		median: NewMedian(nil),
+		median: NewMedian[T](nil),
 	}
 }
 
 /*
 Observe returns the median of all panel members except the excluded key.
 
-Input: the member key to leave out (one boundary scalar when called directly).
-
-When observed through a nomagique.Number pipeline, the excluded key is the
-carried boundary sample (the last input after pipeline wiring), not the initial
-zero placeholder.
+Input: the member key to leave out as the boundary scalar.
 
 Returns zero when the panel is empty, the excluded key is unknown, or no peers
-remain after exclusion. Median math is delegated to Median.Observe — this stage
-only selects peers; it does not reimplement order statistics.
+remain after exclusion.
 */
-func (leaveOneOut *LeaveOneOutMedian) Observe(inputs ...core.Number) core.Float64 {
-	samples := nomagique.Samples(core.Numbers(inputs))
+func (leaveOneOut *LeaveOneOutMedian[T]) Observe(inputs ...core.Number[T]) core.Scalar[T] {
+	excludedKey, ok := boundarySample(inputs...)
 
-	if len(samples) == 0 {
-		return 0
-	}
-
-	excludedKey := samples[0]
-
-	if len(samples) > 1 {
-		excludedKey = samples[len(samples)-1]
+	if !ok {
+		return leaveOneOut.output
 	}
 
 	peerSamples := leaveOneOut.peerSamples(excludedKey)
 
 	if len(peerSamples) == 0 {
-		return 0
+		return leaveOneOut.output
 	}
 
-	return leaveOneOut.median.Observe(nomagique.Numbers(peerSamples...)...)
+	peerNumbers := make([]core.Number[T], len(peerSamples))
+
+	for index, sample := range peerSamples {
+		peerNumbers[index] = core.Scalar[T](T(sample))
+	}
+
+	leaveOneOut.output = leaveOneOut.median.Observe(peerNumbers...)
+
+	return leaveOneOut.output
 }
 
 /*
@@ -144,11 +128,13 @@ Reset clears derived median state on the embedded Median stage.
 Panel member samples are not cleared here; call Panel.Reset when the universe
 should forget prior registrations.
 */
-func (leaveOneOut *LeaveOneOutMedian) Reset() error {
+func (leaveOneOut *LeaveOneOutMedian[T]) Reset() error {
+	leaveOneOut.output = core.Scalar[T](0)
+
 	return leaveOneOut.median.Reset()
 }
 
-func (leaveOneOut *LeaveOneOutMedian) peerSamples(excludedKey float64) []float64 {
+func (leaveOneOut *LeaveOneOutMedian[T]) peerSamples(excludedKey float64) []float64 {
 	peerSamples := make([]float64, 0)
 
 	leaveOneOut.panel.values.Range(func(key, value any) bool {

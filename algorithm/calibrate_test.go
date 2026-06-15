@@ -4,8 +4,6 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/nomagique"
-	"github.com/theapemachine/nomagique/core"
 )
 
 func TestCalibrate_Observe(testingTB *testing.T) {
@@ -18,9 +16,9 @@ func TestCalibrate_Observe(testingTB *testing.T) {
 			target[index] = 2*feature[index] + 1
 		}
 
-		calibrate, err := NewCalibrate(
-			[]core.Numbers{nomagique.Numbers(feature...)},
-			nomagique.Numbers(target...),
+		calibrate, err := NewCalibrate[float64](
+			[][]float64{feature},
+			target,
 			1000,
 			1,
 		)
@@ -39,7 +37,7 @@ func TestCalibrate_Observe(testingTB *testing.T) {
 
 func TestNewCalibrate(testingTB *testing.T) {
 	Convey("Given no feature streams", testingTB, func() {
-		_, err := NewCalibrate(nil, nomagique.Numbers(1), 1000, 1)
+		_, err := NewCalibrate[float64](nil, []float64{1}, 1000, 1)
 
 		Convey("It should return an error", func() {
 			So(err, ShouldNotBeNil)
@@ -56,9 +54,9 @@ func BenchmarkCalibrate_Observe(testingTB *testing.B) {
 		target[index] = 2*feature[index] + 1
 	}
 
-	calibrate, err := NewCalibrate(
-		[]core.Numbers{nomagique.Numbers(feature...)},
-		nomagique.Numbers(target...),
+	calibrate, err := NewCalibrate[float64](
+		[][]float64{feature},
+		target,
 		1000,
 		1,
 	)
@@ -66,6 +64,8 @@ func BenchmarkCalibrate_Observe(testingTB *testing.B) {
 	if err != nil {
 		testingTB.Fatal(err)
 	}
+
+	testingTB.ReportAllocs()
 
 	for testingTB.Loop() {
 		_ = calibrate.Observe()

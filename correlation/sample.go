@@ -2,8 +2,6 @@ package correlation
 
 import (
 	"time"
-
-	"github.com/theapemachine/nomagique/core"
 )
 
 /*
@@ -15,9 +13,7 @@ type Sample struct {
 	Value float64
 }
 
-func samplesFromNumbers(numbers core.Numbers) ([]Sample, bool) {
-	values := numbers.Float64()
-
+func samplesFromScalars(values []float64) ([]Sample, bool) {
 	if len(values) < 4 || len(values)%2 != 0 {
 		return nil, false
 	}

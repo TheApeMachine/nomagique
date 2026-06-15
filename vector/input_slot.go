@@ -4,7 +4,6 @@ import (
 	"fmt"
 
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/nomagique"
 	"github.com/theapemachine/nomagique/core"
 )
 
@@ -12,23 +11,21 @@ import (
 InputSlot binds one raw input channel on a shared FeatureExtractor to the
 nomagique pipeline.
 
-Observe writes the boundary sample into that channel — use when composing live
-feeds into an extractor without calling SetInput from adapter code. When
-observed through a nomagique.Number pipeline, the carried boundary sample is the
-last input after pipeline wiring.
-
-InputSlot implements core.Number. Multiple InputSlots can share one extractor,
-one per channel (bid price, ask price, and so on).
+Observe writes the boundary sample into that channel. Multiple InputSlots can
+share one extractor, one per channel.
 */
-type InputSlot struct {
+type InputSlot[T ~float64] struct {
 	extractor *FeatureExtractor
 	channel   int
+	output    core.Scalar[T]
 }
 
 /*
 NewInputSlot binds channel on extractor for composable input updates.
 */
-func NewInputSlot(extractor *FeatureExtractor, channel int) (*InputSlot, error) {
+func NewInputSlot[T ~float64](
+	extractor *FeatureExtractor, channel int,
+) (*InputSlot[T], error) {
 	if extractor == nil {
 		return nil, errnie.Error(fmt.Errorf("vector: NewInputSlot requires extractor"))
 	}
@@ -41,40 +38,44 @@ func NewInputSlot(extractor *FeatureExtractor, channel int) (*InputSlot, error) 
 		))
 	}
 
-	return &InputSlot{
+	return &InputSlot[T]{
 		extractor: extractor,
 		channel:   channel,
 	}, nil
 }
 
 /*
-Observe stores the sample into the bound input channel.
-
-Empty input returns zero and leaves the channel unchanged.
+Observe stores the carried sample into the bound input channel.
 */
-func (inputSlot *InputSlot) Observe(inputs ...core.Number) core.Float64 {
-	samples := nomagique.Samples(core.Numbers(inputs))
-
-	if len(samples) == 0 {
-		return 0
+func (inputSlot *InputSlot[T]) Observe(inputs ...core.Number[T]) core.Scalar[T] {
+	if len(inputs) == 0 {
+		return inputSlot.output
 	}
 
-	value := samples[0]
+	sample, ok := inputs[0].(core.Scalar[T])
 
-	if len(samples) > 1 {
-		value = samples[len(samples)-1]
+	if !ok {
+		return inputSlot.output
 	}
 
-	if err := inputSlot.extractor.SetInput(inputSlot.channel, value); err != nil {
-		return 0
+	if len(inputs) > 1 {
+		if work, workOK := inputs[1].(core.Scalar[T]); workOK {
+			sample = core.Scalar[T](T(sample) + T(work))
+		}
 	}
 
-	return core.Float64(value)
+	if err := inputSlot.extractor.SetInput(inputSlot.channel, float64(sample)); err != nil {
+		return inputSlot.output
+	}
+
+	inputSlot.output = sample
+
+	return inputSlot.output
 }
 
 /*
 Reset is a no-op; the shared extractor owns buffer state.
 */
-func (inputSlot *InputSlot) Reset() error {
+func (inputSlot *InputSlot[T]) Reset() error {
 	return nil
 }

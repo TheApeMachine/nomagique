@@ -4,33 +4,52 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/nomagique"
 )
 
 func TestFastSlowRate(testingTB *testing.T) {
-	Convey("Given a silent slow window and a recent spike", testingTB, func() {
-		samples := []float64{0, 0, 0, 0, 0, 10, 10, 10}
+	cases := []struct {
+		name     string
+		samples  []float64
+		window   int
+		epsilon  float64
+		expectFn func(float64) bool
+	}{
+		{
+			name:    "silent slow window and recent spike",
+			samples: []float64{0, 0, 0, 0, 0, 10, 10, 10},
+			window:  3,
+			epsilon: 1e-6,
+			expectFn: func(rate float64) bool {
+				return rate > 1.0
+			},
+		},
+		{
+			name:    "fewer samples than fast window",
+			samples: []float64{1, 2},
+			window:  3,
+			epsilon: 1e-6,
+			expectFn: func(rate float64) bool {
+				return rate == 1.0
+			},
+		},
+	}
 
-		rate := FastSlowRate(samples, 3, 1e-6)
+	for _, testCase := range cases {
+		testCase := testCase
 
-		Convey("It should exceed unity", func() {
-			So(rate, ShouldBeGreaterThan, 1.0)
+		Convey("Given "+testCase.name, testingTB, func() {
+			rate := FastSlowRate(testCase.samples, testCase.window, testCase.epsilon)
+
+			Convey("It should return the expected ratio", func() {
+				So(testCase.expectFn(rate), ShouldBeTrue)
+			})
 		})
-	})
-
-	Convey("Given fewer samples than the fast window", testingTB, func() {
-		rate := FastSlowRate([]float64{1, 2}, 3, 1e-6)
-
-		Convey("It should return the neutral ratio", func() {
-			So(rate, ShouldEqual, 1.0)
-		})
-	})
+	}
 }
 
 func TestInvertedFastSlowRate(testingTB *testing.T) {
 	Convey("Given tightening spreads", testingTB, func() {
 		spreads := []float64{0.5, 0.5, 0.5, 0.5, 0.2, 0.2, 0.2}
-
 		compression := InvertedFastSlowRate(spreads, 3, 1e-6)
 
 		Convey("It should exceed unity", func() {
@@ -39,7 +58,7 @@ func TestInvertedFastSlowRate(testingTB *testing.T) {
 	})
 }
 
-func TestFastSlowRatioNegativeSample(testingTB *testing.T) {
+func TestFastSlowRatio_Next(testingTB *testing.T) {
 	Convey("Given a negative volume sample", testingTB, func() {
 		ratio := NewFastSlowRatio(3, 1e-6)
 
@@ -49,10 +68,8 @@ func TestFastSlowRatioNegativeSample(testingTB *testing.T) {
 			So(err, ShouldNotBeNil)
 		})
 	})
-}
 
-func TestFastSlowRatioNext(testingTB *testing.T) {
-	Convey("Given a FastSlowRatio dynamic", testingTB, func() {
+	Convey("Given a breakout sample series", testingTB, func() {
 		ratio := NewFastSlowRatio(3, 1e-6)
 
 		out, err := ratio.Next(0, []float64{1, 1, 1, 4, 4, 4}...)
@@ -60,6 +77,63 @@ func TestFastSlowRatioNext(testingTB *testing.T) {
 		Convey("It should compute a breakout ratio without error", func() {
 			So(err, ShouldBeNil)
 			So(out, ShouldBeGreaterThan, 1.0)
+		})
+	})
+}
+
+func TestFastSlow_Observe(testingTB *testing.T) {
+	cases := []struct {
+		name   string
+		stream []float64
+		invert bool
+		expect func(float64) bool
+	}{
+		{
+			name:   "breakout stream",
+			stream: []float64{0, 0, 0, 0, 0, 10, 10, 10},
+			expect: func(value float64) bool { return value > 1 },
+		},
+		{
+			name:   "inverted compression stream",
+			stream: []float64{0.5, 0.5, 0.5, 0.5, 0.2, 0.2, 0.2},
+			invert: true,
+			expect: func(value float64) bool { return value > 1 },
+		},
+	}
+
+	for _, testCase := range cases {
+		testCase := testCase
+
+		Convey("Given "+testCase.name, testingTB, func() {
+			var ratio *FastSlow[float64]
+
+			if testCase.invert {
+				ratio = NewInvertedFastSlow[float64](testCase.stream, 3, 1e-6)
+			}
+
+			if !testCase.invert {
+				ratio = NewFastSlow[float64](testCase.stream, 3, 1e-6)
+			}
+
+			got := ratio.Observe()
+
+			Convey("It should return the expected ratio", func() {
+				So(testCase.expect(float64(got)), ShouldBeTrue)
+			})
+		})
+	}
+}
+
+func TestFastSlow_Reset(testingTB *testing.T) {
+	Convey("Given an observed fast-slow stage", testingTB, func() {
+		ratio := NewFastSlow[float64]([]float64{0, 0, 0, 10, 10, 10}, 3, 1e-6)
+		_ = ratio.Observe()
+
+		So(ratio.Reset(), ShouldBeNil)
+
+		Convey("It should clear stream and output", func() {
+			So(ratio.stream, ShouldBeNil)
+			So(float64(ratio.Observe()), ShouldEqual, 1)
 		})
 	})
 }
@@ -78,35 +152,13 @@ func BenchmarkFastSlowRate(b *testing.B) {
 	}
 }
 
-func TestFastSlow_Observe(testingTB *testing.T) {
-	Convey("Given a breakout stream", testingTB, func() {
-		stream := nomagique.Numbers(0, 0, 0, 0, 0, 10, 10, 10)
-		ratio := NewFastSlow(stream, 3, 1e-6)
-		value := ratio.Observe()
+func BenchmarkFastSlow_Observe(b *testing.B) {
+	stream := []float64{0, 0, 0, 0, 0, 10, 10, 10, 12, 12, 12}
+	ratio := NewFastSlow[float64](stream, 3, 1e-6)
 
-		Convey("It should exceed unity", func() {
-			So(float64(value), ShouldBeGreaterThan, 1)
-		})
-	})
+	b.ReportAllocs()
 
-	Convey("Given an inverted fast-slow stream", testingTB, func() {
-		stream := nomagique.Numbers(0.5, 0.5, 0.5, 0.5, 0.2, 0.2, 0.2)
-		ratio := NewInvertedFastSlow(stream, 3, 1e-6)
-		value := ratio.Observe()
-
-		Convey("It should exceed unity", func() {
-			So(float64(value), ShouldBeGreaterThan, 1)
-		})
-	})
-}
-
-func BenchmarkFastSlow_Observe(testingTB *testing.B) {
-	stream := nomagique.Numbers(0, 0, 0, 0, 0, 10, 10, 10, 12, 12, 12)
-	ratio := NewFastSlow(stream, 3, 1e-6)
-
-	testingTB.ReportAllocs()
-
-	for testingTB.Loop() {
+	for b.Loop() {
 		_ = ratio.Observe()
 	}
 }

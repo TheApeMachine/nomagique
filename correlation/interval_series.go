@@ -1,10 +1,14 @@
 package correlation
 
-import "math"
+import (
+	"math"
+
+	"github.com/theapemachine/nomagique/core"
+)
 
 /*
-ReturnInterval is a log return over the half-open time interval (start, end] in Unix
-nanoseconds. Hayashi-Yoshida sums products of returns whose intervals overlap.
+ReturnInterval is a log return over the half-open time interval (start, end] encoded
+as epoch nanoseconds. Hayashi-Yoshida sums products of returns whose intervals overlap.
 */
 type ReturnInterval struct {
 	Start int64
@@ -13,67 +17,100 @@ type ReturnInterval struct {
 }
 
 /*
-IntervalSeries accumulates a bounded, time-ordered series of log-return intervals for
-one asset from asynchronous trade prints.
+IntervalSeries accumulates a bounded, time-ordered series of log-return intervals from
+paired epoch and level observations.
 */
-type IntervalSeries struct {
+type IntervalSeries[T ~float64] struct {
 	intervals []ReturnInterval
 	capacity  int
-	lastPrice float64
-	lastNanos int64
+	lastLevel float64
+	lastEpoch int64
+	output    core.Scalar[T]
 }
 
 /*
 NewIntervalSeries creates a bounded interval accumulator.
 */
-func NewIntervalSeries(capacity int) *IntervalSeries {
+func NewIntervalSeries[T ~float64](capacity int) *IntervalSeries[T] {
 	if capacity < 1 {
 		capacity = 1
 	}
 
-	return &IntervalSeries{
+	return &IntervalSeries[T]{
 		intervals: make([]ReturnInterval, 0, capacity),
 		capacity:  capacity,
 	}
 }
 
 /*
-Observe folds one trade print. The first print seeds the anchor; out-of-order timestamps
-advance the price anchor without emitting a zero-width interval.
+Observe ingests epoch nanoseconds and a positive level as two scalar inputs.
 */
-func (series *IntervalSeries) Observe(nanos int64, price float64) {
-	if series == nil || price <= 0 {
+func (series *IntervalSeries[T]) Observe(inputs ...core.Number[T]) core.Scalar[T] {
+	if series == nil {
+		return core.Scalar[T](0)
+	}
+
+	epoch, level, ok := parseEpochLevel(inputs...)
+
+	if !ok {
+		return series.output
+	}
+
+	series.ingest(epoch, level)
+	series.output = core.Scalar[T](T(series.LastReturnMagnitude()))
+
+	return series.output
+}
+
+/*
+Reset clears interval history and anchors.
+*/
+func (series *IntervalSeries[T]) Reset() error {
+	if series == nil {
+		return nil
+	}
+
+	series.intervals = series.intervals[:0]
+	series.lastLevel = 0
+	series.lastEpoch = 0
+	series.output = core.Scalar[T](0)
+
+	return nil
+}
+
+func (series *IntervalSeries[T]) ingest(epoch int64, level float64) {
+	if level <= 0 {
 		return
 	}
 
-	if series.lastPrice <= 0 || series.lastNanos <= 0 {
-		series.lastPrice = price
-		series.lastNanos = nanos
+	if series.lastLevel <= 0 || series.lastEpoch <= 0 {
+		series.lastLevel = level
+		series.lastEpoch = epoch
 
 		return
 	}
 
-	if nanos <= series.lastNanos {
-		series.lastPrice = price
+	if epoch <= series.lastEpoch {
+		series.lastLevel = level
 
 		return
 	}
 
 	series.intervals = append(series.intervals, ReturnInterval{
-		Start: series.lastNanos,
-		End:   nanos,
-		Ret:   math.Log(price / series.lastPrice),
+		Start: series.lastEpoch,
+		End:   epoch,
+		Ret:   math.Log(level / series.lastLevel),
 	})
 
 	if len(series.intervals) > series.capacity {
 		series.intervals = series.intervals[len(series.intervals)-series.capacity:]
 	}
 
-	series.lastPrice = price
-	series.lastNanos = nanos
+	series.lastLevel = level
+	series.lastEpoch = epoch
 }
 
-func (series *IntervalSeries) Len() int {
+func (series *IntervalSeries[T]) Len() int {
 	if series == nil {
 		return 0
 	}
@@ -84,7 +121,7 @@ func (series *IntervalSeries) Len() int {
 /*
 Trim keeps only the most recent keep intervals.
 */
-func (series *IntervalSeries) Trim(keep int) {
+func (series *IntervalSeries[T]) Trim(keep int) {
 	if series == nil {
 		return
 	}
@@ -105,7 +142,7 @@ func (series *IntervalSeries) Trim(keep int) {
 /*
 LastReturnMagnitude is the absolute log return of the most recent interval.
 */
-func (series *IntervalSeries) LastReturnMagnitude() float64 {
+func (series *IntervalSeries[T]) LastReturnMagnitude() float64 {
 	if series == nil || len(series.intervals) == 0 {
 		return 0
 	}
@@ -118,7 +155,7 @@ func (series *IntervalSeries) LastReturnMagnitude() float64 {
 /*
 RealizedVolatility is the root mean square of interval log returns.
 */
-func (series *IntervalSeries) RealizedVolatility() float64 {
+func (series *IntervalSeries[T]) RealizedVolatility() float64 {
 	if series == nil || len(series.intervals) == 0 {
 		return 0
 	}
@@ -131,7 +168,7 @@ func (series *IntervalSeries) RealizedVolatility() float64 {
 /*
 RealizedVolatilityExcludingLast estimates vol before the most recent interval.
 */
-func (series *IntervalSeries) RealizedVolatilityExcludingLast() float64 {
+func (series *IntervalSeries[T]) RealizedVolatilityExcludingLast() float64 {
 	if series == nil || len(series.intervals) <= 1 {
 		return series.RealizedVolatility()
 	}
@@ -150,7 +187,7 @@ func (series *IntervalSeries) RealizedVolatilityExcludingLast() float64 {
 /*
 Clone returns an independent snapshot of the interval history.
 */
-func (series *IntervalSeries) Clone() *IntervalSeries {
+func (series *IntervalSeries[T]) Clone() *IntervalSeries[T] {
 	if series == nil {
 		return nil
 	}
@@ -158,18 +195,19 @@ func (series *IntervalSeries) Clone() *IntervalSeries {
 	copied := make([]ReturnInterval, len(series.intervals))
 	copy(copied, series.intervals)
 
-	return &IntervalSeries{
+	return &IntervalSeries[T]{
 		intervals: copied,
 		capacity:  series.capacity,
-		lastPrice: series.lastPrice,
-		lastNanos: series.lastNanos,
+		lastLevel: series.lastLevel,
+		lastEpoch: series.lastEpoch,
+		output:    series.output,
 	}
 }
 
 /*
 CloneTail returns a snapshot containing at most the last window intervals.
 */
-func (series *IntervalSeries) CloneTail(window int) *IntervalSeries {
+func (series *IntervalSeries[T]) CloneTail(window int) *IntervalSeries[T] {
 	cloned := series.Clone()
 
 	if cloned == nil {
@@ -192,7 +230,7 @@ func (series *IntervalSeries) CloneTail(window int) *IntervalSeries {
 /*
 RealizedVariance is the Hayashi-Yoshida variance of the series against itself.
 */
-func (series *IntervalSeries) RealizedVariance() float64 {
+func (series *IntervalSeries[T]) RealizedVariance() float64 {
 	if series == nil {
 		return 0
 	}
@@ -210,7 +248,9 @@ func (series *IntervalSeries) RealizedVariance() float64 {
 IntervalCorrelation normalises asynchronous interval covariance by realised standard
 deviations. It reports false when either series carries no variance.
 */
-func IntervalCorrelation(left, right *IntervalSeries) (float64, bool) {
+func IntervalCorrelation[T ~float64](
+	left, right *IntervalSeries[T],
+) (float64, bool) {
 	if left == nil || right == nil {
 		return 0, false
 	}

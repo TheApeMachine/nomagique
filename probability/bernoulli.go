@@ -7,79 +7,68 @@ import (
 /*
 Posterior tracks a Beta posterior mean from Bernoulli outcomes.
 */
-type Posterior struct {
-	stageParser *core.StageParser
-	state       BetaState
+type Posterior[T ~float64] struct {
+	state  BetaState
+	output core.Scalar[T]
 }
 
 /*
 Bernoulli returns a Beta-Bernoulli dynamic ready from its first observation.
 */
-func Bernoulli() *Posterior {
-	return &Posterior{
-		stageParser: core.NewStageParser(),
-	}
+func Bernoulli[T ~float64]() *Posterior[T] {
+	return &Posterior[T]{}
 }
 
 /*
 Observe ingests either a unit-interval outcome or a predicted and actual pair.
 */
-func (posterior *Posterior) Observe(
-	inputs ...core.Number,
-) core.Float64 {
-	out, work, err := posterior.stageParser.Parse(inputs)
-
-	if err != nil {
-		return 0
+func (posterior *Posterior[T]) Observe(inputs ...core.Number[T]) core.Scalar[T] {
+	if len(inputs) == 0 {
+		return posterior.output
 	}
 
-	result, err := posterior.Apply(out, work)
+	scalars, ok := collectScalars[T](inputs...)
 
-	if err != nil {
-		return 0
+	if !ok {
+		return posterior.output
 	}
 
-	return result
-}
-
-/*
-Apply runs one pipeline stage without allocating number inputs.
-*/
-func (posterior *Posterior) Apply(
-	out core.Float64, work []core.Float64,
-) (core.Float64, error) {
-	if len(work) >= 1 {
-		predicted, actual, err := parsePredictedActual(out, work)
+	if len(scalars) >= 2 {
+		predicted, actual, err := parsePredictedActual(scalars[0], scalars[1:])
 
 		if err != nil {
-			return 0, err
+			return posterior.output
 		}
 
-		return core.Float64(
+		posterior.output = core.Scalar[T](T(
 			ObserveBetaPair(&posterior.state, predicted, actual),
-		), nil
+		))
+
+		return posterior.output
 	}
 
-	outcome, err := parseBernoulliOutcome(out, work)
+	outcome, err := parseBernoulliOutcome(scalars[0], nil)
 
 	if err != nil {
-		return 0, err
+		return posterior.output
 	}
 
-	return core.Float64(ObserveBeta(&posterior.state, outcome)), nil
+	posterior.output = core.Scalar[T](T(ObserveBeta(&posterior.state, outcome)))
+
+	return posterior.output
 }
 
 /*
 ObserveSamples runs the exact batch kernel over outcomes into out.
 */
-func (posterior *Posterior) ObserveSamples(outcomes []float64, out []float64) {
+func (posterior *Posterior[T]) ObserveSamples(outcomes []float64, out []float64) {
 	posterior.state.ObserveSamples(outcomes, out)
 }
 
 /*
 ObservePairSamples runs the exact batch kernel over pairs into out.
 */
-func (posterior *Posterior) ObservePairSamples(
+func (posterior *Posterior[T]) ObservePairSamples(
 	predicted []float64, actual []float64, out []float64,
 ) {
 	posterior.state.ObservePairSamples(predicted, actual, out)
@@ -88,7 +77,9 @@ func (posterior *Posterior) ObservePairSamples(
 /*
 Reset clears derived state.
 */
-func (posterior *Posterior) Reset() error {
+func (posterior *Posterior[T]) Reset() error {
 	posterior.state.Reset()
+	posterior.output = core.Scalar[T](0)
+
 	return nil
 }

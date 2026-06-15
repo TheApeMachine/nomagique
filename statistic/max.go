@@ -1,7 +1,6 @@
 package statistic
 
 import (
-	"github.com/theapemachine/nomagique"
 	"github.com/theapemachine/nomagique/core"
 	"gonum.org/v1/gonum/floats"
 )
@@ -13,28 +12,34 @@ Like Min, it is a stateless snapshot reducer over whatever scalars you feed it i
 one call — useful for peak energy, best bid depth, or any worst case in this set.
 Max implements core.Number. Empty input returns zero.
 */
-type Max struct{}
+type Max[T ~float64] struct {
+	output core.Scalar[T]
+}
 
 /*
-NewMax creates a max dynamic.
+NewMax creates a max stage.
 */
-func NewMax() *Max {
-	return &Max{}
+func NewMax[T ~float64]() *Max[T] {
+	return &Max[T]{}
 }
 
 /*
 Observe returns the maximum of the input stream.
 */
-func (max *Max) Observe(inputs ...core.Number) core.Float64 {
-	values := nomagique.Samples(core.Numbers(inputs))
+func (max *Max[T]) Observe(inputs ...core.Number[T]) core.Scalar[T] {
+	values := sampleBatch[T](inputs...)
 
 	if len(values) == 0 {
-		return 0
+		return max.output
 	}
 
-	return core.Float64(floats.Max(values))
+	max.output = core.Scalar[T](T(floats.Max(values)))
+
+	return max.output
 }
 
-func (max *Max) Reset() error {
+func (max *Max[T]) Reset() error {
+	max.output = core.Scalar[T](0)
+
 	return nil
 }

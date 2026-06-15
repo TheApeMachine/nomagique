@@ -9,7 +9,7 @@ import (
 	"gonum.org/v1/gonum/mat"
 )
 
-func TestProcrustes(t *testing.T) {
+func TestProcrustes_Observe(t *testing.T) {
 	Convey("Given the Procrustes orthogonal alignment solver", t, func() {
 		Convey("When A equals B (identity alignment)", func() {
 			nDim := 8
@@ -18,17 +18,16 @@ func TestProcrustes(t *testing.T) {
 			matA := randomMatrix(nSamples, nDim, 42)
 			matB := copyMatrix(matA)
 
-			denseA, err := DenseFromRows(matA, nSamples, nDim)
-			So(err, ShouldBeNil)
-			denseB, err := DenseFromRows(matB, nSamples, nDim)
+			stage, err := NewProcrustesFromRows[float64](matA, matB, nSamples, nDim)
 			So(err, ShouldBeNil)
 
-			result, err := Procrustes(denseA, denseB)
-			So(err, ShouldBeNil)
+			residual := stage.Observe()
+			So(stage.Err(), ShouldBeNil)
 
 			Convey("It should return R ≈ I with near-zero residual", func() {
-				So(result, ShouldNotBeNil)
-				So(result.Residual, ShouldBeLessThan, 1e-10)
+				So(float64(residual), ShouldBeLessThan, 1e-10)
+
+				result := stage.Result()
 
 				for row := 0; row < nDim; row++ {
 					for col := 0; col < nDim; col++ {
@@ -52,16 +51,14 @@ func TestProcrustes(t *testing.T) {
 			knownR := knownRotation90(nDim)
 			matB := applyRotation(knownR, matA, nSamples, nDim)
 
-			denseA, err := DenseFromRows(matA, nSamples, nDim)
-			So(err, ShouldBeNil)
-			denseB, err := DenseFromRows(matB, nSamples, nDim)
+			stage, err := NewProcrustesFromRows[float64](matA, matB, nSamples, nDim)
 			So(err, ShouldBeNil)
 
-			result, err := Procrustes(denseA, denseB)
-			So(err, ShouldBeNil)
+			_ = stage.Observe()
+			So(stage.Err(), ShouldBeNil)
 
 			Convey("It should recover the known rotation with low residual", func() {
-				So(result, ShouldNotBeNil)
+				result := stage.Result()
 				So(result.Residual, ShouldBeLessThan, 1e-8)
 
 				for row := 0; row < nDim; row++ {
@@ -76,26 +73,32 @@ func TestProcrustes(t *testing.T) {
 			Convey("It should error on dimension mismatch", func() {
 				denseA := mat.NewDense(1, 2, []float64{1, 2})
 				denseB := mat.NewDense(2, 2, []float64{1, 2, 3, 4})
-				_, err := Procrustes(denseA, denseB)
-				So(err, ShouldNotBeNil)
+				stage := NewProcrustes[float64](denseA, denseB)
+				_ = stage.Observe()
+
+				So(stage.Err(), ShouldNotBeNil)
 			})
 
 			Convey("It should error on row count mismatch", func() {
 				matA := randomMatrix(3, 2, 1)
 				matB := randomMatrix(4, 2, 2)
-				denseA, err := DenseFromRows(matA, 3, 2)
+				denseA, err := denseFromRows(matA, 3, 2)
 				So(err, ShouldBeNil)
-				denseB, err := DenseFromRows(matB, 4, 2)
+				denseB, err := denseFromRows(matB, 4, 2)
 				So(err, ShouldBeNil)
-				_, err = Procrustes(denseA, denseB)
-				So(err, ShouldNotBeNil)
+				stage := NewProcrustes[float64](denseA, denseB)
+				_ = stage.Observe()
+
+				So(stage.Err(), ShouldNotBeNil)
 			})
 		})
 	})
 }
 
-func TestJacobiSVD(t *testing.T) {
+func TestProcrustes_Decompose(t *testing.T) {
 	Convey("Given the Jacobi SVD decomposition", t, func() {
+		stage := NewProcrustes[float64](nil, nil)
+
 		Convey("When decomposing a known diagonal matrix", func() {
 			dense := mat.NewDense(3, 3, []float64{
 				3, 0, 0,
@@ -103,7 +106,7 @@ func TestJacobiSVD(t *testing.T) {
 				0, 0, 2,
 			})
 
-			uMat, sigma, vMat, err := JacobiSVD(dense)
+			uMat, sigma, vMat, err := stage.Decompose(dense)
 			So(err, ShouldBeNil)
 
 			Convey("It should recover the singular values", func() {
@@ -125,7 +128,7 @@ func TestJacobiSVD(t *testing.T) {
 				5, 6,
 			})
 
-			uMat, sigma, vMat, err := JacobiSVD(dense)
+			uMat, sigma, vMat, err := stage.Decompose(dense)
 			So(err, ShouldBeNil)
 
 			Convey("It should reconstruct A = U·Σ·Vᵀ", func() {
@@ -142,40 +145,48 @@ func TestJacobiSVD(t *testing.T) {
 		Convey("When rows < cols", func() {
 			Convey("It should return an error", func() {
 				dense := mat.NewDense(1, 3, []float64{1, 2, 3})
-				_, _, _, err := JacobiSVD(dense)
+				_, _, _, err := stage.Decompose(dense)
+
 				So(err, ShouldNotBeNil)
 			})
 		})
 	})
 }
 
-func BenchmarkProcrustes512(b *testing.B) {
+func BenchmarkProcrustes_Observe(b *testing.B) {
 	nDim := 512
 	nSamples := 16
 
 	matA := randomMatrix(nSamples, nDim, 1337)
 	matB := randomMatrix(nSamples, nDim, 7331)
-	denseA, _ := DenseFromRows(matA, nSamples, nDim)
-	denseB, _ := DenseFromRows(matB, nSamples, nDim)
+	stage, err := NewProcrustesFromRows[float64](matA, matB, nSamples, nDim)
+
+	if err != nil {
+		b.Fatal(err)
+	}
 
 	b.ReportAllocs()
-	b.ResetTimer()
 
 	for b.Loop() {
-		_, _ = Procrustes(denseA, denseB)
+		_ = stage.Observe()
 	}
 }
 
-func BenchmarkJacobiSVD512(b *testing.B) {
+func BenchmarkProcrustes_Decompose(b *testing.B) {
 	nDim := 512
 	matRows := randomMatrix(nDim, nDim, 2024)
-	dense, _ := DenseFromRows(matRows, nDim, nDim)
+	dense, err := denseFromRows(matRows, nDim, nDim)
+
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	stage := NewProcrustes[float64](nil, nil)
 
 	b.ReportAllocs()
-	b.ResetTimer()
 
 	for b.Loop() {
-		_, _, _, _ = JacobiSVD(dense)
+		_, _, _, _ = stage.Decompose(dense)
 	}
 }
 

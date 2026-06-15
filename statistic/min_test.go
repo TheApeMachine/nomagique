@@ -4,26 +4,54 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/nomagique"
 )
 
 func TestMin_Observe(testingTB *testing.T) {
-	Convey("Given a stream", testingTB, func() {
-		value := NewMin().Observe(nomagique.Numbers(3, 1, 4, 2)...)
+	cases := []struct {
+		name    string
+		samples []float64
+		expect  float64
+	}{
+		{"mixed batch", []float64{3, 1, 4, 2}, 1},
+		{"negative floor", []float64{-5, -1, -3}, -5},
+		{"single value", []float64{9}, 9},
+		{"empty input", nil, 0},
+	}
 
-		Convey("It should return the smallest value", func() {
-			So(value, ShouldEqual, 1)
+	for _, testCase := range cases {
+		testCase := testCase
+
+		Convey("Given "+testCase.name, testingTB, func() {
+			minStage := NewMin[float64]()
+			got := minStage.Observe(numberInputs(testCase.samples...)...)
+
+			Convey("It should return the expected minimum", func() {
+				So(float64(got), ShouldEqual, testCase.expect)
+			})
+		})
+	}
+}
+
+func TestMin_Reset(testingTB *testing.T) {
+	Convey("Given an observed min", testingTB, func() {
+		minStage := NewMin[float64]()
+		_ = minStage.Observe(numberInputs(3, 1)...)
+
+		So(minStage.Reset(), ShouldBeNil)
+
+		Convey("It should clear output", func() {
+			So(float64(minStage.Observe()), ShouldEqual, 0)
 		})
 	})
 }
 
-func BenchmarkMin_Observe(testingTB *testing.B) {
-	inputs := nomagique.Numbers(3, 1, 4, 2, 5, 0, 8)
-	min := NewMin()
+func BenchmarkMin_Observe(b *testing.B) {
+	minStage := NewMin[float64]()
+	inputs := numberInputs(3, 1, 4, 2)
 
-	testingTB.ReportAllocs()
+	b.ReportAllocs()
 
-	for testingTB.Loop() {
-		_ = min.Observe(inputs...)
+	for b.Loop() {
+		_ = minStage.Observe(inputs...)
 	}
 }

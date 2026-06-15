@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"math"
 	"time"
+
+	"github.com/theapemachine/nomagique/core"
 )
 
 /*
@@ -79,4 +81,82 @@ func (memory *TimeElasticMemory) Update(eventAt time.Time, currentSample float64
 	memory.vSlow = (1.0-alpha)*memory.vSlow + alpha*currentSample
 
 	return relative, nil
+}
+
+/*
+Reset clears derived baseline state.
+*/
+func (memory *TimeElasticMemory) Reset() {
+	memory.vSlow = 0
+	memory.lastAt = time.Time{}
+	memory.initialized = false
+}
+
+/*
+TimeElastic tracks a time-decayed baseline and returns sample/baseline ratios.
+
+Observe expects two scalar inputs: sample value, then event time as Unix
+nanoseconds encoded in float64. Fewer than two scalars returns the prior output.
+*/
+type TimeElastic[T ~float64] struct {
+	memory *TimeElasticMemory
+	output core.Scalar[T]
+}
+
+/*
+NewTimeElastic returns a time-elastic baseline stage for nomagique.Number pipelines.
+*/
+func NewTimeElastic[T ~float64](
+	halflife time.Duration, epsilon float64,
+) *TimeElastic[T] {
+	return &TimeElastic[T]{
+		memory: NewTimeElasticMemory(halflife, epsilon),
+	}
+}
+
+/*
+Observe ingests sample and event-time scalars and returns the relative baseline ratio.
+*/
+func (timeElastic *TimeElastic[T]) Observe(inputs ...core.Number[T]) core.Scalar[T] {
+	if len(inputs) == 0 {
+		return timeElastic.output
+	}
+
+	sample, ok := inputs[0].(core.Scalar[T])
+
+	if !ok {
+		return timeElastic.output
+	}
+
+	if len(inputs) < 2 {
+		return timeElastic.output
+	}
+
+	timestamp, timestampOK := inputs[1].(core.Scalar[T])
+
+	if !timestampOK {
+		return timeElastic.output
+	}
+
+	eventAt := time.Unix(0, int64(float64(timestamp)))
+
+	relative, err := timeElastic.memory.Update(eventAt, float64(sample))
+
+	if err != nil {
+		return timeElastic.output
+	}
+
+	timeElastic.output = core.Scalar[T](T(relative))
+
+	return timeElastic.output
+}
+
+/*
+Reset clears derived baseline state.
+*/
+func (timeElastic *TimeElastic[T]) Reset() error {
+	timeElastic.memory.Reset()
+	timeElastic.output = core.Scalar[T](0)
+
+	return nil
 }

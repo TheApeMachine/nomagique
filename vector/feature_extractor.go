@@ -4,35 +4,25 @@ import (
 	"fmt"
 
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/nomagique/core"
 )
 
 /*
 FeatureFormula maps indexed input channels to one derived feature value.
 
-Each formula receives the full input slice and returns a single scalar — for
-example mid price from bid and ask, or spread in basis points. Formulas are
-registered at construction time; they are not core.Number stages themselves.
+Each formula receives the full input slice and returns a single scalar.
 */
 type FeatureFormula func(inputs []float64) float64
 
 /*
 FeatureExtractor holds raw input channels and derived feature slots in reusable
-buffers.
-
-Think of it as a small spreadsheet: columns are inputs (bid price, ask price,
-quantities), rows of formulas produce features (mid, spread, imbalance). You
-update cells with SetInput, run Extract to refresh every formula, then read
-Feature by index.
-
-FeatureExtractor does not implement core.Number. For composable pipelines use
-InputSlot to feed channels and FeatureNode to expose one derived feature inside
-nomagique.Number(...). NewL1BookExtractor is a ready-made four-input,
-three-feature book touch preset.
+buffers. Observe writes one channel index and sample value, then refreshes features.
 */
 type FeatureExtractor struct {
 	inputs   []float64
 	features []float64
 	formulas []FeatureFormula
+	output   core.Scalar[float64]
 }
 
 /*
@@ -58,6 +48,39 @@ func NewFeatureExtractor(inputCount int, formulas ...FeatureFormula) (*FeatureEx
 		features: make([]float64, len(formulas)),
 		formulas: formulas,
 	}, nil
+}
+
+/*
+Observe writes channel index and sample value, evaluates formulas, and returns the
+first derived feature.
+*/
+func (extractor *FeatureExtractor) Observe(inputs ...core.Number[float64]) core.Scalar[float64] {
+	if extractor == nil {
+		return core.Scalar[float64](0)
+	}
+
+	if len(inputs) < 2 {
+		return extractor.output
+	}
+
+	channelScalar, channelOK := inputs[0].(core.Scalar[float64])
+	valueScalar, valueOK := inputs[1].(core.Scalar[float64])
+
+	if !channelOK || !valueOK {
+		return extractor.output
+	}
+
+	channel := int(float64(channelScalar))
+
+	if channel < 0 || channel >= len(extractor.inputs) {
+		return extractor.output
+	}
+
+	extractor.inputs[channel] = float64(valueScalar)
+	extractor.Extract()
+	extractor.output = core.Scalar[float64](extractor.features[0])
+
+	return extractor.output
 }
 
 /*
@@ -101,9 +124,6 @@ func (extractor *FeatureExtractor) Input(index int) (float64, error) {
 
 /*
 Extract evaluates every formula over the current inputs into the feature buffer.
-
-Call this after inputs change and before reading features — or use FeatureNode
-Observe, which runs Extract automatically.
 */
 func (extractor *FeatureExtractor) Extract() []float64 {
 	for index, formula := range extractor.formulas {
@@ -146,6 +166,8 @@ func (extractor *FeatureExtractor) Reset() error {
 	for index := range extractor.features {
 		extractor.features[index] = 0
 	}
+
+	extractor.output = core.Scalar[float64](0)
 
 	return nil
 }

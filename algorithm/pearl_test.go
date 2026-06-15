@@ -4,7 +4,6 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/nomagique"
 	"github.com/theapemachine/nomagique/causal"
 	"github.com/theapemachine/nomagique/core"
 )
@@ -33,13 +32,8 @@ func TestPearl_Observe(testingTB *testing.T) {
 			MinHistory:        12,
 		}
 
-		streams := []core.Numbers{
-			nomagique.Numbers(nodeZero...),
-			nomagique.Numbers(nodeOne...),
-			nomagique.Numbers(nodeTwo...),
-			nomagique.Numbers(nodeThree...),
-		}
-		ladder := NewPearl(3, config, streams, nomagique.Scalar(0), nil)
+		streams := [][]float64{nodeZero, nodeOne, nodeTwo, nodeThree}
+		ladder := NewPearl[float64](3, config, streams, core.Scalar[float64](0), nil)
 
 		intervention := ladder.Observe()
 
@@ -72,13 +66,10 @@ func BenchmarkPearl_Observe(testingTB *testing.B) {
 		MinHistory:        12,
 	}
 
-	streams := []core.Numbers{
-		nomagique.Numbers(nodeZero...),
-		nomagique.Numbers(nodeOne...),
-		nomagique.Numbers(nodeTwo...),
-		nomagique.Numbers(nodeThree...),
-	}
-	ladder := NewPearl(3, config, streams, nomagique.Scalar(0), nil)
+	streams := [][]float64{nodeZero, nodeOne, nodeTwo, nodeThree}
+	ladder := NewPearl[float64](3, config, streams, core.Scalar[float64](0), nil)
+
+	testingTB.ReportAllocs()
 
 	for testingTB.Loop() {
 		_ = ladder.Observe()

@@ -10,7 +10,7 @@ import (
 	"gonum.org/v1/gonum/stat"
 )
 
-const minKernelWeight = 1e-9
+const minKernelWeight = math.SmallestNonzeroFloat64
 
 /*
 NodeTable is a tabular structural causal model over aligned observation rows.
@@ -78,7 +78,13 @@ func (nodeTable NodeTable) Association(treatment int) (float64, error) {
 		return 0, err
 	}
 
-	return stat.Correlation(treatmentValues, targetValues, nil), nil
+	association := stat.Correlation(treatmentValues, targetValues, nil)
+
+	if math.IsNaN(association) || math.IsInf(association, 0) {
+		return 0, nil
+	}
+
+	return association, nil
 }
 
 /*
@@ -359,4 +365,3 @@ func nodeDistance(left, right []float64, features []int) float64 {
 
 	return math.Sqrt(sum)
 }
-

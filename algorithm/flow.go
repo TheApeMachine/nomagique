@@ -88,9 +88,9 @@ func (flow *Flow) evaluate(batch []float64) FlowOutcome {
 		return FlowOutcome{}
 	}
 
-	priceResponseBps := math.Abs(lastPrice/firstPrice-1) * 10000
-	flowPressure := gross / math.Max(medianNotional, 1e-9)
-	impactEfficiency := priceResponseBps / math.Max(flowPressure, 1e-9)
+	priceResponseBps := math.Abs(lastPrice/firstPrice-1) * basisPointsPerUnit
+	flowPressure := gross / positiveFloor(medianNotional)
+	impactEfficiency := priceResponseBps / positiveFloor(flowPressure)
 	priceDrift := lastPrice - firstPrice
 	flatThreshold := medianAbsoluteMove(prices)
 	driveThreshold := 1 / math.Sqrt(float64(tradeCount))
@@ -225,7 +225,18 @@ func (reading *FlowReading) Close() error {
 	return nil
 }
 
-const flowCategoryStarvation = 4
+const (
+	flowCategoryStarvation = 4
+	basisPointsPerUnit     = 10000
+)
+
+func positiveFloor(value float64) float64 {
+	if value > 0 && !math.IsNaN(value) && !math.IsInf(value, 0) {
+		return value
+	}
+
+	return math.SmallestNonzeroFloat64
+}
 
 func medianAbsoluteMove(prices []float64) float64 {
 	moves := priceMoves(prices)

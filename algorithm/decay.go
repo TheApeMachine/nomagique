@@ -295,27 +295,31 @@ func pressureFade(pressures []float64, side int) float64 {
 	}
 
 	recent := pressures[len(pressures)-1]
-	priorPeak := pressures[0]
+	prior := pressures[0]
 
 	for _, value := range pressures[:len(pressures)-1] {
-		if value > priorPeak {
-			priorPeak = value
+		if side > 0 && value > prior {
+			prior = value
+		}
+
+		if side < 0 && value < prior {
+			prior = value
 		}
 	}
 
 	if side > 0 {
-		if priorPeak <= 0 || recent >= priorPeak {
+		if prior <= 0 || recent >= prior {
 			return 0
 		}
 
-		return (priorPeak - recent) / math.Max(math.Abs(priorPeak), 1e-9)
+		return (prior - recent) / math.Abs(prior)
 	}
 
-	if priorPeak >= 0 || recent <= priorPeak {
+	if prior >= 0 || recent <= prior {
 		return 0
 	}
 
-	return (recent - priorPeak) / math.Max(math.Abs(priorPeak), 1e-9)
+	return (recent - prior) / math.Abs(prior)
 }
 
 func imbalanceFlip(imbalances []float64, side int) float64 {
@@ -327,11 +331,11 @@ func imbalanceFlip(imbalances []float64, side int) float64 {
 	prior := columnMean(imbalances[:len(imbalances)-1])
 
 	if side > 0 && prior > 0 && recent < 0 {
-		return math.Abs(recent) / math.Max(prior, 1e-9)
+		return math.Abs(recent) / prior
 	}
 
 	if side < 0 && prior < 0 && recent > 0 {
-		return recent / math.Max(math.Abs(prior), 1e-9)
+		return recent / math.Abs(prior)
 	}
 
 	return 0
@@ -360,6 +364,7 @@ func classifyDecay(thinning, widen, fade, flip float64) int {
 	}
 
 	if flip > best {
+		best = flip
 		category = 4
 	}
 

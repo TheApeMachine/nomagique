@@ -1,7 +1,6 @@
 package adaptive
 
 import (
-	"encoding/binary"
 	"math"
 
 	"github.com/theapemachine/datura"
@@ -36,16 +35,50 @@ func (ema *EMA) Write(p []byte) (int, error) {
 func (ema *EMA) Read(p []byte) (int, error) {
 	payload, err := ema.artifact.Payload()
 
-	if err == nil && len(payload) == 8 {
-		sample := math.Float64frombits(binary.BigEndian.Uint64(payload))
-		derived := ema.step(sample)
-		assignScalarPayload(&ema.artifact, "ema", derived)
+	if err == nil {
+		observeScalarPayload(&ema.artifact, "ema", payload, ema.step)
 	}
 
 	return ema.artifact.Read(p)
 }
 
 func (ema *EMA) Close() error {
+	return nil
+}
+
+/*
+ObserveSample ingests one raw sample through the EMA kernel.
+*/
+func (ema *EMA) ObserveSample(sample float64) float64 {
+	return observeScalarSample(&ema.artifact, "ema", sample, ema.step)
+}
+
+/*
+ObserveSamples writes one derived value per sample into out.
+*/
+func (ema *EMA) ObserveSamples(samples []float64, out []float64) {
+	limit := len(samples)
+
+	if len(out) < limit {
+		limit = len(out)
+	}
+
+	for index := 0; index < limit; index++ {
+		out[index] = ema.ObserveSample(samples[index])
+	}
+}
+
+/*
+Reset clears derived state so the next observation bootstraps again.
+*/
+func (ema *EMA) Reset() error {
+	ema.value = 0
+	ema.prev = 0
+	ema.min = 0
+	ema.max = 0
+	ema.rate = 0
+	ema.ready = false
+
 	return nil
 }
 

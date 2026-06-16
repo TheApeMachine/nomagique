@@ -1,3 +1,6 @@
+//go:build darwin && cgo
+// +build darwin,cgo
+
 #import "solver_private.h"
 
 void *batch_solver_create(
@@ -46,6 +49,23 @@ int batch_solver_seed_weights(
     return 0;
 }
 
+int batch_solver_seed_all_weights(
+    void *handle,
+    const float *w, size_t wl, const float *r, size_t rl,
+    const float *a, size_t al, const float *v, size_t vl,
+    char *err_out, int err_cap
+) {
+    if (handle == NULL) { resonance_write_error(err_out, err_cap, @"solver is not initialized"); return 1; }
+    @autoreleasepool {
+        NSString *error = nil;
+        if (![from(handle) seedAllSlotsW:w wLen:wl r:r rLen:rl a:a aLen:al v:v vLen:vl error:&error]) {
+            resonance_write_error(err_out, err_cap, error ?: @"seed all failed");
+            return 1;
+        }
+    }
+    return 0;
+}
+
 int batch_solver_reset_state(void *handle, uint32_t reset_precision, char *err_out, int err_cap) {
     if (handle == NULL) { resonance_write_error(err_out, err_cap, @"solver is not initialized"); return 1; }
     @autoreleasepool { [from(handle) resetState:(reset_precision != 0u)]; }
@@ -60,9 +80,48 @@ int batch_solver_set_input(
 ) {
     if (handle == NULL) { resonance_write_error(err_out, err_cap, @"solver is not initialized"); return 1; }
     BatchResonanceSolver *s = from(handle);
-    if (input_len != s.arch[0]) { resonance_write_error(err_out, err_cap, @"input dimension mismatch"); return 1; }
-    BOOL hasTarget = (target != NULL && target_len == s.targetDim && s.targetDim > 0u);
+    if (slot >= s.batch) { resonance_write_error(err_out, err_cap, @"slot out of range"); return 1; }
+    if (input == NULL || input_len != s.arch[0]) { resonance_write_error(err_out, err_cap, @"input dimension mismatch"); return 1; }
+    BOOL hasTarget = NO;
+    if (target != NULL || target_len != 0u) {
+        if (s.targetDim == 0u || target == NULL || target_len != s.targetDim) {
+            resonance_write_error(err_out, err_cap, @"target dimension mismatch");
+            return 1;
+        }
+        hasTarget = YES;
+    }
     @autoreleasepool { [s setInputSlot:slot input:input target:target hasTarget:hasTarget]; }
+    return 0;
+}
+
+int batch_solver_set_inputs(
+    void *handle,
+    const float *inputs, uint32_t input_len, uint32_t input_stride,
+    const float *targets, uint32_t target_len, uint32_t target_stride,
+    char *err_out, int err_cap
+) {
+    if (handle == NULL) { resonance_write_error(err_out, err_cap, @"solver is not initialized"); return 1; }
+    BatchResonanceSolver *s = from(handle);
+    uint32_t expectedInputLen = s.batch * s.arch[0];
+    if (inputs == NULL || input_stride != s.arch[0] || input_len != expectedInputLen) {
+        resonance_write_error(err_out, err_cap, @"batch input dimension mismatch");
+        return 1;
+    }
+
+    BOOL hasTarget = NO;
+    if (targets != NULL || target_len != 0u || target_stride != 0u) {
+        uint32_t expectedTargetLen = s.batch * s.targetDim;
+        if (s.targetDim == 0u || targets == NULL || target_stride != s.targetDim || target_len != expectedTargetLen) {
+            resonance_write_error(err_out, err_cap, @"batch target dimension mismatch");
+            return 1;
+        }
+        hasTarget = YES;
+    }
+
+    @autoreleasepool {
+        [s setInputBatch:inputs inputStride:input_stride
+                  target:targets targetStride:target_stride hasTarget:hasTarget];
+    }
     return 0;
 }
 
@@ -106,3 +165,6 @@ int batch_solver_read_weights(
     @autoreleasepool { [from(handle) readSlot:slot w:w r:r a:a v:v]; }
     return 0;
 }
+
+
+

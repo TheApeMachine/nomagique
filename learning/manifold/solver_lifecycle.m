@@ -1,3 +1,6 @@
+//go:build darwin && cgo
+// +build darwin,cgo
+
 #import "solver_private.h"
 #include <dispatch/dispatch.h>
 
@@ -200,6 +203,25 @@ void resonance_write_error(char *err_out, int err_cap, NSString *message) {
     return YES;
 }
 
+- (BOOL)seedAllSlotsW:(const float *)w wLen:(size_t)wLen
+                    r:(const float *)r rLen:(size_t)rLen
+                    a:(const float *)a aLen:(size_t)aLen
+                    v:(const float *)v vLen:(size_t)vLen
+                error:(NSString **)errorOut {
+    if (w && wLen != self.wTotal) { if (errorOut) *errorOut = @"W seed length mismatch"; return NO; }
+    if (r && rLen != self.rTotal) { if (errorOut) *errorOut = @"R seed length mismatch"; return NO; }
+    if (a && aLen != self.aTotal) { if (errorOut) *errorOut = @"A seed length mismatch"; return NO; }
+    if (v && self.bufV && vLen != self.vTotal) { if (errorOut) *errorOut = @"V seed length mismatch"; return NO; }
+
+    for (uint32_t slot = 0u; slot < self.batch; ++slot) {
+        if (w) memcpy((float *)self.bufW.contents + (size_t)self.wTotal * slot, w, wLen * sizeof(float));
+        if (r) memcpy((float *)self.bufR.contents + (size_t)self.rTotal * slot, r, rLen * sizeof(float));
+        if (a) memcpy((float *)self.bufA.contents + (size_t)self.aTotal * slot, a, aLen * sizeof(float));
+        if (v && self.bufV) memcpy((float *)self.bufV.contents + (size_t)self.vTotal * slot, v, vLen * sizeof(float));
+    }
+    return YES;
+}
+
 - (void)readSlot:(uint32_t)slot w:(float *)w r:(float *)r a:(float *)a v:(float *)v {
     if (slot >= self.batch) return;
     if (w) memcpy(w, (float *)self.bufW.contents + (size_t)self.wTotal * slot, (size_t)self.wTotal * sizeof(float));
@@ -221,6 +243,36 @@ void resonance_write_error(char *err_out, int err_cap, NSString *message) {
     if (hasTarget && self.bufTarget && target) {
         float *t = (float *)self.bufTarget.contents;
         for (uint32_t r = 0u; r < self.targetDim; ++r) t[r * N + slot] = target[r];
+    }
+}
+
+// Write every staged input/target in one pass. Destination layout is layer-major
+// [row][slot], so row-first loops write contiguous cache lines in the shared
+// Metal buffer instead of striding once per slot.
+- (void)setInputBatch:(const float *)inputs inputStride:(uint32_t)inputStride
+               target:(const float *)targets targetStride:(uint32_t)targetStride
+            hasTarget:(BOOL)hasTarget {
+    if (inputs == NULL) return;
+    uint32_t N = self.batch;
+    uint32_t dim0 = self.arch[0];
+    float *z = (float *)self.bufZ.contents;
+    uint32_t base = self.zOffset[0] * N;
+
+    for (uint32_t r = 0u; r < dim0; ++r) {
+        float *dst = z + base + r * N;
+        for (uint32_t slot = 0u; slot < N; ++slot) {
+            dst[slot] = inputs[(size_t)slot * inputStride + r];
+        }
+    }
+
+    if (hasTarget && self.bufTarget && targets) {
+        float *t = (float *)self.bufTarget.contents;
+        for (uint32_t r = 0u; r < self.targetDim; ++r) {
+            float *dst = t + r * N;
+            for (uint32_t slot = 0u; slot < N; ++slot) {
+                dst[slot] = targets[(size_t)slot * targetStride + r];
+            }
+        }
     }
 }
 
@@ -258,3 +310,6 @@ void resonance_write_error(char *err_out, int err_cap, NSString *message) {
 }
 
 @end
+
+
+

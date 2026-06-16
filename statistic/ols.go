@@ -7,7 +7,7 @@ import (
 	"gonum.org/v1/gonum/stat"
 )
 
-const minBackdoorDenominator = 1e-9
+const minBackdoorDenominator = math.SmallestNonzeroFloat64
 
 /*
 OLS fits target against predictors via ridge-regularized normal equations.
@@ -17,9 +17,21 @@ func OLS(target []float64, predictors ...[]float64) ([]float64, bool) {
 		return nil, false
 	}
 
+	for _, value := range target {
+		if !finite(value) {
+			return nil, false
+		}
+	}
+
 	for _, predictor := range predictors {
 		if len(predictor) != len(target) {
 			return nil, false
+		}
+
+		for _, value := range predictor {
+			if !finite(value) {
+				return nil, false
+			}
 		}
 	}
 
@@ -109,6 +121,10 @@ func PairConditionNumber(left, right []float64) (float64, bool) {
 
 	correlation := math.Abs(stat.Correlation(left, right, nil))
 
+	if math.IsNaN(correlation) || math.IsInf(correlation, 0) {
+		return 0, false
+	}
+
 	if correlation >= 1 {
 		return math.Inf(1), true
 	}
@@ -120,5 +136,13 @@ func PairConditionNumber(left, right []float64) (float64, bool) {
 BackdoorDenominator floors small residual norms during backdoor estimation.
 */
 func BackdoorDenominator(residualNorm float64) float64 {
+	if math.IsNaN(residualNorm) || math.IsInf(residualNorm, 0) || residualNorm <= 0 {
+		return minBackdoorDenominator
+	}
+
 	return math.Max(residualNorm, minBackdoorDenominator)
+}
+
+func finite(value float64) bool {
+	return !math.IsNaN(value) && !math.IsInf(value, 0)
 }

@@ -1,7 +1,6 @@
 package adaptive
 
 import (
-	"encoding/binary"
 	"math"
 
 	"github.com/theapemachine/datura"
@@ -34,10 +33,8 @@ func (momentum *Momentum) Write(p []byte) (int, error) {
 func (momentum *Momentum) Read(p []byte) (int, error) {
 	payload, err := momentum.artifact.Payload()
 
-	if err == nil && len(payload) == 8 {
-		sample := math.Float64frombits(binary.BigEndian.Uint64(payload))
-		derived := momentum.step(sample)
-		assignScalarPayload(&momentum.artifact, "momentum", derived)
+	if err == nil {
+		observeScalarPayload(&momentum.artifact, "momentum", payload, momentum.step)
 	}
 
 	return momentum.artifact.Read(p)
@@ -51,15 +48,21 @@ func (momentum *Momentum) Close() error {
 ObserveSample ingests one raw sample through the momentum kernel.
 */
 func (momentum *Momentum) ObserveSample(sample float64) float64 {
-	return momentum.readSampleViaArtifact(sample)
+	return observeScalarSample(&momentum.artifact, "momentum", sample, momentum.step)
 }
 
 /*
 ObserveSamples writes one derived value per sample into out.
 */
 func (momentum *Momentum) ObserveSamples(samples []float64, out []float64) {
-	for index, sample := range samples {
-		out[index] = momentum.ObserveSample(sample)
+	limit := len(samples)
+
+	if len(out) < limit {
+		limit = len(out)
+	}
+
+	for index := 0; index < limit; index++ {
+		out[index] = momentum.ObserveSample(samples[index])
 	}
 }
 
@@ -73,26 +76,6 @@ func (momentum *Momentum) Reset() error {
 	momentum.Ready = false
 
 	return nil
-}
-
-func (momentum *Momentum) readSampleViaArtifact(sample float64) float64 {
-	inbound := datura.Acquire("momentum-in", datura.Artifact_Type_json)
-	payload := make([]byte, 8)
-	binary.BigEndian.PutUint64(payload, math.Float64bits(sample))
-	_ = inbound.SetPayload(payload)
-	buf, _ := inbound.Message().Marshal()
-	_, _ = momentum.Write(buf)
-	outBuf := make([]byte, 4096)
-	_, _ = momentum.Read(outBuf)
-	outbound := datura.Acquire("stage-out", datura.Artifact_Type_json)
-	_, _ = outbound.Write(outBuf)
-	readPayload, _ := outbound.Payload()
-
-	if len(readPayload) != 8 {
-		return 0
-	}
-
-	return math.Float64frombits(binary.BigEndian.Uint64(readPayload))
 }
 
 func (momentum *Momentum) step(sample float64) float64 {

@@ -24,7 +24,13 @@ func payloadSamples(payload []byte) []float64 {
 
 	for index := range samples {
 		offset := index * 8
-		samples[index] = math.Float64frombits(binary.BigEndian.Uint64(payload[offset : offset+8]))
+		value := math.Float64frombits(binary.BigEndian.Uint64(payload[offset : offset+8]))
+
+		if math.IsNaN(value) || math.IsInf(value, 0) {
+			return nil
+		}
+
+		samples[index] = value
 	}
 
 	return samples
@@ -46,7 +52,13 @@ func payloadScalar(payload []byte) (float64, bool) {
 		return 0, false
 	}
 
-	return math.Float64frombits(binary.BigEndian.Uint64(payload)), true
+	value := math.Float64frombits(binary.BigEndian.Uint64(payload))
+
+	if math.IsNaN(value) || math.IsInf(value, 0) {
+		return 0, false
+	}
+
+	return value, true
 }
 
 func pokeFloat(artifact *datura.Artifact, key string, value float64) {
@@ -129,12 +141,19 @@ func samplesFromTimeValues(values []float64) ([]correlation.Sample, bool) {
 	for index := range samples {
 		pair := index * 2
 		seconds := values[pair]
+		value := values[pair+1]
+
+		if math.IsNaN(seconds) || math.IsInf(seconds, 0) ||
+			math.IsNaN(value) || math.IsInf(value, 0) {
+			return nil, false
+		}
+
 		wholeSeconds := int64(seconds)
 		nanoseconds := int64((seconds - float64(wholeSeconds)) * float64(time.Second))
 
 		samples[index] = correlation.Sample{
 			At:    time.Unix(wholeSeconds, nanoseconds),
-			Value: values[pair+1],
+			Value: value,
 		}
 	}
 
@@ -302,6 +321,10 @@ func samplesToTimes(samples []float64) []time.Time {
 	times := make([]time.Time, len(samples))
 
 	for index, sample := range samples {
+		if math.IsNaN(sample) || math.IsInf(sample, 0) {
+			return nil
+		}
+
 		times[index] = time.Unix(0, int64(sample))
 	}
 
@@ -314,4 +337,22 @@ func weightSamples(weights []float64) []float64 {
 	}
 
 	return weights
+}
+
+func weightSamplesFor(weights []float64, count int) ([]float64, bool) {
+	if len(weights) == 0 {
+		return nil, true
+	}
+
+	if len(weights) != count {
+		return nil, false
+	}
+
+	for _, weight := range weights {
+		if math.IsNaN(weight) || math.IsInf(weight, 0) || weight < 0 {
+			return nil, false
+		}
+	}
+
+	return weights, true
 }

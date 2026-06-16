@@ -10,6 +10,37 @@
 // length and the pipeline's queried maxTotalThreadsPerThreadgroup (see
 // -reduceThreadgroupSizeFor:pipeline:), not hardcoded.
 
+
+// Lightweight scalar constant representation for hot kernel-dispatch paths.
+// This avoids allocating Objective-C NSArray/NSNumber objects for every encoded
+// Metal kernel in settle/learn loops.
+typedef enum ResonanceConstKind {
+    ResonanceConstKindUInt = 0,
+    ResonanceConstKindFloat = 1,
+} ResonanceConstKind;
+
+typedef struct ResonanceConst {
+    ResonanceConstKind kind;
+    uint32_t u;
+    float f;
+} ResonanceConst;
+
+static inline ResonanceConst ResU(uint32_t value) {
+    ResonanceConst c;
+    c.kind = ResonanceConstKindUInt;
+    c.u = value;
+    c.f = 0.0f;
+    return c;
+}
+
+static inline ResonanceConst ResF(float value) {
+    ResonanceConst c;
+    c.kind = ResonanceConstKindFloat;
+    c.u = 0u;
+    c.f = value;
+    return c;
+}
+
 /*
 BatchDimsHost mirrors the BatchDims struct in resonance.metal — the per-symbol
 dimensions/config the batched kernels read to self-navigate the flat buffers.
@@ -151,9 +182,17 @@ early-stop run per column so symbols converge independently.
                a:(const float *)a aLen:(size_t)aLen
                v:(const float *)v vLen:(size_t)vLen
            error:(NSString **)errorOut;
+- (BOOL)seedAllSlotsW:(const float *)w wLen:(size_t)wLen
+                    r:(const float *)r rLen:(size_t)rLen
+                    a:(const float *)a aLen:(size_t)aLen
+                    v:(const float *)v vLen:(size_t)vLen
+                error:(NSString **)errorOut;
 - (void)readSlot:(uint32_t)slot w:(float *)w r:(float *)r a:(float *)a v:(float *)v;
 - (void)setInputSlot:(uint32_t)slot input:(const float *)input
               target:(const float *)target hasTarget:(BOOL)hasTarget;
+- (void)setInputBatch:(const float *)inputs inputStride:(uint32_t)inputStride
+               target:(const float *)targets targetStride:(uint32_t)targetStride
+            hasTarget:(BOOL)hasTarget;
 - (void)readLatentSlot:(uint32_t)slot out:(float *)out length:(uint32_t)length;
 - (void)resetState:(BOOL)resetPrecision;
 @end
@@ -163,6 +202,33 @@ early-stop run per column so symbols converge independently.
 @end
 
 @interface BatchResonanceSolver (Dispatch)
+- (void)encRaw:(id<MTLComputeCommandEncoder>)encoder
+          pipe:(id<MTLComputePipelineState>)pipeline
+       buffers:(id<MTLBuffer> __unsafe_unretained *)buffers
+   bufferCount:(NSUInteger)bufferCount
+       offsets:(const NSUInteger *)offsets
+        consts:(const ResonanceConst *)consts
+    constCount:(NSUInteger)constCount
+       threads:(NSUInteger)threads
+      perGroup:(NSUInteger)perGroup
+        groups:(NSUInteger)groups;
+- (void)encRaw:(id<MTLComputeCommandEncoder>)encoder
+          pipe:(id<MTLComputePipelineState>)pipeline
+       buffers:(id<MTLBuffer> __unsafe_unretained *)buffers
+   bufferCount:(NSUInteger)bufferCount
+       offsets:(const NSUInteger *)offsets
+        consts:(const ResonanceConst *)consts
+    constCount:(NSUInteger)constCount
+       threads:(NSUInteger)threads;
+- (void)encReduceRaw:(id<MTLComputeCommandEncoder>)encoder
+                pipe:(id<MTLComputePipelineState>)pipeline
+             buffers:(id<MTLBuffer> __unsafe_unretained *)buffers
+         bufferCount:(NSUInteger)bufferCount
+             offsets:(const NSUInteger *)offsets
+              consts:(const ResonanceConst *)consts
+          constCount:(NSUInteger)constCount
+             columns:(NSUInteger)columns
+           reduceLen:(NSUInteger)reduceLen;
 - (void)enc:(id<MTLComputeCommandEncoder>)encoder
        pipe:(id<MTLComputePipelineState>)pipeline
     buffers:(NSArray<id<MTLBuffer>> *)buffers
@@ -196,3 +262,6 @@ early-stop run per column so symbols converge independently.
 @end
 
 void resonance_write_error(char *err_out, int err_cap, NSString *message);
+
+
+

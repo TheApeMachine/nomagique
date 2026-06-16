@@ -10,12 +10,12 @@ import (
 Shift measures distribution drift between a reference stream and a live stream via KL divergence.
 */
 type Shift struct {
-	artifact   *datura.Artifact
-	reference  []float64
-	live       []float64
-	weights    []float64
+	artifact    *datura.Artifact
+	reference   []float64
+	live        []float64
+	weights     []float64
 	expectedSum float64
-	floor      float64
+	floor       float64
 }
 
 /*

@@ -1,11 +1,6 @@
 package adaptive
 
-import (
-	"encoding/binary"
-	"math"
-
-	"github.com/theapemachine/datura"
-)
+import "github.com/theapemachine/datura"
 
 /*
 Compression scores how far below the running baseline the current sample sits.
@@ -32,10 +27,8 @@ func (compression *Compression) Write(p []byte) (int, error) {
 func (compression *Compression) Read(p []byte) (int, error) {
 	payload, err := compression.artifact.Payload()
 
-	if err == nil && len(payload) == 8 {
-		sample := math.Float64frombits(binary.BigEndian.Uint64(payload))
-		derived := compression.step(sample)
-		assignScalarPayload(&compression.artifact, "compression", derived)
+	if err == nil {
+		observeScalarPayload(&compression.artifact, "compression", payload, compression.step)
 	}
 
 	return compression.artifact.Read(p)
@@ -49,15 +42,21 @@ func (compression *Compression) Close() error {
 ObserveSample ingests one raw sample through the compression kernel.
 */
 func (compression *Compression) ObserveSample(sample float64) float64 {
-	return compression.readSampleViaArtifact(sample)
+	return observeScalarSample(&compression.artifact, "compression", sample, compression.step)
 }
 
 /*
 ObserveSamples writes one derived value per sample into out.
 */
 func (compression *Compression) ObserveSamples(samples []float64, out []float64) {
-	for index, sample := range samples {
-		out[index] = compression.ObserveSample(sample)
+	limit := len(samples)
+
+	if len(out) < limit {
+		limit = len(out)
+	}
+
+	for index := 0; index < limit; index++ {
+		out[index] = compression.ObserveSample(samples[index])
 	}
 }
 
@@ -69,26 +68,6 @@ func (compression *Compression) Reset() error {
 	compression.Ready = false
 
 	return nil
-}
-
-func (compression *Compression) readSampleViaArtifact(sample float64) float64 {
-	inbound := datura.Acquire("compression-in", datura.Artifact_Type_json)
-	payload := make([]byte, 8)
-	binary.BigEndian.PutUint64(payload, math.Float64bits(sample))
-	_ = inbound.SetPayload(payload)
-	buf, _ := inbound.Message().Marshal()
-	_, _ = compression.Write(buf)
-	outBuf := make([]byte, 4096)
-	_, _ = compression.Read(outBuf)
-	outbound := datura.Acquire("stage-out", datura.Artifact_Type_json)
-	_, _ = outbound.Write(outBuf)
-	readPayload, _ := outbound.Payload()
-
-	if len(readPayload) != 8 {
-		return 0
-	}
-
-	return math.Float64frombits(binary.BigEndian.Uint64(readPayload))
 }
 
 func (compression *Compression) step(sample float64) float64 {

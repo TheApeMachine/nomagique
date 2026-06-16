@@ -2,6 +2,7 @@ package causal
 
 import (
 	"errors"
+	"sort"
 
 	"gonum.org/v1/gonum/stat"
 )
@@ -27,6 +28,14 @@ type NonLinearModel struct {
 FitNonLinearTable fits a stump ensemble on the configured node table.
 */
 func FitNonLinearTable(nodeTable NodeTable, features []int) (NonLinearModel, bool) {
+	if len(features) == 0 {
+		return NonLinearModel{}, false
+	}
+
+	if err := nodeTable.validateNodes(features...); err != nil {
+		return NonLinearModel{}, false
+	}
+
 	targets, err := nodeTable.column(nodeTable.target)
 
 	if err != nil {
@@ -156,6 +165,7 @@ func featureThresholds(nodeTable NodeTable, features []int) map[int][]float64 {
 			values = append(values, value)
 		}
 
+		sort.Float64s(values)
 		thresholds[featureIndex] = values
 	}
 

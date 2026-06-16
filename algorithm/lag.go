@@ -237,7 +237,11 @@ func (lag *Lag) contemporaneousOutcome(price, corr float64, sampleCount int) Lag
 		decoupledScore = 0
 	}
 
-	strength := math.Max(0, corr)
+	strength := decoupledScore
+
+	if category == 2 {
+		strength = syncScore
+	}
 
 	return LagOutcome{
 		SyncScore:      syncScore,

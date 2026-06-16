@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"math"
 	"math/rand"
+	"runtime"
 	"unsafe"
 )
 
@@ -42,6 +43,12 @@ type BatchSolver struct {
 	arch      []int
 	targetDim int
 	batch     int
+
+	errBuf             [512]byte
+	inputScratch       []float32
+	targetScratch      []float32
+	batchInputScratch  []float32
+	batchTargetScratch []float32
 }
 
 /*
@@ -68,8 +75,12 @@ func NewBatchSolver(arch []int, targetDim, batch int, alpha float64) (*BatchSolv
 		cArch[i] = C.uint32_t(dim)
 	}
 
+	if len(resonanceMetallib) == 0 {
+		return nil, fmt.Errorf("resonance: embedded kernels.metallib is empty")
+	}
+
 	cConfig := cConfigFrom(cfg)
-	errBuf := make([]byte, 512)
+	var errBuf [512]byte
 
 	handle := C.batch_solver_create(
 		&cConfig,
@@ -84,7 +95,7 @@ func NewBatchSolver(arch []int, targetDim, batch int, alpha float64) (*BatchSolv
 	)
 
 	if handle == nil {
-		return nil, fmt.Errorf("resonance: %s", cString(errBuf))
+		return nil, fmt.Errorf("resonance: %s", cString(errBuf[:]))
 	}
 
 	solver := &BatchSolver{
@@ -96,11 +107,9 @@ func NewBatchSolver(arch []int, targetDim, batch int, alpha float64) (*BatchSolv
 	}
 
 	w, r, a, v := InitialWeights(arch, targetDim)
-	for slot := 0; slot < batch; slot++ {
-		if err := solver.SeedSlot(slot, w, r, a, v); err != nil {
-			solver.Close()
-			return nil, err
-		}
+	if err := solver.seedAllSlots(w, r, a, v); err != nil {
+		solver.Close()
+		return nil, err
 	}
 
 	return solver, nil
@@ -145,8 +154,15 @@ as learning.NewResonanceManifold, flat row-major.
 */
 func InitialWeights(arch []int, targetDim int) (w, r, a, v []float32) {
 	rng := rand.New(rand.NewSource(42))
-	numLinks := len(arch) - 1
+	wTotal, rTotal, aTotal, vTotal := weightSizes(arch, targetDim)
+	w = make([]float32, 0, wTotal)
+	r = make([]float32, 0, rTotal)
+	a = make([]float32, 0, aTotal)
+	if vTotal > 0 {
+		v = make([]float32, 0, vTotal)
+	}
 
+	numLinks := len(arch) - 1
 	for layer := 0; layer < numLinks; layer++ {
 		rows, cols := arch[layer], arch[layer+1]
 		scaleW := math.Sqrt(2.0 / float64(rows+cols))
@@ -171,7 +187,22 @@ func InitialWeights(arch []int, targetDim int) (w, r, a, v []float32) {
 			v = append(v, float32(rng.NormFloat64()*scaleV))
 		}
 	}
+
 	return w, r, a, v
+}
+
+func weightSizes(arch []int, targetDim int) (wTotal, rTotal, aTotal, vTotal int) {
+	for layer := 0; layer < len(arch)-1; layer++ {
+		rows, cols := arch[layer], arch[layer+1]
+		wTotal += rows * cols
+		rTotal += cols * rows
+	}
+	topDim := arch[len(arch)-1]
+	aTotal = topDim * topDim
+	if targetDim > 0 {
+		vTotal = targetDim * topDim
+	}
+	return wTotal, rTotal, aTotal, vTotal
 }
 
 /*
@@ -179,11 +210,15 @@ SeedSlot uploads flat row-major weights for one symbol (W,R concatenated across
 links; A the top temporal matrix; V the task head or nil).
 */
 func (s *BatchSolver) SeedSlot(slot int, w, r, a, v []float32) error {
+	if err := s.validateSlot(slot); err != nil {
+		return err
+	}
+
 	wP, wL := floatPtr(w)
 	rP, rL := floatPtr(r)
 	aP, aL := floatPtr(a)
 	vP, vL := floatPtr(v)
-	return s.call(func(errBuf []byte) C.int {
+	err := s.call(func(errBuf []byte) C.int {
 		return C.batch_solver_seed_weights(
 			s.handle, C.uint32_t(slot),
 			wP, C.size_t(wL), rP, C.size_t(rL),
@@ -191,6 +226,31 @@ func (s *BatchSolver) SeedSlot(slot int, w, r, a, v []float32) error {
 			(*C.char)(unsafe.Pointer(&errBuf[0])), C.int(len(errBuf)),
 		)
 	})
+	runtime.KeepAlive(w)
+	runtime.KeepAlive(r)
+	runtime.KeepAlive(a)
+	runtime.KeepAlive(v)
+	return err
+}
+
+func (s *BatchSolver) seedAllSlots(w, r, a, v []float32) error {
+	wP, wL := floatPtr(w)
+	rP, rL := floatPtr(r)
+	aP, aL := floatPtr(a)
+	vP, vL := floatPtr(v)
+	err := s.call(func(errBuf []byte) C.int {
+		return C.batch_solver_seed_all_weights(
+			s.handle,
+			wP, C.size_t(wL), rP, C.size_t(rL),
+			aP, C.size_t(aL), vP, C.size_t(vL),
+			(*C.char)(unsafe.Pointer(&errBuf[0])), C.int(len(errBuf)),
+		)
+	})
+	runtime.KeepAlive(w)
+	runtime.KeepAlive(r)
+	runtime.KeepAlive(a)
+	runtime.KeepAlive(v)
+	return err
 }
 
 func (s *BatchSolver) Close() {
@@ -219,23 +279,31 @@ SetInput stages symbol `slot`'s input (length arch[0]) and optional target
 (length targetDim, or nil) for the next Settle/Learn.
 */
 func (s *BatchSolver) SetInput(slot int, input, target []float64) error {
+	if err := s.validateSlot(slot); err != nil {
+		return err
+	}
 	if len(input) != s.arch[0] {
 		return fmt.Errorf("resonance: input dimension mismatch")
 	}
-	in := toFloat32(input)
+	if len(target) > 0 && (s.targetDim <= 0 || len(target) != s.targetDim) {
+		return fmt.Errorf("resonance: target dimension mismatch")
+	}
+	in := toFloat32Into(s.inputScratch, input)
+	s.inputScratch = in
 
 	var (
-		tPtr *C.float
-		tLen C.uint32_t
+		targetSlice []float32
+		tPtr        *C.float
+		tLen        C.uint32_t
 	)
 	if len(target) == s.targetDim && s.targetDim > 0 {
-		t := toFloat32(target)
-		tPtr = (*C.float)(unsafe.Pointer(&t[0]))
-		tLen = C.uint32_t(len(t))
-		defer func() { _ = t }()
+		targetSlice = toFloat32Into(s.targetScratch, target)
+		s.targetScratch = targetSlice
+		tPtr = (*C.float)(unsafe.Pointer(&targetSlice[0]))
+		tLen = C.uint32_t(len(targetSlice))
 	}
 
-	return s.call(func(errBuf []byte) C.int {
+	err := s.call(func(errBuf []byte) C.int {
 		return C.batch_solver_set_input(
 			s.handle, C.uint32_t(slot),
 			(*C.float)(unsafe.Pointer(&in[0])), C.uint32_t(len(in)),
@@ -243,6 +311,74 @@ func (s *BatchSolver) SetInput(slot int, input, target []float64) error {
 			(*C.char)(unsafe.Pointer(&errBuf[0])), C.int(len(errBuf)),
 		)
 	})
+	runtime.KeepAlive(in)
+	runtime.KeepAlive(targetSlice)
+	return err
+}
+
+/*
+SetInputs stages every slot's input and optional target in one cgo call. Inputs
+and targets are slot-major flat slices: slot0, slot1, ... .
+*/
+func (s *BatchSolver) SetInputs(inputs, targets []float64) error {
+	if s == nil || s.handle == nil {
+		return fmt.Errorf("resonance: solver is not initialized")
+	}
+	if len(inputs) != s.batch*s.arch[0] {
+		return fmt.Errorf("resonance: batch input dimension mismatch")
+	}
+	in := toFloat32Into(s.batchInputScratch, inputs)
+	s.batchInputScratch = in
+
+	var targetSlice []float32
+	if len(targets) > 0 {
+		if s.targetDim <= 0 || len(targets) != s.batch*s.targetDim {
+			return fmt.Errorf("resonance: batch target dimension mismatch")
+		}
+		targetSlice = toFloat32Into(s.batchTargetScratch, targets)
+		s.batchTargetScratch = targetSlice
+	}
+
+	return s.SetInputs32(in, targetSlice)
+}
+
+/*
+SetInputs32 is the zero-conversion variant of SetInputs for callers that already
+maintain float32 staging buffers.
+*/
+func (s *BatchSolver) SetInputs32(inputs, targets []float32) error {
+	if s == nil || s.handle == nil {
+		return fmt.Errorf("resonance: solver is not initialized")
+	}
+	if len(inputs) != s.batch*s.arch[0] {
+		return fmt.Errorf("resonance: batch input dimension mismatch")
+	}
+
+	var (
+		tPtr    *C.float
+		tLen    C.uint32_t
+		tStride C.uint32_t
+	)
+	if len(targets) > 0 {
+		if s.targetDim <= 0 || len(targets) != s.batch*s.targetDim {
+			return fmt.Errorf("resonance: batch target dimension mismatch")
+		}
+		tPtr = (*C.float)(unsafe.Pointer(&targets[0]))
+		tLen = C.uint32_t(len(targets))
+		tStride = C.uint32_t(s.targetDim)
+	}
+
+	err := s.call(func(errBuf []byte) C.int {
+		return C.batch_solver_set_inputs(
+			s.handle,
+			(*C.float)(unsafe.Pointer(&inputs[0])), C.uint32_t(len(inputs)), C.uint32_t(s.arch[0]),
+			tPtr, tLen, tStride,
+			(*C.char)(unsafe.Pointer(&errBuf[0])), C.int(len(errBuf)),
+		)
+	})
+	runtime.KeepAlive(inputs)
+	runtime.KeepAlive(targets)
+	return err
 }
 
 func (s *BatchSolver) Settle(advanceTemporal bool) error {
@@ -332,9 +468,22 @@ func (s *BatchSolver) call(run func(errBuf []byte) C.int) error {
 	if s == nil || s.handle == nil {
 		return fmt.Errorf("resonance: solver is not initialized")
 	}
-	errBuf := make([]byte, 512)
+	errBuf := s.errBuf[:]
+	for i := range errBuf {
+		errBuf[i] = 0
+	}
 	if run(errBuf) != 0 {
 		return fmt.Errorf("resonance: %s", cString(errBuf))
+	}
+	return nil
+}
+
+func (s *BatchSolver) validateSlot(slot int) error {
+	if s == nil || s.handle == nil {
+		return fmt.Errorf("resonance: solver is not initialized")
+	}
+	if slot < 0 || slot >= s.batch {
+		return fmt.Errorf("resonance: slot out of range")
 	}
 	return nil
 }
@@ -346,12 +495,16 @@ func floatPtr(values []float32) (*C.float, int) {
 	return (*C.float)(unsafe.Pointer(&values[0])), len(values)
 }
 
-func toFloat32(values []float64) []float32 {
-	out := make([]float32, len(values))
-	for i, v := range values {
-		out[i] = float32(v)
+func toFloat32Into(dst []float32, values []float64) []float32 {
+	if cap(dst) < len(values) {
+		dst = make([]float32, len(values))
+	} else {
+		dst = dst[:len(values)]
 	}
-	return out
+	for i, v := range values {
+		dst[i] = float32(v)
+	}
+	return dst
 }
 
 func toFloat64(values []float32) []float64 {

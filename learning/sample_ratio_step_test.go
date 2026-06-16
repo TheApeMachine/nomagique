@@ -20,4 +20,3 @@ func TestObserveSampleRatio(testingTB *testing.T) {
 		})
 	})
 }
-

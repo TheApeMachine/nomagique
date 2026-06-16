@@ -1,7 +1,6 @@
 package adaptive
 
 import (
-	"encoding/binary"
 	"math"
 
 	"github.com/theapemachine/datura"
@@ -37,10 +36,8 @@ func (variance *Variance) Write(p []byte) (int, error) {
 func (variance *Variance) Read(p []byte) (int, error) {
 	payload, err := variance.artifact.Payload()
 
-	if err == nil && len(payload) == 8 {
-		sample := math.Float64frombits(binary.BigEndian.Uint64(payload))
-		derived := variance.step(sample)
-		assignScalarPayload(&variance.artifact, "variance", derived)
+	if err == nil {
+		observeScalarPayload(&variance.artifact, "variance", payload, variance.step)
 	}
 
 	return variance.artifact.Read(p)
@@ -54,15 +51,21 @@ func (variance *Variance) Close() error {
 ObserveSample ingests one raw sample through the variance kernel.
 */
 func (variance *Variance) ObserveSample(sample float64) float64 {
-	return variance.readSampleViaArtifact(sample)
+	return observeScalarSample(&variance.artifact, "variance", sample, variance.step)
 }
 
 /*
 ObserveSamples writes one derived value per sample into out.
 */
 func (variance *Variance) ObserveSamples(samples []float64, out []float64) {
-	for index, sample := range samples {
-		out[index] = variance.ObserveSample(sample)
+	limit := len(samples)
+
+	if len(out) < limit {
+		limit = len(out)
+	}
+
+	for index := 0; index < limit; index++ {
+		out[index] = variance.ObserveSample(samples[index])
 	}
 }
 
@@ -79,26 +82,6 @@ func (variance *Variance) Reset() error {
 	variance.Ready = false
 
 	return nil
-}
-
-func (variance *Variance) readSampleViaArtifact(sample float64) float64 {
-	inbound := datura.Acquire("variance-in", datura.Artifact_Type_json)
-	payload := make([]byte, 8)
-	binary.BigEndian.PutUint64(payload, math.Float64bits(sample))
-	_ = inbound.SetPayload(payload)
-	buf, _ := inbound.Message().Marshal()
-	_, _ = variance.Write(buf)
-	outBuf := make([]byte, 4096)
-	_, _ = variance.Read(outBuf)
-	outbound := datura.Acquire("stage-out", datura.Artifact_Type_json)
-	_, _ = outbound.Write(outBuf)
-	readPayload, _ := outbound.Payload()
-
-	if len(readPayload) != 8 {
-		return 0
-	}
-
-	return math.Float64frombits(binary.BigEndian.Uint64(readPayload))
 }
 
 func (variance *Variance) step(sample float64) float64 {

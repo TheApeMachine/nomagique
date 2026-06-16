@@ -1,6 +1,8 @@
 package correlation
 
 import (
+	"math"
+
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"gonum.org/v1/gonum/stat"
@@ -38,7 +40,21 @@ func (pearson *Pearson) Read(p []byte) (int, error) {
 		half := count / 2
 		left := values[:half]
 		right := values[half:]
-		putFloat64Payload(&pearson.artifact, "pearson", stat.Correlation(left, right, weightSamples(pearson.weights)))
+		weights, weightsOK := weightSamplesFor(pearson.weights, half)
+
+		if !weightsOK {
+			putFloat64Payload(&pearson.artifact, "pearson", 0)
+
+			return pearson.artifact.Read(p)
+		}
+
+		correlation := stat.Correlation(left, right, weights)
+
+		if math.IsNaN(correlation) || math.IsInf(correlation, 0) {
+			correlation = 0
+		}
+
+		putFloat64Payload(&pearson.artifact, "pearson", correlation)
 
 		return pearson.artifact.Read(p)
 	}

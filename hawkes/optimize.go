@@ -26,6 +26,7 @@ func (context FitContext) logParamBounds() logParamBounds {
 	betaMax := context.BetaCandidates[len(context.BetaCandidates)-1]
 	selfMax := context.BranchCeiling * selfBranchShareFromContext(context)
 	crossMax := context.BranchCeiling
+	crossMin := crossBranchFloorFromContext(context)
 	minRate := 1 / context.SpanSec
 	maxRate := float64(context.TotalEvents) / context.SpanSec
 
@@ -35,8 +36,8 @@ func (context FitContext) logParamBounds() logParamBounds {
 			decay.LogPositive(minRate),
 			math.Log(betaMin),
 			decay.LogPositive(context.BranchFloor),
-			decay.LogPositive(1e-9),
-			decay.LogPositive(1e-9),
+			decay.LogPositive(crossMin),
+			decay.LogPositive(crossMin),
 			decay.LogPositive(context.BranchFloor),
 		},
 		upper: [bivariateParamCount]float64{
@@ -49,6 +50,14 @@ func (context FitContext) logParamBounds() logParamBounds {
 			math.Log(selfMax),
 		},
 	}
+}
+
+func crossBranchFloorFromContext(context FitContext) float64 {
+	if context.BranchFloor <= 0 {
+		return math.SmallestNonzeroFloat64
+	}
+
+	return context.BranchFloor * math.Sqrt(math.Nextafter(1, 2)-1)
 }
 
 func selfBranchShareFromContext(context FitContext) float64 {

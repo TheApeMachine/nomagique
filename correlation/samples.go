@@ -27,7 +27,13 @@ func float64sFromPayload(payload []byte) []float64 {
 
 	for index := range count {
 		offset := index * 8
-		values[index] = math.Float64frombits(binary.BigEndian.Uint64(payload[offset : offset+8]))
+		value := math.Float64frombits(binary.BigEndian.Uint64(payload[offset : offset+8]))
+
+		if math.IsNaN(value) || math.IsInf(value, 0) {
+			return nil
+		}
+
+		values[index] = value
 	}
 
 	return values
@@ -80,4 +86,22 @@ func weightSamples(weights []float64) []float64 {
 	}
 
 	return weights
+}
+
+func weightSamplesFor(weights []float64, count int) ([]float64, bool) {
+	if len(weights) == 0 {
+		return nil, true
+	}
+
+	if len(weights) != count {
+		return nil, false
+	}
+
+	for _, weight := range weights {
+		if math.IsNaN(weight) || math.IsInf(weight, 0) || weight < 0 {
+			return nil, false
+		}
+	}
+
+	return weights, true
 }

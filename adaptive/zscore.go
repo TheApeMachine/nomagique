@@ -44,11 +44,16 @@ func (surprise *ZScore) Read(p []byte) (int, error) {
 
 		if len(payload) >= 16 {
 			anchor = math.Float64frombits(binary.BigEndian.Uint64(payload[8:16]))
-			hasAnchor = true
+			hasAnchor = finiteScalar(anchor)
 		}
 
-		derived := surprise.step(sample, anchor, hasAnchor)
-		assignScalarPayload(&surprise.artifact, "zscore", derived)
+		if finiteScalar(sample) {
+			derived := surprise.step(sample, anchor, hasAnchor)
+
+			if finiteScalar(derived) {
+				assignScalarPayload(&surprise.artifact, "zscore", derived)
+			}
+		}
 	}
 
 	return surprise.artifact.Read(p)
@@ -62,15 +67,23 @@ func (surprise *ZScore) Close() error {
 ObserveSample ingests one raw sample through the z-score kernel.
 */
 func (surprise *ZScore) ObserveSample(sample float64) float64 {
-	return surprise.readSampleViaArtifact(sample)
+	return observeScalarSample(&surprise.artifact, "zscore", sample, func(value float64) float64 {
+		return surprise.step(value, 0, false)
+	})
 }
 
 /*
 ObserveSamples writes one derived value per sample into out.
 */
 func (surprise *ZScore) ObserveSamples(samples []float64, out []float64) {
-	for index, sample := range samples {
-		out[index] = surprise.ObserveSample(sample)
+	limit := len(samples)
+
+	if len(out) < limit {
+		limit = len(out)
+	}
+
+	for index := 0; index < limit; index++ {
+		out[index] = surprise.ObserveSample(samples[index])
 	}
 }
 
@@ -87,26 +100,6 @@ func (surprise *ZScore) Reset() error {
 	surprise.Ready = false
 
 	return nil
-}
-
-func (surprise *ZScore) readSampleViaArtifact(sample float64) float64 {
-	inbound := datura.Acquire("zscore-in", datura.Artifact_Type_json)
-	payload := make([]byte, 8)
-	binary.BigEndian.PutUint64(payload, math.Float64bits(sample))
-	_ = inbound.SetPayload(payload)
-	buf, _ := inbound.Message().Marshal()
-	_, _ = surprise.Write(buf)
-	outBuf := make([]byte, 4096)
-	_, _ = surprise.Read(outBuf)
-	outbound := datura.Acquire("stage-out", datura.Artifact_Type_json)
-	_, _ = outbound.Write(outBuf)
-	readPayload, _ := outbound.Payload()
-
-	if len(readPayload) != 8 {
-		return 0
-	}
-
-	return math.Float64frombits(binary.BigEndian.Uint64(readPayload))
 }
 
 func (surprise *ZScore) step(sample float64, anchorMean float64, hasAnchorMean bool) float64 {

@@ -1,7 +1,6 @@
 package adaptive
 
 import (
-	"encoding/binary"
 	"math"
 
 	"github.com/theapemachine/datura"
@@ -40,10 +39,8 @@ func (fractional *FracDiff) Write(p []byte) (int, error) {
 func (fractional *FracDiff) Read(p []byte) (int, error) {
 	payload, err := fractional.artifact.Payload()
 
-	if err == nil && len(payload) == 8 {
-		sample := math.Float64frombits(binary.BigEndian.Uint64(payload))
-		derived := fractional.step(sample)
-		assignScalarPayload(&fractional.artifact, "frac-diff", derived)
+	if err == nil {
+		observeScalarPayload(&fractional.artifact, "frac-diff", payload, fractional.step)
 	}
 
 	return fractional.artifact.Read(p)
@@ -57,15 +54,21 @@ func (fractional *FracDiff) Close() error {
 ObserveSample ingests one raw sample through the fractional differencing kernel.
 */
 func (fractional *FracDiff) ObserveSample(sample float64) float64 {
-	return fractional.readSampleViaArtifact(sample)
+	return observeScalarSample(&fractional.artifact, "frac-diff", sample, fractional.step)
 }
 
 /*
 ObserveSamples writes one derived value per sample into out.
 */
 func (fractional *FracDiff) ObserveSamples(samples []float64, out []float64) {
-	for index, sample := range samples {
-		out[index] = fractional.ObserveSample(sample)
+	limit := len(samples)
+
+	if len(out) < limit {
+		limit = len(out)
+	}
+
+	for index := 0; index < limit; index++ {
+		out[index] = fractional.ObserveSample(samples[index])
 	}
 }
 
@@ -85,26 +88,6 @@ func (fractional *FracDiff) Reset() error {
 	fractional.Weights = nil
 
 	return nil
-}
-
-func (fractional *FracDiff) readSampleViaArtifact(sample float64) float64 {
-	inbound := datura.Acquire("fracdiff-in", datura.Artifact_Type_json)
-	payload := make([]byte, 8)
-	binary.BigEndian.PutUint64(payload, math.Float64bits(sample))
-	_ = inbound.SetPayload(payload)
-	buf, _ := inbound.Message().Marshal()
-	_, _ = fractional.Write(buf)
-	outBuf := make([]byte, 4096)
-	_, _ = fractional.Read(outBuf)
-	outbound := datura.Acquire("stage-out", datura.Artifact_Type_json)
-	_, _ = outbound.Write(outBuf)
-	readPayload, _ := outbound.Payload()
-
-	if len(readPayload) != 8 {
-		return 0
-	}
-
-	return math.Float64frombits(binary.BigEndian.Uint64(readPayload))
 }
 
 func (fractional *FracDiff) step(sample float64) float64 {

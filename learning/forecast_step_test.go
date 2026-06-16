@@ -20,4 +20,3 @@ func TestObserveForecast(testingTB *testing.T) {
 		})
 	})
 }
-

@@ -76,7 +76,7 @@ func (filter *RLSFilter) resetCovariance() {
 
 func (filter *RLSFilter) stabilizeCovariance() {
 	size := len(filter.covariance)
-	diagonalFloor := filter.initialVariance * 1e-12
+	diagonalFloor := filter.initialVariance * rlsCovarianceFloorScale()
 
 	for row := 0; row < size; row++ {
 		for col := row + 1; col < size; col++ {
@@ -89,6 +89,10 @@ func (filter *RLSFilter) stabilizeCovariance() {
 			filter.covariance[row][row] = diagonalFloor
 		}
 	}
+}
+
+func rlsCovarianceFloorScale() float64 {
+	return math.Sqrt(math.Nextafter(1, 2) - 1)
 }
 
 /*
@@ -148,6 +152,10 @@ func (filter *RLSFilter) observe(features []float64, target float64) error {
 		return err
 	}
 
+	if !finite(target) {
+		return fmt.Errorf("learning: rls target must be finite")
+	}
+
 	if len(features) != filter.dimension {
 		return fmt.Errorf(
 			"learning: rls expected %d features, got %d",
@@ -159,7 +167,13 @@ func (filter *RLSFilter) observe(features []float64, target float64) error {
 	design := make([]float64, filter.dimension+1)
 	design[0] = 1
 
-	copy(design[1:], features)
+	for index, feature := range features {
+		if !finite(feature) {
+			return fmt.Errorf("learning: rls feature[%d] must be finite", index)
+		}
+
+		design[index+1] = feature
+	}
 
 	size := len(design)
 	px := make([]float64, size)
@@ -215,7 +229,15 @@ func (filter *RLSFilter) Predict(features []float64) (float64, error) {
 	forecast := filter.beta[0]
 
 	for index, feature := range features {
+		if !finite(feature) {
+			return 0, fmt.Errorf("learning: rls feature[%d] must be finite", index)
+		}
+
 		forecast += filter.beta[index+1] * feature
+	}
+
+	if !finite(forecast) {
+		return 0, fmt.Errorf("learning: rls forecast must be finite")
 	}
 
 	return forecast, nil
@@ -241,6 +263,12 @@ func (filter *RLSFilter) SetCoefficients(coefficients []float64) error {
 			len(filter.beta),
 			len(coefficients),
 		)
+	}
+
+	for index, coefficient := range coefficients {
+		if !finite(coefficient) {
+			return fmt.Errorf("learning: rls coefficient[%d] must be finite", index)
+		}
 	}
 
 	copy(filter.beta, coefficients)

@@ -76,7 +76,10 @@ func (estimator *BivariateEstimator) crossLikelihoodValid(
 		Beta:    fit.Beta,
 	}
 
-	return fit.LogLikelihood(stream, horizon)+1e-9 >= restricted.LogLikelihood(stream, horizon)
+	fitLL := fit.LogLikelihood(stream, horizon)
+	restrictedLL := restricted.LogLikelihood(stream, horizon)
+
+	return fitLL+logLikelihoodTolerance(fitLL, restrictedLL) >= restrictedLL
 }
 
 func (estimator *BivariateEstimator) preferCandidate(
@@ -91,11 +94,13 @@ func (estimator *BivariateEstimator) preferCandidate(
 		return true
 	}
 
-	if candidateLL > currentLL+1e-6 {
+	improvementTolerance := logLikelihoodTolerance(currentLL, candidateLL)
+
+	if candidateLL > currentLL+improvementTolerance {
 		return true
 	}
 
-	if math.Abs(candidateLL-currentLL) > 1e-4 {
+	if math.Abs(candidateLL-currentLL) > math.Sqrt(improvementTolerance) {
 		return false
 	}
 
@@ -103,4 +108,22 @@ func (estimator *BivariateEstimator) preferCandidate(
 	crossCandidate := candidate.AlphaXY + candidate.AlphaYX
 
 	return crossCandidate > crossCurrent
+}
+
+func logLikelihoodTolerance(values ...float64) float64 {
+	scale := 1.0
+
+	for _, value := range values {
+		if math.IsNaN(value) || math.IsInf(value, 0) {
+			continue
+		}
+
+		absValue := math.Abs(value)
+
+		if absValue > scale {
+			scale = absValue
+		}
+	}
+
+	return math.Sqrt(math.Nextafter(1, 2)-1) * scale
 }

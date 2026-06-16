@@ -1,6 +1,8 @@
 package correlation
 
 import (
+	"math"
+
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"gonum.org/v1/gonum/stat"
@@ -36,7 +38,21 @@ func (covariance *Covariance) Read(p []byte) (int, error) {
 		half := count / 2
 		left := values[:half]
 		right := values[half:]
-		putFloat64Payload(&covariance.artifact, "covariance", stat.Covariance(left, right, weightSamples(covariance.weights)))
+		weights, weightsOK := weightSamplesFor(covariance.weights, half)
+
+		if !weightsOK {
+			putFloat64Payload(&covariance.artifact, "covariance", 0)
+
+			return covariance.artifact.Read(p)
+		}
+
+		covarianceValue := stat.Covariance(left, right, weights)
+
+		if math.IsNaN(covarianceValue) || math.IsInf(covarianceValue, 0) {
+			covarianceValue = 0
+		}
+
+		putFloat64Payload(&covariance.artifact, "covariance", covarianceValue)
 	}
 
 	if count > 0 && count < 2 {

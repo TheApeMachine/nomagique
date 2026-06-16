@@ -1,7 +1,6 @@
 package adaptive
 
 import (
-	"encoding/binary"
 	"math"
 
 	"github.com/theapemachine/datura"
@@ -34,10 +33,8 @@ func (delta *Delta) Write(p []byte) (int, error) {
 func (delta *Delta) Read(p []byte) (int, error) {
 	payload, err := delta.artifact.Payload()
 
-	if err == nil && len(payload) == 8 {
-		sample := math.Float64frombits(binary.BigEndian.Uint64(payload))
-		derived := delta.step(sample)
-		assignScalarPayload(&delta.artifact, "delta", derived)
+	if err == nil {
+		observeScalarPayload(&delta.artifact, "delta", payload, delta.step)
 	}
 
 	return delta.artifact.Read(p)
@@ -51,15 +48,21 @@ func (delta *Delta) Close() error {
 ObserveSample ingests one raw sample through the delta kernel.
 */
 func (delta *Delta) ObserveSample(sample float64) float64 {
-	return delta.readSampleViaArtifact(sample)
+	return observeScalarSample(&delta.artifact, "delta", sample, delta.step)
 }
 
 /*
 ObserveSamples writes one derived value per sample into out.
 */
 func (delta *Delta) ObserveSamples(samples []float64, out []float64) {
-	for index, sample := range samples {
-		out[index] = delta.ObserveSample(sample)
+	limit := len(samples)
+
+	if len(out) < limit {
+		limit = len(out)
+	}
+
+	for index := 0; index < limit; index++ {
+		out[index] = delta.ObserveSample(samples[index])
 	}
 }
 
@@ -73,26 +76,6 @@ func (delta *Delta) Reset() error {
 	delta.Ready = false
 
 	return nil
-}
-
-func (delta *Delta) readSampleViaArtifact(sample float64) float64 {
-	inbound := datura.Acquire("delta-in", datura.Artifact_Type_json)
-	payload := make([]byte, 8)
-	binary.BigEndian.PutUint64(payload, math.Float64bits(sample))
-	_ = inbound.SetPayload(payload)
-	buf, _ := inbound.Message().Marshal()
-	_, _ = delta.Write(buf)
-	outBuf := make([]byte, 4096)
-	_, _ = delta.Read(outBuf)
-	outbound := datura.Acquire("stage-out", datura.Artifact_Type_json)
-	_, _ = outbound.Write(outBuf)
-	readPayload, _ := outbound.Payload()
-
-	if len(readPayload) != 8 {
-		return 0
-	}
-
-	return math.Float64frombits(binary.BigEndian.Uint64(readPayload))
 }
 
 func (delta *Delta) step(sample float64) float64 {

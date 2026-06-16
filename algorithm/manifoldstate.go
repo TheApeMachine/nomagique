@@ -12,15 +12,15 @@ const manifoldstatePayloadFields = 5
 ManifoldstateOutcome holds herd, shock, drift, and noise scores for the 3D manifold field.
 */
 type ManifoldstateOutcome struct {
-	HerdScore   float64
-	ShockScore  float64
-	DriftScore  float64
-	NoiseScore  float64
-	Strength    float64
-	Category    int
-	Eligible    bool
-	Price       float64
-	Spread      float64
+	HerdScore  float64
+	ShockScore float64
+	DriftScore float64
+	NoiseScore float64
+	Strength   float64
+	Category   int
+	Eligible   bool
+	Price      float64
+	Spread     float64
 }
 
 /*
@@ -98,8 +98,8 @@ func (manifoldstate *Manifoldstate) evaluate(batch []float64) ManifoldstateOutco
 
 	herdScore := coherenceMag2 * guidanceSpeed
 	shockScore := pressureGradNorm
-	driftScore := guidanceSpeed * (1 / math.Max(viscosityProxy, 1e-9))
-	noiseScore := viscosityProxy * (1 - coherenceMag2)
+	driftScore := guidanceSpeed / viscosityProxy
+	noiseScore := viscosityProxy * math.Max(0, 1-coherenceMag2)
 
 	best := noiseScore
 	category := 4

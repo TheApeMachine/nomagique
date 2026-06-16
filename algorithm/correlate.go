@@ -72,11 +72,23 @@ func (correlate *Correlate) Pearson() float64 {
 		return 0
 	}
 
-	return stat.Correlation(
+	weights, weightsOK := weightSamplesFor(correlate.weights, len(correlate.syncLeft))
+
+	if !weightsOK {
+		return 0
+	}
+
+	correlationValue := stat.Correlation(
 		correlate.syncLeft,
 		correlate.syncRight,
-		weightSamples(correlate.weights),
+		weights,
 	)
+
+	if math.IsNaN(correlationValue) || math.IsInf(correlationValue, 0) {
+		return 0
+	}
+
+	return correlationValue
 }
 
 /*

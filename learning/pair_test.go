@@ -8,12 +8,12 @@ import (
 
 func TestParsePredictedActual(testingTB *testing.T) {
 	cases := []struct {
-		name              string
-		primary           float64
-		extras            []float64
-		expectPredicted   float64
-		expectActual      float64
-		expectError       error
+		name            string
+		primary         float64
+		extras          []float64
+		expectPredicted float64
+		expectActual    float64
+		expectError     error
 	}{
 		{
 			name:            "primary plus one extra",

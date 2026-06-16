@@ -1,3 +1,6 @@
+//go:build darwin && cgo
+// +build darwin,cgo
+
 #import "solver_private.h"
 
 /*
@@ -34,11 +37,13 @@ static inline NSUInteger bo(uint32_t scalarOffset) { return (NSUInteger)scalarOf
             xOff:(uint32_t)xOff outBuf:(id<MTLBuffer>)outBuf outOff:(uint32_t)outOff
            xBuf:(id<MTLBuffer>)xBuf rows:(uint32_t)rows cols:(uint32_t)cols {
     NSUInteger N = self.batch;
-    [self enc:enc pipe:self.pGemv
-      buffers:@[matrix, xBuf, outBuf] offsets:NULL
-       consts:@[@[@"u", @(matBase)], @[@"u", @(matOff)], @[@"u", @(xOff)], @[@"u", @(outOff)],
-                @[@"u", @(rows)], @[@"u", @(cols)], @[@"u", @(self.batch)], @[@"u", @(act ? 1u : 0u)]]
-      threads:rows * N];
+    id<MTLBuffer> __unsafe_unretained bufs[] = { matrix, xBuf, outBuf };
+    ResonanceConst consts[] = {
+        ResU(matBase), ResU(matOff), ResU(xOff), ResU(outOff),
+        ResU(rows), ResU(cols), ResU((uint32_t)N), ResU(act ? 1u : 0u),
+    };
+    [self encRaw:enc pipe:self.pGemv buffers:bufs bufferCount:3 offsets:NULL
+          consts:consts constCount:8 threads:rows * N];
 }
 
 - (void)encGemvT:(id<MTLComputeCommandEncoder>)enc
@@ -46,11 +51,13 @@ static inline NSUInteger bo(uint32_t scalarOffset) { return (NSUInteger)scalarOf
             xBuf:(id<MTLBuffer>)xBuf xOff:(uint32_t)xOff
           outBuf:(id<MTLBuffer>)outBuf outOff:(uint32_t)outOff rows:(uint32_t)rows cols:(uint32_t)cols {
     NSUInteger N = self.batch;
-    [self enc:enc pipe:self.pGemvT
-      buffers:@[matrix, xBuf, outBuf] offsets:NULL
-       consts:@[@[@"u", @(matBase)], @[@"u", @(matOff)], @[@"u", @(xOff)], @[@"u", @(outOff)],
-                @[@"u", @(rows)], @[@"u", @(cols)], @[@"u", @(self.batch)]]
-      threads:cols * N];
+    id<MTLBuffer> __unsafe_unretained bufs[] = { matrix, xBuf, outBuf };
+    ResonanceConst consts[] = {
+        ResU(matBase), ResU(matOff), ResU(xOff), ResU(outOff),
+        ResU(rows), ResU(cols), ResU((uint32_t)N),
+    };
+    [self encRaw:enc pipe:self.pGemvT buffers:bufs bufferCount:3 offsets:NULL
+          consts:consts constCount:7 threads:cols * N];
 }
 
 // elementwise over a layer block (dim*N): pipe in {pSub,pMul}. a,b,out are
@@ -60,39 +67,49 @@ static inline NSUInteger bo(uint32_t scalarOffset) { return (NSUInteger)scalarOf
            out:(id<MTLBuffer>)out outOff:(uint32_t)outOff dim:(uint32_t)dim {
     NSUInteger N = self.batch;
     NSUInteger offs[3] = { [self layerByteOff:aOff], [self layerByteOff:bOff], [self layerByteOff:outOff] };
-    [self enc:enc pipe:pipe buffers:@[a, b, out] offsets:offs
-       consts:@[@[@"u", @(dim * (uint32_t)N)]] threads:dim * N];
+    id<MTLBuffer> __unsafe_unretained bufs[] = { a, b, out };
+    ResonanceConst consts[] = { ResU(dim * (uint32_t)N) };
+    [self encRaw:enc pipe:pipe buffers:bufs bufferCount:3 offsets:offs
+          consts:consts constCount:1 threads:dim * N];
 }
 
 - (void)encCopy:(id<MTLComputeCommandEncoder>)enc src:(id<MTLBuffer>)src srcOff:(uint32_t)srcOff
             dst:(id<MTLBuffer>)dst dstOff:(uint32_t)dstOff count:(uint32_t)count {
     NSUInteger offs[2] = { bo(srcOff), bo(dstOff) };
-    [self enc:enc pipe:self.pCopy buffers:@[src, dst] offsets:offs
-       consts:@[@[@"u", @(count)]] threads:count];
+    id<MTLBuffer> __unsafe_unretained bufs[] = { src, dst };
+    ResonanceConst consts[] = { ResU(count) };
+    [self encRaw:enc pipe:self.pCopy buffers:bufs bufferCount:2 offsets:offs
+          consts:consts constCount:1 threads:count];
 }
 
 - (void)encTanhDeriv:(id<MTLComputeCommandEncoder>)enc p:(id<MTLBuffer>)p pOff:(uint32_t)pOff
                  out:(id<MTLBuffer>)out outOff:(uint32_t)outOff dim:(uint32_t)dim {
     NSUInteger N = self.batch;
     NSUInteger offs[2] = { [self layerByteOff:pOff], [self layerByteOff:outOff] };
-    [self enc:enc pipe:self.pTanhDeriv buffers:@[p, out] offsets:offs
-       consts:@[@[@"u", @(dim * (uint32_t)N)]] threads:dim * N];
+    id<MTLBuffer> __unsafe_unretained bufs[] = { p, out };
+    ResonanceConst consts[] = { ResU(dim * (uint32_t)N) };
+    [self encRaw:enc pipe:self.pTanhDeriv buffers:bufs bufferCount:2 offsets:offs
+          consts:consts constCount:1 threads:dim * N];
 }
 
 - (void)encAxpy:(id<MTLComputeCommandEncoder>)enc src:(id<MTLBuffer>)src srcOff:(uint32_t)srcOff
             out:(id<MTLBuffer>)out outOff:(uint32_t)outOff scalar:(float)scalar dim:(uint32_t)dim {
     NSUInteger N = self.batch;
     NSUInteger offs[2] = { [self layerByteOff:srcOff], [self layerByteOff:outOff] };
-    [self enc:enc pipe:self.pAxpy buffers:@[src, out] offsets:offs
-       consts:@[@[@"f", @(scalar)], @[@"u", @(dim * (uint32_t)N)]] threads:dim * N];
+    id<MTLBuffer> __unsafe_unretained bufs[] = { src, out };
+    ResonanceConst consts[] = { ResF(scalar), ResU(dim * (uint32_t)N) };
+    [self encRaw:enc pipe:self.pAxpy buffers:bufs bufferCount:2 offsets:offs
+          consts:consts constCount:2 threads:dim * N];
 }
 
 - (void)encScale:(id<MTLComputeCommandEncoder>)enc src:(id<MTLBuffer>)src srcOff:(uint32_t)srcOff
              out:(id<MTLBuffer>)out outOff:(uint32_t)outOff scalar:(float)scalar dim:(uint32_t)dim {
     NSUInteger N = self.batch;
     NSUInteger offs[2] = { [self layerByteOff:srcOff], [self layerByteOff:outOff] };
-    [self enc:enc pipe:self.pScale buffers:@[src, out] offsets:offs
-       consts:@[@[@"f", @(scalar)], @[@"u", @(dim * (uint32_t)N)]] threads:dim * N];
+    id<MTLBuffer> __unsafe_unretained bufs[] = { src, out };
+    ResonanceConst consts[] = { ResF(scalar), ResU(dim * (uint32_t)N) };
+    [self encRaw:enc pipe:self.pScale buffers:bufs bufferCount:2 offsets:offs
+          consts:consts constCount:2 threads:dim * N];
 }
 
 // topPrior = tanh(A * prevTop) into dst[dstOff layer block]. A is per-symbol.
@@ -153,10 +170,10 @@ static inline NSUInteger bo(uint32_t scalarOffset) { return (NSUInteger)scalarOf
         uint32_t dim = self.arch[l];
         NSUInteger off = [self layerByteOff:self.zOffset[l]];
         NSUInteger offs[3] = { off, off, off };
-        [self enc:enc pipe:self.pMergeClamp
-          buffers:@[self.bufTopDown, self.bufBottomUp, self.bufZ] offsets:offs
-           consts:@[@[@"f", @(mix)], @[@"f", @(clip)], @[@"u", @(dim * (uint32_t)N)]]
-          threads:dim * N];
+        id<MTLBuffer> __unsafe_unretained bufs[] = { self.bufTopDown, self.bufBottomUp, self.bufZ };
+        ResonanceConst consts[] = { ResF(mix), ResF(clip), ResU(dim * (uint32_t)N) };
+        [self encRaw:enc pipe:self.pMergeClamp buffers:bufs bufferCount:3 offsets:offs
+              consts:consts constCount:3 threads:dim * N];
     }
 }
 
@@ -211,15 +228,17 @@ static inline NSUInteger bo(uint32_t scalarOffset) { return (NSUInteger)scalarOf
         NSUInteger off = [self layerByteOff:gOff];
         NSUInteger zoff = [self layerByteOff:self.zOffset[layer]];
         NSUInteger offs[2] = { zoff, off };
-        [self enc:enc pipe:self.pSparsity buffers:@[self.bufZ, self.bufGradCache] offsets:offs
-           consts:@[@[@"f", @(self.config.sparsity)], @[@"u", @(dim * (uint32_t)N)]] threads:dim * N];
+        id<MTLBuffer> __unsafe_unretained bufs[] = { self.bufZ, self.bufGradCache };
+        ResonanceConst consts[] = { ResF(self.config.sparsity), ResU(dim * (uint32_t)N) };
+        [self encRaw:enc pipe:self.pSparsity buffers:bufs bufferCount:2 offsets:offs
+              consts:consts constCount:2 threads:dim * N];
     }
 
     // per-column grad clip on this layer block (reduces over `dim` elements)
-    [self encReduce:enc pipe:self.pGradClipLayer
-            buffers:@[self.bufGradCache] offsets:NULL
-             consts:@[@[@"u", @(gOff)], @[@"u", @(dim)], @[@"u", @(self.batch)], @[@"f", @(self.config.grad_clip)]]
-            columns:self.batch reduceLen:dim];
+    id<MTLBuffer> __unsafe_unretained clipBufs[] = { self.bufGradCache };
+    ResonanceConst clipConsts[] = { ResU(gOff), ResU(dim), ResU(self.batch), ResF(self.config.grad_clip) };
+    [self encReduceRaw:enc pipe:self.pGradClipLayer buffers:clipBufs bufferCount:1 offsets:NULL
+                consts:clipConsts constCount:4 columns:self.batch reduceLen:dim];
 }
 
 // ---- per-column energy into energyBuf -------------------------------------
@@ -232,12 +251,13 @@ static inline NSUInteger bo(uint32_t scalarOffset) { return (NSUInteger)scalarOf
                  out:self.bufTemporalErr outOff:0 dim:top];
     }
     // energy_full's inner loops span all layers; size the reduce to the widest.
-    [self encReduce:enc pipe:self.pEnergy
-            buffers:@[self.bufZ, self.bufErr, self.bufPrecision, self.bufTemporalErr, self.bufTemporalPrec,
-                      self.bufArchDim, self.bufZOff, self.bufPredOff, self.bufDims, self.bufHasPrev, energyBuf]
-            offsets:NULL
-             consts:@[@[@"u", @0]]
-            columns:self.batch reduceLen:self.maxDim];
+    id<MTLBuffer> __unsafe_unretained bufs[] = {
+        self.bufZ, self.bufErr, self.bufPrecision, self.bufTemporalErr, self.bufTemporalPrec,
+        self.bufArchDim, self.bufZOff, self.bufPredOff, self.bufDims, self.bufHasPrev, energyBuf,
+    };
+    ResonanceConst consts[] = { ResU(0u) };
+    [self encReduceRaw:enc pipe:self.pEnergy buffers:bufs bufferCount:11 offsets:NULL
+                consts:consts constCount:1 columns:self.batch reduceLen:self.maxDim];
 }
 
 // ---- settle ---------------------------------------------------------------
@@ -266,23 +286,9 @@ static inline NSUInteger bo(uint32_t scalarOffset) { return (NSUInteger)scalarOf
     }
 
     for (uint32_t step = 0u; step < self.config.max_inference_steps; ++step) {
-        // CB-A: predict (refresh err for grads), gradients, save z.
-        {
-            id<MTLCommandBuffer> cb = [self.queue commandBuffer];
-            id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
-            [self encPredict:enc];
-            for (uint32_t l = 1u; l <= topIndex; ++l) [self encGradLayer:enc layer:l];
-            [self encCopy:enc src:self.bufZ srcOff:0 dst:self.bufZSaved dstOff:0 count:self.zTotal * (uint32_t)N];
-            [enc endEncoding]; [cb commit]; [cb waitUntilCompleted];
-        }
-
-        // Snapshot each column's start energy (energyOld currently holds it:
-        // the initial energy, or the previous step's carried-accept energy).
-        {
-            const float *eOld = (const float *)self.bufEnergyOld.contents;
-            for (uint32_t s = 0u; s < N; ++s) self.startSnapshot[s] = eOld[s];
-        }
-
+        // Snapshot each column's start energy before any proposal mutates
+        // energyOld, then reset per-column line-search step sizes on the host.
+        memcpy(self.startSnapshot, self.bufEnergyOld.contents, N * sizeof(float));
         for (uint32_t s = 0u; s < N; ++s) stepBuf[s] = self.config.lr_state;
 
         for (uint32_t h = 0u; h <= halvings; ++h) {
@@ -290,29 +296,40 @@ static inline NSUInteger bo(uint32_t scalarOffset) { return (NSUInteger)scalarOf
             id<MTLCommandBuffer> cb = [self.queue commandBuffer];
             id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
 
+            if (h == 0u) {
+                // First proposal of the inference step: refresh prediction errors,
+                // compute gradients, and save the starting z in the same command
+                // buffer as the first line-search attempt. This removes one
+                // command-buffer commit/wait from every inference step.
+                [self encPredict:enc];
+                for (uint32_t l = 1u; l <= topIndex; ++l) [self encGradLayer:enc layer:l];
+                [self encCopy:enc src:self.bufZ srcOff:0 dst:self.bufZSaved dstOff:0 count:self.zTotal * (uint32_t)N];
+            }
+
             // z = clamp(saved - step[s]*grad) for active columns, layers>=1.
-            [self enc:enc pipe:self.pApplyState
-              buffers:@[self.bufZ, self.bufZSaved, self.bufGradCache, self.bufLayerRow, self.bufStep, self.bufActive]
-              offsets:NULL
-               consts:@[@[@"u", @(self.zTotal)], @[@"u", @(self.batch)], @[@"f", @(self.config.state_clip)]]
-              threads:self.zTotal * N];
+            id<MTLBuffer> __unsafe_unretained applyBufs[] = {
+                self.bufZ, self.bufZSaved, self.bufGradCache, self.bufLayerRow, self.bufStep, self.bufActive,
+            };
+            ResonanceConst applyConsts[] = { ResU(self.zTotal), ResU(self.batch), ResF(self.config.state_clip) };
+            [self encRaw:enc pipe:self.pApplyState buffers:applyBufs bufferCount:6 offsets:NULL
+                  consts:applyConsts constCount:3 threads:self.zTotal * N];
 
             [self encPredict:enc];
             [self encEnergy:enc into:self.bufEnergyNew];
 
             // decide per column
-            [self enc:enc pipe:self.pDecide
-              buffers:@[self.bufEnergyOld, self.bufEnergyNew, self.bufFlags, self.bufEnergyOld, self.bufStep, self.bufActive]
-              offsets:NULL
-               consts:@[@[@"u", @(monotone)], @[@"u", @(isLast)], @[@"u", @(self.batch)]]
-              threads:N];
+            id<MTLBuffer> __unsafe_unretained decideBufs[] = {
+                self.bufEnergyOld, self.bufEnergyNew, self.bufFlags, self.bufEnergyOld, self.bufStep, self.bufActive,
+            };
+            ResonanceConst decideConsts[] = { ResU(monotone), ResU(isLast), ResU(self.batch) };
+            [self encRaw:enc pipe:self.pDecide buffers:decideBufs bufferCount:6 offsets:NULL
+                  consts:decideConsts constCount:3 threads:N];
 
             // revert columns whose flags==0
-            [self enc:enc pipe:self.pRevert
-              buffers:@[self.bufZ, self.bufZSaved, self.bufLayerRow, self.bufFlags]
-              offsets:NULL
-               consts:@[@[@"u", @(self.zTotal)], @[@"u", @(self.batch)]]
-              threads:self.zTotal * N];
+            id<MTLBuffer> __unsafe_unretained revertBufs[] = { self.bufZ, self.bufZSaved, self.bufLayerRow, self.bufFlags };
+            ResonanceConst revertConsts[] = { ResU(self.zTotal), ResU(self.batch) };
+            [self encRaw:enc pipe:self.pRevert buffers:revertBufs bufferCount:4 offsets:NULL
+                  consts:revertConsts constCount:2 threads:self.zTotal * N];
 
             [enc endEncoding]; [cb commit]; [cb waitUntilCompleted];
 
@@ -400,17 +417,21 @@ static inline NSUInteger bo(uint32_t scalarOffset) { return (NSUInteger)scalarOf
 
     // factor[s] from per-column norms of a (rows x N at off 0) and b (cols x N at bOff block).
     NSUInteger fOffs[3] = { 0, [self layerByteOff:bOff], 0 };
-    [self enc:enc pipe:self.pOuterFactor
-      buffers:@[aBuf, bBuf, self.bufFactor] offsets:fOffs
-       consts:@[@[@"u", @(rows)], @[@"u", @(cols)], @[@"u", @(self.batch)], @[@"f", @(lr)], @[@"f", @(self.config.grad_clip)]]
-      threads:N];
+    id<MTLBuffer> __unsafe_unretained factorBufs[] = { aBuf, bBuf, self.bufFactor };
+    ResonanceConst factorConsts[] = {
+        ResU(rows), ResU(cols), ResU(self.batch), ResF(lr), ResF(self.config.grad_clip),
+    };
+    [self encRaw:enc pipe:self.pOuterFactor buffers:factorBufs bufferCount:3 offsets:fOffs
+          consts:factorConsts constCount:5 threads:N];
 
     NSUInteger aOffs[5] = { 0, 0, [self layerByteOff:bOff], 0, 0 };
-    [self enc:enc pipe:self.pOuterApply
-      buffers:@[matrix, aBuf, bBuf, self.bufFactor, self.bufActive] offsets:aOffs
-       consts:@[@[@"u", @(matBase)], @[@"u", @(matOff)], @[@"u", @(rows)], @[@"u", @(cols)],
-                @[@"u", @(self.batch)], @[@"f", @(decay)], @[@"u", @(useActive ? 1u : 0u)]]
-      threads:rows * cols * N];
+    id<MTLBuffer> __unsafe_unretained applyBufs[] = { matrix, aBuf, bBuf, self.bufFactor, self.bufActive };
+    ResonanceConst applyConsts[] = {
+        ResU(matBase), ResU(matOff), ResU(rows), ResU(cols),
+        ResU(self.batch), ResF(decay), ResU(useActive ? 1u : 0u),
+    };
+    [self encRaw:enc pipe:self.pOuterApply buffers:applyBufs bufferCount:5 offsets:aOffs
+          consts:applyConsts constCount:7 threads:rows * cols * N];
 }
 
 - (void)learn {
@@ -509,20 +530,31 @@ static inline NSUInteger bo(uint32_t scalarOffset) { return (NSUInteger)scalarOf
     NSUInteger N = self.batch;
     NSUInteger off = [self layerByteOff:errOff];
     NSUInteger offs[3] = { off, off, off };
-    [self enc:enc pipe:self.pPrecision buffers:@[err, var, prec] offsets:offs
-       consts:@[@[@"f", @(self.config.precision_beta)], @[@"f", @(self.config.precision_eps)],
-                @[@"f", @(self.config.precision_min)], @[@"f", @(self.config.precision_max)],
-                @[@"u", @(dim * (uint32_t)N)]] threads:dim * N];
+    id<MTLBuffer> __unsafe_unretained bufs[] = { err, var, prec };
+    ResonanceConst consts[] = {
+        ResF(self.config.precision_beta), ResF(self.config.precision_eps),
+        ResF(self.config.precision_min), ResF(self.config.precision_max),
+        ResU(dim * (uint32_t)N),
+    };
+    [self encRaw:enc pipe:self.pPrecision buffers:bufs bufferCount:3 offsets:offs
+          consts:consts constCount:5 threads:dim * N];
 }
 
 // precision update where err is a standalone [dim x N] buffer at offset 0.
 - (void)encPrecisionBuf:(id<MTLComputeCommandEncoder>)enc errBuf:(id<MTLBuffer>)errBuf
                     var:(id<MTLBuffer>)var prec:(id<MTLBuffer>)prec dim:(uint32_t)dim {
     NSUInteger N = self.batch;
-    [self enc:enc pipe:self.pPrecision buffers:@[errBuf, var, prec] offsets:NULL
-       consts:@[@[@"f", @(self.config.precision_beta)], @[@"f", @(self.config.precision_eps)],
-                @[@"f", @(self.config.precision_min)], @[@"f", @(self.config.precision_max)],
-                @[@"u", @(dim * (uint32_t)N)]] threads:dim * N];
+    id<MTLBuffer> __unsafe_unretained bufs[] = { errBuf, var, prec };
+    ResonanceConst consts[] = {
+        ResF(self.config.precision_beta), ResF(self.config.precision_eps),
+        ResF(self.config.precision_min), ResF(self.config.precision_max),
+        ResU(dim * (uint32_t)N),
+    };
+    [self encRaw:enc pipe:self.pPrecision buffers:bufs bufferCount:3 offsets:NULL
+          consts:consts constCount:5 threads:dim * N];
 }
 
 @end
+
+
+

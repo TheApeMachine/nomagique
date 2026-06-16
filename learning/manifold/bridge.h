@@ -60,11 +60,24 @@ void batch_solver_destroy(void *handle);
 /*
 batch_solver_seed_weights uploads weights for symbol `slot`. Flat row-major,
 same per-symbol layout as the single-model layout (W and R concatenated across
-links, A the top matrix, V the task head or NULL). Call once per slot.
+links, A the top matrix, V the task head or NULL).
 */
 int batch_solver_seed_weights(
     void *handle,
     uint32_t slot,
+    const float *w_flat, size_t w_len,
+    const float *r_flat, size_t r_len,
+    const float *a_flat, size_t a_len,
+    const float *v_flat, size_t v_len,
+    char *err_out, int err_cap
+);
+
+/*
+batch_solver_seed_all_weights uploads the same initial weights into every slot.
+This avoids one cgo/Objective-C transition per slot during solver construction.
+*/
+int batch_solver_seed_all_weights(
+    void *handle,
     const float *w_flat, size_t w_len,
     const float *r_flat, size_t r_len,
     const float *a_flat, size_t a_len,
@@ -85,6 +98,18 @@ int batch_solver_set_input(
     uint32_t slot,
     const float *input, uint32_t input_len,
     const float *target, uint32_t target_len,
+    char *err_out, int err_cap
+);
+
+/*
+batch_solver_set_inputs stages a full batch in one host transition. Inputs are
+slot-major with input_stride floats per slot; targets use target_stride when
+present. Passing NULL targets leaves the task buffer unchanged.
+*/
+int batch_solver_set_inputs(
+    void *handle,
+    const float *inputs, uint32_t input_len, uint32_t input_stride,
+    const float *targets, uint32_t target_len, uint32_t target_stride,
     char *err_out, int err_cap
 );
 
@@ -116,3 +141,6 @@ int batch_solver_read_weights(
     float *v_flat, size_t v_len,
     char *err_out, int err_cap
 );
+
+
+

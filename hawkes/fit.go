@@ -198,13 +198,14 @@ func (fit BivariateFit) ExcitationConfidence(
 ClampSubcritical scales excitation parameters to stay below criticalBranch.
 */
 func (fit BivariateFit) ClampSubcritical() BivariateFit {
-	if fit.SpectralRadius <= 0 || fit.SpectralRadius >= criticalBranch {
+	if fit.SpectralRadius <= 0 || fit.SpectralRadius < criticalBranch {
 		return fit
 	}
 
-	factor := criticalBranch / fit.SpectralRadius
+	targetRadius := math.Nextafter(criticalBranch, 0)
+	factor := targetRadius / fit.SpectralRadius
 
-	if factor >= 1 {
+	if factor <= 0 || factor >= 1 {
 		return fit
 	}
 

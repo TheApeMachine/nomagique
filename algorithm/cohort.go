@@ -249,7 +249,6 @@ func classifyCohort(
 
 	lowMagnitudeCorrelation := peerLowMagnitudeCorrelation(
 		correlation,
-		lowerCorrelation,
 		correlationSpread,
 		peerCorrelations,
 	)
@@ -277,19 +276,28 @@ func classifyCohort(
 
 func peerLowMagnitudeCorrelation(
 	correlation float64,
-	lowerCorrelation float64,
 	correlationSpread float64,
 	peerCorrelations []float64,
 ) bool {
-	if correlationSpread > 0 {
-		return math.Abs(correlation) <= lowerCorrelation
-	}
-
 	if len(peerCorrelations) < 3 {
 		return false
 	}
 
-	peerMagnitude := medianAbsoluteValues(peerCorrelations)
+	magnitudes := make([]float64, len(peerCorrelations))
+
+	for index, value := range peerCorrelations {
+		magnitudes[index] = math.Abs(value)
+	}
+
+	sort.Float64s(magnitudes)
+
+	if correlationSpread > 0 {
+		lowerMagnitude := quantileSorted(magnitudes, 0.25)
+
+		return math.Abs(correlation) <= lowerMagnitude
+	}
+
+	peerMagnitude := quantileSorted(magnitudes, 0.5)
 
 	if peerMagnitude <= 0 {
 		return false

@@ -26,6 +26,8 @@ func TestBatchSolverStub_methods(testingTB *testing.T) {
 		Convey("It should error on runtime operations", func() {
 			So(solver.ResetState(false), ShouldNotBeNil)
 			So(solver.SetInput(0, []float64{0.1}, nil), ShouldNotBeNil)
+			So(solver.SetInputs([]float64{0.1}, nil), ShouldNotBeNil)
+			So(solver.SetInputs32([]float32{0.1}, nil), ShouldNotBeNil)
 			So(solver.Settle(true), ShouldNotBeNil)
 			So(solver.Learn(), ShouldNotBeNil)
 

@@ -79,7 +79,7 @@ func (solver *RidgeSolver) Solve(normal [][]float64, vector []float64) ([]float6
 		return out, nil
 	}
 
-	dense := mat.NewDense(size, size, flattenSquare(normal))
+	dense := mat.NewDense(size, size, flattenRegularizedSquare(normal, lambda))
 	var qr mat.QR
 
 	qr.Factorize(dense)
@@ -99,12 +99,16 @@ func (solver *RidgeSolver) Solve(normal [][]float64, vector []float64) ([]float6
 	return out, nil
 }
 
-func flattenSquare(matrix [][]float64) []float64 {
+func flattenRegularizedSquare(matrix [][]float64, lambda float64) []float64 {
 	size := len(matrix)
 	flat := make([]float64, size*size)
 
 	for row := 0; row < size; row++ {
 		copy(flat[row*size:(row+1)*size], matrix[row])
+
+		if row > 0 {
+			flat[row*size+row] += lambda
+		}
 	}
 
 	return flat
@@ -130,7 +134,11 @@ func (solver *RidgeSolver) ridgeLambda(normal [][]float64) float64 {
 		extra = base * ridgeScaleFactor
 	}
 
-	return base*1e-8 + extra
+	return base*machineSqrtEpsilon() + extra
+}
+
+func machineSqrtEpsilon() float64 {
+	return math.Sqrt(math.Nextafter(1, 2) - 1)
 }
 
 func (solver *RidgeSolver) conditionEstimate(normal [][]float64) float64 {

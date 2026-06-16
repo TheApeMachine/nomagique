@@ -1,7 +1,6 @@
 package adaptive
 
 import (
-	"encoding/binary"
 	"math"
 
 	"github.com/theapemachine/datura"
@@ -33,10 +32,8 @@ func (extent *Range) Write(p []byte) (int, error) {
 func (extent *Range) Read(p []byte) (int, error) {
 	payload, err := extent.artifact.Payload()
 
-	if err == nil && len(payload) == 8 {
-		sample := math.Float64frombits(binary.BigEndian.Uint64(payload))
-		derived := extent.step(sample)
-		assignScalarPayload(&extent.artifact, "range", derived)
+	if err == nil {
+		observeScalarPayload(&extent.artifact, "range", payload, extent.step)
 	}
 
 	return extent.artifact.Read(p)
@@ -50,15 +47,21 @@ func (extent *Range) Close() error {
 ObserveSample ingests one raw sample through the range kernel.
 */
 func (extent *Range) ObserveSample(sample float64) float64 {
-	return extent.readSampleViaArtifact(sample)
+	return observeScalarSample(&extent.artifact, "range", sample, extent.step)
 }
 
 /*
 ObserveSamples writes one derived value per sample into out.
 */
 func (extent *Range) ObserveSamples(samples []float64, out []float64) {
-	for index, sample := range samples {
-		out[index] = extent.ObserveSample(sample)
+	limit := len(samples)
+
+	if len(out) < limit {
+		limit = len(out)
+	}
+
+	for index := 0; index < limit; index++ {
+		out[index] = extent.ObserveSample(samples[index])
 	}
 }
 
@@ -71,26 +74,6 @@ func (extent *Range) Reset() error {
 	extent.Ready = false
 
 	return nil
-}
-
-func (extent *Range) readSampleViaArtifact(sample float64) float64 {
-	inbound := datura.Acquire("range-in", datura.Artifact_Type_json)
-	payload := make([]byte, 8)
-	binary.BigEndian.PutUint64(payload, math.Float64bits(sample))
-	_ = inbound.SetPayload(payload)
-	buf, _ := inbound.Message().Marshal()
-	_, _ = extent.Write(buf)
-	outBuf := make([]byte, 4096)
-	_, _ = extent.Read(outBuf)
-	outbound := datura.Acquire("stage-out", datura.Artifact_Type_json)
-	_, _ = outbound.Write(outBuf)
-	readPayload, _ := outbound.Payload()
-
-	if len(readPayload) != 8 {
-		return 0
-	}
-
-	return math.Float64frombits(binary.BigEndian.Uint64(readPayload))
 }
 
 func (extent *Range) step(sample float64) float64 {

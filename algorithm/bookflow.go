@@ -171,7 +171,7 @@ func (bookflow *Bookflow) evaluate(batch []float64) BookflowOutcome {
 	neutralScore := 0.0
 
 	if category == 4 {
-		neutralScore = 1 - math.Abs(weighted)
+		neutralScore = math.Max(0, 1-math.Abs(weighted))
 	}
 
 	strength := math.Abs(weighted)
@@ -271,7 +271,13 @@ func bookflowLoadedPressureScale(tradePressure, weightedThreshold float64) float
 
 	confirmWeight := math.Abs(tradePressure) / (math.Abs(tradePressure) + weightedThreshold)
 
-	return 1 + confirmWeight*tradePressure
+	scale := 1 + confirmWeight*tradePressure
+
+	if scale < 0 {
+		return 0
+	}
+
+	return scale
 }
 
 func bookflowIsSpoofSkew(

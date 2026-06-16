@@ -10,7 +10,7 @@ import (
 func TestHayashiYoshida_Observe(testingTB *testing.T) {
 	Convey("Given proportional async streams", testingTB, func() {
 		hayashi := NewHayashiYoshida(nil, time.Second)
-		got := observeInputs(hayashi, 
+		got := observeInputs(hayashi,
 			0, 100,
 			1, 110,
 			0, 50,
@@ -50,7 +50,7 @@ func TestHayashiYoshida_Observe(testingTB *testing.T) {
 
 	Convey("Given a half that is not time-value pairs", testingTB, func() {
 		hayashi := NewHayashiYoshida(nil, time.Second)
-		got := observeInputs(hayashi, 
+		got := observeInputs(hayashi,
 			0, 100,
 			0, 50, 1, 55,
 		)

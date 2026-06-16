@@ -25,10 +25,13 @@ func NewGraph(parents [][]int) (Graph, error) {
 	}
 
 	nodeCount := len(parents)
+	parentsCopy := make([][]int, nodeCount)
 	children := make([][]int, nodeCount)
 
 	for node := range parents {
-		for _, parent := range parents[node] {
+		parentsCopy[node] = append([]int(nil), parents[node]...)
+
+		for _, parent := range parentsCopy[node] {
 			if parent < 0 || parent >= nodeCount {
 				return Graph{}, fmt.Errorf(
 					"causal: parent %d of node %d outside graph width %d",
@@ -44,11 +47,52 @@ func NewGraph(parents [][]int) (Graph, error) {
 		}
 	}
 
-	return Graph{
+	graph := Graph{
 		nodeCount: nodeCount,
-		parents:   parents,
+		parents:   parentsCopy,
 		children:  children,
-	}, nil
+	}
+
+	if err := graph.ensureAcyclic(); err != nil {
+		return Graph{}, err
+	}
+
+	return graph, nil
+}
+
+func (graph Graph) ensureAcyclic() error {
+	state := make([]int, graph.nodeCount)
+
+	var visit func(int) error
+
+	visit = func(node int) error {
+		switch state[node] {
+		case 1:
+			return fmt.Errorf("causal: graph contains a cycle through node %d", node)
+		case 2:
+			return nil
+		}
+
+		state[node] = 1
+
+		for _, child := range graph.children[node] {
+			if err := visit(child); err != nil {
+				return err
+			}
+		}
+
+		state[node] = 2
+
+		return nil
+	}
+
+	for node := 0; node < graph.nodeCount; node++ {
+		if err := visit(node); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 /*

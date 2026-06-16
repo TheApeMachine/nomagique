@@ -9,7 +9,7 @@ import (
 func TestCovariance_Observe(testingTB *testing.T) {
 	Convey("Given positively coupled streams", testingTB, func() {
 		covariance := NewCovariance(nil)
-		got := observeSplit(covariance, 
+		got := observeSplit(covariance,
 			[]float64{1, 2, 3, 4},
 			[]float64{2, 4, 6, 8},
 		)
@@ -31,7 +31,7 @@ func TestCovariance_Observe(testingTB *testing.T) {
 func TestCovariance_Reset(testingTB *testing.T) {
 	Convey("Given an observed covariance stage", testingTB, func() {
 		covariance := NewCovariance(nil)
-		_ = observeSplit(covariance, 
+		_ = observeSplit(covariance,
 			[]float64{1, 2, 3, 4},
 			[]float64{2, 4, 6, 8},
 		)

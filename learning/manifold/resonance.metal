@@ -496,3 +496,6 @@ kernel void bmerge_clamp(
     float v = mix * td[gid] + (1.0f - mix) * bu[gid];
     out[gid] = clamp(v, -clip, clip);
 }
+
+
+

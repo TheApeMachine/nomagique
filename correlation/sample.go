@@ -1,6 +1,7 @@
 package correlation
 
 import (
+	"math"
 	"time"
 )
 
@@ -23,12 +24,19 @@ func samplesFromScalars(values []float64) ([]Sample, bool) {
 	for index := range samples {
 		pair := index * 2
 		seconds := values[pair]
+		value := values[pair+1]
+
+		if math.IsNaN(seconds) || math.IsInf(seconds, 0) ||
+			math.IsNaN(value) || math.IsInf(value, 0) {
+			return nil, false
+		}
+
 		wholeSeconds := int64(seconds)
 		nanoseconds := int64((seconds - float64(wholeSeconds)) * float64(time.Second))
 
 		samples[index] = Sample{
 			At:    time.Unix(wholeSeconds, nanoseconds),
-			Value: values[pair+1],
+			Value: value,
 		}
 	}
 

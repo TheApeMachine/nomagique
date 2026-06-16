@@ -23,7 +23,7 @@ type TimeElasticMemory struct {
 
 func NewTimeElasticMemory(halflife time.Duration, epsilon float64) *TimeElasticMemory {
 	if epsilon <= 0 {
-		epsilon = 1e-6
+		epsilon = defaultTimeElasticEpsilon()
 	}
 
 	return &TimeElasticMemory{
@@ -34,6 +34,10 @@ func NewTimeElasticMemory(halflife time.Duration, epsilon float64) *TimeElasticM
 
 func (memory *TimeElasticMemory) Initialized() bool {
 	return memory.initialized
+}
+
+func defaultTimeElasticEpsilon() float64 {
+	return math.Sqrt(math.Nextafter(1, 2) - 1)
 }
 
 func (memory *TimeElasticMemory) Update(eventAt time.Time, currentSample float64) (float64, error) {
@@ -102,6 +106,7 @@ time as Unix nanoseconds encoded in float64.
 type TimeElastic struct {
 	artifact *datura.Artifact
 	memory   *TimeElasticMemory
+	value    float64
 }
 
 /*
@@ -124,17 +129,14 @@ func (timeElastic *TimeElastic) Read(p []byte) (int, error) {
 	if err == nil && len(payload) >= 16 {
 		sample := math.Float64frombits(binary.BigEndian.Uint64(payload[:8]))
 		eventAt := time.Unix(0, int64(math.Float64frombits(binary.BigEndian.Uint64(payload[8:16]))))
-		relative, updateErr := timeElastic.memory.Update(eventAt, sample)
-
-		if updateErr == nil {
-			assignScalarPayload(&timeElastic.artifact, "time-elastic", relative)
-		}
+		derived := timeElastic.observe(sample, eventAt)
+		assignScalarPayload(&timeElastic.artifact, "time-elastic", derived)
 
 		return timeElastic.artifact.Read(p)
 	}
 
 	if err == nil && len(payload) >= 8 {
-		assignScalarPayload(&timeElastic.artifact, "time-elastic", 0)
+		assignScalarPayload(&timeElastic.artifact, "time-elastic", timeElastic.value)
 	}
 
 	return timeElastic.artifact.Read(p)
@@ -148,7 +150,10 @@ func (timeElastic *TimeElastic) Close() error {
 ObserveSample ingests sample and event time through the time-elastic kernel.
 */
 func (timeElastic *TimeElastic) ObserveSample(sample float64, eventAt time.Time) float64 {
-	return timeElastic.readSampleViaArtifact(sample, eventAt)
+	derived := timeElastic.observe(sample, eventAt)
+	assignScalarPayload(&timeElastic.artifact, "time-elastic", derived)
+
+	return derived
 }
 
 /*
@@ -156,34 +161,31 @@ Reset clears derived baseline state.
 */
 func (timeElastic *TimeElastic) Reset() error {
 	timeElastic.memory.Reset()
+	timeElastic.value = 0
+	assignScalarPayload(&timeElastic.artifact, "time-elastic", 0)
 
 	return nil
 }
 
-func (timeElastic *TimeElastic) readSampleViaArtifact(sample float64, eventAt time.Time) float64 {
-	inbound := datura.Acquire("time-elastic-in", datura.Artifact_Type_json)
-	payload := make([]byte, 16)
-	binary.BigEndian.PutUint64(payload[:8], math.Float64bits(sample))
-	binary.BigEndian.PutUint64(payload[8:16], math.Float64bits(float64(eventAt.UnixNano())))
-	_ = inbound.SetPayload(payload)
-	buf, _ := inbound.Message().Marshal()
-	_, _ = timeElastic.Write(buf)
-	outBuf := make([]byte, 4096)
-	_, _ = timeElastic.Read(outBuf)
-	outbound := datura.Acquire("stage-out", datura.Artifact_Type_json)
-	_, _ = outbound.Write(outBuf)
-	readPayload, _ := outbound.Payload()
-
-	if len(readPayload) != 8 {
-		return 0
+func (timeElastic *TimeElastic) observe(sample float64, eventAt time.Time) float64 {
+	if !finiteScalar(sample) {
+		return timeElastic.value
 	}
 
-	return math.Float64frombits(binary.BigEndian.Uint64(readPayload))
+	relative, err := timeElastic.memory.Update(eventAt, sample)
+
+	if err != nil || !finiteScalar(relative) {
+		return timeElastic.value
+	}
+
+	timeElastic.value = relative
+
+	return relative
 }
 
 /*
 Value returns the last derived scalar without re-processing the stage.
 */
 func (timeElastic *TimeElastic) Value() float64 {
-	return valueFromArtifact(timeElastic.artifact)
+	return timeElastic.value
 }

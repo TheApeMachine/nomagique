@@ -20,4 +20,3 @@ func TestObserveWeight(testingTB *testing.T) {
 		})
 	})
 }
-

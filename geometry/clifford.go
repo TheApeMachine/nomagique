@@ -35,6 +35,13 @@ func (multivector *Multivector) FromRotation(
 ) {
 	half := angle / 2
 	sinHalf := math.Sin(half)
+	axisNorm := math.Sqrt(axisE12*axisE12 + axisE31*axisE31 + axisE23*axisE23)
+
+	if axisNorm > 0 {
+		axisE12 /= axisNorm
+		axisE31 /= axisNorm
+		axisE23 /= axisNorm
+	}
 
 	*multivector = Multivector{
 		math.Cos(half),
@@ -68,7 +75,18 @@ func (multivector *Multivector) FromTranslation(dx, dy, dz float64) {
 FromComponents loads all eight even-subalgebra components from scalars.
 */
 func (multivector *Multivector) FromComponents(scalars []float64) {
-	for index := range multivectorComponentCount {
+	*multivector = Multivector{}
+	limit := len(scalars)
+
+	if limit > multivectorComponentCount {
+		limit = multivectorComponentCount
+	}
+
+	for index := 0; index < limit; index++ {
+		if math.IsNaN(scalars[index]) || math.IsInf(scalars[index], 0) {
+			continue
+		}
+
 		multivector[index] = scalars[index]
 	}
 }
@@ -132,7 +150,7 @@ func (multivector Multivector) Normalize() Multivector {
 		multivector[MvE31]*multivector[MvE31] +
 		multivector[MvE23]*multivector[MvE23]
 
-	if bulkSq == 0 {
+	if bulkSq <= 0 || math.IsNaN(bulkSq) || math.IsInf(bulkSq, 0) {
 		return multivector
 	}
 

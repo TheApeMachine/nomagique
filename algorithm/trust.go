@@ -12,10 +12,10 @@ import (
 Trust combines forecast scale calibration with adaptive prediction trust.
 */
 type Trust struct {
-	artifact   *datura.Artifact
-	forecast   learning.ForecastState
-	weight     learning.WeightState
-	lastTrust  float64
+	artifact  *datura.Artifact
+	forecast  learning.ForecastState
+	weight    learning.WeightState
+	lastTrust float64
 }
 
 /*

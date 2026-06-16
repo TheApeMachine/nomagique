@@ -91,15 +91,52 @@ an ordered list of @[@"u"|@"f", @(value)] appended after the buffers.
       threads:threads perGroup:0 groups:0];
 }
 
-// one threadgroup per column (N groups, kReduceThreads each).
+/*
+reduceThreadgroupSizeFor returns the threadgroup width for a per-column tree
+reduction over `reduceLen` elements.
+
+Sizing note (measured on M-series, {8,16,8} x 800 columns): shrinking the group
+to the reduction length — e.g. 32 threads for a 16-wide layer — is ~2.4x SLOWER
+than a wider group, despite the "idle" threads. The reason is occupancy, not
+reduction cost: with hundreds of columns each as a tiny 32-wide group, the GPU
+fills its cores poorly, whereas a wider group keeps each core busy and lets the
+scheduler overlap per-column work. The unused threads in the binary tree just
+skip the `for` loop — nearly free — so a healthy occupancy FLOOR wins.
+
+So: floor at kReduceOccupancyFloor (a full set of SIMD groups), grow to the next
+power of two when the reduction is genuinely larger, and clamp to the pipeline's
+queried maxTotalThreadsPerThreadgroup (1024 on Apple Silicon). Always a power of
+two so the tree reduce stays valid; never exceeds the scratch[1024] in-kernel.
+*/
+static const NSUInteger kReduceOccupancyFloor = 256u;
+
+- (NSUInteger)reduceThreadgroupSizeFor:(NSUInteger)reduceLen
+                              pipeline:(id<MTLComputePipelineState>)pipeline {
+    NSUInteger pow2 = 32u;                  // one SIMD group minimum
+    while (pow2 < reduceLen) pow2 <<= 1;    // cover the whole reduction
+    if (pow2 < kReduceOccupancyFloor) pow2 = kReduceOccupancyFloor;
+
+    NSUInteger hwMax = pipeline.maxTotalThreadsPerThreadgroup;
+    if (hwMax == 0) hwMax = 1024u;
+    NSUInteger cap = 1u;                     // largest pow2 <= hwMax
+    while ((cap << 1) <= hwMax) cap <<= 1;
+
+    if (pow2 > cap) pow2 = cap;
+    return pow2;
+}
+
+// One threadgroup per column; width sized to the reduction length, clamped to
+// the pipeline's hardware max.
 - (void)encReduce:(id<MTLComputeCommandEncoder>)encoder
              pipe:(id<MTLComputePipelineState>)pipeline
           buffers:(NSArray<id<MTLBuffer>> *)buffers
           offsets:(const NSUInteger *)offsets
            consts:(NSArray<NSArray *> *)consts
-          columns:(NSUInteger)columns {
+          columns:(NSUInteger)columns
+        reduceLen:(NSUInteger)reduceLen {
+    NSUInteger perGroup = [self reduceThreadgroupSizeFor:reduceLen pipeline:pipeline];
     [self enc:encoder pipe:pipeline buffers:buffers offsets:offsets consts:consts
-      threads:0 perGroup:kReduceThreads groups:columns];
+      threads:0 perGroup:perGroup groups:columns];
 }
 
 - (void)syncDims {

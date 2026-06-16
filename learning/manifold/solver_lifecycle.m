@@ -48,9 +48,11 @@ void resonance_write_error(char *err_out, int err_cap, NSString *message) {
     self.library = [self.device newLibraryWithData:data error:&metalError];
     if (self.library == nil) { if (error) *error = metalError.localizedDescription ?: @"failed to load kernels.metallib"; return nil; }
 
+    // Layout first: the tiled GEMV pipeline specializes on maxDim (cols cap).
+    [self computeLayout:arch];
+
     if (![self buildPipelines:error]) return nil;
 
-    [self computeLayout:arch];
     [self allocateBuffers];
     [self buildLayoutBuffers];
 

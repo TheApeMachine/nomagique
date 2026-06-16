@@ -6,7 +6,9 @@
 #include <math.h>
 #include <string.h>
 
-static const uint32_t kReduceThreads = 256u;
+// Reduction threadgroup sizes are derived per-dispatch from the actual reduction
+// length and the pipeline's queried maxTotalThreadsPerThreadgroup (see
+// -reduceThreadgroupSizeFor:pipeline:), not hardcoded.
 
 /*
 BatchDimsHost mirrors the BatchDims struct in resonance.metal — the per-symbol
@@ -172,7 +174,8 @@ early-stop run per column so symbols converge independently.
           buffers:(NSArray<id<MTLBuffer>> *)buffers
           offsets:(const NSUInteger *)offsets
            consts:(NSArray<NSArray *> *)consts
-          columns:(NSUInteger)columns;
+          columns:(NSUInteger)columns
+        reduceLen:(NSUInteger)reduceLen;
 - (void)syncDims;
 @end
 

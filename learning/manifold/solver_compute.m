@@ -21,6 +21,14 @@ static inline NSUInteger bo(uint32_t scalarOffset) { return (NSUInteger)scalarOf
 // ---- batched primitives (encoded) ----------------------------------------
 
 // out = act(W_l * z[l+1]) into pred/err layout. mat from bufW/bufR/bufA/bufV.
+//
+// Naive element-per-thread, flat grid of rows*N threads. A threadgroup-tiled
+// variant (cache the input column in threadgroup memory, one group per symbol)
+// was tried and MEASURED 3-6x SLOWER across widths {256..2048}: one group per
+// symbol under-occupies the GPU and the strided threadgroup staging costs more
+// than the input re-reads it removes. On this hardware a massive flat grid that
+// the scheduler packs — with input reads already coalesced (adjacent slots are
+// adjacent in memory) — beats the clever scheme. Kept naive deliberately.
 - (void)encGemv:(id<MTLComputeCommandEncoder>)enc act:(BOOL)act
          matrix:(id<MTLBuffer>)matrix matBase:(uint32_t)matBase matOff:(uint32_t)matOff
             xOff:(uint32_t)xOff outBuf:(id<MTLBuffer>)outBuf outOff:(uint32_t)outOff
@@ -207,11 +215,11 @@ static inline NSUInteger bo(uint32_t scalarOffset) { return (NSUInteger)scalarOf
            consts:@[@[@"f", @(self.config.sparsity)], @[@"u", @(dim * (uint32_t)N)]] threads:dim * N];
     }
 
-    // per-column grad clip on this layer block
+    // per-column grad clip on this layer block (reduces over `dim` elements)
     [self encReduce:enc pipe:self.pGradClipLayer
             buffers:@[self.bufGradCache] offsets:NULL
              consts:@[@[@"u", @(gOff)], @[@"u", @(dim)], @[@"u", @(self.batch)], @[@"f", @(self.config.grad_clip)]]
-            columns:self.batch];
+            columns:self.batch reduceLen:dim];
 }
 
 // ---- per-column energy into energyBuf -------------------------------------
@@ -223,12 +231,13 @@ static inline NSUInteger bo(uint32_t scalarOffset) { return (NSUInteger)scalarOf
         [self encBin:enc pipe:self.pSub a:self.bufZ aOff:self.zOffset[topIndex] b:self.bufTmpA bOff:0
                  out:self.bufTemporalErr outOff:0 dim:top];
     }
+    // energy_full's inner loops span all layers; size the reduce to the widest.
     [self encReduce:enc pipe:self.pEnergy
             buffers:@[self.bufZ, self.bufErr, self.bufPrecision, self.bufTemporalErr, self.bufTemporalPrec,
                       self.bufArchDim, self.bufZOff, self.bufPredOff, self.bufDims, self.bufHasPrev, energyBuf]
             offsets:NULL
              consts:@[@[@"u", @0]]
-            columns:self.batch];
+            columns:self.batch reduceLen:self.maxDim];
 }
 
 // ---- settle ---------------------------------------------------------------

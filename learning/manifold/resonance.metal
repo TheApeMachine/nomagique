@@ -88,6 +88,12 @@ kernel void bgemv(
                       rows, cols, n, act != 0u, gid);
 }
 
+// NOTE: a threadgroup-tiled bgemv (cache input column in threadgroup memory, one
+// group per symbol) was implemented and benchmarked — it ran 3-6x SLOWER across
+// widths because one group/symbol under-occupies the GPU and the strided staging
+// outweighs the saved input re-reads. The naive flat-grid kernel above wins on
+// this hardware; the tiled variant was removed rather than kept as a dead path.
+
 // out[(c,s)] = sum_r W_s[r,c] * x[(r,s)]   (transpose). grid = cols * N.
 kernel void bgemv_t(
     device const float* matrix [[buffer(0)]],
@@ -171,7 +177,11 @@ kernel void benergy(
     uint tid [[thread_position_in_threadgroup]],
     uint tcount [[threads_per_threadgroup]]
 ) {
-    threadgroup float scratch[256];
+    // Sized to the Apple Silicon hardware ceiling (1024 = 32 SIMD groups). The
+    // host launches a power-of-two threadgroup no larger than the reduction
+    // length (clamped to the pipeline's maxTotalThreadsPerThreadgroup), so this
+    // is always large enough and the binary-tree reduce below stays valid.
+    threadgroup float scratch[1024];
     uint n = d.n;
     float local = 0.0f;
 
@@ -235,7 +245,7 @@ kernel void bgrad_clip_layer(
     uint tid [[thread_position_in_threadgroup]],
     uint tcount [[threads_per_threadgroup]]
 ) {
-    threadgroup float scratch[256];
+    threadgroup float scratch[1024];   // hardware ceiling; see benergy note
     threadgroup float factor;
     uint base = layer_off * n;
     float local = 0.0f;

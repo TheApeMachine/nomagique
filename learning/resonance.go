@@ -593,6 +593,56 @@ func (rm *ResonanceManifold) LatentState() []float64 {
 	return output
 }
 
+/*
+ResonanceLayerWire exports one settled layer for UI x-ray visualization.
+*/
+type ResonanceLayerWire struct {
+	State      []float64
+	Prediction []float64
+	ErrorNorm  float64
+}
+
+/*
+WireSnapshot exports settled states, top-down predictions, and layer errors.
+*/
+func (rm *ResonanceManifold) WireSnapshot() (
+	layers []ResonanceLayerWire,
+	surprise float64,
+	energy float64,
+) {
+	predictions, layerErrors := rm.predictAdjacentLayers()
+	layers = make([]ResonanceLayerWire, len(rm.z))
+
+	for layerIndex := range rm.z {
+		stateMatrix := rm.z[layerIndex]
+		rowCount, _ := stateMatrix.Dims()
+		state := make([]float64, rowCount)
+		prediction := make([]float64, rowCount)
+
+		for rowIndex := 0; rowIndex < rowCount; rowIndex++ {
+			state[rowIndex] = stateMatrix.At(rowIndex, 0)
+
+			if layerIndex < len(predictions) {
+				prediction[rowIndex] = predictions[layerIndex].At(rowIndex, 0)
+			}
+		}
+
+		errorNorm := 0.0
+
+		if layerIndex < len(layerErrors) {
+			errorNorm = mat.Norm(layerErrors[layerIndex], 2)
+		}
+
+		layers[layerIndex] = ResonanceLayerWire{
+			State:      state,
+			Prediction: prediction,
+			ErrorNorm:  errorNorm,
+		}
+	}
+
+	return layers, rm.ReconstructionError(), rm.Energy()
+}
+
 func (rm *ResonanceManifold) advanceTemporalState() {
 	topIndex := len(rm.z) - 1
 

@@ -25,48 +25,58 @@ import (
 var resonanceMetallib []byte
 
 /*
-Solver runs the predictive-coding resonance manifold on Metal.
+BatchSolver settles N independent predictive-coding resonance manifolds in
+lockstep on Metal — one per symbol, each with its own weights. This is the shape
+in which the GPU wins: a single symbol's settle is a sequential dependency chain
+that can't fill the device, but N symbols advance together so every kernel does
+N x the work per GPU roundtrip, amortizing command-buffer latency across the
+whole batch.
 
-It mirrors learning.ResonanceManifold: a generative/recognition weight stack
-settled by free-energy minimization, with adaptive precision and a temporal
-prior on the top latent. Weights are initialized with the same seeded RNG as the
-gonum reference so the two can be cross-checked within float32 tolerance.
+Each symbol is seeded, fed an input (and optional target) per tick, settled, and
+optionally learned — all in batch. Weights/latents/energy are read back per slot.
+The per-symbol math is identical to learning.ResonanceManifold (parity-checked).
 */
-type Solver struct {
+type BatchSolver struct {
 	handle    unsafe.Pointer
 	cfg       Config
 	arch      []int
 	targetDim int
+	batch     int
 }
 
 /*
-NewSolver builds a Metal resonance manifold for the given architecture and
-supervised target dimension (targetDim == 0 disables the task head). alpha is the
-system-wide learning pace fed to AdaptiveConfig.
+NewBatchSolver builds a batched manifold for `batch` symbols over the given
+architecture and supervised target dimension (0 disables the task head). alpha is
+the shared learning pace. Every slot is seeded with the reference seeded-RNG
+initialization; call SeedSlot to override a slot with specific weights.
 */
-func NewSolver(arch []int, targetDim int, alpha float64) (*Solver, error) {
+func NewBatchSolver(arch []int, targetDim, batch int, alpha float64) (*BatchSolver, error) {
 	if len(arch) < 2 {
 		return nil, fmt.Errorf("resonance: architecture must contain at least input and one latent layer")
+	}
+	if batch <= 0 {
+		return nil, fmt.Errorf("resonance: batch size must be positive")
 	}
 
 	cfg := AdaptiveConfig(alpha, arch)
 
 	cArch := make([]C.uint32_t, len(arch))
-	for index, dim := range arch {
+	for i, dim := range arch {
 		if dim <= 0 {
-			return nil, fmt.Errorf("resonance: layer %d has non-positive dimension %d", index, dim)
+			return nil, fmt.Errorf("resonance: layer %d has non-positive dimension %d", i, dim)
 		}
-		cArch[index] = C.uint32_t(dim)
+		cArch[i] = C.uint32_t(dim)
 	}
 
 	cConfig := cConfigFrom(cfg)
 	errBuf := make([]byte, 512)
 
-	handle := C.manifold_solver_create(
+	handle := C.batch_solver_create(
 		&cConfig,
 		(*C.uint32_t)(unsafe.Pointer(&cArch[0])),
 		C.uint32_t(len(arch)),
 		C.uint32_t(targetDim),
+		C.uint32_t(batch),
 		unsafe.Pointer(&resonanceMetallib[0]),
 		C.size_t(len(resonanceMetallib)),
 		(*C.char)(unsafe.Pointer(&errBuf[0])),
@@ -77,29 +87,32 @@ func NewSolver(arch []int, targetDim int, alpha float64) (*Solver, error) {
 		return nil, fmt.Errorf("resonance: %s", cString(errBuf))
 	}
 
-	solver := &Solver{
+	solver := &BatchSolver{
 		handle:    handle,
 		cfg:       cfg,
 		arch:      append([]int(nil), arch...),
 		targetDim: targetDim,
+		batch:     batch,
 	}
 
-	if err := solver.seedInitialWeights(); err != nil {
-		solver.Close()
-		return nil, err
+	w, r, a, v := InitialWeights(arch, targetDim)
+	for slot := 0; slot < batch; slot++ {
+		if err := solver.SeedSlot(slot, w, r, a, v); err != nil {
+			solver.Close()
+			return nil, err
+		}
 	}
 
 	return solver, nil
 }
 
 func cConfigFrom(cfg Config) C.ResonanceConfig {
-	boolU32 := func(value bool) C.uint32_t {
-		if value {
+	boolU32 := func(b bool) C.uint32_t {
+		if b {
 			return 1
 		}
 		return 0
 	}
-
 	return C.ResonanceConfig{
 		max_inference_steps:  C.uint32_t(cfg.MaxInferenceSteps),
 		min_inference_steps:  C.uint32_t(cfg.MinInferenceSteps),
@@ -127,10 +140,8 @@ func cConfigFrom(cfg Config) C.ResonanceConfig {
 }
 
 /*
-InitialWeights returns the He/Xavier-initialized weight matrices, drawn from the
-same seeded RNG and in the same order as the gonum learning.NewResonanceManifold
-constructor. They are returned flat (row-major) so callers and parity tests can
-compare against the reference directly.
+InitialWeights returns He/Xavier weights from the same seeded RNG and draw order
+as learning.NewResonanceManifold, flat row-major.
 */
 func InitialWeights(arch []int, targetDim int) (w, r, a, v []float32) {
 	rng := rand.New(rand.NewSource(42))
@@ -142,7 +153,6 @@ func InitialWeights(arch []int, targetDim int) (w, r, a, v []float32) {
 		for i := 0; i < rows*cols; i++ {
 			w = append(w, float32(rng.NormFloat64()*scaleW))
 		}
-
 		scaleR := math.Sqrt(2.0 / float64(rows+cols))
 		for i := 0; i < cols*rows; i++ {
 			r = append(r, float32(rng.NormFloat64()*scaleR))
@@ -161,216 +171,171 @@ func InitialWeights(arch []int, targetDim int) (w, r, a, v []float32) {
 			v = append(v, float32(rng.NormFloat64()*scaleV))
 		}
 	}
-
 	return w, r, a, v
 }
 
-func (solver *Solver) seedInitialWeights() error {
-	w, r, a, v := InitialWeights(solver.arch, solver.targetDim)
-	return solver.SeedWeights(w, r, a, v)
-}
-
 /*
-SeedWeights uploads flat row-major weight matrices (W and R concatenated across
-links, A the top temporal matrix, V the task head or nil). Used both for the
-default initialization and to mirror an external reference for parity tests.
+SeedSlot uploads flat row-major weights for one symbol (W,R concatenated across
+links; A the top temporal matrix; V the task head or nil).
 */
-func (solver *Solver) SeedWeights(w, r, a, v []float32) error {
-	wPtr, wLen := floatPtr(w)
-	rPtr, rLen := floatPtr(r)
-	aPtr, aLen := floatPtr(a)
-	vPtr, vLen := floatPtr(v)
-
-	return solver.call(func(errBuf []byte) C.int {
-		return C.manifold_solver_seed_weights(
-			solver.handle,
-			wPtr, C.size_t(wLen),
-			rPtr, C.size_t(rLen),
-			aPtr, C.size_t(aLen),
-			vPtr, C.size_t(vLen),
-			(*C.char)(unsafe.Pointer(&errBuf[0])),
-			C.int(len(errBuf)),
+func (s *BatchSolver) SeedSlot(slot int, w, r, a, v []float32) error {
+	wP, wL := floatPtr(w)
+	rP, rL := floatPtr(r)
+	aP, aL := floatPtr(a)
+	vP, vL := floatPtr(v)
+	return s.call(func(errBuf []byte) C.int {
+		return C.batch_solver_seed_weights(
+			s.handle, C.uint32_t(slot),
+			wP, C.size_t(wL), rP, C.size_t(rL),
+			aP, C.size_t(aL), vP, C.size_t(vL),
+			(*C.char)(unsafe.Pointer(&errBuf[0])), C.int(len(errBuf)),
 		)
 	})
 }
 
-func (solver *Solver) Close() {
-	if solver == nil || solver.handle == nil {
+func (s *BatchSolver) Close() {
+	if s == nil || s.handle == nil {
 		return
 	}
-
-	C.manifold_solver_destroy(solver.handle)
-	solver.handle = nil
+	C.batch_solver_destroy(s.handle)
+	s.handle = nil
 }
 
-func (solver *Solver) ResetState(resetPrecision bool) error {
+func (s *BatchSolver) Batch() int { return s.batch }
+
+func (s *BatchSolver) ResetState(resetPrecision bool) error {
 	reset := C.uint32_t(0)
 	if resetPrecision {
 		reset = 1
 	}
-
-	return solver.call(func(errBuf []byte) C.int {
-		return C.manifold_solver_reset_state(
-			solver.handle,
-			reset,
-			(*C.char)(unsafe.Pointer(&errBuf[0])),
-			C.int(len(errBuf)),
-		)
+	return s.call(func(errBuf []byte) C.int {
+		return C.batch_solver_reset_state(s.handle, reset,
+			(*C.char)(unsafe.Pointer(&errBuf[0])), C.int(len(errBuf)))
 	})
 }
 
 /*
-Settle performs generative inference for one input without supervised
-contamination, optionally advancing the temporal prior.
+SetInput stages symbol `slot`'s input (length arch[0]) and optional target
+(length targetDim, or nil) for the next Settle/Learn.
 */
-func (solver *Solver) Settle(input []float64, advanceTemporal bool) error {
-	if len(input) != solver.arch[0] {
+func (s *BatchSolver) SetInput(slot int, input, target []float64) error {
+	if len(input) != s.arch[0] {
 		return fmt.Errorf("resonance: input dimension mismatch")
 	}
-
 	in := toFloat32(input)
+
+	var (
+		tPtr *C.float
+		tLen C.uint32_t
+	)
+	if len(target) == s.targetDim && s.targetDim > 0 {
+		t := toFloat32(target)
+		tPtr = (*C.float)(unsafe.Pointer(&t[0]))
+		tLen = C.uint32_t(len(t))
+		defer func() { _ = t }()
+	}
+
+	return s.call(func(errBuf []byte) C.int {
+		return C.batch_solver_set_input(
+			s.handle, C.uint32_t(slot),
+			(*C.float)(unsafe.Pointer(&in[0])), C.uint32_t(len(in)),
+			tPtr, tLen,
+			(*C.char)(unsafe.Pointer(&errBuf[0])), C.int(len(errBuf)),
+		)
+	})
+}
+
+func (s *BatchSolver) Settle(advanceTemporal bool) error {
 	advance := C.uint32_t(0)
 	if advanceTemporal {
 		advance = 1
 	}
-
-	return solver.call(func(errBuf []byte) C.int {
-		return C.manifold_solver_settle(
-			solver.handle,
-			(*C.float)(unsafe.Pointer(&in[0])),
-			C.uint32_t(len(in)),
-			advance,
-			(*C.char)(unsafe.Pointer(&errBuf[0])),
-			C.int(len(errBuf)),
-		)
+	return s.call(func(errBuf []byte) C.int {
+		return C.batch_solver_settle(s.handle, advance,
+			(*C.char)(unsafe.Pointer(&errBuf[0])), C.int(len(errBuf)))
 	})
 }
 
-/*
-Learn applies weight updates for the current settled state. Pass nil (or a
-mismatched length) to skip the supervised task head.
-*/
-func (solver *Solver) Learn(target []float64) error {
-	var t []float32
-	if len(target) == solver.targetDim && solver.targetDim > 0 {
-		t = toFloat32(target)
-	}
-
-	ptr, n := floatPtr(t)
-
-	return solver.call(func(errBuf []byte) C.int {
-		return C.manifold_solver_learn(
-			solver.handle,
-			ptr,
-			C.uint32_t(n),
-			(*C.char)(unsafe.Pointer(&errBuf[0])),
-			C.int(len(errBuf)),
-		)
+func (s *BatchSolver) Learn() error {
+	return s.call(func(errBuf []byte) C.int {
+		return C.batch_solver_learn(s.handle,
+			(*C.char)(unsafe.Pointer(&errBuf[0])), C.int(len(errBuf)))
 	})
 }
 
-func (solver *Solver) Energy() (float64, error) {
-	var out C.float
-	err := solver.call(func(errBuf []byte) C.int {
-		return C.manifold_solver_energy(
-			solver.handle, &out,
+func (s *BatchSolver) LatentState(slot int) ([]float64, error) {
+	topDim := s.arch[len(s.arch)-1]
+	buf := make([]float32, topDim)
+	err := s.call(func(errBuf []byte) C.int {
+		return C.batch_solver_read_latent(
+			s.handle, C.uint32_t(slot),
+			(*C.float)(unsafe.Pointer(&buf[0])), C.uint32_t(topDim),
 			(*C.char)(unsafe.Pointer(&errBuf[0])), C.int(len(errBuf)),
 		)
 	})
-	return float64(out), err
-}
-
-func (solver *Solver) ReconstructionError() (float64, error) {
-	var out C.float
-	err := solver.call(func(errBuf []byte) C.int {
-		return C.manifold_solver_reconstruction_error(
-			solver.handle, &out,
-			(*C.char)(unsafe.Pointer(&errBuf[0])), C.int(len(errBuf)),
-		)
-	})
-	return float64(out), err
-}
-
-func (solver *Solver) LatentState() ([]float64, error) {
-	topDim := solver.arch[len(solver.arch)-1]
-	buffer := make([]float32, topDim)
-
-	err := solver.call(func(errBuf []byte) C.int {
-		return C.manifold_solver_read_latent(
-			solver.handle,
-			(*C.float)(unsafe.Pointer(&buffer[0])),
-			C.uint32_t(topDim),
-			(*C.char)(unsafe.Pointer(&errBuf[0])),
-			C.int(len(errBuf)),
-		)
-	})
-
 	if err != nil {
 		return nil, err
 	}
-
-	return toFloat64(buffer), nil
+	return toFloat64(buf), nil
 }
 
-/*
-Weights reads back the current weight matrices using the same flat layout as
-SeedWeights.
-*/
-func (solver *Solver) Weights() (w, r, a, v []float32, err error) {
-	numLinks := len(solver.arch) - 1
-	wTotal, rTotal := 0, 0
-	for layer := 0; layer < numLinks; layer++ {
-		wTotal += solver.arch[layer] * solver.arch[layer+1]
-		rTotal += solver.arch[layer+1] * solver.arch[layer]
-	}
-	topDim := solver.arch[len(solver.arch)-1]
-	aTotal := topDim * topDim
-	vTotal := 0
-	if solver.targetDim > 0 {
-		vTotal = solver.targetDim * topDim
-	}
+func (s *BatchSolver) Energy(slot int) (float64, error) {
+	var out C.float
+	err := s.call(func(errBuf []byte) C.int {
+		return C.batch_solver_read_energy(s.handle, C.uint32_t(slot), &out,
+			(*C.char)(unsafe.Pointer(&errBuf[0])), C.int(len(errBuf)))
+	})
+	return float64(out), err
+}
 
+func (s *BatchSolver) ReconstructionError(slot int) (float64, error) {
+	var out C.float
+	err := s.call(func(errBuf []byte) C.int {
+		return C.batch_solver_read_reconstruction(s.handle, C.uint32_t(slot), &out,
+			(*C.char)(unsafe.Pointer(&errBuf[0])), C.int(len(errBuf)))
+	})
+	return float64(out), err
+}
+
+func (s *BatchSolver) Weights(slot int) (w, r, a, v []float32, err error) {
+	numLinks := len(s.arch) - 1
+	wTotal, rTotal := 0, 0
+	for l := 0; l < numLinks; l++ {
+		wTotal += s.arch[l] * s.arch[l+1]
+		rTotal += s.arch[l+1] * s.arch[l]
+	}
+	top := s.arch[len(s.arch)-1]
 	w = make([]float32, wTotal)
 	r = make([]float32, rTotal)
-	a = make([]float32, aTotal)
-	if vTotal > 0 {
-		v = make([]float32, vTotal)
+	a = make([]float32, top*top)
+	if s.targetDim > 0 {
+		v = make([]float32, s.targetDim*top)
 	}
-
-	wPtr, wLen := floatPtr(w)
-	rPtr, rLen := floatPtr(r)
-	aPtr, aLen := floatPtr(a)
-	vPtr, vLen := floatPtr(v)
-
-	callErr := solver.call(func(errBuf []byte) C.int {
-		return C.manifold_solver_read_weights(
-			solver.handle,
-			wPtr, C.size_t(wLen),
-			rPtr, C.size_t(rLen),
-			aPtr, C.size_t(aLen),
-			vPtr, C.size_t(vLen),
-			(*C.char)(unsafe.Pointer(&errBuf[0])),
-			C.int(len(errBuf)),
+	wP, wL := floatPtr(w)
+	rP, rL := floatPtr(r)
+	aP, aL := floatPtr(a)
+	vP, vL := floatPtr(v)
+	callErr := s.call(func(errBuf []byte) C.int {
+		return C.batch_solver_read_weights(
+			s.handle, C.uint32_t(slot),
+			wP, C.size_t(wL), rP, C.size_t(rL), aP, C.size_t(aL), vP, C.size_t(vL),
+			(*C.char)(unsafe.Pointer(&errBuf[0])), C.int(len(errBuf)),
 		)
 	})
-
 	if callErr != nil {
 		return nil, nil, nil, nil, callErr
 	}
-
 	return w, r, a, v, nil
 }
 
-func (solver *Solver) call(run func(errBuf []byte) C.int) error {
-	if solver == nil || solver.handle == nil {
+func (s *BatchSolver) call(run func(errBuf []byte) C.int) error {
+	if s == nil || s.handle == nil {
 		return fmt.Errorf("resonance: solver is not initialized")
 	}
-
 	errBuf := make([]byte, 512)
 	if run(errBuf) != 0 {
 		return fmt.Errorf("resonance: %s", cString(errBuf))
 	}
-
 	return nil
 }
 
@@ -383,24 +348,24 @@ func floatPtr(values []float32) (*C.float, int) {
 
 func toFloat32(values []float64) []float32 {
 	out := make([]float32, len(values))
-	for index, value := range values {
-		out[index] = float32(value)
+	for i, v := range values {
+		out[i] = float32(v)
 	}
 	return out
 }
 
 func toFloat64(values []float32) []float64 {
 	out := make([]float64, len(values))
-	for index, value := range values {
-		out[index] = float64(value)
+	for i, v := range values {
+		out[i] = float64(v)
 	}
 	return out
 }
 
 func cString(buffer []byte) string {
-	for index, value := range buffer {
-		if value == 0 {
-			return string(buffer[:index])
+	for i, v := range buffer {
+		if v == 0 {
+			return string(buffer[:i])
 		}
 	}
 	return string(buffer)

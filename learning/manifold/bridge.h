@@ -5,7 +5,9 @@
 
 /*
 ResonanceConfig is the float32 mirror of learning.ResonanceConfig handed to the
-GPU solver at creation time.
+batched GPU solver at creation time. Every symbol in the batch shares the same
+hyperparameters (they derive from alpha + architecture), but each symbol carries
+its OWN weights and settles independently per column.
 */
 typedef struct ResonanceConfig {
     uint32_t max_inference_steps;
@@ -37,106 +39,80 @@ typedef struct ResonanceConfig {
 } ResonanceConfig;
 
 /*
-manifold_solver_create builds the Metal resonance manifold.
-
-arch points to layer dimensions (length arch_len, at least 2). target_dim may be
-0 to disable the supervised task head. The weight buffers (W, R, A, V) are
-optional seeds laid out flat; pass NULL to let the GPU initialize them with the
-same He/Xavier scheme the gonum reference uses (seeded RNG handled host-side and
-fed in via the seed buffers in practice). Returns NULL on error.
+batch_solver_create builds a Metal resonance manifold that settles `batch`
+symbols in lockstep, each with its own weights. arch (length arch_len >= 2) and
+target_dim are shared. Returns NULL on error (message in err_out).
 */
-void *manifold_solver_create(
+void *batch_solver_create(
     const ResonanceConfig *config,
     const uint32_t *arch,
     uint32_t arch_len,
     uint32_t target_dim,
+    uint32_t batch,
     const void *metallib_bytes,
     size_t metallib_length,
     char *err_out,
     int err_cap
 );
 
-void manifold_solver_destroy(void *handle);
+void batch_solver_destroy(void *handle);
 
 /*
-manifold_solver_seed_weights uploads the initial weight matrices into the GPU
-buffers. Each pointer is a flat float32 array in row-major order; w/r are
-concatenations across links, a/v are single matrices (v may be NULL when
-target_dim == 0). Lengths are validated against the architecture.
+batch_solver_seed_weights uploads weights for symbol `slot`. Flat row-major,
+same per-symbol layout as the single-model layout (W and R concatenated across
+links, A the top matrix, V the task head or NULL). Call once per slot.
 */
-int manifold_solver_seed_weights(
+int batch_solver_seed_weights(
     void *handle,
-    const float *w_flat,
-    size_t w_len,
-    const float *r_flat,
-    size_t r_len,
-    const float *a_flat,
-    size_t a_len,
-    const float *v_flat,
-    size_t v_len,
-    char *err_out,
-    int err_cap
+    uint32_t slot,
+    const float *w_flat, size_t w_len,
+    const float *r_flat, size_t r_len,
+    const float *a_flat, size_t a_len,
+    const float *v_flat, size_t v_len,
+    char *err_out, int err_cap
 );
 
-int manifold_solver_reset_state(void *handle, uint32_t reset_precision, char *err_out, int err_cap);
+/* Reset latent state (and optionally precision) for every symbol. */
+int batch_solver_reset_state(void *handle, uint32_t reset_precision, char *err_out, int err_cap);
 
 /*
-manifold_solver_settle runs generative inference (no supervised contamination).
-input has length arch[0]. advance_temporal mirrors the gonum flag.
+batch_solver_set_input writes symbol `slot`'s input vector (length arch[0]) and,
+if target_dim>0 and target!=NULL, its supervised target (length target_dim).
+Inputs/targets are staged; settle/learn consume the whole batch at once.
 */
-int manifold_solver_settle(
+int batch_solver_set_input(
     void *handle,
-    const float *input,
-    uint32_t input_len,
-    uint32_t advance_temporal,
-    char *err_out,
-    int err_cap
+    uint32_t slot,
+    const float *input, uint32_t input_len,
+    const float *target, uint32_t target_len,
+    char *err_out, int err_cap
 );
 
 /*
-manifold_solver_learn applies the weight updates for the current settled state.
-target has length target_dim (may be 0/NULL to skip the task head).
+batch_solver_settle settles all symbols (generative inference, no supervised
+contamination), advancing the temporal prior when advance_temporal != 0. Each
+column line-searches and early-stops independently; the call returns when every
+column has converged or max steps is reached.
 */
-int manifold_solver_learn(
-    void *handle,
-    const float *target,
-    uint32_t target_len,
-    char *err_out,
-    int err_cap
-);
+int batch_solver_settle(void *handle, uint32_t advance_temporal, char *err_out, int err_cap);
 
-/*
-manifold_solver_energy / reconstruction read back the scalar observables.
-*/
-int manifold_solver_energy(void *handle, float *out, char *err_out, int err_cap);
-int manifold_solver_reconstruction_error(void *handle, float *out, char *err_out, int err_cap);
+/* batch_solver_learn applies per-symbol weight updates using staged targets. */
+int batch_solver_learn(void *handle, char *err_out, int err_cap);
 
-/*
-manifold_solver_read_latent copies the top-layer latent state (length arch[-1]).
-*/
-int manifold_solver_read_latent(
-    void *handle,
-    float *out,
-    uint32_t out_len,
-    char *err_out,
-    int err_cap
-);
+/* Read symbol `slot`'s top latent state (length arch[-1]). */
+int batch_solver_read_latent(
+    void *handle, uint32_t slot, float *out, uint32_t out_len, char *err_out, int err_cap);
 
-/*
-manifold_solver_read_weights copies the current weight matrices back out, using
-the same flat layout as manifold_solver_seed_weights. Pass NULL for buffers you
-do not need.
-*/
-int manifold_solver_read_weights(
-    void *handle,
-    float *w_flat,
-    size_t w_len,
-    float *r_flat,
-    size_t r_len,
-    float *a_flat,
-    size_t a_len,
-    float *v_flat,
-    size_t v_len,
-    char *err_out,
-    int err_cap
+/* Read symbol `slot`'s scalar energy / reconstruction error. */
+int batch_solver_read_energy(void *handle, uint32_t slot, float *out, char *err_out, int err_cap);
+int batch_solver_read_reconstruction(void *handle, uint32_t slot, float *out, char *err_out, int err_cap);
+
+/* Read back symbol `slot`'s weights (same flat layout as seed). NULL to skip. */
+int batch_solver_read_weights(
+    void *handle, uint32_t slot,
+    float *w_flat, size_t w_len,
+    float *r_flat, size_t r_len,
+    float *a_flat, size_t a_len,
+    float *v_flat, size_t v_len,
+    char *err_out, int err_cap
 );

@@ -5,48 +5,33 @@ package manifold
 import "fmt"
 
 /*
-Solver runs the predictive-coding resonance manifold on Metal (darwin + cgo only).
+BatchSolver settles N predictive-coding resonance manifolds on Metal (darwin +
+cgo only).
 */
-type Solver struct{}
+type BatchSolver struct{}
 
-func NewSolver(arch []int, targetDim int, alpha float64) (*Solver, error) {
-	return nil, fmt.Errorf("resonance: Metal manifold solver requires darwin with cgo enabled")
+func NewBatchSolver(arch []int, targetDim, batch int, alpha float64) (*BatchSolver, error) {
+	return nil, fmt.Errorf("resonance: Metal batch solver requires darwin with cgo enabled")
 }
 
-func (solver *Solver) Close() {}
+func (s *BatchSolver) Close()      {}
+func (s *BatchSolver) Batch() int  { return 0 }
 
-func (solver *Solver) SeedWeights(w, r, a, v []float32) error {
+func (s *BatchSolver) SeedSlot(slot int, w, r, a, v []float32) error { return errUnavailable() }
+func (s *BatchSolver) ResetState(resetPrecision bool) error         { return errUnavailable() }
+func (s *BatchSolver) SetInput(slot int, input, target []float64) error {
 	return errUnavailable()
 }
+func (s *BatchSolver) Settle(advanceTemporal bool) error { return errUnavailable() }
+func (s *BatchSolver) Learn() error                      { return errUnavailable() }
 
-func (solver *Solver) ResetState(resetPrecision bool) error {
-	return errUnavailable()
-}
-
-func (solver *Solver) Settle(input []float64, advanceTemporal bool) error {
-	return errUnavailable()
-}
-
-func (solver *Solver) Learn(target []float64) error {
-	return errUnavailable()
-}
-
-func (solver *Solver) Energy() (float64, error) {
-	return 0, errUnavailable()
-}
-
-func (solver *Solver) ReconstructionError() (float64, error) {
-	return 0, errUnavailable()
-}
-
-func (solver *Solver) LatentState() ([]float64, error) {
-	return nil, errUnavailable()
-}
-
-func (solver *Solver) Weights() (w, r, a, v []float32, err error) {
+func (s *BatchSolver) LatentState(slot int) ([]float64, error)        { return nil, errUnavailable() }
+func (s *BatchSolver) Energy(slot int) (float64, error)               { return 0, errUnavailable() }
+func (s *BatchSolver) ReconstructionError(slot int) (float64, error)  { return 0, errUnavailable() }
+func (s *BatchSolver) Weights(slot int) (w, r, a, v []float32, err error) {
 	return nil, nil, nil, nil, errUnavailable()
 }
 
 func errUnavailable() error {
-	return fmt.Errorf("resonance: Metal manifold solver unavailable on this platform")
+	return fmt.Errorf("resonance: Metal batch solver unavailable on this platform")
 }

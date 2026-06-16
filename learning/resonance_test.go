@@ -128,6 +128,44 @@ func TestResonanceManifold_Read(testingTB *testing.T) {
 	})
 }
 
+func TestResonanceManifold_WireSnapshot(testingTB *testing.T) {
+	Convey("Given a settled resonance manifold", testingTB, func() {
+		architecture := []int{4, 8, 3}
+		manifold, err := NewResonanceManifold(architecture, 0, 0.02)
+
+		So(err, ShouldBeNil)
+		So(manifold.Settle([]float64{50000, 0.02, 1200, 0.015}, true), ShouldBeNil)
+
+		layers, surprise, energy := manifold.WireSnapshot()
+
+		Convey("It should export finite layer states and errors", func() {
+			So(len(layers), ShouldEqual, len(architecture))
+
+			totalRows := 0
+
+			for layerIndex, layer := range layers {
+				So(len(layer.State), ShouldEqual, architecture[layerIndex])
+				So(len(layer.Prediction), ShouldEqual, architecture[layerIndex])
+				So(surprise, ShouldBeGreaterThanOrEqualTo, 0)
+				So(energy, ShouldBeGreaterThanOrEqualTo, 0)
+
+				for _, value := range layer.State {
+					So(math.IsNaN(value), ShouldBeFalse)
+					So(math.IsInf(value, 0), ShouldBeFalse)
+				}
+
+				if layerIndex < len(architecture)-1 {
+					So(layer.ErrorNorm, ShouldBeGreaterThanOrEqualTo, 0)
+				}
+
+				totalRows += len(layer.State)
+			}
+
+			So(totalRows, ShouldEqual, 15)
+		})
+	})
+}
+
 func TestResonanceManifold_Sparsity(testingTB *testing.T) {
 	Convey("Given a non-zero latent state", testingTB, func() {
 		manifold, err := NewResonanceManifold([]int{2, 3, 2}, 0, 0.02)

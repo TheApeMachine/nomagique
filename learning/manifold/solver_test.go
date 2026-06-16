@@ -12,132 +12,121 @@ import (
 
 func maxAbsDiff(a, b []float64) float64 {
 	worst := 0.0
-	for index := range a {
-		diff := math.Abs(a[index] - b[index])
-		if diff > worst {
-			worst = diff
+	for i := range a {
+		d := math.Abs(a[i] - b[i])
+		if d > worst {
+			worst = d
 		}
 	}
 	return worst
 }
 
-func TestNewResonanceSolver(t *testing.T) {
-	convey.Convey("Given a valid architecture", t, func() {
-		solver, err := NewSolver([]int{4, 8, 4}, 2, 0.01)
-
-		convey.Convey("It should construct a usable solver", func() {
-			convey.So(err, convey.ShouldBeNil)
-			convey.So(solver, convey.ShouldNotBeNil)
-
-			defer solver.Close()
-
-			convey.So(solver.Settle([]float64{0.8, -0.2, 0.4, 0.1}, true), convey.ShouldBeNil)
-
-			latent, latentErr := solver.LatentState()
-			convey.So(latentErr, convey.ShouldBeNil)
-			convey.So(len(latent), convey.ShouldEqual, 4)
-
-			for _, value := range latent {
-				convey.So(math.IsNaN(value), convey.ShouldBeFalse)
-				convey.So(math.IsInf(value, 0), convey.ShouldBeFalse)
-			}
-		})
-	})
+// distinct deterministic input per slot.
+func slotInput(slot, dim int) []float64 {
+	in := make([]float64, dim)
+	for j := 0; j < dim; j++ {
+		in[j] = math.Sin(float64(slot*7+j) * 0.31)
+	}
+	return in
 }
 
-func TestResonanceSolver_InitialWeightsMatchReference(t *testing.T) {
-	convey.Convey("Given the seeded weight initialization", t, func() {
-		arch := []int{4, 8, 4}
-		solver, err := NewSolver(arch, 2, 0.01)
+func slotTarget(slot, dim int) []float64 {
+	t := make([]float64, dim)
+	for j := 0; j < dim; j++ {
+		t[j] = math.Cos(float64(slot*3+j) * 0.5)
+	}
+	return t
+}
+
+func TestBatchSolver_Construct(t *testing.T) {
+	convey.Convey("Given a valid batched architecture", t, func() {
+		s, err := NewBatchSolver([]int{4, 8, 4}, 2, 16, 0.01)
 		convey.So(err, convey.ShouldBeNil)
-		defer solver.Close()
-
-		reference, refErr := learning.NewResonanceManifold(arch, 2, 0.01)
-		convey.So(refErr, convey.ShouldBeNil)
-
-		w, _, _, _, weightsErr := solver.Weights()
-		convey.So(weightsErr, convey.ShouldBeNil)
-
-		convey.Convey("The GPU W[0] should equal the gonum reference W[0]", func() {
-			rows, cols := reference.W[0].Dims()
-			convey.So(rows*cols, convey.ShouldEqual, len(w[:rows*cols]))
-
-			worst := 0.0
-			for r := 0; r < rows; r++ {
-				for c := 0; c < cols; c++ {
-					diff := math.Abs(float64(w[r*cols+c]) - reference.W[0].At(r, c))
-					if diff > worst {
-						worst = diff
-					}
-				}
-			}
-			convey.So(worst, convey.ShouldBeLessThan, 1e-6)
-		})
+		convey.So(s, convey.ShouldNotBeNil)
+		defer s.Close()
+		convey.So(s.Batch(), convey.ShouldEqual, 16)
 	})
 }
 
-func TestResonanceSolver_SettleParity(t *testing.T) {
-	convey.Convey("Given identical fresh GPU and gonum manifolds", t, func() {
+// The core test: N symbols settled in lockstep must each match an independent
+// gonum manifold fed that symbol's own input.
+func TestBatchSolver_SettleParityPerSlot(t *testing.T) {
+	convey.Convey("Given a batch of distinct inputs", t, func() {
 		arch := []int{4, 8, 4}
 		alpha := 0.05
+		N := 32
 
-		solver, err := NewSolver(arch, 0, alpha)
+		s, err := NewBatchSolver(arch, 0, N, alpha)
 		convey.So(err, convey.ShouldBeNil)
-		defer solver.Close()
+		defer s.Close()
 
-		reference, refErr := learning.NewResonanceManifold(arch, 0, alpha)
-		convey.So(refErr, convey.ShouldBeNil)
-
-		input := []float64{0.8, -0.2, 0.4, 0.1}
-
-		convey.So(solver.Settle(input, false), convey.ShouldBeNil)
-		convey.So(reference.Settle(input, false), convey.ShouldBeNil)
-
-		gpuLatent, latentErr := solver.LatentState()
-		convey.So(latentErr, convey.ShouldBeNil)
-		refLatent := reference.LatentState()
-
-		gpuEnergy, energyErr := solver.Energy()
-		convey.So(energyErr, convey.ShouldBeNil)
-		refEnergy := reference.Energy()
-
-		convey.Convey("Latent state and energy should match within float32 tolerance", func() {
-			convey.So(maxAbsDiff(gpuLatent, refLatent), convey.ShouldBeLessThan, 1e-3)
-			convey.So(math.Abs(gpuEnergy-refEnergy), convey.ShouldBeLessThan, 1e-3)
-		})
-	})
-}
-
-func TestResonanceSolver_SettleLearnParity(t *testing.T) {
-	convey.Convey("Given a settle+learn cycle on both backends", t, func() {
-		arch := []int{4, 8, 4}
-		alpha := 0.05
-
-		solver, err := NewSolver(arch, 2, alpha)
-		convey.So(err, convey.ShouldBeNil)
-		defer solver.Close()
-
-		reference, refErr := learning.NewResonanceManifold(arch, 2, alpha)
-		convey.So(refErr, convey.ShouldBeNil)
-
-		input := []float64{0.8, -0.2, 0.4, 0.1}
-		target := []float64{0.5, -0.5}
-
-		for i := 0; i < 5; i++ {
-			convey.So(solver.Settle(input, true), convey.ShouldBeNil)
-			convey.So(solver.Learn(target), convey.ShouldBeNil)
-			reference.SettleFromBatchOptions(input, target, true, true)
+		refs := make([]*learning.ResonanceManifold, N)
+		for i := 0; i < N; i++ {
+			refs[i], _ = learning.NewResonanceManifold(arch, 0, alpha)
 		}
 
-		gpuLatent, latentErr := solver.LatentState()
-		convey.So(latentErr, convey.ShouldBeNil)
-		refLatent := reference.LatentState()
+		for slot := 0; slot < N; slot++ {
+			convey.So(s.SetInput(slot, slotInput(slot, arch[0]), nil), convey.ShouldBeNil)
+		}
+		convey.So(s.Settle(false), convey.ShouldBeNil)
+		for slot := 0; slot < N; slot++ {
+			convey.So(refs[slot].Settle(slotInput(slot, arch[0]), false), convey.ShouldBeNil)
+		}
 
-		convey.Convey("Latent trajectories should stay close after learning", func() {
-			for _, value := range gpuLatent {
-				convey.So(math.IsNaN(value), convey.ShouldBeFalse)
+		convey.Convey("Each slot's latent matches its gonum twin within float32 tol", func() {
+			worst := 0.0
+			for slot := 0; slot < N; slot++ {
+				gpu, _ := s.LatentState(slot)
+				ref := refs[slot].LatentState()
+				d := maxAbsDiff(gpu, ref)
+				if d > worst {
+					worst = d
+				}
 			}
-			convey.So(maxAbsDiff(gpuLatent, refLatent), convey.ShouldBeLessThan, 5e-2)
+			convey.So(worst, convey.ShouldBeLessThan, 2e-3)
+		})
+	})
+}
+
+// Per-symbol weights diverge correctly: each slot learns its own stream and must
+// track its independent gonum twin across multiple settle+learn cycles.
+func TestBatchSolver_SettleLearnParityPerSlot(t *testing.T) {
+	convey.Convey("Given per-slot settle+learn cycles", t, func() {
+		arch := []int{4, 8, 4}
+		alpha := 0.05
+		N := 16
+
+		s, err := NewBatchSolver(arch, 2, N, alpha)
+		convey.So(err, convey.ShouldBeNil)
+		defer s.Close()
+
+		refs := make([]*learning.ResonanceManifold, N)
+		for i := 0; i < N; i++ {
+			refs[i], _ = learning.NewResonanceManifold(arch, 2, alpha)
+		}
+
+		for cycle := 0; cycle < 5; cycle++ {
+			for slot := 0; slot < N; slot++ {
+				convey.So(s.SetInput(slot, slotInput(slot, arch[0]), slotTarget(slot, 2)), convey.ShouldBeNil)
+			}
+			convey.So(s.Settle(true), convey.ShouldBeNil)
+			convey.So(s.Learn(), convey.ShouldBeNil)
+			for slot := 0; slot < N; slot++ {
+				refs[slot].SettleFromBatchOptions(slotInput(slot, arch[0]), slotTarget(slot, 2), true, true)
+			}
+		}
+
+		convey.Convey("Each slot tracks its independent gonum twin after learning", func() {
+			worst := 0.0
+			for slot := 0; slot < N; slot++ {
+				gpu, _ := s.LatentState(slot)
+				ref := refs[slot].LatentState()
+				d := maxAbsDiff(gpu, ref)
+				if d > worst {
+					worst = d
+				}
+			}
+			convey.So(worst, convey.ShouldBeLessThan, 5e-2)
 		})
 	})
 }

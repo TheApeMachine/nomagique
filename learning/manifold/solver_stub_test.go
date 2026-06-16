@@ -8,9 +8,9 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 )
 
-func TestNewSolver_stub(testingTB *testing.T) {
-	Convey("Given the stub resonance solver build", testingTB, func() {
-		solver, err := NewSolver([]int{4, 8, 4}, 2, 0.01)
+func TestNewBatchSolver_stub(testingTB *testing.T) {
+	Convey("Given the stub batch solver build", testingTB, func() {
+		solver, err := NewBatchSolver([]int{4, 8, 4}, 2, 16, 0.01)
 
 		Convey("It should refuse to start without Metal", func() {
 			So(solver, ShouldBeNil)
@@ -19,16 +19,17 @@ func TestNewSolver_stub(testingTB *testing.T) {
 	})
 }
 
-func TestSolverStub_methods(testingTB *testing.T) {
+func TestBatchSolverStub_methods(testingTB *testing.T) {
 	Convey("Given a zero-value stub solver", testingTB, func() {
-		solver := &Solver{}
+		solver := &BatchSolver{}
 
 		Convey("It should error on runtime operations", func() {
 			So(solver.ResetState(false), ShouldNotBeNil)
-			So(solver.Settle([]float64{0.1}, true), ShouldNotBeNil)
-			So(solver.Learn(nil), ShouldNotBeNil)
+			So(solver.SetInput(0, []float64{0.1}, nil), ShouldNotBeNil)
+			So(solver.Settle(true), ShouldNotBeNil)
+			So(solver.Learn(), ShouldNotBeNil)
 
-			_, energyErr := solver.Energy()
+			_, energyErr := solver.Energy(0)
 			So(energyErr, ShouldNotBeNil)
 		})
 	})

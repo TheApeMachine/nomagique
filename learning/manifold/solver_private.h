@@ -9,138 +9,187 @@
 static const uint32_t kReduceThreads = 256u;
 
 /*
-ResonanceSolver runs the predictive-coding resonance manifold on Metal.
-
-State is stored as flat float buffers with per-layer offset tables so a single
-class handles arbitrary architectures. The host orchestrates the settle
-line-search and the learning weight updates; kernels do the per-element work.
+BatchDimsHost mirrors the BatchDims struct in resonance.metal — the per-symbol
+dimensions/config the batched kernels read to self-navigate the flat buffers.
 */
-@interface ResonanceSolver : NSObject
+typedef struct BatchDimsHost {
+    uint32_t n;
+    uint32_t arch_len;
+    uint32_t num_links;
+    uint32_t top_dim;
+    uint32_t target_dim;
+    uint32_t z_total;     // per-symbol latent scalars
+    uint32_t pred_total;  // per-symbol prediction scalars
+    uint32_t w_total;     // per-symbol generative weight scalars
+    uint32_t r_total;     // per-symbol recognition weight scalars
+    uint32_t use_precision;
+    float temporal_weight;
+    float latent_decay;
+    float sparsity;
+    float state_clip;
+    float grad_clip;
+    float early_stop_tol;
+} BatchDimsHost;
+
+/*
+BatchResonanceSolver settles N independent predictive-coding manifolds in
+lockstep on Metal. State layout: per layer l, scalar (row r, slot s) at
+z_off[l]*N + r*N + s. Weights are per-symbol, slot-major blocks. Line search and
+early-stop run per column so symbols converge independently.
+*/
+@interface BatchResonanceSolver : NSObject
 
 @property (nonatomic, strong) id<MTLDevice> device;
 @property (nonatomic, strong) id<MTLCommandQueue> queue;
 @property (nonatomic, strong) id<MTLLibrary> library;
 
 @property (nonatomic, assign) ResonanceConfig config;
-@property (nonatomic, assign) uint32_t archLen;     // number of layers
-@property (nonatomic, assign) uint32_t numLinks;    // archLen - 1
+@property (nonatomic, assign) uint32_t archLen;
+@property (nonatomic, assign) uint32_t numLinks;
 @property (nonatomic, assign) uint32_t targetDim;
-@property (nonatomic, assign) BOOL hasPrevTop;      // temporal prior active
+@property (nonatomic, assign) uint32_t batch;
+@property (nonatomic, assign) BOOL hasPrevTop;
 
-// Architecture and offset tables (host memory).
+// Host-side layout tables.
 @property (nonatomic, assign) uint32_t *arch;       // [archLen]
-@property (nonatomic, assign) uint32_t *zOffset;    // [archLen] latent vec offsets
-@property (nonatomic, assign) uint32_t *wOffset;    // [numLinks] weight matrix offsets
-@property (nonatomic, assign) uint32_t *rOffset;    // [numLinks] recognition matrix offsets
-@property (nonatomic, assign) uint32_t zTotal;      // total latent scalars
-@property (nonatomic, assign) uint32_t wTotal;      // total generative weight scalars
-@property (nonatomic, assign) uint32_t rTotal;      // total recognition weight scalars
+@property (nonatomic, assign) uint32_t *zOffset;    // [archLen] per-symbol scalar offsets
+@property (nonatomic, assign) uint32_t *wOffset;    // [numLinks]
+@property (nonatomic, assign) uint32_t *rOffset;    // [numLinks]
+@property (nonatomic, assign) uint32_t *predOffset; // [numLinks]
+@property (nonatomic, assign) uint32_t zTotal;
+@property (nonatomic, assign) uint32_t predTotal;
+@property (nonatomic, assign) uint32_t wTotal;
+@property (nonatomic, assign) uint32_t rTotal;
+@property (nonatomic, assign) uint32_t aTotal;      // top*top
+@property (nonatomic, assign) uint32_t vTotal;      // target*top (0 if none)
+@property (nonatomic, assign) uint32_t maxDim;
 
 // Pipelines.
 @property (nonatomic, strong) id<MTLComputePipelineState> pGemv;
-@property (nonatomic, strong) id<MTLComputePipelineState> pGemvTanh;
-@property (nonatomic, strong) id<MTLComputePipelineState> pGemvTranspose;
-@property (nonatomic, strong) id<MTLComputePipelineState> pVecCopy;
-@property (nonatomic, strong) id<MTLComputePipelineState> pVecSub;
-@property (nonatomic, strong) id<MTLComputePipelineState> pVecAdd;
-@property (nonatomic, strong) id<MTLComputePipelineState> pVecMulElem;
-@property (nonatomic, strong) id<MTLComputePipelineState> pVecScale;
-@property (nonatomic, strong) id<MTLComputePipelineState> pVecAxpy;
-@property (nonatomic, strong) id<MTLComputePipelineState> pVecClamp;
+@property (nonatomic, strong) id<MTLComputePipelineState> pGemvT;
+@property (nonatomic, strong) id<MTLComputePipelineState> pSub;
+@property (nonatomic, strong) id<MTLComputePipelineState> pMul;
+@property (nonatomic, strong) id<MTLComputePipelineState> pCopy;
 @property (nonatomic, strong) id<MTLComputePipelineState> pTanhDeriv;
+@property (nonatomic, strong) id<MTLComputePipelineState> pAxpy;
+@property (nonatomic, strong) id<MTLComputePipelineState> pScale;
+@property (nonatomic, strong) id<MTLComputePipelineState> pSparsity;
+@property (nonatomic, strong) id<MTLComputePipelineState> pEnergy;
+@property (nonatomic, strong) id<MTLComputePipelineState> pGradClipLayer;
+@property (nonatomic, strong) id<MTLComputePipelineState> pApplyState;
+@property (nonatomic, strong) id<MTLComputePipelineState> pDecide;
+@property (nonatomic, strong) id<MTLComputePipelineState> pRevert;
+@property (nonatomic, strong) id<MTLComputePipelineState> pEarlyStop;
+@property (nonatomic, strong) id<MTLComputePipelineState> pPrecision;
+@property (nonatomic, strong) id<MTLComputePipelineState> pOuterFactor;
+@property (nonatomic, strong) id<MTLComputePipelineState> pOuterApply;
 @property (nonatomic, strong) id<MTLComputePipelineState> pMergeClamp;
-@property (nonatomic, strong) id<MTLComputePipelineState> pSparsitySubgrad;
-@property (nonatomic, strong) id<MTLComputePipelineState> pPrecisionUpdate;
-@property (nonatomic, strong) id<MTLComputePipelineState> pOuterUpdate;
-@property (nonatomic, strong) id<MTLComputePipelineState> pReduceDot;
-@property (nonatomic, strong) id<MTLComputePipelineState> pReduceAbsSum;
-@property (nonatomic, strong) id<MTLComputePipelineState> pGradClip;
 
-// Weight buffers (flat, shared storage so host can seed/read).
-@property (nonatomic, strong) id<MTLBuffer> bufW;   // generative  [wTotal]
-@property (nonatomic, strong) id<MTLBuffer> bufR;   // recognition [rTotal]
-@property (nonatomic, strong) id<MTLBuffer> bufA;   // temporal    [top x top]
-@property (nonatomic, strong) id<MTLBuffer> bufV;   // task        [targetDim x top] (or nil)
+// Weights (per-symbol slot-major).
+@property (nonatomic, strong) id<MTLBuffer> bufW;   // [wTotal * N]
+@property (nonatomic, strong) id<MTLBuffer> bufR;   // [rTotal * N]
+@property (nonatomic, strong) id<MTLBuffer> bufA;   // [aTotal * N]
+@property (nonatomic, strong) id<MTLBuffer> bufV;   // [vTotal * N] or nil
 
-// Latent state and saved copy for the line search.
-@property (nonatomic, strong) id<MTLBuffer> bufZ;        // [zTotal]
-@property (nonatomic, strong) id<MTLBuffer> bufZSaved;   // [zTotal]
-@property (nonatomic, strong) id<MTLBuffer> bufPrevTop;  // [top]
+// State (per layer, [dim x N]).
+@property (nonatomic, strong) id<MTLBuffer> bufZ;        // [zTotal * N]
+@property (nonatomic, strong) id<MTLBuffer> bufZSaved;   // [zTotal * N]
+@property (nonatomic, strong) id<MTLBuffer> bufPrevTop;  // [top * N]
+@property (nonatomic, strong) id<MTLBuffer> bufPred;     // [predTotal * N]
+@property (nonatomic, strong) id<MTLBuffer> bufErr;      // [predTotal * N]
+@property (nonatomic, strong) id<MTLBuffer> bufPrecision;// [predTotal * N]
+@property (nonatomic, strong) id<MTLBuffer> bufVariance; // [predTotal * N]
+@property (nonatomic, strong) id<MTLBuffer> bufTemporalPrec; // [top * N]
+@property (nonatomic, strong) id<MTLBuffer> bufTemporalVar;  // [top * N]
+@property (nonatomic, strong) id<MTLBuffer> bufTemporalErr;  // [top * N]
+@property (nonatomic, strong) id<MTLBuffer> bufTaskPrec; // [target * N] or nil
+@property (nonatomic, strong) id<MTLBuffer> bufTaskVar;  // [target * N] or nil
+@property (nonatomic, strong) id<MTLBuffer> bufGradCache;// [zTotal * N]
 
-// Per-link prediction/error scratch (flat over links, sized like z[0..numLinks-1]).
-@property (nonatomic, strong) id<MTLBuffer> bufPred;     // predictions  [sum arch[l], l<numLinks]
-@property (nonatomic, strong) id<MTLBuffer> bufErr;      // layer errors [same layout]
-@property (nonatomic, assign) uint32_t *predOffset;      // [numLinks]
-@property (nonatomic, assign) uint32_t predTotal;
+// Init/scratch.
+@property (nonatomic, strong) id<MTLBuffer> bufBottomUp; // [zTotal * N]
+@property (nonatomic, strong) id<MTLBuffer> bufTopDown;  // [zTotal * N]
+@property (nonatomic, strong) id<MTLBuffer> bufTmpA;     // [maxDim * N]
+@property (nonatomic, strong) id<MTLBuffer> bufTmpB;     // [maxDim * N]
+@property (nonatomic, strong) id<MTLBuffer> bufTmpC;     // [maxDim * N]
+@property (nonatomic, strong) id<MTLBuffer> bufTarget;   // [target * N] or nil
+@property (nonatomic, strong) id<MTLBuffer> bufFactor;   // [N]
 
-// Precision / variance per link (same layout as pred), plus temporal & task.
-@property (nonatomic, strong) id<MTLBuffer> bufPrecision;
-@property (nonatomic, strong) id<MTLBuffer> bufVariance;
-@property (nonatomic, strong) id<MTLBuffer> bufTemporalPrec;
-@property (nonatomic, strong) id<MTLBuffer> bufTemporalVar;
-@property (nonatomic, strong) id<MTLBuffer> bufTaskPrec;
-@property (nonatomic, strong) id<MTLBuffer> bufTaskVar;
+// Per-column line-search scalars.
+@property (nonatomic, strong) id<MTLBuffer> bufStep;       // [N]
+@property (nonatomic, strong) id<MTLBuffer> bufEnergyOld;  // [N]
+@property (nonatomic, strong) id<MTLBuffer> bufEnergyNew;  // [N]
+@property (nonatomic, strong) id<MTLBuffer> bufFlags;      // [N]
+@property (nonatomic, strong) id<MTLBuffer> bufActive;     // [N]
+@property (nonatomic, strong) id<MTLBuffer> bufAnyActive;  // [1] atomic counter
+@property (nonatomic, assign) float *startSnapshot;       // [N] host copy of per-step start energy
 
-// Generic per-layer scratch buffers (sized to max layer dim).
-@property (nonatomic, strong) id<MTLBuffer> bufTmpA;     // [maxDim]
-@property (nonatomic, strong) id<MTLBuffer> bufTmpB;     // [maxDim]
-@property (nonatomic, strong) id<MTLBuffer> bufTmpC;     // [maxDim]
-@property (nonatomic, strong) id<MTLBuffer> bufGrad;     // [maxDim]
-@property (nonatomic, strong) id<MTLBuffer> bufBottomUp; // [zTotal] init pass
-@property (nonatomic, strong) id<MTLBuffer> bufTopDown;  // [zTotal] init pass
-@property (nonatomic, strong) id<MTLBuffer> bufInput;    // [arch[0]]
-@property (nonatomic, strong) id<MTLBuffer> bufTarget;   // [targetDim]
-@property (nonatomic, strong) id<MTLBuffer> bufScalar;   // [1] reduction output
-@property (nonatomic, assign) uint32_t maxDim;
+// Layout buffers for kernels.
+@property (nonatomic, strong) id<MTLBuffer> bufDims;       // BatchDimsHost
+@property (nonatomic, strong) id<MTLBuffer> bufArchDim;    // [archLen]
+@property (nonatomic, strong) id<MTLBuffer> bufZOff;       // [archLen]
+@property (nonatomic, strong) id<MTLBuffer> bufPredOff;    // [numLinks]
+@property (nonatomic, strong) id<MTLBuffer> bufLayerRow;   // [zTotal] layer per latent row
+@property (nonatomic, strong) id<MTLBuffer> bufHasPrev;    // [1]
 
 @end
 
-@interface ResonanceSolver (Pipelines)
-- (id<MTLComputePipelineState>)pipelineNamed:(NSString *)name error:(NSError **)error;
-- (BOOL)buildPipelines:(NSString **)error;
-@end
-
-@interface ResonanceSolver (Dispatch)
-// One-shot dispatch helpers (each owns a command buffer, commits, waits).
-- (void)dispatch1D:(id<MTLComputePipelineState>)pipeline
-           buffers:(NSArray<id<MTLBuffer>> *)buffers
-           offsets:(NSArray<NSNumber *> *)offsets
-       threadCount:(NSUInteger)threadCount;
-- (void)dispatchReduce:(id<MTLComputePipelineState>)pipeline
-               buffers:(NSArray<id<MTLBuffer>> *)buffers
-               offsets:(NSArray<NSNumber *> *)offsets;
-- (id<MTLBuffer>)constantUint:(uint32_t)value;
-- (id<MTLBuffer>)constantFloat:(float)value;
-@end
-
-// Helpers implemented in solver_darwin.m, shared with the Compute category.
-@interface ResonanceSolver (Layout)
+@interface BatchResonanceSolver (Lifecycle)
 - (instancetype)initWithConfig:(const ResonanceConfig *)config
                           arch:(const uint32_t *)arch
                        archLen:(uint32_t)archLen
                      targetDim:(uint32_t)targetDim
+                         batch:(uint32_t)batch
                  metallibBytes:(const void *)metallibBytes
                 metallibLength:(size_t)metallibLength
                          error:(NSString **)error;
-- (void)fillFloats:(id<MTLBuffer>)buffer count:(uint32_t)count value:(float)value;
-- (BOOL)seedW:(const float *)w len:(size_t)wLen
-            r:(const float *)r len:(size_t)rLen
-            a:(const float *)a len:(size_t)aLen
-            v:(const float *)v len:(size_t)vLen
-        error:(NSString **)errorOut;
-- (void)readWeightsW:(float *)w r:(float *)r a:(float *)a v:(float *)v;
-- (void)readLatent:(float *)out length:(uint32_t)length;
+- (BOOL)seedSlot:(uint32_t)slot
+               w:(const float *)w wLen:(size_t)wLen
+               r:(const float *)r rLen:(size_t)rLen
+               a:(const float *)a aLen:(size_t)aLen
+               v:(const float *)v vLen:(size_t)vLen
+           error:(NSString **)errorOut;
+- (void)readSlot:(uint32_t)slot w:(float *)w r:(float *)r a:(float *)a v:(float *)v;
+- (void)setInputSlot:(uint32_t)slot input:(const float *)input
+              target:(const float *)target hasTarget:(BOOL)hasTarget;
+- (void)readLatentSlot:(uint32_t)slot out:(float *)out length:(uint32_t)length;
+- (void)resetState:(BOOL)resetPrecision;
 @end
 
-@interface ResonanceSolver (Compute)
-- (void)predictAdjacentLayers;     // fills bufPred/bufErr from current z and W
-- (void)initializeLatents;         // bottom-up + top-down init into z
-- (float)energy;
-- (float)reconstructionError;
-- (void)settleInput:(const float *)input advanceTemporal:(BOOL)advanceTemporal;
-- (void)learnTarget:(const float *)target hasTarget:(BOOL)hasTarget;
-- (void)advanceTemporalState;
-- (void)resetState:(BOOL)resetPrecision;
+@interface BatchResonanceSolver (Pipelines)
+- (BOOL)buildPipelines:(NSString **)error;
+@end
+
+@interface BatchResonanceSolver (Dispatch)
+- (void)enc:(id<MTLComputeCommandEncoder>)encoder
+       pipe:(id<MTLComputePipelineState>)pipeline
+    buffers:(NSArray<id<MTLBuffer>> *)buffers
+    offsets:(const NSUInteger *)offsets
+     consts:(NSArray<NSArray *> *)consts
+    threads:(NSUInteger)threads;
+- (void)encReduce:(id<MTLComputeCommandEncoder>)encoder
+             pipe:(id<MTLComputePipelineState>)pipeline
+          buffers:(NSArray<id<MTLBuffer>> *)buffers
+          offsets:(const NSUInteger *)offsets
+           consts:(NSArray<NSArray *> *)consts
+          columns:(NSUInteger)columns;
+- (void)syncDims;
+@end
+
+@interface BatchResonanceSolver (Lifecycle2)
+- (void)computeLayout:(const uint32_t *)arch;
+- (void)allocateBuffers;
+- (void)buildLayoutBuffers;
+- (id<MTLBuffer>)floats:(uint32_t)count;
+- (void)fill:(id<MTLBuffer>)b count:(uint32_t)count value:(float)value;
+@end
+
+@interface BatchResonanceSolver (Compute)
+- (void)settleAdvanceTemporal:(BOOL)advanceTemporal;
+- (void)learn;
+- (void)advanceTemporal;
+- (float)energySlotCompute:(uint32_t)slot;
+- (float)reconstructionSlotCompute:(uint32_t)slot;
 @end
 
 void resonance_write_error(char *err_out, int err_cap, NSString *message);

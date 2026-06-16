@@ -1,0 +1,533 @@
+package algorithm
+
+import (
+	"math"
+	"sort"
+	"time"
+
+	"github.com/theapemachine/datura"
+	"github.com/theapemachine/nomagique/correlation"
+	"gonum.org/v1/gonum/stat"
+)
+
+const (
+	lagPayloadFields = 11
+	minLagSamples    = 16
+	maxLagBars       = 12
+)
+
+/*
+LagOutcome holds lead-lag classification scores.
+*/
+type LagOutcome struct {
+	InefficientScore float64
+	SyncScore        float64
+	DecoupledScore   float64
+	StallScore       float64
+	Strength         float64
+	Category         int
+	Eligible         bool
+	Price            float64
+}
+
+/*
+Lag classifies anchor stall, inefficient lag, synchronized drift, and decoupling.
+
+Payload layout: isAnchor, price, moveReady, moveMoved, stallMargin, lagOK, lagBars,
+lagCorr, contempOK, contempCorr, sampleCount.
+*/
+type Lag struct {
+	artifact *datura.Artifact
+	outcome  LagOutcome
+}
+
+/*
+NewLag returns a lead-lag classification stage.
+*/
+func NewLag() *Lag {
+	return &Lag{
+		artifact: datura.Acquire("lag", datura.Artifact_Type_json),
+	}
+}
+
+func (lag *Lag) Write(p []byte) (int, error) {
+	return lag.artifact.Write(p)
+}
+
+func (lag *Lag) Read(p []byte) (int, error) {
+	rehydrateArtifact(&lag.artifact, "lag", datura.Artifact_Type_json)
+
+	payload, err := lag.artifact.Payload()
+
+	if err == nil {
+		lag.outcome = lag.evaluate(payloadSamples(payload))
+		lag.publishReadings()
+	}
+
+	return lag.artifact.Read(p)
+}
+
+func (lag *Lag) Close() error {
+	return nil
+}
+
+/*
+Outcome returns scores from the last Read.
+*/
+func (lag *Lag) Outcome() LagOutcome {
+	return lag.outcome
+}
+
+func (lag *Lag) evaluate(batch []float64) LagOutcome {
+	if len(batch) < lagPayloadFields {
+		return LagOutcome{}
+	}
+
+	isAnchor := batch[0] > 0
+	price := batch[1]
+	moveReady := batch[2] > 0
+	moveMoved := batch[3] > 0
+	stallMargin := batch[4]
+	lagOK := batch[5] > 0
+	lagBars := int(batch[6])
+	lagCorr := batch[7]
+	contempOK := batch[8] > 0
+	contempCorr := batch[9]
+	sampleCount := int(batch[10])
+
+	if price <= 0 {
+		return LagOutcome{}
+	}
+
+	if isAnchor {
+		return lag.evaluateAnchor(price, moveReady, moveMoved, stallMargin)
+	}
+
+	return lag.evaluateFollower(
+		price,
+		moveReady,
+		moveMoved,
+		stallMargin,
+		lagOK,
+		lagBars,
+		lagCorr,
+		contempOK,
+		contempCorr,
+		sampleCount,
+	)
+}
+
+func (lag *Lag) evaluateAnchor(
+	price float64,
+	moveReady, moveMoved bool,
+	stallMargin float64,
+) LagOutcome {
+	if !moveReady || moveMoved {
+		return LagOutcome{}
+	}
+
+	strength := stallMargin
+	stallScore := strength
+
+	if strength <= 0 {
+		return LagOutcome{}
+	}
+
+	return LagOutcome{
+		StallScore: stallScore,
+		Strength:   strength,
+		Category:   4,
+		Eligible:   true,
+		Price:      price,
+	}
+}
+
+func (lag *Lag) evaluateFollower(
+	price float64,
+	moveReady, moveMoved bool,
+	stallMargin float64,
+	lagOK bool,
+	lagBars int,
+	lagCorr float64,
+	contempOK bool,
+	contempCorr float64,
+	sampleCount int,
+) LagOutcome {
+	if !moveReady {
+		if contempOK {
+			return lag.contemporaneousOutcome(price, contempCorr, sampleCount)
+		}
+
+		return LagOutcome{}
+	}
+
+	if !moveMoved {
+		if contempOK {
+			return lag.contemporaneousOutcome(price, contempCorr, sampleCount)
+		}
+
+		if stallMargin <= 0 {
+			return LagOutcome{}
+		}
+
+		return LagOutcome{
+			DecoupledScore: stallMargin,
+			Strength:       stallMargin,
+			Category:       3,
+			Eligible:       true,
+			Price:          price,
+		}
+	}
+
+	if lagOK {
+		return lag.lagOutcome(price, lagBars, lagCorr)
+	}
+
+	if contempOK {
+		return lag.contemporaneousOutcome(price, contempCorr, sampleCount)
+	}
+
+	return LagOutcome{}
+}
+
+func (lag *Lag) lagOutcome(price float64, lagBars int, corr float64) LagOutcome {
+	lagMagnitude := math.Abs(float64(lagBars))
+	lagFraction := lagMagnitude / float64(maxLagBars)
+	threshold := minLagFraction()
+
+	category := 2
+	inefficientScore := 0.0
+	syncScore := 0.0
+
+	if lagFraction >= threshold {
+		category = 1
+		inefficientScore = lagFraction * corr
+	}
+
+	if category == 2 {
+		syncScore = corr * (threshold - lagFraction)
+	}
+
+	strength := lagFraction
+
+	return LagOutcome{
+		InefficientScore: inefficientScore,
+		SyncScore:        syncScore,
+		Strength:         strength,
+		Category:         category,
+		Eligible:         true,
+		Price:            price,
+	}
+}
+
+func (lag *Lag) contemporaneousOutcome(price, corr float64, sampleCount int) LagOutcome {
+	if sampleCount <= 0 {
+		sampleCount = minLagSamples
+	}
+
+	significance := 1 / (2 * math.Sqrt(float64(sampleCount)))
+
+	category := 3
+	decoupledScore := math.Max(0, significance-corr)
+	syncScore := 0.0
+
+	if corr >= significance {
+		category = 2
+		syncScore = corr
+		decoupledScore = 0
+	}
+
+	strength := math.Max(0, corr)
+
+	return LagOutcome{
+		SyncScore:      syncScore,
+		DecoupledScore: decoupledScore,
+		Strength:       strength,
+		Category:       category,
+		Eligible:       true,
+		Price:          price,
+	}
+}
+
+func minLagFraction() float64 {
+	return math.Ceil(float64(maxLagBars)/2) / float64(maxLagBars)
+}
+
+func (lag *Lag) publishReadings() {
+	pokeFloat(lag.artifact, "lag.inefficient", lag.outcome.InefficientScore)
+	pokeFloat(lag.artifact, "lag.sync", lag.outcome.SyncScore)
+	pokeFloat(lag.artifact, "lag.decoupled", lag.outcome.DecoupledScore)
+	pokeFloat(lag.artifact, "lag.stall", lag.outcome.StallScore)
+	pokeFloat(lag.artifact, "lag.strength", lag.outcome.Strength)
+}
+
+func (lag *Lag) InefficientReading() *LagReading {
+	return newLagReading(lag, func(outcome LagOutcome) float64 {
+		return outcome.InefficientScore
+	})
+}
+
+func (lag *Lag) SyncReading() *LagReading {
+	return newLagReading(lag, func(outcome LagOutcome) float64 {
+		return outcome.SyncScore
+	})
+}
+
+func (lag *Lag) DecoupledReading() *LagReading {
+	return newLagReading(lag, func(outcome LagOutcome) float64 {
+		return outcome.DecoupledScore
+	})
+}
+
+func (lag *Lag) StallReading() *LagReading {
+	return newLagReading(lag, func(outcome LagOutcome) float64 {
+		return outcome.StallScore
+	})
+}
+
+type LagReading struct {
+	artifact *datura.Artifact
+	lag      *Lag
+	project  func(LagOutcome) float64
+}
+
+func newLagReading(lag *Lag, project func(LagOutcome) float64) *LagReading {
+	return &LagReading{
+		artifact: datura.Acquire("lag-reading", datura.Artifact_Type_json),
+		lag:      lag,
+		project:  project,
+	}
+}
+
+func (reading *LagReading) Write(p []byte) (int, error) {
+	if len(p) == 0 {
+		return 0, nil
+	}
+
+	return len(p), nil
+}
+
+func (reading *LagReading) Read(p []byte) (int, error) {
+	value := 0.0
+
+	if reading.lag != nil && reading.project != nil {
+		value = reading.project(reading.lag.outcome)
+	}
+
+	_ = reading.artifact.SetPayload(encodePayload(value))
+
+	return reading.artifact.Read(p)
+}
+
+func (reading *LagReading) Close() error {
+	return nil
+}
+
+/*
+HayashiPairCorrelation computes asynchronous correlation between two price paths.
+*/
+func HayashiPairCorrelation(
+	left, right []correlation.Sample,
+	maxInterval time.Duration,
+) (float64, bool) {
+	return hayashiCorrelation(left, right, maxInterval)
+}
+
+/*
+ShiftPriceSamples shifts sample timestamps by the given duration.
+*/
+func ShiftPriceSamples(
+	samples []correlation.Sample,
+	shift time.Duration,
+) []correlation.Sample {
+	if shift == 0 || len(samples) == 0 {
+		return append([]correlation.Sample(nil), samples...)
+	}
+
+	shifted := make([]correlation.Sample, len(samples))
+
+	for index, sample := range samples {
+		shifted[index] = correlation.Sample{
+			At:    sample.At.Add(shift),
+			Value: sample.Value,
+		}
+	}
+
+	return shifted
+}
+
+/*
+CrossLagScore searches shifted anchor paths for the best Hayashi correlation.
+*/
+func CrossLagScore(
+	anchorSeries, followerSeries []correlation.Sample,
+	barInterval time.Duration,
+) (lagBars int, corr float64, ok bool) {
+	if len(anchorSeries) < minLagSamples || len(followerSeries) < minLagSamples {
+		return 0, 0, false
+	}
+
+	sampleCount := len(anchorSeries)
+
+	if len(followerSeries) < sampleCount {
+		sampleCount = len(followerSeries)
+	}
+
+	baseline := 0.0
+
+	if baselineCorr, baselineOK := hayashiCorrelation(anchorSeries, followerSeries, 0); baselineOK {
+		baseline = baselineCorr
+	}
+
+	bestCorr := 0.0
+	bestLag := 0
+
+	for lag := -maxLagBars; lag <= maxLagBars; lag++ {
+		if lag == 0 {
+			continue
+		}
+
+		shifted := ShiftPriceSamples(anchorSeries, time.Duration(lag)*barInterval)
+		lagCorr, lagOK := hayashiCorrelation(shifted, followerSeries, 0)
+
+		if lagOK && lagCorr > bestCorr {
+			bestCorr = lagCorr
+			bestLag = lag
+		}
+	}
+
+	significance := 1 / (2 * math.Sqrt(float64(sampleCount)))
+
+	if bestLag == 0 || bestCorr <= significance {
+		return 0, 0, false
+	}
+
+	floor := baseline
+
+	if floor < 0 {
+		floor = 0
+	}
+
+	margin := significance
+
+	if relative := significance * math.Abs(baseline); relative > margin {
+		margin = relative
+	}
+
+	if bestCorr <= floor+margin {
+		return 0, 0, false
+	}
+
+	return bestLag, bestCorr, true
+}
+
+/*
+MoveBaseline tracks adaptive path-move thresholds for anchor gating.
+*/
+type MoveBaseline struct {
+	moments   ewMoments
+	minObs    int
+	pathMoves []float64
+	pathCap   int
+}
+
+/*
+NewMoveBaseline returns an anchor move gate with the given minimum observations.
+*/
+func NewMoveBaseline(minObs, pathCap int) *MoveBaseline {
+	return &MoveBaseline{
+		minObs:  minObs,
+		pathCap: pathCap,
+	}
+}
+
+/*
+Evaluate updates the baseline and returns move gate state.
+*/
+func (baseline *MoveBaseline) Evaluate(recentMove float64) (moved bool, stallMargin float64, ready bool) {
+	baseline.pathMoves = appendRingFloat(baseline.pathMoves, recentMove, baseline.pathCap)
+	effectiveAlpha := 2.0 / (float64(baseline.moments.count + 1))
+
+	if effectiveAlpha > 1 {
+		effectiveAlpha = 1
+	}
+
+	minMove := baseline.pathMoveFloor()
+
+	if baseline.moments.count < baseline.minObs {
+		baseline.moments.update(recentMove, effectiveAlpha)
+
+		return false, 0, false
+	}
+
+	mean := baseline.moments.mean
+	historicalVar := baseline.moments.variance
+
+	if historicalVar < 0 {
+		historicalVar = 0
+	}
+
+	floorVar := minMove * minMove
+	threshold := mean + math.Sqrt(historicalVar+floorVar)
+
+	if threshold <= 0 && recentMove <= 0 {
+		return false, 1, true
+	}
+
+	moved = recentMove > threshold
+
+	if !moved && threshold > 0 {
+		stallMargin = (threshold - recentMove) / threshold
+	}
+
+	baseline.moments.update(recentMove, effectiveAlpha)
+
+	return moved, stallMargin, true
+}
+
+type ewMoments struct {
+	count    int
+	mean     float64
+	variance float64
+}
+
+func (moments *ewMoments) update(value, alpha float64) {
+	moments.count++
+
+	if moments.count == 1 {
+		moments.mean = value
+		moments.variance = 0
+
+		return
+	}
+
+	delta := value - moments.mean
+	moments.mean += alpha * delta
+	moments.variance = (1 - alpha) * (moments.variance + alpha*delta*delta)
+}
+
+func (baseline *MoveBaseline) pathMoveFloor() float64 {
+	if len(baseline.pathMoves) < baseline.minObs {
+		return 0
+	}
+
+	sortedMoves := append([]float64(nil), baseline.pathMoves...)
+	sort.Float64s(sortedMoves)
+	floor := stat.Quantile(0.1, stat.LinInterp, sortedMoves, nil)
+
+	if floor > 0 {
+		return floor
+	}
+
+	for _, move := range baseline.pathMoves {
+		if move <= 0 {
+			continue
+		}
+
+		if floor == 0 || move < floor {
+			floor = move
+		}
+	}
+
+	return floor
+}

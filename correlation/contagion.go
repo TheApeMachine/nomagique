@@ -77,15 +77,13 @@ func (contagion *Contagion) Write(p []byte) (int, error) {
 }
 
 func (contagion *Contagion) Read(p []byte) (int, error) {
-	if contagion == nil {
-		return contagion.artifact.Read(p)
-	}
+	if contagion != nil {
+		snapshots := contagion.snapshots()
 
-	snapshots := contagion.snapshots()
-
-	if len(snapshots) > 0 {
-		contagion.output = contagion.observeSnapshots(snapshots)
-		putFloat64Payload(&contagion.artifact, "contagion", contagion.output)
+		if len(snapshots) > 0 {
+			contagion.output = contagion.observeSnapshots(snapshots)
+			putFloat64Payload(&contagion.artifact, "contagion", contagion.output)
+		}
 	}
 
 	return contagion.artifact.Read(p)

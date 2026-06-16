@@ -42,6 +42,18 @@ func putFloat64Payload(artifact **datura.Artifact, name string, value float64) {
 	_ = (*artifact).SetPayload(payload)
 }
 
+func putFloat64SlicePayload(artifact **datura.Artifact, name string, values []float64) {
+	*artifact = datura.Acquire(name, datura.Artifact_Type_json)
+	payload := make([]byte, 8*len(values))
+
+	for index, value := range values {
+		offset := index * 8
+		binary.BigEndian.PutUint64(payload[offset:offset+8], math.Float64bits(value))
+	}
+
+	_ = (*artifact).SetPayload(payload)
+}
+
 func parsePredictedActual(
 	primary float64, extras []float64,
 ) (float64, float64, error) {

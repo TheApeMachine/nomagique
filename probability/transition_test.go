@@ -67,6 +67,20 @@ func TestTransitionMatrixReset(testingTB *testing.T) {
 	})
 }
 
+func TestTransitionObserve(testingTB *testing.T) {
+	Convey("Given classifier probabilities", testingTB, func() {
+		transition := NewTransitionSurprise(4, 0.1)
+
+		surprise, err := transition.Observe([]float64{0.5, 0.3, 0.2}, 2)
+
+		Convey("It should return finite surprisal and advance state", func() {
+			So(err, ShouldBeNil)
+			So(surprise, ShouldBeGreaterThan, 0)
+			So(transition.matrix.lastCategory, ShouldEqual, 1)
+		})
+	})
+}
+
 func TestTransitionSurprise_Read(testingTB *testing.T) {
 	Convey("Given a padded observation through TransitionSurprise", testingTB, func() {
 		stage := NewTransitionSurprise(5, 0.1)

@@ -72,45 +72,6 @@ func pokeFloatList(artifact *datura.Artifact, key string, values []float64) {
 	artifact.Poke(key, strings.Join(parts, ","))
 }
 
-func peekFloatList(artifact *datura.Artifact, key string) []float64 {
-	raw := artifact.Peek(key)
-
-	if raw == "" {
-		return nil
-	}
-
-	parts := strings.Split(raw, ",")
-	values := make([]float64, 0, len(parts))
-
-	for _, part := range parts {
-		value, err := strconv.ParseFloat(strings.TrimSpace(part), 64)
-
-		if err != nil {
-			return nil
-		}
-
-		values = append(values, value)
-	}
-
-	return values
-}
-
-func peekInt(artifact *datura.Artifact, key string) (int, bool) {
-	raw := artifact.Peek(key)
-
-	if raw == "" {
-		return 0, false
-	}
-
-	value, err := strconv.Atoi(raw)
-
-	if err != nil {
-		return 0, false
-	}
-
-	return value, true
-}
-
 func rehydrateArtifact(artifact **datura.Artifact, origin string, artifactType datura.Artifact_Type) {
 	if artifact == nil || *artifact == nil {
 		return

@@ -30,15 +30,13 @@ func (coupling *IntervalCoupling) Write(p []byte) (int, error) {
 }
 
 func (coupling *IntervalCoupling) Read(p []byte) (int, error) {
-	if coupling == nil {
-		return coupling.artifact.Read(p)
-	}
+	if coupling != nil {
+		value, ok := IntervalCorrelation(coupling.left, coupling.right)
 
-	value, ok := IntervalCorrelation(coupling.left, coupling.right)
-
-	if ok {
-		coupling.output = value
-		putFloat64Payload(&coupling.artifact, "interval-coupling", coupling.output)
+		if ok {
+			coupling.output = value
+			putFloat64Payload(&coupling.artifact, "interval-coupling", coupling.output)
+		}
 	}
 
 	return coupling.artifact.Read(p)

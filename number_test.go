@@ -7,11 +7,11 @@ import (
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/datura/transport"
 	"github.com/theapemachine/nomagique"
 	"github.com/theapemachine/nomagique/adaptive"
 	"github.com/theapemachine/nomagique/geometry"
 	"github.com/theapemachine/nomagique/learning"
+	"github.com/theapemachine/nomagique/logic"
 	"github.com/theapemachine/nomagique/probability"
 	"github.com/theapemachine/nomagique/statistic"
 	"github.com/theapemachine/nomagique/tests"
@@ -137,8 +137,6 @@ func TestNumber_PanelMedian(testingTB *testing.T) {
 		_ = tests.WriteSamples(panel, 3, 0.06)
 		_, _ = tests.ReadSample(panel)
 
-		So(nomagique.Number(transport.NewThrough(1.0), median), ShouldBeNil)
-
 		got, err := tests.ReadSample(median)
 
 		So(err, ShouldBeNil)
@@ -150,8 +148,12 @@ func TestNumber_PanelMedian(testingTB *testing.T) {
 }
 
 func TestConstants(testingTB *testing.T) {
-	Convey("Given Constants wrapping a slice", testingTB, func() {
-		stages := nomagique.Constants(1.0, 2.0, 3.0)
+	Convey("Given constant stages wrapping a slice", testingTB, func() {
+		stages := []io.ReadWriter{
+			logic.NewConstant(1.0),
+			logic.NewConstant(2.0),
+			logic.NewConstant(3.0),
+		}
 
 		Convey("It should expose each value as a constant stage", func() {
 			So(len(stages), ShouldEqual, 3)

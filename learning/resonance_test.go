@@ -1,0 +1,165 @@
+package learning
+
+import (
+	"math"
+	"testing"
+
+	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/nomagique/tests"
+	"gonum.org/v1/gonum/mat"
+)
+
+func TestNewResonanceManifold(testingTB *testing.T) {
+	Convey("Given a valid architecture", testingTB, func() {
+		manifold, err := NewResonanceManifold([]int{4, 8, 4}, 2, 0.01)
+
+		Convey("It should construct a usable manifold", func() {
+			So(err, ShouldBeNil)
+			So(manifold, ShouldNotBeNil)
+			So(manifold.streamLearn, ShouldBeTrue)
+			So(manifold.streamAdvanceTemporal, ShouldBeTrue)
+		})
+	})
+}
+
+func TestResonanceManifold_SettleAdvanceTemporal(testingTB *testing.T) {
+	Convey("Given inference without learning", testingTB, func() {
+		architecture := []int{4, 8, 4}
+		manifold, err := NewResonanceManifold(architecture, 0, 0.05)
+		So(err, ShouldBeNil)
+
+		firstInput := []float64{0.8, -0.2, 0.4, 0.1}
+		secondInput := []float64{-0.3, 0.6, -0.1, 0.2}
+
+		settleErr := manifold.Settle(firstInput, true)
+		So(settleErr, ShouldBeNil)
+
+		withHistoryErr := manifold.Settle(secondInput, true)
+		So(withHistoryErr, ShouldBeNil)
+		withHistory := manifold.LatentState()
+
+		coldStart, err := NewResonanceManifold(architecture, 0, 0.05)
+		So(err, ShouldBeNil)
+
+		coldErr := coldStart.Settle(secondInput, false)
+		So(coldErr, ShouldBeNil)
+		coldLatent := coldStart.LatentState()
+
+		Convey("It should keep temporal priors active without Learn", func() {
+			So(withHistory, ShouldNotResemble, coldLatent)
+		})
+	})
+}
+
+func TestResonanceManifold_SupervisedTargetDoesNotContaminateSettle(testingTB *testing.T) {
+	Convey("Given the same input and settled state", testingTB, func() {
+		architecture := []int{3, 6, 3}
+		input := []float64{0.5, -0.25, 0.75}
+		target := []float64{1.0, -1.0}
+
+		unlabeled, err := NewResonanceManifold(architecture, 2, 0.02)
+		So(err, ShouldBeNil)
+		So(unlabeled.Settle(input, false), ShouldBeNil)
+		unlabeledEnergy := unlabeled.Energy()
+		unlabeledLatent := unlabeled.LatentState()
+
+		labeled, err := NewResonanceManifold(architecture, 2, 0.02)
+		So(err, ShouldBeNil)
+		So(labeled.Settle(input, false), ShouldBeNil)
+		labeledEnergy := labeled.Energy()
+		labeledLatent := labeled.LatentState()
+		labeled.Learn(target)
+
+		Convey("Settle should ignore supervised targets during inference", func() {
+			So(unlabeledEnergy, ShouldAlmostEqual, labeledEnergy, 1e-12)
+			So(unlabeledLatent, ShouldResemble, labeledLatent)
+		})
+	})
+}
+
+func TestResonanceManifold_SetStreamLearn(testingTB *testing.T) {
+	Convey("Given a manifold with learning disabled on the stream path", testingTB, func() {
+		architecture := []int{2, 4, 2}
+		input := []float64{0.3, -0.7}
+		target := []float64{0.9}
+
+		baseline, err := NewResonanceManifold(architecture, 1, 0.03)
+		So(err, ShouldBeNil)
+
+		frozenManifold, err := NewResonanceManifold(architecture, 1, 0.03)
+		So(err, ShouldBeNil)
+		frozenManifold.W[0].Copy(baseline.W[0])
+		frozenManifold.R[0].Copy(baseline.R[0])
+		frozenManifold.A.Copy(baseline.A)
+		frozenManifold.V.Copy(baseline.V)
+
+		baselineWeights := mat.DenseCopyOf(baseline.W[0])
+
+		baseline.SettleFromBatchOptions(input, target, true, true)
+		frozenManifold.SetStreamLearn(false)
+		frozenManifold.SettleFromBatchOptions(input, target, false, true)
+
+		Convey("It should leave weights unchanged when learning is disabled", func() {
+			So(mat.Equal(baselineWeights, frozenManifold.W[0]), ShouldBeTrue)
+			So(mat.Equal(baselineWeights, baseline.W[0]), ShouldBeFalse)
+		})
+	})
+}
+
+func TestResonanceManifold_Read(testingTB *testing.T) {
+	Convey("Given stream input with a supervised target", testingTB, func() {
+		manifold, err := NewResonanceManifold([]int{2, 4, 2}, 1, 0.02)
+		So(err, ShouldBeNil)
+
+		writeErr := tests.WriteSamples(manifold, 0.2, -0.4, 0.8)
+		So(writeErr, ShouldBeNil)
+
+		got, readErr := tests.ReadSample(manifold)
+		So(readErr, ShouldBeNil)
+
+		payload, payloadErr := manifold.artifact.Payload()
+		So(payloadErr, ShouldBeNil)
+
+		Convey("It should expose reconstruction and latent state on the artifact", func() {
+			So(math.IsNaN(got), ShouldBeFalse)
+			So(len(payload), ShouldEqual, 8*(1+2))
+			So(len(manifold.LatentState()), ShouldEqual, 2)
+		})
+	})
+}
+
+func TestResonanceManifold_Sparsity(testingTB *testing.T) {
+	Convey("Given a non-zero latent state", testingTB, func() {
+		manifold, err := NewResonanceManifold([]int{2, 3, 2}, 0, 0.02)
+		So(err, ShouldBeNil)
+		So(manifold.Settle([]float64{0.5, -0.5}, false), ShouldBeNil)
+
+		withSparsity := manifold.cfg.Sparsity
+		manifold.cfg.Sparsity = 0
+		energyWithout := manifold.Energy()
+		manifold.cfg.Sparsity = withSparsity
+		energyWith := manifold.Energy()
+
+		Convey("It should apply the configured sparsity penalty", func() {
+			So(energyWith, ShouldBeGreaterThan, energyWithout)
+		})
+	})
+}
+
+func BenchmarkResonanceManifold_Settle(testingTB *testing.B) {
+	manifold, err := NewResonanceManifold([]int{8, 16, 8}, 2, 0.01)
+
+	if err != nil {
+		testingTB.Fatal(err)
+	}
+
+	input := []float64{0.1, -0.2, 0.3, -0.4, 0.5, -0.6, 0.7, -0.8}
+	target := []float64{0.25, -0.5}
+
+	testingTB.ReportAllocs()
+
+	for testingTB.Loop() {
+		_ = manifold.Settle(input, true)
+		manifold.Learn(target)
+	}
+}

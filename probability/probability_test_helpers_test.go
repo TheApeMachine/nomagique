@@ -3,7 +3,6 @@ package probability
 import (
 	"bytes"
 	"io"
-	"testing"
 
 	"github.com/theapemachine/datura"
 )
@@ -11,13 +10,6 @@ import (
 type fixedScore struct {
 	artifact *datura.Artifact
 	value    float64
-}
-
-func newFixedScore(value float64) *fixedScore {
-	return &fixedScore{
-		artifact: datura.Acquire("fixed-score", datura.Artifact_Type_json),
-		value:    value,
-	}
 }
 
 func (fixedScore *fixedScore) Write(p []byte) (int, error) {
@@ -36,16 +28,6 @@ func (fixedScore *fixedScore) Read(p []byte) (int, error) {
 
 func (fixedScore *fixedScore) Close() error {
 	return nil
-}
-
-func numberInputs(series ...float64) []io.ReadWriter {
-	scores := make([]io.ReadWriter, len(series))
-
-	for index, sample := range series {
-		scores[index] = newFixedScore(sample)
-	}
-
-	return scores
 }
 
 func readScalar(stage io.ReadWriter, samples ...float64) float64 {
@@ -105,10 +87,4 @@ func observeWithoutSample(stage io.ReadWriter, carried float64) float64 {
 
 func observeWithWork(stage io.ReadWriter, sample float64, work float64) float64 {
 	return readScalar(stage, sample+work)
-}
-
-func mustNumbers(testingTB testing.TB, series ...float64) []io.ReadWriter {
-	testingTB.Helper()
-
-	return numberInputs(series...)
 }

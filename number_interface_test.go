@@ -5,7 +5,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/theapemachine/datura/transport"
 	"github.com/theapemachine/nomagique/adaptive"
 	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/nomagique/correlation"
@@ -100,7 +99,6 @@ func TestNumberInterfaceCompile(testingTB *testing.T) {
 	))
 
 	assignStage(algorithm.NewTrust())
-	assignStage(transport.NewThrough(0))
 
 	assignStage(logic.NewCircuit(logic.Rules{
 		{

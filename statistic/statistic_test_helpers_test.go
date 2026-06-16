@@ -2,21 +2,9 @@ package statistic
 
 import (
 	"io"
-	"testing"
 
-	"github.com/theapemachine/nomagique/logic"
 	"github.com/theapemachine/nomagique/tests"
 )
-
-func numberInputs(series ...float64) []io.ReadWriter {
-	stages := make([]io.ReadWriter, len(series))
-
-	for index, sample := range series {
-		stages[index] = logic.NewConstant(sample)
-	}
-
-	return stages
-}
 
 func observeInputs(stage io.ReadWriter, series ...float64) float64 {
 	if len(series) == 0 {
@@ -64,10 +52,4 @@ func observeWithoutSample(stage io.ReadWriter, carried float64) float64 {
 	value, _ := tests.ReadSample(stage)
 
 	return value
-}
-
-func mustConstants(testingTB testing.TB, series ...float64) []io.ReadWriter {
-	testingTB.Helper()
-
-	return numberInputs(series...)
 }

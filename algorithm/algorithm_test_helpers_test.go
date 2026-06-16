@@ -3,7 +3,6 @@ package algorithm
 import (
 	"bytes"
 	"io"
-	"testing"
 
 	"github.com/theapemachine/datura"
 )
@@ -79,40 +78,6 @@ func observeInputs(stage io.ReadWriter, series ...float64) float64 {
 	return readScalar(stage, series...)
 }
 
-func observeWithoutSample(stage io.ReadWriter, carried float64) float64 {
-	_ = carried
-
-	var outBuf bytes.Buffer
-	chunk := make([]byte, 4096)
-
-	for {
-		readCount, readErr := stage.Read(chunk)
-
-		if readCount > 0 {
-			outBuf.Write(chunk[:readCount])
-		}
-
-		if readErr == io.EOF {
-			break
-		}
-
-		if readErr != nil {
-			break
-		}
-	}
-
-	outbound := datura.Acquire("test-out", datura.Artifact_Type_json)
-	_, _ = outbound.Write(outBuf.Bytes())
-	payload, _ := outbound.Payload()
-	value, ok := payloadScalar(payload)
-
-	if !ok {
-		return 0
-	}
-
-	return value
-}
-
 func observeWithWork(stage io.ReadWriter, sample float64, work float64) float64 {
 	return readScalar(stage, sample, work)
 }
@@ -135,16 +100,4 @@ func nodeRingFromStreams(streams [][]float64) *NodeRing {
 	}
 
 	return nodeRing
-}
-
-func mustNumbers(testingTB testing.TB, series ...float64) []io.ReadWriter {
-	testingTB.Helper()
-
-	scores := make([]io.ReadWriter, len(series))
-
-	for index, sample := range series {
-		scores[index] = newFixedScore(sample)
-	}
-
-	return scores
 }

@@ -5,7 +5,6 @@ import (
 	"errors"
 	"math"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/theapemachine/datura"
@@ -13,8 +12,7 @@ import (
 )
 
 var (
-	ErrEmptyInputs   = errors.New("algorithm: empty inputs")
-	ErrZeroPredicted = errors.New("algorithm: zero predicted value")
+	ErrEmptyInputs = errors.New("algorithm: empty inputs")
 )
 
 func payloadSamples(payload []byte) []float64 {
@@ -53,22 +51,6 @@ func payloadScalar(payload []byte) (float64, bool) {
 
 func pokeFloat(artifact *datura.Artifact, key string, value float64) {
 	artifact.Poke(key, strconv.FormatFloat(value, 'g', -1, 64))
-}
-
-func peekFloat(artifact *datura.Artifact, key string) (float64, bool) {
-	raw := artifact.Peek(key)
-
-	if raw == "" {
-		return 0, false
-	}
-
-	value, err := strconv.ParseFloat(raw, 64)
-
-	if err != nil {
-		return 0, false
-	}
-
-	return value, true
 }
 
 func rehydrateArtifact(artifact **datura.Artifact, origin string, artifactType datura.Artifact_Type) {
@@ -135,34 +117,6 @@ func zipNodeRows(streams [][]float64) ([][]float64, bool) {
 	}
 
 	return rows, true
-}
-
-func parsePredictedActual(
-	primary float64, extras []float64,
-) (float64, float64, error) {
-	if len(extras) >= 2 {
-		predicted := extras[0]
-		actual := extras[1]
-
-		if predicted == 0 {
-			return 0, 0, ErrZeroPredicted
-		}
-
-		return predicted, actual, nil
-	}
-
-	if len(extras) == 0 {
-		return 0, 0, ErrEmptyInputs
-	}
-
-	predicted := primary
-	actual := extras[0]
-
-	if predicted == 0 {
-		return 0, 0, ErrZeroPredicted
-	}
-
-	return predicted, actual, nil
 }
 
 func samplesFromTimeValues(values []float64) ([]correlation.Sample, bool) {
@@ -360,18 +314,4 @@ func weightSamples(weights []float64) []float64 {
 	}
 
 	return weights
-}
-
-func formatFloatList(values []float64) string {
-	if len(values) == 0 {
-		return ""
-	}
-
-	parts := make([]string, len(values))
-
-	for index, value := range values {
-		parts[index] = strconv.FormatFloat(value, 'g', -1, 64)
-	}
-
-	return strings.Join(parts, ",")
 }

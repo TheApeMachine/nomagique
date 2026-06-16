@@ -2,15 +2,9 @@ package geometry
 
 import (
 	"io"
-	"testing"
 
-	"github.com/theapemachine/nomagique"
 	"github.com/theapemachine/nomagique/tests"
 )
-
-func numberInputs(series ...float64) []io.ReadWriter {
-	return nomagique.Constants(series...)
-}
 
 func observeInputs(stage io.ReadWriter, series ...float64) float64 {
 	if len(series) == 0 {
@@ -54,10 +48,4 @@ func observeWithWork(stage io.ReadWriter, sample float64, work float64) float64 
 	value, _ := tests.ReadSample(stage)
 
 	return value
-}
-
-func mustConstants(testingTB testing.TB, series ...float64) []io.ReadWriter {
-	testingTB.Helper()
-
-	return numberInputs(series...)
 }

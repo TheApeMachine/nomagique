@@ -39,9 +39,9 @@ func NewMedian(weights []float64, panel *Panel) *Median {
 func (median *Median) Write(p []byte) (int, error) {
 	route := datura.Acquire("median-route", datura.Artifact_Type_json)
 	_, _ = route.Write(p)
-	payload, payloadErr := route.Payload()
+	payload, payloadOK := route.PayloadQuiet()
 
-	if payloadErr == nil && len(payload) == 8 {
+	if payloadOK && len(payload) == 8 {
 		median.excludedKey = math.Float64frombits(binary.BigEndian.Uint64(payload))
 		median.hasExcludedKey = true
 	}

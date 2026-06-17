@@ -75,9 +75,9 @@ func (excitation *Excitation) Read(p []byte) (int, error) {
 		scope = excitation.artifact.Peek("scope")
 	}
 
-	payload, err := excitation.artifact.Payload()
+	payload, payloadOK := excitation.artifact.PayloadQuiet()
 
-	if err == nil {
+	if payloadOK {
 		excitation.outcome = excitation.evaluate(scope, payloadSamples(payload))
 		excitation.publishReadings()
 	}

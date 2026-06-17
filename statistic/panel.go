@@ -31,9 +31,9 @@ func (panel *Panel) Write(p []byte) (int, error) {
 }
 
 func (panel *Panel) Read(p []byte) (int, error) {
-	payload, err := panel.artifact.Payload()
+	payload, payloadOK := panel.artifact.PayloadQuiet()
 
-	if err == nil && len(payload) >= 16 && len(payload)%8 == 0 {
+	if payloadOK && len(payload) >= 16 && len(payload)%8 == 0 {
 		count := len(payload) / 8
 		values := make([]float64, count)
 
@@ -50,7 +50,7 @@ func (panel *Panel) Read(p []byte) (int, error) {
 		}
 	}
 
-	if err == nil && len(payload) == 8 {
+	if payloadOK && len(payload) == 8 {
 		panel.output = math.Float64frombits(binary.BigEndian.Uint64(payload))
 	}
 

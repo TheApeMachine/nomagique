@@ -2,6 +2,7 @@ package probability
 
 import (
 	"bytes"
+	"errors"
 	"io"
 
 	"github.com/theapemachine/datura"
@@ -144,10 +145,10 @@ func (classifier *Classifier) scores() ([]float64, bool) {
 }
 
 func (classifier *Classifier) inboundBytes() ([]byte, error) {
-	payload, err := classifier.artifact.Payload()
+	payload, payloadOK := classifier.artifact.PayloadQuiet()
 
-	if err != nil {
-		return nil, err
+	if !payloadOK {
+		return nil, errors.New("classifier: inbound payload unavailable")
 	}
 
 	inbound := datura.Acquire("classifier-in", datura.Artifact_Type_json)

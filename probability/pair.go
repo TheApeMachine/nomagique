@@ -78,7 +78,7 @@ func rehydrateArtifact(artifact **datura.Artifact, origin string, artifactType d
 	}
 
 	current := *artifact
-	payload, _ := current.Payload()
+	payload, _ := current.PayloadQuiet()
 	fresh := datura.Acquire(origin, artifactType)
 
 	if fresh == nil {

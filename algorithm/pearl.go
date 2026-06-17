@@ -62,9 +62,9 @@ func (pearl *Pearl) Write(p []byte) (int, error) {
 func (pearl *Pearl) Read(p []byte) (int, error) {
 	rehydrateArtifact(&pearl.artifact, "pearl", datura.Artifact_Type_json)
 
-	payload, err := pearl.artifact.Payload()
+	payload, payloadOK := pearl.artifact.PayloadQuiet()
 
-	if err == nil {
+	if payloadOK {
 		batch := payloadSamples(payload)
 
 		if len(batch) > 0 {

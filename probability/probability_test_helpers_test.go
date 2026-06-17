@@ -30,6 +30,38 @@ func (fixedScore *fixedScore) Close() error {
 	return nil
 }
 
+func readStageOutput(stage io.ReadWriter) float64 {
+	var outBuf bytes.Buffer
+	chunk := make([]byte, 4096)
+
+	for {
+		readCount, readErr := stage.Read(chunk)
+
+		if readCount > 0 {
+			outBuf.Write(chunk[:readCount])
+		}
+
+		if readErr == io.EOF {
+			break
+		}
+
+		if readErr != nil {
+			break
+		}
+	}
+
+	outbound := datura.Acquire("test-out", datura.Artifact_Type_json)
+	_, _ = outbound.Write(outBuf.Bytes())
+	payload, _ := outbound.Payload()
+	value, ok := payloadScalar(payload)
+
+	if !ok {
+		return 0
+	}
+
+	return value
+}
+
 func readScalar(stage io.ReadWriter, samples ...float64) float64 {
 	inbound := datura.Acquire("test-in", datura.Artifact_Type_json)
 	_ = inbound.SetPayload(encodePayload(samples...))

@@ -152,6 +152,7 @@ early-stop run per column so symbols converge independently.
 @property (nonatomic, strong) id<MTLBuffer> bufStep;       // [N]
 @property (nonatomic, strong) id<MTLBuffer> bufEnergyOld;  // [N]
 @property (nonatomic, strong) id<MTLBuffer> bufEnergyNew;  // [N]
+@property (nonatomic, strong) id<MTLBuffer> bufReconstruction; // [N]
 @property (nonatomic, strong) id<MTLBuffer> bufFlags;      // [N]
 @property (nonatomic, strong) id<MTLBuffer> bufActive;     // [N]
 @property (nonatomic, strong) id<MTLBuffer> bufAnyActive;  // [1] atomic counter
@@ -259,6 +260,14 @@ early-stop run per column so symbols converge independently.
 - (void)advanceTemporal;
 - (float)energySlotCompute:(uint32_t)slot;
 - (float)reconstructionSlotCompute:(uint32_t)slot;
+- (void)computeOutcomesBatch;
+- (BOOL)readOutcomesBatchLatent:(float *)latent
+                        latentLen:(uint32_t)latentLen
+                           energy:(float *)energy
+                         energyLen:(uint32_t)energyLen
+                   reconstruction:(float *)reconstruction
+                         reconLen:(uint32_t)reconLen
+                            error:(NSString **)errorOut;
 @end
 
 void resonance_write_error(char *err_out, int err_cap, NSString *message);

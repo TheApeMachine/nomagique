@@ -181,7 +181,12 @@ void manifold_velocity_at(
         [encoder setBuffer:buffers[index] offset:0 atIndex:(NSUInteger)index];
     }
 
+    NSUInteger hwMax = manifold_pipeline_max_threads(pipeline);
     NSUInteger width = kHeavyKernelThreads;
+
+    if (width > hwMax) {
+        width = hwMax;
+    }
 
     if (width > threadCount) {
         width = pipeline.threadExecutionWidth;
@@ -199,6 +204,14 @@ void manifold_velocity_at(
         if (width > threadCount) {
             width = threadCount;
         }
+
+        if (width > hwMax) {
+            width = hwMax;
+        }
+    }
+
+    if (width == 0) {
+        width = 1;
     }
 
     MTLSize gridSize = MTLSizeMake(threadCount, 1, 1);
@@ -307,7 +320,8 @@ void manifold_velocity_at(
         }
     }
 
-    MTLSize threadsPerThreadgroup = MTLSizeMake(threadgroupSize, 1, 1);
+    NSUInteger tgSize = manifold_clamp_threadgroup_width(threadgroupSize, pipeline);
+    MTLSize threadsPerThreadgroup = MTLSizeMake(tgSize, 1, 1);
     MTLSize threadgroups = MTLSizeMake(threadgroupCount, 1, 1);
     [encoder dispatchThreadgroups:threadgroups threadsPerThreadgroup:threadsPerThreadgroup];
 

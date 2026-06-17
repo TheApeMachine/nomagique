@@ -209,10 +209,10 @@ static const float kFp32ExpUnderflowX0 = 103.27893f;
                      ]
                  threadCount:self.numOsc];
 
-    NSUInteger tgWidth = manifold_simd_threadgroup_width(
+    NSUInteger tgWidth = manifold_simd_threadgroup_width_for_pipeline(
         self.numOsc,
         self.simdWidth,
-        self.maxThreadsPerThreadgroup
+        self.accumulateForces
     );
     NSUInteger tgCount = 1;
 

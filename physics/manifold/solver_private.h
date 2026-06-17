@@ -15,9 +15,59 @@ static const uint32_t kGasBrickX = 2u;
 static const uint32_t kGasBrickY = 4u;
 static const uint32_t kGasBrickZ = 32u;
 static const uint32_t kHeavyKernelThreads = 256u;
+
+static inline NSUInteger manifold_pipeline_max_threads(id<MTLComputePipelineState> pipeline) {
+    if (pipeline == nil) {
+        return 1u;
+    }
+
+    NSUInteger hwMax = pipeline.maxTotalThreadsPerThreadgroup;
+
+    if (hwMax == 0u) {
+        hwMax = 1u;
+    }
+
+    return hwMax;
+}
+
+static inline NSUInteger manifold_clamp_threadgroup_width(
+    NSUInteger requested,
+    id<MTLComputePipelineState> pipeline
+) {
+    if (requested == 0u) {
+        requested = 1u;
+    }
+
+    NSUInteger hwMax = manifold_pipeline_max_threads(pipeline);
+
+    if (requested > hwMax) {
+        return hwMax;
+    }
+
+    return requested;
+}
+
 static inline uint32_t manifold_max_carriers_for_threadgroup(id<MTLDevice> device) {
     uint32_t memoryLimit = (uint32_t)(device.maxThreadgroupMemoryLength / kCarrierAccumThreadgroupBytes);
     uint32_t threadLimit = (uint32_t)device.maxThreadsPerThreadgroup.width;
+
+    if (memoryLimit > kMaxCarriersForTG) {
+        memoryLimit = kMaxCarriersForTG;
+    }
+
+    if (threadLimit > kMaxCarriersForTG) {
+        threadLimit = kMaxCarriersForTG;
+    }
+
+    return memoryLimit < threadLimit ? memoryLimit : threadLimit;
+}
+
+static inline uint32_t manifold_max_carriers_for_pipeline(
+    id<MTLDevice> device,
+    id<MTLComputePipelineState> pipeline
+) {
+    uint32_t memoryLimit = (uint32_t)(device.maxThreadgroupMemoryLength / kCarrierAccumThreadgroupBytes);
+    uint32_t threadLimit = (uint32_t)manifold_pipeline_max_threads(pipeline);
 
     if (memoryLimit > kMaxCarriersForTG) {
         memoryLimit = kMaxCarriersForTG;
@@ -50,6 +100,18 @@ static inline NSUInteger manifold_simd_threadgroup_width(
     }
 
     return aligned;
+}
+
+static inline NSUInteger manifold_simd_threadgroup_width_for_pipeline(
+    NSUInteger count,
+    NSUInteger simdWidth,
+    id<MTLComputePipelineState> pipeline
+) {
+    return manifold_simd_threadgroup_width(
+        count,
+        simdWidth,
+        manifold_pipeline_max_threads(pipeline)
+    );
 }
 
 typedef struct GasGridParamsHost {

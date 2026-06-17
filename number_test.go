@@ -1,14 +1,18 @@
 package nomagique_test
 
 import (
+	"encoding/binary"
 	"io"
 	"math"
 	"testing"
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/datura"
 	"github.com/theapemachine/nomagique"
 	"github.com/theapemachine/nomagique/adaptive"
+	"github.com/theapemachine/nomagique/algorithm"
+	"github.com/theapemachine/nomagique/causal"
 	"github.com/theapemachine/nomagique/geometry"
 	"github.com/theapemachine/nomagique/learning"
 	"github.com/theapemachine/nomagique/logic"
@@ -17,14 +21,25 @@ import (
 	"github.com/theapemachine/nomagique/tests"
 )
 
+const (
+	causalNodeMacro        = 0
+	causalNodeLiquidity    = 1
+	causalNodeFlow         = 2
+	causalNodeTarget       = 3
+	causalMinHistory       = 12
+	causalFeedRingCapacity = 64
+)
+
 func TestNumber(testingTB *testing.T) {
 	Convey("Given Number with EMA and Delta stages", testingTB, func() {
 		exponential := adaptive.NewEMA()
 		delta := adaptive.NewDelta()
 
-		So(nomagique.Number(exponential, delta), ShouldBeNil)
+		pipeline := nomagique.Number(exponential, delta)
 
-		got, err := tests.PipelineSample([]io.ReadWriter{exponential, delta}, 0)
+		So(pipeline, ShouldNotBeNil)
+
+		got, err := tests.PipelineSample([]io.ReadWriter{pipeline}, 0)
 
 		So(err, ShouldBeNil)
 
@@ -125,6 +140,87 @@ func TestPipeline_EMAThenZScoreSeries(testingTB *testing.T) {
 	})
 }
 
+func TestNumber_causalPipeline(testingTB *testing.T) {
+	Convey("Given a causal-style panel-median-ladder-classifier pipeline", testingTB, func() {
+		nodes := buildCausalNodeRing(causalMinHistory)
+		ladderConfig := causal.LadderConfig{
+			TreatmentNormal:   causalNodeFlow,
+			ControlsNormal:    []int{causalNodeMacro, causalNodeLiquidity},
+			TreatmentInverted: causalNodeLiquidity,
+			ControlsInverted:  []int{causalNodeMacro},
+			ConditionLeft:     causalNodeLiquidity,
+			ConditionRight:    causalNodeFlow,
+			MinHistory:        causalMinHistory,
+		}
+
+		ladder := algorithm.NewPearl(causalNodeTarget, ladderConfig, nodes, nil, nil)
+		classifier := probability.NewClassifier(
+			ladder.UpliftReading(),
+			ladder.ContagionReading(),
+			ladder.AssociationReading(),
+			ladder.InterventionReading(),
+		)
+
+		So(classifier, ShouldNotBeNil)
+
+		pipeline := nomagique.Number(
+			statistic.NewPanel(),
+			statistic.NewMedian(nil, nil),
+			ladder,
+			classifier,
+			probability.NewTransitionSurprise(
+				4, 1.0/float64(causalFeedRingCapacity),
+			),
+		)
+
+		So(pipeline, ShouldNotBeNil)
+
+		panelMembers := []struct {
+			memberKey float64
+			sample    float64
+		}{
+			{1, 0.02},
+			{2, 0.04},
+			{3, 0.06},
+		}
+
+		for _, member := range panelMembers {
+			ladder.SetNodes(nodes)
+
+			warmErr := tests.WriteSamples(pipeline, member.memberKey, member.sample)
+
+			So(warmErr, ShouldBeNil)
+
+			_, warmReadErr := runPipelineRead(pipeline)
+
+			So(warmReadErr, ShouldBeNil)
+		}
+
+		ladder.SetNodes(nodes)
+
+		writeErr := tests.WriteSamples(pipeline, 1, 0.02)
+
+		So(writeErr, ShouldBeNil)
+
+		output, readErr := runPipelineRead(pipeline)
+
+		So(readErr, ShouldBeNil)
+
+		categoryIndex := datura.Peek[int](output, "classifier.category")
+		surprise := datura.Peek[float64](output, "transition.surprise")
+		intervention := datura.Peek[float64](output, "ladder.intervention")
+
+		Convey("It should classify through panel peers, Pearl ladder, and transition surprise", func() {
+			So(categoryIndex, ShouldBeGreaterThanOrEqualTo, 1)
+			So(categoryIndex, ShouldBeLessThanOrEqualTo, 4)
+			So(classifier.CategoryIndex(), ShouldEqual, categoryIndex)
+			So(intervention, ShouldBeGreaterThan, 0)
+			So(math.IsNaN(surprise), ShouldBeFalse)
+			So(math.IsInf(surprise, 0), ShouldBeFalse)
+		})
+	})
+}
+
 func TestNumber_PanelMedian(testingTB *testing.T) {
 	Convey("Given Through and an explicit panel registry", testingTB, func() {
 		panel := statistic.NewPanel()
@@ -137,7 +233,7 @@ func TestNumber_PanelMedian(testingTB *testing.T) {
 		_ = tests.WriteSamples(panel, 3, 0.06)
 		_, _ = tests.ReadSample(panel)
 
-		got, err := tests.ReadSample(median)
+		got, err := tests.PipelineSample([]io.ReadWriter{median}, 1)
 
 		So(err, ShouldBeNil)
 
@@ -189,9 +285,11 @@ func TestNumber_crossPackageStages(testingTB *testing.T) {
 		testCase := testCase
 
 		Convey("Given "+testCase.name+" composed through Number", testingTB, func() {
-			So(nomagique.Number(testCase.stages...), ShouldBeNil)
+			pipeline := nomagique.Number(testCase.stages...)
 
-			got, err := tests.PipelineSample(testCase.stages, testCase.sample)
+			So(pipeline, ShouldNotBeNil)
+
+			got, err := tests.PipelineSample([]io.ReadWriter{pipeline}, testCase.sample)
 
 			So(err, ShouldBeNil)
 
@@ -211,4 +309,68 @@ func reverseFloat64(values []float64) []float64 {
 	}
 
 	return reversed
+}
+
+func buildCausalNodeRing(historyLength int) *algorithm.NodeRing {
+	nodeMacroStream := make([]float64, historyLength)
+	nodeLiquidityStream := make([]float64, historyLength)
+	nodeFlowStream := make([]float64, historyLength)
+	nodeTargetStream := make([]float64, historyLength)
+
+	for index := range nodeMacroStream {
+		nodeMacroStream[index] = float64(index) * 0.1
+		nodeLiquidityStream[index] = float64(index) * 0.2
+		nodeFlowStream[index] = float64(index) * 0.5
+		nodeTargetStream[index] = float64(index) * 0.05
+	}
+
+	nodeRing := algorithm.NewNodeRing(4, historyLength)
+
+	for index := range nodeMacroStream {
+		observeCausalNodeRow(
+			nodeRing,
+			nodeMacroStream[index],
+			nodeLiquidityStream[index],
+			nodeFlowStream[index],
+			nodeTargetStream[index],
+		)
+	}
+
+	return nodeRing
+}
+
+func observeCausalNodeRow(nodeRing *algorithm.NodeRing, values ...float64) {
+	payload := make([]byte, 8*len(values))
+
+	for index, value := range values {
+		offset := index * 8
+		binary.BigEndian.PutUint64(payload[offset:offset+8], math.Float64bits(value))
+	}
+
+	inbound := datura.Acquire("causal-node-in", datura.Artifact_Type_json)
+	_ = inbound.SetPayload(payload)
+	buf, _ := inbound.Message().Marshal()
+	_, _ = nodeRing.Write(buf)
+	_, _ = nodeRing.Read(make([]byte, len(buf)))
+}
+
+func runPipelineRead(pipeline io.ReadWriter) (*datura.Artifact, error) {
+	frame := make([]byte, 8192)
+	readCount, err := pipeline.Read(frame)
+
+	if readCount == 0 {
+		return nil, err
+	}
+
+	if err != nil && err != io.EOF {
+		return nil, err
+	}
+
+	output := datura.Acquire("number-pipeline-out", datura.Artifact_Type_json)
+
+	if _, writeErr := output.Write(frame[:readCount]); writeErr != nil {
+		return nil, writeErr
+	}
+
+	return output, nil
 }

@@ -30,6 +30,11 @@ func (s *BatchSolver) SetInputs32(inputs, targets []float32) error {
 }
 func (s *BatchSolver) Settle(advanceTemporal bool) error { return errUnavailable() }
 func (s *BatchSolver) Learn() error                      { return errUnavailable() }
+func (s *BatchSolver) ReadOutcomes() error               { return errUnavailable() }
+func (s *BatchSolver) OutcomeSlot(slot int) ([]float64, float64, float64, error) {
+	return nil, 0, 0, errUnavailable()
+}
+func (s *BatchSolver) TopDimension() int { return 0 }
 
 func (s *BatchSolver) LatentState(slot int) ([]float64, error)       { return nil, errUnavailable() }
 func (s *BatchSolver) Energy(slot int) (float64, error)              { return 0, errUnavailable() }

@@ -61,8 +61,8 @@
         self.simdWidth = 32;
     }
 
-    self.maxThreadsPerThreadgroup = self.device.maxThreadsPerThreadgroup.width;
-    self.maxCarriersForTG = manifold_max_carriers_for_threadgroup(self.device);
+    self.maxThreadsPerThreadgroup = manifold_pipeline_max_threads(self.accumulateForces);
+    self.maxCarriersForTG = manifold_max_carriers_for_pipeline(self.device, self.accumulateForces);
 
     if (self.config.max_carriers > self.maxCarriersForTG) {
         if (error != nil) {

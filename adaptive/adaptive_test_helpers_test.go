@@ -2,9 +2,7 @@ package adaptive
 
 import (
 	"io"
-	"testing"
 
-	"github.com/theapemachine/nomagique/logic"
 	"github.com/theapemachine/nomagique/tests"
 )
 
@@ -68,16 +66,4 @@ func observeWithoutSample(stage io.ReadWriter, carried float64) float64 {
 	value, _ := tests.ReadSample(stage)
 
 	return value
-}
-
-func mustConstants(testingTB testing.TB, series ...float64) []io.ReadWriter {
-	testingTB.Helper()
-
-	stages := make([]io.ReadWriter, len(series))
-
-	for index, sample := range series {
-		stages[index] = logic.NewConstant(sample)
-	}
-
-	return stages
 }

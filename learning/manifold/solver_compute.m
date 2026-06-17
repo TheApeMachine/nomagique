@@ -379,31 +379,99 @@ static inline NSUInteger bo(uint32_t scalarOffset) { return (NSUInteger)scalarOf
 
 // Full per-column energy reduction; caller reads the slot it needs.
 - (float)energySlotCompute:(uint32_t)slot {
-    [self syncDims];
-    id<MTLCommandBuffer> cb = [self.queue commandBuffer];
-    id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
-    [self encPredict:enc];
-    [self encEnergy:enc into:self.bufEnergyNew];
-    [enc endEncoding]; [cb commit]; [cb waitUntilCompleted];
+    [self computeOutcomesBatch];
     return ((const float *)self.bufEnergyNew.contents)[slot];
 }
 
 // reconstruction error per column: ||z[0] - tanh(W[0] z[1])||, read slot.
 - (float)reconstructionSlotCompute:(uint32_t)slot {
+    [self computeOutcomesBatch];
+    return ((const float *)self.bufReconstruction.contents)[slot];
+}
+
+- (void)computeOutcomesBatch {
     [self syncDims];
     NSUInteger N = self.batch;
     uint32_t rows = self.arch[0], cols = self.arch[1];
+
     id<MTLCommandBuffer> cb = [self.queue commandBuffer];
     id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
-    // tmpA = tanh(W[0] z[1]) ; tmpB = z[0]-tmpA
+    [self encPredict:enc];
+    [self encEnergy:enc into:self.bufEnergyNew];
     [self encGemv:enc act:YES matrix:self.bufW matBase:self.wTotal matOff:self.wOffset[0]
              xOff:self.zOffset[1] outBuf:self.bufTmpA outOff:0 xBuf:self.bufZ rows:rows cols:cols];
-    [self encBin:enc pipe:self.pSub a:self.bufZ aOff:self.zOffset[0] b:self.bufTmpA bOff:0 out:self.bufTmpB outOff:0 dim:rows];
-    [enc endEncoding]; [cb commit]; [cb waitUntilCompleted];
-    const float *d = (const float *)self.bufTmpB.contents;
-    float sq = 0.0f;
-    for (uint32_t r = 0u; r < rows; ++r) { float v = d[r * (uint32_t)N + slot]; sq += v * v; }
-    return sqrtf(sq);
+    [self encBin:enc pipe:self.pSub a:self.bufZ aOff:self.zOffset[0] b:self.bufTmpA bOff:0
+             out:self.bufTmpB outOff:0 dim:rows];
+    [enc endEncoding];
+    [cb commit];
+    [cb waitUntilCompleted];
+
+    const float *residual = (const float *)self.bufTmpB.contents;
+    float *reconstruction = (float *)self.bufReconstruction.contents;
+
+    for (uint32_t slot = 0u; slot < N; ++slot) {
+        float sumSquares = 0.0f;
+
+        for (uint32_t row = 0u; row < rows; ++row) {
+            float value = residual[row * (uint32_t)N + slot];
+            sumSquares += value * value;
+        }
+
+        reconstruction[slot] = sqrtf(sumSquares);
+    }
+}
+
+- (BOOL)readOutcomesBatchLatent:(float *)latent
+                      latentLen:(uint32_t)latentLen
+                         energy:(float *)energy
+                       energyLen:(uint32_t)energyLen
+                 reconstruction:(float *)reconstruction
+                       reconLen:(uint32_t)reconLen
+                          error:(NSString **)errorOut {
+    uint32_t batchSize = self.batch;
+    uint32_t topIndex = self.archLen - 1u;
+    uint32_t topDim = self.arch[topIndex];
+    uint32_t expectedLatentLen = batchSize * topDim;
+
+    if (latent == NULL || latentLen != expectedLatentLen) {
+        if (errorOut) {
+            *errorOut = @"latent buffer length mismatch";
+        }
+
+        return NO;
+    }
+
+    if (energy == NULL || energyLen != batchSize) {
+        if (errorOut) {
+            *errorOut = @"energy buffer length mismatch";
+        }
+
+        return NO;
+    }
+
+    if (reconstruction == NULL || reconLen != batchSize) {
+        if (errorOut) {
+            *errorOut = @"reconstruction buffer length mismatch";
+        }
+
+        return NO;
+    }
+
+    [self computeOutcomesBatch];
+
+    const float *latentSource = (const float *)self.bufZ.contents;
+    uint32_t latentBase = self.zOffset[topIndex] * batchSize;
+
+    for (uint32_t slot = 0u; slot < batchSize; ++slot) {
+        for (uint32_t row = 0u; row < topDim; ++row) {
+            latent[(size_t)slot * topDim + row] = latentSource[latentBase + row * batchSize + slot];
+        }
+    }
+
+    memcpy(energy, self.bufEnergyNew.contents, (size_t)batchSize * sizeof(float));
+    memcpy(reconstruction, self.bufReconstruction.contents, (size_t)batchSize * sizeof(float));
+
+    return YES;
 }
 
 // ---- batched learn (one command buffer) -----------------------------------

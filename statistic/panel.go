@@ -56,11 +56,7 @@ func (panel *Panel) Read(p []byte) (int, error) {
 
 	panel.publishPeerBatch()
 
-	peerPayload, payloadErr := panel.artifact.Payload()
-
-	if payloadErr != nil || len(peerPayload) == 0 {
-		putFloat64Payload(&panel.artifact, "panel", panel.output)
-	}
+	putFloat64Payload(&panel.artifact, "panel", panel.output)
 
 	return panel.artifact.Read(p)
 }

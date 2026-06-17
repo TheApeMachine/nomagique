@@ -88,9 +88,9 @@ func rehydrateArtifact(artifact **datura.Artifact, origin string, artifactType d
 		for index := 0; index < attrs.Len(); index++ {
 			attr := attrs.At(index)
 			key, keyErr := attr.Key()
-			value, valueErr := attr.Value()
+			value := datura.Peek[string](fresh, key)
 
-			if keyErr != nil || valueErr != nil {
+			if keyErr != nil {
 				continue
 			}
 
@@ -329,14 +329,6 @@ func samplesToTimes(samples []float64) []time.Time {
 	}
 
 	return times
-}
-
-func weightSamples(weights []float64) []float64 {
-	if len(weights) == 0 {
-		return nil
-	}
-
-	return weights
 }
 
 func weightSamplesFor(weights []float64, count int) ([]float64, bool) {

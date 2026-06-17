@@ -49,6 +49,9 @@ type BatchSolver struct {
 	targetScratch      []float32
 	batchInputScratch  []float32
 	batchTargetScratch []float32
+	outcomeLatent      []float32
+	outcomeEnergy      []float32
+	outcomeSurprise    []float32
 }
 
 /*
@@ -99,11 +102,14 @@ func NewBatchSolver(arch []int, targetDim, batch int, alpha float64) (*BatchSolv
 	}
 
 	solver := &BatchSolver{
-		handle:    handle,
-		cfg:       cfg,
-		arch:      append([]int(nil), arch...),
-		targetDim: targetDim,
-		batch:     batch,
+		handle:          handle,
+		cfg:             cfg,
+		arch:            append([]int(nil), arch...),
+		targetDim:       targetDim,
+		batch:           batch,
+		outcomeLatent:   make([]float32, batch*arch[len(arch)-1]),
+		outcomeEnergy:   make([]float32, batch),
+		outcomeSurprise: make([]float32, batch),
 	}
 
 	w, r, a, v := InitialWeights(arch, targetDim)
@@ -397,6 +403,67 @@ func (s *BatchSolver) Learn() error {
 		return C.batch_solver_learn(s.handle,
 			(*C.char)(unsafe.Pointer(&errBuf[0])), C.int(len(errBuf)))
 	})
+}
+
+/*
+ReadOutcomes refreshes post-learn energy and reconstruction for the full batch
+in one host transition, then caches latent/energy/surprise in solver scratch.
+*/
+func (s *BatchSolver) ReadOutcomes() error {
+	if s == nil || s.handle == nil {
+		return fmt.Errorf("resonance: solver is not initialized")
+	}
+
+	topDim := s.arch[len(s.arch)-1]
+	expectedLatentLen := s.batch * topDim
+
+	if len(s.outcomeLatent) != expectedLatentLen {
+		return fmt.Errorf("resonance: outcome latent buffer length mismatch")
+	}
+
+	if len(s.outcomeEnergy) != s.batch || len(s.outcomeSurprise) != s.batch {
+		return fmt.Errorf("resonance: outcome scalar buffer length mismatch")
+	}
+
+	return s.call(func(errBuf []byte) C.int {
+		latentPointer, latentLength := floatPtr(s.outcomeLatent)
+		energyPointer, energyLength := floatPtr(s.outcomeEnergy)
+		surprisePointer, surpriseLength := floatPtr(s.outcomeSurprise)
+
+		return C.batch_solver_read_outcomes(
+			s.handle,
+			latentPointer, C.uint32_t(latentLength),
+			energyPointer, C.uint32_t(energyLength),
+			surprisePointer, C.uint32_t(surpriseLength),
+			(*C.char)(unsafe.Pointer(&errBuf[0])), C.int(len(errBuf)),
+		)
+	})
+}
+
+/*
+OutcomeSlot returns cached batch outcomes for one slot after ReadOutcomes.
+*/
+func (s *BatchSolver) OutcomeSlot(slot int) (latent []float64, energy, surprise float64, err error) {
+	if err := s.validateSlot(slot); err != nil {
+		return nil, 0, 0, err
+	}
+
+	topDim := s.arch[len(s.arch)-1]
+	start := slot * topDim
+	end := start + topDim
+
+	return toFloat64(s.outcomeLatent[start:end]),
+		float64(s.outcomeEnergy[slot]),
+		float64(s.outcomeSurprise[slot]),
+		nil
+}
+
+func (s *BatchSolver) TopDimension() int {
+	if s == nil || len(s.arch) == 0 {
+		return 0
+	}
+
+	return s.arch[len(s.arch)-1]
 }
 
 func (s *BatchSolver) LatentState(slot int) ([]float64, error) {

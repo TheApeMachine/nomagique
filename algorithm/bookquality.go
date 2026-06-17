@@ -138,8 +138,8 @@ func classifyBookQuality(
 		return 1, toxicBluffStrength, bluffScore, 0, 0
 	}
 
-	bidRatio := cancelFillRatio(cancelBid, fillBid)
-	askRatio := cancelFillRatio(cancelAsk, fillAsk)
+	bidRatio := CancelFillRatio(cancelBid, fillBid)
+	askRatio := CancelFillRatio(cancelAsk, fillAsk)
 	maxRatio := math.Max(bidRatio, askRatio)
 
 	if bidDepth > 0 && askDepth > 0 && maxRatio == 0 && (fillBid > 0 || fillAsk > 0) {
@@ -200,14 +200,6 @@ func toxicBluffEvidence(churnRatio, churnGate float64) float64 {
 	}
 
 	return competitionMargin(churnRatio-churnGate, churnGate)
-}
-
-func cancelFillRatio(cancel, fill float64) float64 {
-	if cancel <= 0 || fill <= 0 {
-		return 0
-	}
-
-	return cancel / fill
 }
 
 func magnitudeMargin(value float64) float64 {

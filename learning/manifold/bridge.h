@@ -132,6 +132,19 @@ int batch_solver_read_latent(
 int batch_solver_read_energy(void *handle, uint32_t slot, float *out, char *err_out, int err_cap);
 int batch_solver_read_reconstruction(void *handle, uint32_t slot, float *out, char *err_out, int err_cap);
 
+/*
+batch_solver_read_outcomes refreshes post-learn energy and reconstruction for every
+slot in one GPU pass, then copies latent/energy/surprise into caller buffers.
+Latent is slot-major with topDim = arch[-1] floats per slot.
+*/
+int batch_solver_read_outcomes(
+    void *handle,
+    float *latent, uint32_t latent_len,
+    float *energy, uint32_t energy_len,
+    float *reconstruction, uint32_t reconstruction_len,
+    char *err_out, int err_cap
+);
+
 /* Read back symbol `slot`'s weights (same flat layout as seed). NULL to skip. */
 int batch_solver_read_weights(
     void *handle, uint32_t slot,

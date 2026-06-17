@@ -130,3 +130,63 @@ func TestBatchSolver_SettleLearnParityPerSlot(t *testing.T) {
 		})
 	})
 }
+
+func TestBatchSolver_ReadOutcomesParity(t *testing.T) {
+	convey.Convey("Given a settled and learned batch", t, func() {
+		arch := []int{4, 8, 4}
+		alpha := 0.05
+		batchSize := 8
+
+		solver, err := NewBatchSolver(arch, 0, batchSize, alpha)
+		convey.So(err, convey.ShouldBeNil)
+		defer solver.Close()
+
+		references := make([]*learning.ResonanceManifold, batchSize)
+
+		for slot := 0; slot < batchSize; slot++ {
+			references[slot], _ = learning.NewResonanceManifold(arch, 0, alpha)
+			convey.So(solver.SetInput(slot, slotInput(slot, arch[0]), nil), convey.ShouldBeNil)
+		}
+
+		convey.So(solver.Settle(true), convey.ShouldBeNil)
+		convey.So(solver.Learn(), convey.ShouldBeNil)
+		convey.So(solver.ReadOutcomes(), convey.ShouldBeNil)
+
+		for slot := 0; slot < batchSize; slot++ {
+			references[slot].SettleFromBatchOptions(slotInput(slot, arch[0]), nil, true, true)
+		}
+
+		convey.Convey("Batch outcomes should match per-slot reads and gonum twins", func() {
+			latentWorst := 0.0
+			energyWorst := 0.0
+			surpriseWorst := 0.0
+
+			for slot := 0; slot < batchSize; slot++ {
+				batchLatent, batchEnergy, batchSurprise, outcomeErr := solver.OutcomeSlot(slot)
+				convey.So(outcomeErr, convey.ShouldBeNil)
+
+				slotLatent, latentErr := solver.LatentState(slot)
+				convey.So(latentErr, convey.ShouldBeNil)
+
+				slotEnergy, energyErr := solver.Energy(slot)
+				convey.So(energyErr, convey.ShouldBeNil)
+
+				slotSurprise, surpriseErr := solver.ReconstructionError(slot)
+				convey.So(surpriseErr, convey.ShouldBeNil)
+
+				latentWorst = math.Max(latentWorst, maxAbsDiff(batchLatent, slotLatent))
+				energyWorst = math.Max(energyWorst, math.Abs(batchEnergy-slotEnergy))
+				surpriseWorst = math.Max(surpriseWorst, math.Abs(batchSurprise-slotSurprise))
+
+				referenceLatent := references[slot].LatentState()
+				latentWorst = math.Max(latentWorst, maxAbsDiff(batchLatent, referenceLatent))
+				energyWorst = math.Max(energyWorst, math.Abs(batchEnergy-references[slot].Energy()))
+				surpriseWorst = math.Max(surpriseWorst, math.Abs(batchSurprise-references[slot].ReconstructionError()))
+			}
+
+			convey.So(latentWorst, convey.ShouldBeLessThan, 5e-2)
+			convey.So(energyWorst, convey.ShouldBeLessThan, 5e-1)
+			convey.So(surpriseWorst, convey.ShouldBeLessThan, 5e-1)
+		})
+	})
+}

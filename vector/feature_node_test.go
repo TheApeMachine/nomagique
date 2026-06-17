@@ -192,9 +192,11 @@ func TestFeatureNode_Number(testingTB *testing.T) {
 		observeInputs(leftSlot, 10)
 		observeInputs(rightSlot, 3)
 
-		So(nomagique.Number(productNode), ShouldBeNil)
+		pipeline := nomagique.Number(productNode)
 
-		got := observeInputs(productNode)
+		So(pipeline, ShouldNotBeNil)
+
+		got := pipelineSample(pipeline, 0)
 
 		Convey("It should observe through the registered pipeline", func() {
 			So(got, ShouldEqual, 30)

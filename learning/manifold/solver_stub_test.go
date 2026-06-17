@@ -30,6 +30,10 @@ func TestBatchSolverStub_methods(testingTB *testing.T) {
 			So(solver.SetInputs32([]float32{0.1}, nil), ShouldNotBeNil)
 			So(solver.Settle(true), ShouldNotBeNil)
 			So(solver.Learn(), ShouldNotBeNil)
+			So(solver.ReadOutcomes(), ShouldNotBeNil)
+
+			_, _, _, outcomeErr := solver.OutcomeSlot(0)
+			So(outcomeErr, ShouldNotBeNil)
 
 			_, energyErr := solver.Energy(0)
 			So(energyErr, ShouldNotBeNil)

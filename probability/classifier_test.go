@@ -170,12 +170,9 @@ func TestClassifier_Number(testingTB *testing.T) {
 
 		inbound := datura.Acquire("number-in", datura.Artifact_Type_json)
 		buf, _ := inbound.Message().Marshal()
-		_, _ = classifier.Write(buf)
-		err := nomagique.Number(classifier)
-
-		So(err, ShouldBeNil)
-
-		got := readScalar(classifier)
+		pipeline := nomagique.Number(classifier)
+		_, _ = pipeline.Write(buf)
+		got := readScalar(pipeline)
 
 		Convey("It should return the winning category as float64", func() {
 			So(got, ShouldEqual, 2)
@@ -231,14 +228,9 @@ func TestClassifier_Pearl(testingTB *testing.T) {
 
 		inbound := datura.Acquire("pearl-in", datura.Artifact_Type_json)
 		buf, _ := inbound.Message().Marshal()
-		_, _ = ladder.Write(buf)
-		_, _ = ladder.Read(make([]byte, len(buf)))
-		_, _ = classifier.Write(buf)
-		err := nomagique.Number(ladder, classifier)
-
-		So(err, ShouldBeNil)
-
-		got := readScalar(classifier)
+		pipeline := nomagique.Number(ladder, classifier)
+		_, _ = pipeline.Write(buf)
+		got := readScalar(pipeline)
 
 		Convey("It should classify from Pearl outcome readings", func() {
 			So(got, ShouldBeGreaterThanOrEqualTo, 1)

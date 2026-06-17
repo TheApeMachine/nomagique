@@ -3025,7 +3025,7 @@ kernel void coherence_prep_oscillator_coupling(
 //
 // Threadgroup memory: num_carriers * 8 atomic_uint fields (32 bytes each).
 // Host sets threadgroup memory length to num_carriers * 32; capacity is capped at
-// min(maxThreadgroupMemoryLength / 32, maxThreadsPerThreadgroup, 1024).
+// min(maxThreadgroupMemoryLength / 32, pipeline.maxTotalThreadsPerThreadgroup, 1024).
 
 constant uint kMaxCarriersForTG = 256u;
 

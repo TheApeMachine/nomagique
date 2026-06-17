@@ -155,6 +155,30 @@ int batch_solver_read_reconstruction(void *handle, uint32_t slot, float *out, ch
     return 0;
 }
 
+int batch_solver_read_outcomes(
+    void *handle,
+    float *latent, uint32_t latent_len,
+    float *energy, uint32_t energy_len,
+    float *reconstruction, uint32_t reconstruction_len,
+    char *err_out, int err_cap
+) {
+    if (handle == NULL) { resonance_write_error(err_out, err_cap, @"solver is not initialized"); return 1; }
+    @autoreleasepool {
+        NSString *error = nil;
+        if (![from(handle) readOutcomesBatchLatent:latent
+                                         latentLen:latent_len
+                                            energy:energy
+                                          energyLen:energy_len
+                                    reconstruction:reconstruction
+                                          reconLen:reconstruction_len
+                                             error:&error]) {
+            resonance_write_error(err_out, err_cap, error ?: @"read outcomes failed");
+            return 1;
+        }
+    }
+    return 0;
+}
+
 int batch_solver_read_weights(
     void *handle, uint32_t slot,
     float *w, size_t wl, float *r, size_t rl, float *a, size_t al, float *v, size_t vl,

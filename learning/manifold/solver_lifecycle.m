@@ -153,6 +153,7 @@ void resonance_write_error(char *err_out, int err_cap, NSString *message) {
     self.bufStep = [self floats:N];
     self.bufEnergyOld = [self floats:N];
     self.bufEnergyNew = [self floats:N];
+    self.bufReconstruction = [self floats:N];
     self.bufFlags = [self.device newBufferWithLength:N * sizeof(uint32_t) options:MTLResourceStorageModeShared];
     self.bufActive = [self.device newBufferWithLength:N * sizeof(uint32_t) options:MTLResourceStorageModeShared];
     self.bufAnyActive = [self.device newBufferWithLength:sizeof(uint32_t) options:MTLResourceStorageModeShared];

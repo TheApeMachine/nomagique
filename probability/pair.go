@@ -95,9 +95,9 @@ func rehydrateArtifact(artifact **datura.Artifact, origin string, artifactType d
 		for index := 0; index < attrs.Len(); index++ {
 			attr := attrs.At(index)
 			key, keyErr := attr.Key()
-			value, valueErr := attr.Value()
+			value := datura.Peek[string](fresh, key)
 
-			if keyErr != nil || valueErr != nil {
+			if keyErr != nil {
 				continue
 			}
 

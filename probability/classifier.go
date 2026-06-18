@@ -28,14 +28,9 @@ NewClassifier returns a classifier over scoreSources.
 Each source is re-read on every Classifier.Read call so upstream stages such as
 algorithm.Pearl can populate ladder readings before classification.
 */
-func NewClassifier(scoreSources ...io.ReadWriter) *Classifier {
-	if len(scoreSources) == 0 {
-		return nil
-	}
-
+func NewClassifier(artifact *datura.Artifact) *Classifier {
 	return &Classifier{
-		artifact:     datura.Acquire("classifier", datura.Artifact_Type_json),
-		scoreSources: scoreSources,
+		artifact:     artifact,
 	}
 }
 
@@ -44,7 +39,8 @@ func (classifier *Classifier) Write(p []byte) (int, error) {
 }
 
 func (classifier *Classifier) Read(p []byte) (int, error) {
-	rehydrateArtifact(&classifier.artifact, "classifier", datura.Artifact_Type_json)
+	artifact := datura.Acquire("classifier", datura.APPJSON)
+	defer artifact.Release()
 
 	scores, ok := classifier.scores()
 

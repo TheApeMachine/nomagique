@@ -33,6 +33,7 @@ require (
 	github.com/phuslu/log v1.0.124 // indirect
 	github.com/ronanh/intcomp v1.1.1 // indirect
 	github.com/rs/zerolog v1.34.0 // indirect
+	github.com/smallnest/ringbuffer v0.1.1 // indirect
 	github.com/smarty/go-disruptor v0.5.0 // indirect
 	github.com/theapemachine/qpool v1.2.5 // indirect
 	github.com/twitchyliquid64/golang-asm v0.15.1 // indirect

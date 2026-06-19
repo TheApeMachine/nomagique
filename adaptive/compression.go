@@ -16,9 +16,9 @@ type Compression struct {
 /*
 NewCompression returns a compression stage ready to bootstrap from its first observation.
 */
-func NewCompression() *Compression {
+func NewCompression(artifact *datura.Artifact) *Compression {
 	return &Compression{
-		artifact: datura.Acquire("compression", datura.APPJSON),
+		artifact: artifact,
 	}
 }
 

@@ -75,9 +75,8 @@ func (excitation *Excitation) Read(p []byte) (int, error) {
 		scope = datura.Peek[string](excitation.artifact, "scope")
 	}
 
-	payload, payloadOK := excitation.artifact.PayloadQuiet()
-
-	if payloadOK {
+	if excitation.artifact.HasEncryptedPayload() {
+		payload := excitation.artifact.DecryptPayload()
 		excitation.outcome = excitation.evaluate(scope, payloadSamples(payload))
 		excitation.publishReadings()
 	}
@@ -468,19 +467,16 @@ func (symbol *excitationSymbol) rawBaseStep(sample float64) float64 {
 	readCount, _ := symbol.rawBase.Read(out)
 	outbound := datura.Acquire("excitation-ema-out", datura.Artifact_Type_json)
 	_, _ = outbound.Write(out[:readCount])
-	payload, payloadOK := outbound.PayloadQuiet()
+	if outbound.HasEncryptedPayload() {
+		payload := outbound.DecryptPayload()
+		value, ok := payloadScalar(payload)
 
-	if !payloadOK {
-		return sample
+		if ok {
+			return value
+		}
 	}
 
-	value, ok := payloadScalar(payload)
-
-	if !ok {
-		return sample
-	}
-
-	return value
+	return sample
 }
 
 func (symbol *excitationSymbol) recordFitGates(spectralRadius, asymmetry float64) {

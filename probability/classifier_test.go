@@ -17,6 +17,7 @@ func classifierSchema(inputs ...string) *datura.Artifact {
 
 func artifactWithScores(scores map[string]float64) *datura.Artifact {
 	artifact := datura.Acquire("test", datura.APPJSON)
+	artifact.WithPayload([]byte(`{}`))
 
 	for key, score := range scores {
 		artifact.Poke(score, "output", key)
@@ -54,11 +55,11 @@ func TestClassifier_Read(testingTB *testing.T) {
 
 		Convey("It should return a 1-based winning category index", func() {
 			So(datura.Peek[float64](artifact, "output", "value"), ShouldEqual, 3)
-			So(datura.Peek[int](artifact, "classifier", "category"), ShouldEqual, 3)
+			So(int(datura.Peek[float64](artifact, "output", "category")), ShouldEqual, 3)
 		})
 
 		Convey("It should expose normalized probabilities on the artifact", func() {
-			confidence := datura.Peek[float64](artifact, "classifier", "confidence")
+			confidence := datura.Peek[float64](artifact, "output", "confidence")
 
 			So(confidence, ShouldBeGreaterThan, 0)
 			So(confidence, ShouldBeLessThan, 1)

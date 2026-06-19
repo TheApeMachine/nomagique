@@ -10,6 +10,6 @@ import (
 /*
 NewTrust returns a calibration-trust pipeline over predicted-vs-actual pairs.
 */
-func NewTrust() io.ReadWriter {
+func NewTrust() io.ReadWriteCloser {
 	return nomagique.Number(learning.Weight(), learning.Forecast())
 }

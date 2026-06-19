@@ -18,7 +18,7 @@ NewMean creates a mean stage.
 */
 func NewMean() *Mean {
 	return &Mean{
-		artifact: datura.Acquire("mean", datura.APPJSON).RetainStageAttributes(),
+		artifact: datura.Acquire("mean", datura.APPJSON),
 	}
 }
 
@@ -52,17 +52,7 @@ func (mean *Mean) Read(p []byte) (int, error) {
 }
 
 func (mean *Mean) Write(p []byte) (int, error) {
-	bootstrap := datura.Peek[datura.Map[float64]](mean.artifact, "output") == nil
-
-	mean.artifact.Clear("sample")
-
-	n, err := mean.artifact.Write(p)
-
-	if bootstrap {
-		mean.artifact.Clear("output")
-	}
-
-	return n, err
+	return mean.artifact.Write(p)
 }
 
 func (mean *Mean) Close() error {

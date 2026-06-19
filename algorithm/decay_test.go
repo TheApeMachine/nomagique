@@ -5,6 +5,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/nomagique/equation"
 	"github.com/theapemachine/nomagique/tests"
 )
 
@@ -36,7 +37,7 @@ func decayPayload(
 
 func TestDecayEvaluate(testingTB *testing.T) {
 	Convey("Given deteriorating long-side book history", testingTB, func() {
-		decay := NewDecay()
+		decay := equation.NewDecay()
 		bidDepths := []float64{20, 18, 16, 14, 12, 10, 8, 6}
 		askDepths := []float64{10, 10, 10, 10, 10, 10, 10, 10}
 		densities := []float64{8, 8, 8, 8, 8, 8, 8, 8}
@@ -62,7 +63,7 @@ func TestDecayEvaluate(testingTB *testing.T) {
 	})
 
 	Convey("Given pressure fade on the long side", testingTB, func() {
-		decay := NewDecay()
+		decay := equation.NewDecay()
 		pressures := []float64{0.9, 0.85, 0.8, 0.75, 0.7, 0.2, 0.1, -0.1}
 		bidDepths := []float64{10, 10, 10, 10, 10, 10, 10, 10}
 		askDepths := []float64{10, 10, 10, 10, 10, 10, 10, 10}
@@ -86,7 +87,7 @@ func TestDecayEvaluate(testingTB *testing.T) {
 	})
 
 	Convey("Given ask-side thinning stronger than bid-side", testingTB, func() {
-		decay := NewDecay()
+		decay := equation.NewDecay()
 		bidDepths := []float64{10, 10, 10, 10, 9, 9, 9, 9}
 		askDepths := []float64{10, 10, 10, 10, 8, 6, 4, 2}
 		densities := []float64{8, 8, 8, 8, 8, 8, 8, 8}
@@ -112,7 +113,7 @@ func TestDecayEvaluate(testingTB *testing.T) {
 }
 
 func BenchmarkDecayRead(b *testing.B) {
-	decay := NewDecay()
+	decay := equation.NewDecay()
 	samples := decayPayload(
 		100,
 		[]float64{20, 18, 16, 14, 12, 10, 8, 6},

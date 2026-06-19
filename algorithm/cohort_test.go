@@ -5,6 +5,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/nomagique/equation"
 	"github.com/theapemachine/nomagique/tests"
 )
 
@@ -96,7 +97,7 @@ func TestCohort_evaluate(testingTB *testing.T) {
 		testCase := testCase
 
 		Convey("Given cohort payload "+testCase.name, testingTB, func() {
-			cohortStage := NewCohort()
+			cohortStage := equation.NewCohort()
 			writeErr := tests.WriteSamples(cohortStage, testCase.batch...)
 
 			So(writeErr, ShouldBeNil)

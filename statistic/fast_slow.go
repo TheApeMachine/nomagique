@@ -26,7 +26,7 @@ func NewFastSlow(fastWindow int, epsilon float64) *FastSlow {
 	}
 
 	return &FastSlow{
-		artifact:   datura.Acquire("fast_slow", datura.APPJSON).RetainStageAttributes(),
+		artifact:   datura.Acquire("fast_slow", datura.APPJSON),
 		fastWindow: fastWindow,
 		epsilon:    epsilon,
 	}
@@ -43,17 +43,7 @@ func NewInvertedFastSlow(fastWindow int, epsilon float64) *FastSlow {
 }
 
 func (fastSlow *FastSlow) Write(p []byte) (int, error) {
-	bootstrap := datura.Peek[datura.Map[float64]](fastSlow.artifact, "output") == nil
-
-	fastSlow.artifact.Clear("sample")
-
-	n, err := fastSlow.artifact.Write(p)
-
-	if bootstrap {
-		fastSlow.artifact.Clear("output")
-	}
-
-	return n, err
+	return fastSlow.artifact.Write(p)
 }
 
 func (fastSlow *FastSlow) Read(p []byte) (int, error) {

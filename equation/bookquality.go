@@ -1,6 +1,7 @@
 package equation
 
 import (
+	"io"
 	"math"
 
 	"github.com/theapemachine/datura"
@@ -23,32 +24,18 @@ type BookQuality struct {
 /*
 NewBookQuality returns a book-flow quality stage.
 */
-func NewBookQuality() *BookQuality {
+func NewBookQuality() io.ReadWriteCloser {
 	return &BookQuality{
-		artifact: datura.Acquire("bookquality", datura.APPJSON).RetainStageAttributes(),
+		artifact: datura.Acquire("bookquality", datura.APPJSON),
 	}
-}
-
-func (bookQuality *BookQuality) StageArtifact() *datura.Artifact {
-	return bookQuality.artifact
 }
 
 func (bookQuality *BookQuality) Write(p []byte) (int, error) {
-	bootstrap := datura.Peek[datura.Map[float64]](bookQuality.artifact, "output") == nil
-
-	bookQuality.artifact.Clear("sample")
-
-	n, err := bookQuality.artifact.Write(p)
-
-	if bootstrap {
-		bookQuality.artifact.Clear("output")
-	}
-
-	return n, err
+	return bookQuality.artifact.Write(p)
 }
 
 func (bookQuality *BookQuality) Read(p []byte) (int, error) {
-	batch := FloatBatch(bookQuality.artifact)
+	batch := Features(bookQuality.artifact)
 
 	if len(batch) < bookQualityPayloadFields+1 {
 		bookQuality.artifact.Poke(datura.Map[float64]{"value": 0}, "output")

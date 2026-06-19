@@ -16,23 +16,12 @@ NewLadder returns a ladder stage.
 */
 func NewLadder() *Ladder {
 	return &Ladder{
-		artifact: datura.Acquire("ladder", datura.APPJSON).RetainStageAttributes(),
+		artifact: datura.Acquire("ladder", datura.APPJSON),
 	}
 }
 
 func (ladder *Ladder) Write(p []byte) (int, error) {
-	bootstrap := datura.Peek[datura.Map[float64]](ladder.artifact, "output") == nil
-
-	ladder.artifact.Clear("sample")
-	ladder.artifact.Clear("batch")
-
-	n, err := ladder.artifact.Write(p)
-
-	if bootstrap {
-		ladder.artifact.Clear("output")
-	}
-
-	return n, err
+	return ladder.artifact.Write(p)
 }
 
 func (ladder *Ladder) Read(p []byte) (int, error) {
@@ -53,7 +42,7 @@ func (ladder *Ladder) Read(p []byte) (int, error) {
 		return ladder.artifact.Read(p)
 	}
 
-	table, err := NewNodeTable(rows, target, minHistory)
+	table, err := newNodeTable(rows, target, minHistory)
 
 	if err != nil {
 		return ladder.artifact.Read(p)
@@ -85,13 +74,13 @@ func (ladder *Ladder) Read(p []byte) (int, error) {
 		return ladder.artifact.Read(p)
 	}
 
-	association, assocErr := table.Association(treatment)
+	association, assocErr := table.association(treatment)
 
 	if assocErr != nil {
 		association = 0
 	}
 
-	intervention, intervErr := table.KernelBackdoorEffect(treatment, bandwidth, controls...)
+	intervention, intervErr := table.kernelBackdoorEffect(treatment, bandwidth, controls...)
 
 	if intervErr != nil {
 		intervention = 0
@@ -102,25 +91,36 @@ func (ladder *Ladder) Read(p []byte) (int, error) {
 
 	if intervention > 0 {
 		predictors := append(append([]int(nil), controls...), treatment)
-		model, fitOK := FitNonLinearTable(table, predictors)
+		nonLinear, fitOK := fitNonLinearTable(table, predictors)
 		raw = intervention
+		currentRow := rows[len(rows)-1]
+		interventionLevel := datura.Peek[float64](ladder.artifact, "config", "interventionLevel")
+
+		if interventionLevel <= 0 {
+			level, levelErr := table.percentile(treatment, 0.75)
+
+			if levelErr == nil {
+				interventionLevel = level
+			}
+		}
 
 		if fitOK {
-			currentRow := rows[len(rows)-1]
-			interventionLevel := datura.Peek[float64](ladder.artifact, "config", "interventionLevel")
-
-			if interventionLevel <= 0 {
-				level, levelErr := table.Percentile(treatment, 0.75)
-
-				if levelErr == nil {
-					interventionLevel = level
-				}
-			}
-
-			upliftValue, upliftErr := model.CounterfactualUplift(currentRow, treatment, interventionLevel)
+			upliftValue, upliftErr := nonLinear.counterfactualUplift(currentRow, treatment, interventionLevel)
 
 			if upliftErr == nil {
 				uplift = upliftValue
+			}
+		}
+
+		if !fitOK {
+			linear, linearErr := table.fitLinearModel(predictors...)
+
+			if linearErr == nil {
+				upliftValue, upliftErr := linear.counterfactualUplift(currentRow, treatment, interventionLevel)
+
+				if upliftErr == nil {
+					uplift = upliftValue
+				}
 			}
 		}
 	}
@@ -146,11 +146,4 @@ func (ladder *Ladder) Read(p []byte) (int, error) {
 
 func (ladder *Ladder) Close() error {
 	return nil
-}
-
-/*
-Artifact returns the stage artifact for downstream peeks.
-*/
-func (ladder *Ladder) Artifact() *datura.Artifact {
-	return ladder.artifact
 }

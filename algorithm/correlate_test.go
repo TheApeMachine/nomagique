@@ -2,24 +2,56 @@ package algorithm
 
 import (
 	"testing"
-	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
-	"github.com/theapemachine/nomagique/correlation"
 	"github.com/theapemachine/nomagique/tests"
 )
 
+func encodeGapBatch(
+	syncLeft, syncRight, asyncLeft, asyncRight []float64,
+) []float64 {
+	if len(syncLeft) != len(syncRight) {
+		return nil
+	}
+
+	if len(asyncLeft) == 0 || len(asyncLeft)%2 != 0 || len(asyncLeft) != len(asyncRight) {
+		return nil
+	}
+
+	batch := make(
+		[]float64,
+		0,
+		2+len(syncLeft)+len(syncRight)+len(asyncLeft)+len(asyncRight),
+	)
+	batch = append(batch, float64(len(syncLeft)), float64(len(asyncLeft)/2))
+	batch = append(batch, syncLeft...)
+	batch = append(batch, syncRight...)
+	batch = append(batch, asyncLeft...)
+	batch = append(batch, asyncRight...)
+
+	return batch
+}
+
 func TestCorrelate_Observe(testingTB *testing.T) {
 	Convey("Given positively coupled sync and async streams", testingTB, func() {
-		batch := correlation.EncodeGapBatch(
+		batch := encodeGapBatch(
 			[]float64{1, 2, 3, 4, 5, 6},
 			[]float64{2, 4, 6, 8, 10, 12},
 			[]float64{0, 100, 1, 110, 2, 121, 3, 133.1},
 			[]float64{0, 50, 1, 55, 2, 60.5, 3, 66.55},
 		)
-		correlate := NewCorrelate(time.Second)
+		correlate := NewCorrelate()
+		configArtifact := datura.Acquire("test-config", datura.APPJSON)
+		configArtifact.Poke(1.0, "config", "maxIntervalSeconds")
+		configFrame, configErr := configArtifact.Message().Marshal()
 
+		So(configErr, ShouldBeNil)
+
+		writeCount, writeErr := correlate.Write(configFrame)
+
+		So(writeErr, ShouldBeNil)
+		So(writeCount, ShouldBeGreaterThan, 0)
 		So(tests.WriteSamples(correlate, batch...), ShouldBeNil)
 
 		frame := make([]byte, 4096)
@@ -43,18 +75,22 @@ func TestCorrelate_Observe(testingTB *testing.T) {
 }
 
 func BenchmarkCorrelate_Observe(testingTB *testing.B) {
-	batch := correlation.EncodeGapBatch(
+	batch := encodeGapBatch(
 		[]float64{1, 2, 3, 4, 5, 6, 7, 8},
 		[]float64{2, 4, 6, 8, 10, 12, 14, 16},
 		[]float64{0, 100, 1, 110, 2, 120, 3, 130, 4, 140, 5, 150, 6, 160, 7, 170},
 		[]float64{0, 100, 1, 120, 2, 140, 3, 160, 4, 180, 5, 200, 6, 220, 7, 240},
 	)
-	correlate := NewCorrelate(time.Second)
+	correlate := NewCorrelate()
 	frame := make([]byte, 4096)
 
 	testingTB.ReportAllocs()
 
 	for testingTB.Loop() {
+		configArtifact := datura.Acquire("test-config", datura.APPJSON)
+		configArtifact.Poke(1.0, "config", "maxIntervalSeconds")
+		configFrame, _ := configArtifact.Message().Marshal()
+		_, _ = correlate.Write(configFrame)
 		_ = tests.WriteSamples(correlate, batch...)
 		_, _ = correlate.Read(frame)
 	}

@@ -17,23 +17,12 @@ SampleRatio returns a calibration dynamic ready from its first observation.
 */
 func SampleRatio() *Calibrator {
 	return &Calibrator{
-		artifact: datura.Acquire("sample-ratio", datura.APPJSON).RetainStageAttributes(),
+		artifact: datura.Acquire("sample-ratio", datura.APPJSON),
 	}
 }
 
 func (calibrator *Calibrator) Write(p []byte) (int, error) {
-	bootstrap := datura.Peek[datura.Map[float64]](calibrator.artifact, "output") == nil
-
-	calibrator.artifact.Clear("sample")
-	calibrator.artifact.Clear("paired")
-
-	n, err := calibrator.artifact.Write(p)
-
-	if bootstrap {
-		calibrator.artifact.Clear("output")
-	}
-
-	return n, err
+	return calibrator.artifact.Write(p)
 }
 
 func (calibrator *Calibrator) Read(p []byte) (int, error) {
@@ -78,7 +67,7 @@ Reset clears derived state.
 */
 func (calibrator *Calibrator) Reset() error {
 	calibrator.state.Reset()
-	calibrator.artifact.Clear("output")
+	calibrator.artifact.Poke(datura.Map[float64]{"value": 0}, "output")
 
 	return nil
 }

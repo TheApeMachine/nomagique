@@ -29,7 +29,7 @@ type Procrustes struct {
 
 func NewProcrustes(matA, matB mat.Matrix) *Procrustes {
 	return &Procrustes{
-		artifact: datura.Acquire("procrustes", datura.APPJSON).RetainStageAttributes(),
+		artifact: datura.Acquire("procrustes", datura.APPJSON),
 		matA:     matA,
 		matB:     matB,
 	}
@@ -55,18 +55,7 @@ func NewProcrustesFromRows(
 }
 
 func (procrustes *Procrustes) Write(p []byte) (int, error) {
-	bootstrap := datura.Peek[datura.Map[float64]](procrustes.artifact, "output") == nil
-
-	procrustes.artifact.Clear("sample")
-	procrustes.artifact.Clear("paired")
-
-	n, err := procrustes.artifact.Write(p)
-
-	if bootstrap {
-		procrustes.artifact.Clear("output")
-	}
-
-	return n, err
+	return procrustes.artifact.Write(p)
 }
 
 func (procrustes *Procrustes) Read(p []byte) (int, error) {
@@ -104,7 +93,7 @@ func (procrustes *Procrustes) Reset() error {
 	procrustes.result = ProcrustesResult{}
 	procrustes.err = nil
 	procrustes.output = 0
-	procrustes.artifact.Clear("output")
+	procrustes.artifact.Poke(datura.Map[float64]{"value": 0}, "output")
 
 	return nil
 }

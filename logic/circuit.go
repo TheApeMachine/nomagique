@@ -11,7 +11,7 @@ Rule binds one condition to the stage that runs when it matches.
 */
 type Rule struct {
 	Condition Condition
-	Then      io.ReadWriter
+	Then      io.ReadWriteCloser
 }
 
 /*
@@ -34,21 +34,23 @@ NewCircuit returns a branching stage for the given ordered rules.
 */
 func NewCircuit(rules Rules) *Circuit {
 	return &Circuit{
-		artifact: datura.Acquire("circuit", datura.APPJSON).RetainStageAttributes(),
+		artifact: datura.Acquire("circuit", datura.APPJSON),
 		rules:    rules,
 	}
 }
 
 func (circuit *Circuit) Write(p []byte) (int, error) {
-	bootstrap := datura.Peek[datura.Map[float64]](circuit.artifact, "output") == nil
+	if inboundReset(p) {
+		circuit.output = 0
+		circuit.inboundWire = circuit.inboundWire[:0]
 
-	circuit.artifact.Clear("sample")
+		for _, rule := range circuit.rules {
+			resetCondition(rule.Condition)
+			writeResetToStage(rule.Then)
+		}
+	}
 
 	n, err := circuit.artifact.Write(p)
-
-	if bootstrap {
-		circuit.artifact.Clear("output")
-	}
 
 	circuit.inboundWire = append(circuit.inboundWire[:0], p...)
 
@@ -94,27 +96,7 @@ func (circuit *Circuit) Close() error {
 	return nil
 }
 
-/*
-Reset clears derived state on every rule.
-*/
-func (circuit *Circuit) Reset() error {
-	circuit.output = 0
-	circuit.inboundWire = circuit.inboundWire[:0]
-
-	for _, rule := range circuit.rules {
-		if resetErr := rule.Condition.Reset(); resetErr != nil {
-			return resetErr
-		}
-
-		if resetErr := resetStage(rule.Then); resetErr != nil {
-			return resetErr
-		}
-	}
-
-	return nil
-}
-
-func isConstantStage(stage io.ReadWriter) bool {
+func isConstantStage(stage io.ReadWriteCloser) bool {
 	_, isConstant := stage.(*Constant)
 
 	return isConstant

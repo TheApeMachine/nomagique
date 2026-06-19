@@ -23,7 +23,7 @@ func NewTimeElastic(halflife time.Duration, epsilon float64) *TimeElastic {
 	}
 
 	stage := &TimeElastic{
-		artifact: datura.Acquire("time_elastic", datura.APPJSON).RetainStageAttributes(),
+		artifact: datura.Acquire("time_elastic", datura.APPJSON),
 	}
 
 	stage.artifact.Poke(float64(halflife), "halflife")
@@ -95,18 +95,7 @@ func (timeElastic *TimeElastic) Read(p []byte) (int, error) {
 }
 
 func (timeElastic *TimeElastic) Write(p []byte) (int, error) {
-	bootstrap := datura.Peek[datura.Map[float64]](timeElastic.artifact, "output") == nil
-
-	timeElastic.artifact.Clear("sample")
-	timeElastic.artifact.Clear("at")
-
-	n, err := timeElastic.artifact.Write(p)
-
-	if bootstrap {
-		timeElastic.artifact.Clear("output")
-	}
-
-	return n, err
+	return timeElastic.artifact.Write(p)
 }
 
 func (timeElastic *TimeElastic) Close() error {

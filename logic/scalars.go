@@ -5,6 +5,7 @@ import (
 	"io"
 	"math"
 
+	"github.com/bytedance/sonic"
 	"github.com/theapemachine/datura"
 )
 
@@ -28,7 +29,7 @@ func artifactBytes(artifact *datura.Artifact) ([]byte, bool) {
 	return buf, true
 }
 
-func readOperand(stage io.ReadWriter, artifactBytes []byte) (float64, bool) {
+func readOperand(stage io.ReadWriteCloser, artifactBytes []byte) (float64, bool) {
 	if stage == nil {
 		return 0, false
 	}
@@ -84,23 +85,13 @@ type Constant struct {
 
 func NewConstant(value float64) *Constant {
 	return &Constant{
-		artifact: datura.Acquire("constant", datura.APPJSON).RetainStageAttributes(),
+		artifact: datura.Acquire("constant", datura.APPJSON),
 		value:    value,
 	}
 }
 
 func (constant *Constant) Write(p []byte) (int, error) {
-	bootstrap := datura.Peek[datura.Map[float64]](constant.artifact, "output") == nil
-
-	constant.artifact.Clear("sample")
-
-	n, err := constant.artifact.Write(p)
-
-	if bootstrap {
-		constant.artifact.Clear("output")
-	}
-
-	return n, err
+	return constant.artifact.Write(p)
 }
 
 func (constant *Constant) Read(p []byte) (int, error) {
@@ -113,24 +104,45 @@ func (constant *Constant) Close() error {
 	return nil
 }
 
-func (constant *Constant) Reset() error {
-	return nil
+func attributeKeyPresent(artifact *datura.Artifact, key string) bool {
+	raw, err := artifact.Attributes()
+
+	if err != nil || len(raw) == 0 {
+		return false
+	}
+
+	_, getErr := sonic.Get(raw, key)
+
+	return getErr == nil
 }
 
-type resetter interface {
-	Reset() error
+func inboundReset(p []byte) bool {
+	inbound := datura.Acquire("inbound", datura.APPJSON)
+	_, _ = inbound.Write(p)
+
+	return attributeKeyPresent(inbound, "reset")
 }
 
-func resetStage(stage io.ReadWriter) error {
+func writeResetToStage(stage io.ReadWriteCloser) {
 	if stage == nil {
-		return nil
+		return
 	}
 
-	stageResetter, ok := stage.(resetter)
+	resetArtifact, resetOK := artifactBytes(
+		datura.Acquire("logic-reset", datura.APPJSON).Poke(1, "reset"),
+	)
 
-	if !ok {
-		return nil
+	if !resetOK {
+		return
 	}
 
-	return stageResetter.Reset()
+	_, _ = stage.Write(resetArtifact)
+}
+
+func resetCondition(condition Condition) {
+	if condition == nil {
+		return
+	}
+
+	condition.ResetOperands()
 }

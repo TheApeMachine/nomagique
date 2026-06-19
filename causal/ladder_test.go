@@ -30,7 +30,7 @@ func TestLadder_Read(testingTB *testing.T) {
 		err = transport.NewFlipFlop(artifact, ladder)
 
 		So(err, ShouldBeNil)
-		So(datura.Peek[float64](ladder.Artifact(), "output", "intervention"), ShouldBeGreaterThan, 0)
+		So(datura.Peek[float64](artifact, "output", "intervention"), ShouldBeGreaterThan, 0)
 	})
 }
 

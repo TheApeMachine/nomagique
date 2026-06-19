@@ -18,22 +18,12 @@ NewHysteresis returns a hysteresis stage ready for its first observation.
 */
 func NewHysteresis() *Hysteresis {
 	return &Hysteresis{
-		artifact: datura.Acquire("hysteresis", datura.APPJSON).RetainStageAttributes(),
+		artifact: datura.Acquire("hysteresis", datura.APPJSON),
 	}
 }
 
 func (hysteresis *Hysteresis) Write(p []byte) (int, error) {
-	bootstrap := datura.Peek[datura.Map[float64]](hysteresis.artifact, "output") == nil
-
-	hysteresis.artifact.Clear("sample")
-
-	n, err := hysteresis.artifact.Write(p)
-
-	if bootstrap {
-		hysteresis.artifact.Clear("output")
-	}
-
-	return n, err
+	return hysteresis.artifact.Write(p)
 }
 
 func (hysteresis *Hysteresis) Read(p []byte) (int, error) {

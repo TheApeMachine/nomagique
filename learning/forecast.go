@@ -17,23 +17,12 @@ Forecast returns a scale-learning dynamic ready from its first observation.
 */
 func Forecast() *Forecaster {
 	return &Forecaster{
-		artifact: datura.Acquire("forecast", datura.APPJSON).RetainStageAttributes(),
+		artifact: datura.Acquire("forecast", datura.APPJSON),
 	}
 }
 
 func (forecaster *Forecaster) Write(p []byte) (int, error) {
-	bootstrap := datura.Peek[datura.Map[float64]](forecaster.artifact, "output") == nil
-
-	forecaster.artifact.Clear("sample")
-	forecaster.artifact.Clear("paired")
-
-	n, err := forecaster.artifact.Write(p)
-
-	if bootstrap {
-		forecaster.artifact.Clear("output")
-	}
-
-	return n, err
+	return forecaster.artifact.Write(p)
 }
 
 func (forecaster *Forecaster) Read(p []byte) (int, error) {
@@ -85,7 +74,7 @@ Reset clears derived state.
 */
 func (forecaster *Forecaster) Reset() error {
 	forecaster.state.Reset()
-	forecaster.artifact.Clear("output")
+	forecaster.artifact.Poke(datura.Map[float64]{"value": 0}, "output")
 
 	return nil
 }

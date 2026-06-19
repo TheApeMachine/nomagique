@@ -19,7 +19,7 @@ NewMedian creates a median stage.
 */
 func NewMedian() *Median {
 	return &Median{
-		artifact: datura.Acquire("median", datura.APPJSON).RetainStageAttributes(),
+		artifact: datura.Acquire("median", datura.APPJSON),
 	}
 }
 
@@ -53,7 +53,6 @@ func (median *Median) Read(p []byte) (int, error) {
 
 	if datura.Peek[float64](median.artifact, "non_finite") != 0 {
 		median.artifact.Poke(datura.Map[float64]{"value": math.NaN()}, "output")
-		median.artifact.Clear("sample")
 
 		return median.artifact.Read(p)
 	}
@@ -61,7 +60,6 @@ func (median *Median) Read(p []byte) (int, error) {
 	if math.IsNaN(sample) || math.IsInf(sample, 0) {
 		median.artifact.Poke(float64(1), "non_finite")
 		median.artifact.Poke(datura.Map[float64]{"value": sample}, "output")
-		median.artifact.Clear("sample")
 
 		return median.artifact.Read(p)
 	}
@@ -76,19 +74,7 @@ func (median *Median) Read(p []byte) (int, error) {
 }
 
 func (median *Median) Write(p []byte) (int, error) {
-	bootstrap := datura.Peek[datura.Map[float64]](median.artifact, "output") == nil
-
-	median.artifact.Clear("sample")
-	median.artifact.Clear("member")
-	median.artifact.Clear("peers")
-
-	n, err := median.artifact.Write(p)
-
-	if bootstrap {
-		median.artifact.Clear("output")
-	}
-
-	return n, err
+	return median.artifact.Write(p)
 }
 
 func (median *Median) Close() error {

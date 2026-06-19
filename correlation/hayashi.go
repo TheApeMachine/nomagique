@@ -10,43 +10,23 @@ import (
 
 /*
 HayashiYoshida estimates asynchronous high-frequency correlation with a sliding
-sweep over overlapping return intervals. It does not require both series to
-share the same observation grid.
+sweep over overlapping return intervals. maxIntervalSeconds may be set on config.
 */
 type HayashiYoshida struct {
-	artifact    *datura.Artifact
-	weights     []float64
-	maxInterval time.Duration
+	artifact *datura.Artifact
 }
 
 /*
-NewHayashiYoshida creates a Hayashi-Yoshida correlation dynamic.
-When maxInterval is zero, consecutive sample spacing is not capped.
+NewHayashiYoshida creates a Hayashi-Yoshida correlation stage.
 */
-func NewHayashiYoshida(weights []float64, maxInterval time.Duration) *HayashiYoshida {
+func NewHayashiYoshida() *HayashiYoshida {
 	return &HayashiYoshida{
-		artifact:    datura.Acquire("hayashi", datura.APPJSON).RetainStageAttributes(),
-		weights:     weights,
-		maxInterval: maxInterval,
+		artifact: datura.Acquire("hayashi", datura.APPJSON),
 	}
 }
 
 func (hayashi *HayashiYoshida) Write(p []byte) (int, error) {
-	bootstrap := datura.Peek[datura.Map[float64]](hayashi.artifact, "output") == nil
-
-	hayashi.artifact.Clear("sample")
-	hayashi.artifact.Clear("paired")
-	hayashi.artifact.Clear("batch")
-	hayashi.artifact.Clear("left")
-	hayashi.artifact.Clear("right")
-
-	n, err := hayashi.artifact.Write(p)
-
-	if bootstrap {
-		hayashi.artifact.Clear("output")
-	}
-
-	return n, err
+	return hayashi.artifact.Write(p)
 }
 
 func (hayashi *HayashiYoshida) Read(p []byte) (int, error) {
@@ -69,7 +49,7 @@ func (hayashi *HayashiYoshida) Read(p []byte) (int, error) {
 		right, rightOK := samplesFromScalars(values[half:])
 
 		if leftOK && rightOK {
-			correlation, ok := hayashiYoshidaCorrelation(left, right, hayashi.maxInterval)
+			correlation, ok := hayashiYoshidaCorrelation(left, right, hayashi.maxIntervalFromArtifact())
 
 			if ok {
 				hayashi.artifact.Poke(datura.Map[float64]{"value": correlation}, "output")
@@ -107,11 +87,14 @@ func (hayashi *HayashiYoshida) Close() error {
 	return nil
 }
 
-func (hayashi *HayashiYoshida) Reset() error {
-	hayashi.weights = nil
-	hayashi.artifact.Clear("output")
+func (hayashi *HayashiYoshida) maxIntervalFromArtifact() time.Duration {
+	seconds := datura.Peek[float64](hayashi.artifact, "config", "maxIntervalSeconds")
 
-	return nil
+	if seconds <= 0 {
+		return 0
+	}
+
+	return time.Duration(seconds * float64(time.Second))
 }
 
 /*

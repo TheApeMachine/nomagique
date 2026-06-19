@@ -20,23 +20,12 @@ NewPanel returns a keyed sample registry for cross-section pipelines.
 */
 func NewPanel() *Panel {
 	return &Panel{
-		artifact: datura.Acquire("panel", datura.APPJSON).RetainStageAttributes(),
+		artifact: datura.Acquire("panel", datura.APPJSON),
 	}
 }
 
 func (panel *Panel) Write(p []byte) (int, error) {
-	bootstrap := datura.Peek[datura.Map[float64]](panel.artifact, "output") == nil
-
-	panel.artifact.Clear("sample")
-	panel.artifact.Clear("member")
-
-	n, err := panel.artifact.Write(p)
-
-	if bootstrap {
-		panel.artifact.Clear("output")
-	}
-
-	return n, err
+	return panel.artifact.Write(p)
 }
 
 func (panel *Panel) Read(p []byte) (int, error) {

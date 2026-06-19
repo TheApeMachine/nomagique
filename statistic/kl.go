@@ -23,25 +23,14 @@ expectedSum and floor may be zero to derive them from each observation.
 */
 func NewKLDivergence(expectedSum, floor float64) *KLDivergence {
 	return &KLDivergence{
-		artifact:    datura.Acquire("kl", datura.APPJSON).RetainStageAttributes(),
+		artifact:    datura.Acquire("kl", datura.APPJSON),
 		expectedSum: expectedSum,
 		floor:       floor,
 	}
 }
 
 func (kl *KLDivergence) Write(p []byte) (int, error) {
-	bootstrap := datura.Peek[datura.Map[float64]](kl.artifact, "output") == nil
-
-	kl.artifact.Clear("sample")
-	kl.artifact.Clear("paired")
-
-	n, err := kl.artifact.Write(p)
-
-	if bootstrap {
-		kl.artifact.Clear("output")
-	}
-
-	return n, err
+	return kl.artifact.Write(p)
 }
 
 func (kl *KLDivergence) Read(p []byte) (int, error) {

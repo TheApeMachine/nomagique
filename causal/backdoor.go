@@ -16,23 +16,12 @@ NewBackdoor returns a backdoor stage reading config and table rows from the arti
 */
 func NewBackdoor() *Backdoor {
 	return &Backdoor{
-		artifact: datura.Acquire("backdoor", datura.APPJSON).RetainStageAttributes(),
+		artifact: datura.Acquire("backdoor", datura.APPJSON),
 	}
 }
 
 func (backdoor *Backdoor) Write(p []byte) (int, error) {
-	bootstrap := datura.Peek[datura.Map[float64]](backdoor.artifact, "output") == nil
-
-	backdoor.artifact.Clear("sample")
-	backdoor.artifact.Clear("batch")
-
-	n, err := backdoor.artifact.Write(p)
-
-	if bootstrap {
-		backdoor.artifact.Clear("output")
-	}
-
-	return n, err
+	return backdoor.artifact.Write(p)
 }
 
 func (backdoor *Backdoor) Read(p []byte) (int, error) {
@@ -53,7 +42,7 @@ func (backdoor *Backdoor) Read(p []byte) (int, error) {
 		minRows = 12
 	}
 
-	table, err := NewNodeTable(rows, target, minRows)
+	table, err := newNodeTable(rows, target, minRows)
 
 	if err != nil {
 		backdoor.artifact.Poke(datura.Map[float64]{"value": 0}, "output")
@@ -61,19 +50,19 @@ func (backdoor *Backdoor) Read(p []byte) (int, error) {
 		return backdoor.artifact.Read(p)
 	}
 
-	association, assocErr := table.Association(treatment)
+	association, assocErr := table.association(treatment)
 
 	if assocErr != nil {
 		association = 0
 	}
 
-	effect, effectErr := table.BackdoorEffect(treatment, controls...)
+	effect, effectErr := table.backdoorEffect(treatment, controls...)
 
 	if effectErr != nil {
 		effect = 0
 	}
 
-	condition, conditionErr := table.PairConditionNumber(treatment, target)
+	condition, conditionErr := table.pairConditionNumber(treatment, target)
 
 	if conditionErr != nil {
 		condition = 0
@@ -91,31 +80,4 @@ func (backdoor *Backdoor) Read(p []byte) (int, error) {
 
 func (backdoor *Backdoor) Close() error {
 	return nil
-}
-
-/*
-WithConfig stores target, treatment, controls, and minHistory on the stage artifact.
-*/
-func (backdoor *Backdoor) WithConfig(
-	target, treatment int,
-	controls []int,
-	minHistory int,
-) *Backdoor {
-	if backdoor == nil {
-		return nil
-	}
-
-	controlValues := make([]float64, len(controls))
-
-	for index, control := range controls {
-		controlValues[index] = float64(control)
-	}
-
-	backdoor.artifact.
-		Poke(float64(target), "config", "target").
-		Poke(float64(treatment), "config", "treatment").
-		Poke(controlValues, "config", "controls").
-		Poke(float64(minHistory), "config", "minHistory")
-
-	return backdoor
 }

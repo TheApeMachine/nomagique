@@ -20,7 +20,7 @@ NewEMA returns an EMA stage ready to bootstrap from its first observation.
 func NewEMA(config *datura.Artifact) *EMA {
 	return &EMA{
 		config:   config,
-		artifact: datura.Acquire("ema", datura.APPJSON).RetainStageAttributes(),
+		artifact: datura.Acquire("ema", datura.APPJSON),
 	}
 }
 
@@ -70,17 +70,7 @@ func (ema *EMA) Read(p []byte) (int, error) {
 }
 
 func (ema *EMA) Write(p []byte) (int, error) {
-	bootstrap := datura.Peek[datura.Map[float64]](ema.artifact, "output") == nil
-
-	ema.artifact.Clear("sample")
-
-	n, err := ema.artifact.Write(p)
-
-	if bootstrap {
-		ema.artifact.Clear("output")
-	}
-
-	return n, err
+	return ema.artifact.Write(p)
 }
 
 func (ema *EMA) Close() error {

@@ -17,23 +17,12 @@ Weight returns a trust weight dynamic ready from its first observation.
 */
 func Weight() *TrustWeight {
 	return &TrustWeight{
-		artifact: datura.Acquire("weight", datura.APPJSON).RetainStageAttributes(),
+		artifact: datura.Acquire("weight", datura.APPJSON),
 	}
 }
 
 func (trustWeight *TrustWeight) Write(p []byte) (int, error) {
-	bootstrap := datura.Peek[datura.Map[float64]](trustWeight.artifact, "output") == nil
-
-	trustWeight.artifact.Clear("sample")
-	trustWeight.artifact.Clear("paired")
-
-	n, err := trustWeight.artifact.Write(p)
-
-	if bootstrap {
-		trustWeight.artifact.Clear("output")
-	}
-
-	return n, err
+	return trustWeight.artifact.Write(p)
 }
 
 func (trustWeight *TrustWeight) Read(p []byte) (int, error) {
@@ -78,7 +67,7 @@ Reset clears derived state.
 */
 func (trustWeight *TrustWeight) Reset() error {
 	trustWeight.state.Reset()
-	trustWeight.artifact.Clear("output")
+	trustWeight.artifact.Poke(datura.Map[float64]{"value": 0}, "output")
 
 	return nil
 }

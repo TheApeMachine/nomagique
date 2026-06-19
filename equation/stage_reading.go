@@ -5,45 +5,29 @@ import (
 )
 
 /*
-StageReading exposes one output field from an artifact stage as a classifier score source.
+StageReading exposes one output field from the carried artifact as a classifier score source.
 */
 type StageReading struct {
 	artifact *datura.Artifact
-	source   ArtifactStage
 	field    string
 }
 
 /*
-NewStageReading returns a score source for one output field on source.
+NewStageReading returns a score source for one output field on the carried artifact.
 */
-func NewStageReading(source ArtifactStage, field string) *StageReading {
+func NewStageReading(field string) *StageReading {
 	return &StageReading{
-		artifact: datura.Acquire("stage-reading", datura.APPJSON).RetainStageAttributes(),
-		source:   source,
+		artifact: datura.Acquire("stage-reading", datura.APPJSON),
 		field:    field,
 	}
 }
 
 func (reading *StageReading) Write(p []byte) (int, error) {
-	bootstrap := datura.Peek[datura.Map[float64]](reading.artifact, "output") == nil
-
-	reading.artifact.Clear("sample")
-
-	n, err := reading.artifact.Write(p)
-
-	if bootstrap {
-		reading.artifact.Clear("output")
-	}
-
-	return n, err
+	return reading.artifact.Write(p)
 }
 
 func (reading *StageReading) Read(p []byte) (int, error) {
-	value := 0.0
-
-	if reading.source != nil {
-		value = datura.Peek[float64](reading.source.StageArtifact(), "output", reading.field)
-	}
+	value := datura.Peek[float64](reading.artifact, "output", reading.field)
 
 	reading.artifact.Poke(datura.Map[float64]{"value": value}, "output")
 

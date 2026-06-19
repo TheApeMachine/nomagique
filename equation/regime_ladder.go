@@ -11,10 +11,10 @@ import (
 /*
 NewRegimeLadder composes regime selection, hysteresis smoothing, and ladder evaluation.
 */
-func NewRegimeLadder(ladderStage *causal.Ladder) io.ReadWriter {
+func NewRegimeLadder() io.ReadWriteCloser {
 	return nomagique.Number(
 		causal.NewRegime(),
 		adaptive.NewHysteresis(),
-		ladderStage,
+		causal.NewLadder(),
 	)
 }

@@ -10,40 +10,23 @@ import (
 
 /*
 Pearson computes the Pearson correlation coefficient between two streams.
-Optionally, weights can be provided which are applied to the inputs before
-computing the correlation. This helps to reduce the impact of outliers.
+Weights may be supplied on config.weights and are applied before correlation.
 */
 type Pearson struct {
 	artifact *datura.Artifact
-	weights  []float64
 }
 
 /*
-NewPearson creates a new Pearson correlation dynamic.
+NewPearson creates a Pearson correlation stage.
 */
-func NewPearson(weights []float64) *Pearson {
+func NewPearson() *Pearson {
 	return &Pearson{
-		artifact: datura.Acquire("pearson", datura.APPJSON).RetainStageAttributes(),
-		weights:  weights,
+		artifact: datura.Acquire("pearson", datura.APPJSON),
 	}
 }
 
 func (pearson *Pearson) Write(p []byte) (int, error) {
-	bootstrap := datura.Peek[datura.Map[float64]](pearson.artifact, "output") == nil
-
-	pearson.artifact.Clear("sample")
-	pearson.artifact.Clear("paired")
-	pearson.artifact.Clear("batch")
-	pearson.artifact.Clear("left")
-	pearson.artifact.Clear("right")
-
-	n, err := pearson.artifact.Write(p)
-
-	if bootstrap {
-		pearson.artifact.Clear("output")
-	}
-
-	return n, err
+	return pearson.artifact.Write(p)
 }
 
 func (pearson *Pearson) Read(p []byte) (int, error) {
@@ -64,9 +47,8 @@ func (pearson *Pearson) Read(p []byte) (int, error) {
 		half := count / 2
 		left := values[:half]
 		right := values[half:]
-
-		weightsOK := len(pearson.weights) == 0 || len(pearson.weights) == half
-		weights := pearson.weights
+		weights := datura.Peek[[]float64](pearson.artifact, "config", "weights")
+		weightsOK := len(weights) == 0 || len(weights) == half
 
 		for _, weight := range weights {
 			if math.IsNaN(weight) || math.IsInf(weight, 0) || weight < 0 {
@@ -120,13 +102,6 @@ func (pearson *Pearson) Close() error {
 	return nil
 }
 
-func (pearson *Pearson) Reset() error {
-	pearson.weights = nil
-	pearson.artifact.Clear("output")
-
-	return nil
-}
-
 type PearsonErrorType string
 
 const (
@@ -138,4 +113,11 @@ type PearsonError string
 
 func (pearsonError PearsonError) Error() string {
 	return string(pearsonError)
+}
+
+func inboundReset(p []byte) bool {
+	inbound := datura.Acquire("inbound", datura.APPJSON)
+	_, _ = inbound.Write(p)
+
+	return datura.Peek[float64](inbound, "reset") > 0
 }

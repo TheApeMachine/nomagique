@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/nomagique/equation"
 	"gonum.org/v1/gonum/stat"
 )
 
@@ -24,7 +25,7 @@ momentR and momentS select the mixed moment used for fit diagnostics.
 */
 func NewMoment(params BivariateParams, momentR, momentS float64) *Moment {
 	return &Moment{
-		artifact: datura.Acquire("hawkes-moment", datura.APPJSON).RetainStageAttributes(),
+		artifact: datura.Acquire("hawkes-moment", datura.APPJSON),
 		params:   params,
 		momentR:  momentR,
 		momentS:  momentS,
@@ -32,18 +33,7 @@ func NewMoment(params BivariateParams, momentR, momentS float64) *Moment {
 }
 
 func (moment *Moment) Write(p []byte) (int, error) {
-	bootstrap := datura.Peek[datura.Map[float64]](moment.artifact, "output") == nil
-
-	moment.artifact.Clear("sample")
-	moment.artifact.Clear("batch")
-
-	n, err := moment.artifact.Write(p)
-
-	if bootstrap {
-		moment.artifact.Clear("output")
-	}
-
-	return n, err
+	return moment.artifact.Write(p)
 }
 
 func (moment *Moment) Read(p []byte) (int, error) {
@@ -93,7 +83,7 @@ horizonUnixNano is the observation horizon in Unix nanoseconds.
 */
 func NewFit(horizonUnixNano int64, prior BivariateFit) *Fit {
 	return &Fit{
-		artifact:  datura.Acquire("hawkes-fit", datura.APPJSON).RetainStageAttributes(),
+		artifact:  datura.Acquire("hawkes-fit", datura.APPJSON),
 		horizon:   horizonUnixNano,
 		prior:     prior,
 		estimator: NewBivariateEstimator(prior),
@@ -101,18 +91,7 @@ func NewFit(horizonUnixNano int64, prior BivariateFit) *Fit {
 }
 
 func (fit *Fit) Write(p []byte) (int, error) {
-	bootstrap := datura.Peek[datura.Map[float64]](fit.artifact, "output") == nil
-
-	fit.artifact.Clear("sample")
-	fit.artifact.Clear("batch")
-
-	n, err := fit.artifact.Write(p)
-
-	if bootstrap {
-		fit.artifact.Clear("output")
-	}
-
-	return n, err
+	return fit.artifact.Write(p)
 }
 
 func (fit *Fit) Read(p []byte) (int, error) {
@@ -163,6 +142,10 @@ func momentSamples(artifact *datura.Artifact) (xValues, yValues, weights []float
 	batch := datura.Peek[[]float64](artifact, "batch")
 
 	if len(batch) == 0 {
+		batch = equation.Features(artifact)
+	}
+
+	if len(batch) == 0 {
 		batch = fitFloatBatch(artifact)
 	}
 
@@ -194,6 +177,10 @@ func fitTimes(artifact *datura.Artifact) (xTimes, yTimes []float64, ok bool) {
 	batch := datura.Peek[[]float64](artifact, "batch")
 
 	if len(batch) == 0 {
+		batch = equation.Features(artifact)
+	}
+
+	if len(batch) == 0 {
 		batch = fitFloatBatch(artifact)
 	}
 
@@ -214,9 +201,13 @@ func fitTimes(artifact *datura.Artifact) (xTimes, yTimes []float64, ok bool) {
 }
 
 func fitFloatBatch(artifact *datura.Artifact) []float64 {
-	payload, ok := artifact.PayloadQuiet()
+	if !artifact.HasEncryptedPayload() {
+		return nil
+	}
 
-	if !ok || len(payload) == 0 || len(payload)%8 != 0 {
+	payload := artifact.DecryptPayload()
+
+	if len(payload) == 0 || len(payload)%8 != 0 {
 		return nil
 	}
 

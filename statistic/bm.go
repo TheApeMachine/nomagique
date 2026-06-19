@@ -22,25 +22,14 @@ NewBivariateMoment creates a bivariate moment stage at exponents r and s.
 */
 func NewBivariateMoment(r, s float64) *BivariateMoment {
 	return &BivariateMoment{
-		artifact: datura.Acquire("bivariate_moment", datura.APPJSON).RetainStageAttributes(),
+		artifact: datura.Acquire("bivariate_moment", datura.APPJSON),
 		r:        r,
 		s:        s,
 	}
 }
 
 func (bivariateMoment *BivariateMoment) Write(p []byte) (int, error) {
-	bootstrap := datura.Peek[datura.Map[float64]](bivariateMoment.artifact, "output") == nil
-
-	bivariateMoment.artifact.Clear("sample")
-	bivariateMoment.artifact.Clear("paired")
-
-	n, err := bivariateMoment.artifact.Write(p)
-
-	if bootstrap {
-		bivariateMoment.artifact.Clear("output")
-	}
-
-	return n, err
+	return bivariateMoment.artifact.Write(p)
 }
 
 func (bivariateMoment *BivariateMoment) Read(p []byte) (int, error) {

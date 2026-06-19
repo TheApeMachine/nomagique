@@ -18,23 +18,12 @@ NewContagion returns a contagion stage that writes paired from table history.
 */
 func NewContagion() *Contagion {
 	return &Contagion{
-		artifact: datura.Acquire("contagion", datura.APPJSON).RetainStageAttributes(),
+		artifact: datura.Acquire("contagion", datura.APPJSON),
 	}
 }
 
 func (contagion *Contagion) Write(p []byte) (int, error) {
-	bootstrap := datura.Peek[datura.Map[float64]](contagion.artifact, "output") == nil
-
-	contagion.artifact.Clear("sample")
-	contagion.artifact.Clear("paired")
-
-	n, err := contagion.artifact.Write(p)
-
-	if bootstrap {
-		contagion.artifact.Clear("output")
-	}
-
-	return n, err
+	return contagion.artifact.Write(p)
 }
 
 func (contagion *Contagion) Read(p []byte) (int, error) {

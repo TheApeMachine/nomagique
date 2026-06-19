@@ -2,49 +2,32 @@ package equation
 
 import (
 	"github.com/theapemachine/datura"
-	"github.com/theapemachine/nomagique/causal"
 )
 
 /*
-Reading exposes one ladder output field as a pipeline score source.
+Reading exposes one upstream output field as a classifier score source.
 */
 type Reading struct {
 	artifact *datura.Artifact
-	source   *causal.Ladder
 	field    string
 }
 
 /*
-NewReading returns a score source for one ladder output field.
+NewReading returns a score source for one output field on the carried artifact.
 */
-func NewReading(source *causal.Ladder, field string) *Reading {
+func NewReading(field string) *Reading {
 	return &Reading{
-		artifact: datura.Acquire("ladder-reading", datura.APPJSON).RetainStageAttributes(),
-		source:   source,
+		artifact: datura.Acquire("ladder-reading", datura.APPJSON),
 		field:    field,
 	}
 }
 
 func (reading *Reading) Write(p []byte) (int, error) {
-	bootstrap := datura.Peek[datura.Map[float64]](reading.artifact, "output") == nil
-
-	reading.artifact.Clear("sample")
-
-	n, err := reading.artifact.Write(p)
-
-	if bootstrap {
-		reading.artifact.Clear("output")
-	}
-
-	return n, err
+	return reading.artifact.Write(p)
 }
 
 func (reading *Reading) Read(p []byte) (int, error) {
-	value := 0.0
-
-	if reading.source != nil {
-		value = datura.Peek[float64](reading.source.Artifact(), "output", reading.field)
-	}
+	value := datura.Peek[float64](reading.artifact, "output", reading.field)
 
 	reading.artifact.Poke(datura.Map[float64]{"value": value}, "output")
 

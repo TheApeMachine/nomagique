@@ -15,7 +15,7 @@ func TestIntegration(t *testing.T) {
 		Convey("When Pearson receives a perfectly correlated batch", func() {
 			artifact := datura.Acquire("test", datura.APPJSON).
 				Poke([]float64{1, 2, 1, 2}, "batch")
-			pipeline := nomagique.Number(correlation.NewPearson(nil))
+			pipeline := nomagique.Number(correlation.NewPearson())
 			err := transport.NewFlipFlop(artifact, pipeline)
 
 			So(err, ShouldBeNil)
@@ -24,7 +24,7 @@ func TestIntegration(t *testing.T) {
 
 		Convey("When IntervalSeries streams epoch and level pairs", func() {
 			artifact := datura.Acquire("test", datura.APPJSON)
-			series := nomagique.Number(correlation.NewIntervalSeries(8))
+			series := nomagique.Number(correlation.NewIntervalSeries())
 
 			artifact.Poke(float64(1_000), "sample").Poke(100.0, "paired")
 			err := transport.NewFlipFlop(artifact, series)
@@ -39,35 +39,30 @@ func TestIntegration(t *testing.T) {
 			So(datura.Peek[float64](artifact, "output", "value"), ShouldBeGreaterThan, 0)
 		})
 
-		Convey("When WindowSet and Contagion run on correlated members", func() {
-			first := correlation.NewWindowSet(16)
-			second := correlation.NewWindowSet(16)
-			artifact := datura.Acquire("test", datura.APPJSON)
+		Convey("When Contagion runs on correlated members", func() {
+			contagion := nomagique.Number(correlation.NewContagion())
+			artifact := datura.Acquire("test", datura.APPJSON).
+				Poke(2, "config", "minSamples").
+				Poke(2, "config", "memberCap").
+				Poke(2, "config", "adaptiveSigma").
+				Poke(4, "config", "tier", "fast").
+				Poke(8, "config", "tier", "medium").
+				Poke(16, "config", "tier", "slow")
 
 			for step := range 16 {
 				epoch := float64((step + 1) * 1_000)
-				artifact.Poke(epoch, "sample").Poke(100+float64(step)*0.1, "paired")
-				err := transport.NewFlipFlop(artifact, first)
+				artifact.Poke(1, "member").Poke(epoch, "sample").Poke(100+float64(step)*0.1, "paired")
+				err := transport.NewFlipFlop(artifact, contagion)
 
 				So(err, ShouldBeNil)
 
-				artifact.Poke(epoch, "sample").Poke(50+float64(step)*0.05, "paired")
-				err = transport.NewFlipFlop(artifact, second)
+				artifact.Poke(2, "member").Poke(epoch, "sample").Poke(50+float64(step)*0.05, "paired")
+				err = transport.NewFlipFlop(artifact, contagion)
 
 				So(err, ShouldBeNil)
 			}
 
-			contagion := nomagique.Number(correlation.NewContagion(
-				[]*correlation.WindowSet{first, second},
-				correlation.TierWindows{Fast: 4, Medium: 8, Slow: 16},
-				correlation.ContagionConfig{MinSamples: 2, MemberCap: 2, AdaptiveSigma: 2},
-			))
-
-			trigger := datura.Acquire("test", datura.APPJSON)
-			err := transport.NewFlipFlop(trigger, contagion)
-
-			So(err, ShouldBeNil)
-			So(datura.Peek[float64](trigger, "output", "value"), ShouldBeGreaterThan, 0)
+			So(datura.Peek[float64](artifact, "output", "value"), ShouldBeGreaterThan, 0)
 		})
 	})
 }

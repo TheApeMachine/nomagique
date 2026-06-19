@@ -18,7 +18,7 @@ NewZScore returns a z-score stage ready to bootstrap from its first observation.
 */
 func NewZScore() *ZScore {
 	return &ZScore{
-		artifact: datura.Acquire("zscore", datura.APPJSON).RetainStageAttributes(),
+		artifact: datura.Acquire("zscore", datura.APPJSON),
 	}
 }
 
@@ -94,17 +94,7 @@ func (surprise *ZScore) Read(p []byte) (int, error) {
 }
 
 func (surprise *ZScore) Write(p []byte) (int, error) {
-	bootstrap := datura.Peek[datura.Map[float64]](surprise.artifact, "output") == nil
-
-	surprise.artifact.Clear("sample")
-
-	n, err := surprise.artifact.Write(p)
-
-	if bootstrap {
-		surprise.artifact.Clear("output")
-	}
-
-	return n, err
+	return surprise.artifact.Write(p)
 }
 
 func (surprise *ZScore) Close() error {

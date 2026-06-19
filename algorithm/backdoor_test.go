@@ -1,36 +1,59 @@
-package algorithm
+package algorithm_test
 
 import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/datura"
+	"github.com/theapemachine/datura/transport"
+	"github.com/theapemachine/nomagique/algorithm"
 )
+
+func backdoorArtifact() *datura.Artifact {
+	nodeCount := 4
+	rowCount := 16
+	flat := make([]float64, 0, rowCount*nodeCount)
+
+	for rowIndex := range rowCount {
+		flat = append(flat,
+			float64(rowIndex)*0.1,
+			float64(rowIndex)*0.2,
+			float64(rowIndex)*0.5,
+			float64(rowIndex)*0.05,
+		)
+	}
+
+	return datura.Acquire("test", datura.APPJSON).
+		Poke(float64(3), "config", "target").
+		Poke(float64(2), "config", "treatment").
+		Poke([]float64{0, 1}, "config", "controls").
+		Poke(float64(12), "config", "minHistory").
+		Poke(float64(rowCount), "table", "rowCount").
+		Poke(float64(nodeCount), "table", "nodeCount").
+		Poke(flat, "table", "rows")
+}
 
 func TestBackdoor_Observe(testingTB *testing.T) {
 	Convey("Given aligned node streams with causal structure", testingTB, func() {
-		backdoor := NewBackdoor(3, 2, []int{0, 1}, 12)
-		effect := observeInputs(backdoor,
-			0.1, 0.2, 0.5, 0.05,
-			0.2, 0.4, 1.0, 0.1,
-			0.3, 0.6, 1.5, 0.15,
-		)
+		backdoor := algorithm.NewBackdoor()
+		artifact := backdoorArtifact()
+		err := transport.NewFlipFlop(artifact, backdoor)
+
+		So(err, ShouldBeNil)
 
 		Convey("It should return a finite backdoor effect", func() {
-			So(float64(effect), ShouldNotEqual, 0)
+			So(datura.Peek[float64](artifact, "output", "value"), ShouldNotEqual, 0)
 		})
 	})
 }
 
 func BenchmarkBackdoor_Observe(testingTB *testing.B) {
-	backdoor := NewBackdoor(3, 2, []int{0, 1}, 12)
+	backdoor := algorithm.NewBackdoor()
+	artifact := backdoorArtifact()
 
 	testingTB.ReportAllocs()
 
 	for testingTB.Loop() {
-		_ = observeInputs(backdoor,
-			0.1, 0.2, 0.5, 0.05,
-			0.2, 0.4, 1.0, 0.1,
-			0.3, 0.6, 1.5, 0.15,
-		)
+		_ = transport.NewFlipFlop(artifact, backdoor)
 	}
 }

@@ -19,7 +19,7 @@ NewStdDev creates a standard-deviation stage.
 */
 func NewStdDev() *StdDev {
 	return &StdDev{
-		artifact: datura.Acquire("stddev", datura.APPJSON).RetainStageAttributes(),
+		artifact: datura.Acquire("stddev", datura.APPJSON),
 	}
 }
 
@@ -46,17 +46,7 @@ func (stdDev *StdDev) Read(p []byte) (int, error) {
 }
 
 func (stdDev *StdDev) Write(p []byte) (int, error) {
-	bootstrap := datura.Peek[datura.Map[float64]](stdDev.artifact, "output") == nil
-
-	stdDev.artifact.Clear("sample")
-
-	n, err := stdDev.artifact.Write(p)
-
-	if bootstrap {
-		stdDev.artifact.Clear("output")
-	}
-
-	return n, err
+	return stdDev.artifact.Write(p)
 }
 
 func (stdDev *StdDev) Close() error {

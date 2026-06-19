@@ -18,7 +18,7 @@ NewMomentum returns a momentum stage ready to bootstrap from its first observati
 */
 func NewMomentum() *Momentum {
 	return &Momentum{
-		artifact: datura.Acquire("momentum", datura.APPJSON).RetainStageAttributes(),
+		artifact: datura.Acquire("momentum", datura.APPJSON),
 	}
 }
 
@@ -65,17 +65,7 @@ func (momentum *Momentum) Read(p []byte) (int, error) {
 }
 
 func (momentum *Momentum) Write(p []byte) (int, error) {
-	bootstrap := datura.Peek[datura.Map[float64]](momentum.artifact, "output") == nil
-
-	momentum.artifact.Clear("sample")
-
-	n, err := momentum.artifact.Write(p)
-
-	if bootstrap {
-		momentum.artifact.Clear("output")
-	}
-
-	return n, err
+	return momentum.artifact.Write(p)
 }
 
 func (momentum *Momentum) Close() error {

@@ -83,12 +83,12 @@ func ToxicChurnEvidence(
 SideFlowLedger tracks per-side depth and smoothed cancel/fill flow.
 */
 type SideFlowLedger struct {
-	BidDepth   float64
-	AskDepth   float64
-	FillBid    float64
-	CancelBid  float64
-	FillAsk    float64
-	CancelAsk  float64
+	BidDepth  float64
+	AskDepth  float64
+	FillBid   float64
+	CancelBid float64
+	FillAsk   float64
+	CancelAsk float64
 }
 
 func (ledger *SideFlowLedger) AddDepth(side byte, delta float64) {

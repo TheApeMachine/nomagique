@@ -5,12 +5,13 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/nomagique/equation"
 	"github.com/theapemachine/nomagique/tests"
 )
 
 func TestBookflowEvaluate(testingTB *testing.T) {
 	Convey("Given a bid-heavy book snapshot", testingTB, func() {
-		bookflow := NewBookflow()
+		bookflow := equation.NewBookflow()
 		writeErr := tests.WriteSamples(bookflow,
 			0.85, 0.80, 0.86, 1,
 			100, 2, 12,
@@ -35,7 +36,7 @@ func TestBookflowEvaluate(testingTB *testing.T) {
 	})
 
 	Convey("Given deep bid wall with bearish touch", testingTB, func() {
-		bookflow := NewBookflow()
+		bookflow := equation.NewBookflow()
 		writeErr := tests.WriteSamples(bookflow,
 			0.6, -0.4, 0.5, 1,
 			50, 2, 3,
@@ -60,7 +61,7 @@ func TestBookflowEvaluate(testingTB *testing.T) {
 }
 
 func BenchmarkBookflowRead(b *testing.B) {
-	bookflow := NewBookflow()
+	bookflow := equation.NewBookflow()
 	samples := []float64{
 		0.85, 0.80, 0.86, 1,
 		100, 2, 12,

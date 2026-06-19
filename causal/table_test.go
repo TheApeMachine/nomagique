@@ -6,54 +6,25 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 )
 
-func TestNodeTable_BackdoorEffect(testingTB *testing.T) {
-	Convey("Given a linear causal table", testingTB, func() {
-		rows := make([][]float64, 16)
-
-		for index := range rows {
-			rows[index] = []float64{
-				float64(index),
-				float64(index) * 0.5,
-				float64(index) * 2,
-				float64(index) * 0.25,
-			}
+func TestLinearModel_counterfactualUplift(testingTB *testing.T) {
+	Convey("Given a linear model fit on treatment and controls", testingTB, func() {
+		rows := [][]float64{
+			{0, 0, 0, 0},
+			{1, 2, 4, 1},
+			{2, 4, 8, 2},
+			{3, 6, 12, 3},
 		}
+		table, tableErr := newNodeTable(rows, 3, 4)
 
-		table, err := NewNodeTable(rows, 3, 12)
+		So(tableErr, ShouldBeNil)
 
-		So(err, ShouldBeNil)
+		model, modelErr := table.fitLinearModel(0, 1, 2)
 
-		effect, effectErr := table.BackdoorEffect(2, 0, 1)
+		So(modelErr, ShouldBeNil)
 
-		Convey("It should estimate a finite backdoor effect", func() {
-			So(effectErr, ShouldBeNil)
-			So(effect, ShouldNotEqual, 0)
-		})
-	})
-}
+		uplift, upliftErr := model.counterfactualUplift(rows[len(rows)-1], 2, 20)
 
-func TestNodeTable_KernelBackdoorEffect(testingTB *testing.T) {
-	Convey("Given enough history rows", testingTB, func() {
-		rows := make([][]float64, 16)
-
-		for index := range rows {
-			rows[index] = []float64{
-				float64(index) * 0.1,
-				float64(index) * 0.2,
-				float64(index) * 0.3,
-				float64(index) * 0.05,
-			}
-		}
-
-		table, err := NewNodeTable(rows, 3, 12)
-
-		So(err, ShouldBeNil)
-
-		effect, effectErr := table.KernelBackdoorEffect(2, 0.35, 0, 1)
-
-		Convey("It should return a finite kernel backdoor effect", func() {
-			So(effectErr, ShouldBeNil)
-			So(effect, ShouldBeGreaterThan, 0)
-		})
+		So(upliftErr, ShouldBeNil)
+		So(uplift, ShouldBeGreaterThan, 0)
 	})
 }

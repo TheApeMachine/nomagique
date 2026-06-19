@@ -18,7 +18,7 @@ NewSum creates a sum stage.
 */
 func NewSum() *Sum {
 	return &Sum{
-		artifact: datura.Acquire("sum", datura.APPJSON).RetainStageAttributes(),
+		artifact: datura.Acquire("sum", datura.APPJSON),
 	}
 }
 
@@ -44,17 +44,7 @@ func (sum *Sum) Read(p []byte) (int, error) {
 }
 
 func (sum *Sum) Write(p []byte) (int, error) {
-	bootstrap := datura.Peek[datura.Map[float64]](sum.artifact, "output") == nil
-
-	sum.artifact.Clear("sample")
-
-	n, err := sum.artifact.Write(p)
-
-	if bootstrap {
-		sum.artifact.Clear("output")
-	}
-
-	return n, err
+	return sum.artifact.Write(p)
 }
 
 func (sum *Sum) Close() error {

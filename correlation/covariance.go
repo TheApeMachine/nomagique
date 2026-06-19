@@ -10,38 +10,23 @@ import (
 
 /*
 Covariance computes sample covariance between two configured streams.
+Weights may be supplied on config.weights.
 */
 type Covariance struct {
 	artifact *datura.Artifact
-	weights  []float64
 }
 
 /*
-NewCovariance creates a covariance dynamic.
+NewCovariance creates a covariance stage.
 */
-func NewCovariance(weights []float64) *Covariance {
+func NewCovariance() *Covariance {
 	return &Covariance{
-		artifact: datura.Acquire("covariance", datura.APPJSON).RetainStageAttributes(),
-		weights:  weights,
+		artifact: datura.Acquire("covariance", datura.APPJSON),
 	}
 }
 
 func (covariance *Covariance) Write(p []byte) (int, error) {
-	bootstrap := datura.Peek[datura.Map[float64]](covariance.artifact, "output") == nil
-
-	covariance.artifact.Clear("sample")
-	covariance.artifact.Clear("paired")
-	covariance.artifact.Clear("batch")
-	covariance.artifact.Clear("left")
-	covariance.artifact.Clear("right")
-
-	n, err := covariance.artifact.Write(p)
-
-	if bootstrap {
-		covariance.artifact.Clear("output")
-	}
-
-	return n, err
+	return covariance.artifact.Write(p)
 }
 
 func (covariance *Covariance) Read(p []byte) (int, error) {
@@ -62,9 +47,8 @@ func (covariance *Covariance) Read(p []byte) (int, error) {
 		half := count / 2
 		left := values[:half]
 		right := values[half:]
-
-		weightsOK := len(covariance.weights) == 0 || len(covariance.weights) == half
-		weights := covariance.weights
+		weights := datura.Peek[[]float64](covariance.artifact, "config", "weights")
+		weightsOK := len(weights) == 0 || len(weights) == half
 
 		for _, weight := range weights {
 			if math.IsNaN(weight) || math.IsInf(weight, 0) || weight < 0 {
@@ -115,13 +99,6 @@ func (covariance *Covariance) Read(p []byte) (int, error) {
 }
 
 func (covariance *Covariance) Close() error {
-	return nil
-}
-
-func (covariance *Covariance) Reset() error {
-	covariance.weights = nil
-	covariance.artifact.Clear("output")
-
 	return nil
 }
 

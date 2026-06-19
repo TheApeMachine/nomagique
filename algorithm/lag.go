@@ -57,9 +57,8 @@ func (lag *Lag) Write(p []byte) (int, error) {
 func (lag *Lag) Read(p []byte) (int, error) {
 	rehydrateArtifact(&lag.artifact, "lag", datura.Artifact_Type_json)
 
-	payload, payloadOK := lag.artifact.PayloadQuiet()
-
-	if payloadOK {
+	if lag.artifact.HasEncryptedPayload() {
+		payload := lag.artifact.DecryptPayload()
 		lag.outcome = lag.evaluate(payloadSamples(payload))
 		lag.publishReadings()
 	}

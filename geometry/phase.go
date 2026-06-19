@@ -20,22 +20,12 @@ NewVelocity returns a velocity stage ready from its first observation.
 */
 func NewVelocity() *Velocity {
 	return &Velocity{
-		artifact: datura.Acquire("velocity", datura.APPJSON).RetainStageAttributes(),
+		artifact: datura.Acquire("velocity", datura.APPJSON),
 	}
 }
 
 func (velocity *Velocity) Write(p []byte) (int, error) {
-	bootstrap := datura.Peek[datura.Map[float64]](velocity.artifact, "output") == nil
-
-	velocity.artifact.Clear("sample")
-
-	n, err := velocity.artifact.Write(p)
-
-	if bootstrap {
-		velocity.artifact.Clear("output")
-	}
-
-	return n, err
+	return velocity.artifact.Write(p)
 }
 
 func (velocity *Velocity) Read(p []byte) (int, error) {
@@ -67,7 +57,7 @@ func (velocity *Velocity) ObserveSamples(means []float64, out []float64) {
 func (velocity *Velocity) Reset() error {
 	velocity.prev = 0
 	velocity.ready = false
-	velocity.artifact.Clear("output")
+	velocity.artifact.Poke(datura.Map[float64]{"value": 0}, "output")
 
 	return nil
 }
@@ -98,24 +88,12 @@ NewCoupling returns a coupling stage.
 */
 func NewCoupling() *Coupling {
 	return &Coupling{
-		artifact: datura.Acquire("coupling", datura.APPJSON).RetainStageAttributes(),
+		artifact: datura.Acquire("coupling", datura.APPJSON),
 	}
 }
 
 func (coupling *Coupling) Write(p []byte) (int, error) {
-	bootstrap := datura.Peek[datura.Map[float64]](coupling.artifact, "output") == nil
-
-	coupling.artifact.Clear("sample")
-	coupling.artifact.Clear("paired")
-	coupling.artifact.Clear("batch")
-
-	n, err := coupling.artifact.Write(p)
-
-	if bootstrap {
-		coupling.artifact.Clear("output")
-	}
-
-	return n, err
+	return coupling.artifact.Write(p)
 }
 
 func (coupling *Coupling) Read(p []byte) (int, error) {
@@ -159,7 +137,7 @@ func (coupling *Coupling) Close() error {
 }
 
 func (coupling *Coupling) Reset() error {
-	coupling.artifact.Clear("output")
+	coupling.artifact.Poke(datura.Map[float64]{"value": 0}, "output")
 
 	return nil
 }

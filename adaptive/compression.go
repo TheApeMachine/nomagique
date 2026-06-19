@@ -18,7 +18,7 @@ NewCompression returns a compression stage ready to bootstrap from its first obs
 */
 func NewCompression() *Compression {
 	return &Compression{
-		artifact: datura.Acquire("compression", datura.APPJSON).RetainStageAttributes(),
+		artifact: datura.Acquire("compression", datura.APPJSON),
 	}
 }
 
@@ -65,17 +65,7 @@ func (compression *Compression) Read(p []byte) (int, error) {
 }
 
 func (compression *Compression) Write(p []byte) (int, error) {
-	bootstrap := datura.Peek[datura.Map[float64]](compression.artifact, "output") == nil
-
-	compression.artifact.Clear("sample")
-
-	n, err := compression.artifact.Write(p)
-
-	if bootstrap {
-		compression.artifact.Clear("output")
-	}
-
-	return n, err
+	return compression.artifact.Write(p)
 }
 
 func (compression *Compression) Close() error {

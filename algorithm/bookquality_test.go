@@ -5,12 +5,13 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/nomagique/equation"
 	"github.com/theapemachine/nomagique/tests"
 )
 
 func TestBookQualityToxicBluff(testingTB *testing.T) {
 	Convey("Given near-touch toxic churn above gate", testingTB, func() {
-		bookQuality := NewBookQuality()
+		bookQuality := equation.NewBookQuality()
 		writeErr := tests.WriteSamples(bookQuality,
 			0, 0.1, 0, 0.1,
 			80, 80,
@@ -35,7 +36,7 @@ func TestBookQualityToxicBluff(testingTB *testing.T) {
 
 func TestBookQualityLiquidityVacuum(testingTB *testing.T) {
 	Convey("Given cancel/fill asymmetry with fill flow", testingTB, func() {
-		bookQuality := NewBookQuality()
+		bookQuality := equation.NewBookQuality()
 		writeErr := tests.WriteSamples(bookQuality,
 			0.3, 0.1, 0, 0,
 			10, 10,
@@ -60,7 +61,7 @@ func TestBookQualityLiquidityVacuum(testingTB *testing.T) {
 
 func TestBookQualityHardSupport(testingTB *testing.T) {
 	Convey("Given balanced depth with fills and no cancels", testingTB, func() {
-		bookQuality := NewBookQuality()
+		bookQuality := equation.NewBookQuality()
 		writeErr := tests.WriteSamples(bookQuality,
 			0, 0.1, 0, 0.1,
 			80, 80,
@@ -84,7 +85,7 @@ func TestBookQualityHardSupport(testingTB *testing.T) {
 }
 
 func BenchmarkBookQualityRead(b *testing.B) {
-	bookQuality := NewBookQuality()
+	bookQuality := equation.NewBookQuality()
 	samples := []float64{
 		0.3, 0.1, 0, 0,
 		10, 10,

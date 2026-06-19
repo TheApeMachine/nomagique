@@ -16,22 +16,12 @@ type ObservationRing struct {
 
 func NewObservationRing() *ObservationRing {
 	return &ObservationRing{
-		artifact: datura.Acquire("observation_ring", datura.APPJSON).RetainStageAttributes(),
+		artifact: datura.Acquire("observation_ring", datura.APPJSON),
 	}
 }
 
 func (ring *ObservationRing) Write(p []byte) (int, error) {
-	bootstrap := datura.Peek[datura.Map[float64]](ring.artifact, "output") == nil
-
-	ring.artifact.Clear("sample")
-
-	n, err := ring.artifact.Write(p)
-
-	if bootstrap {
-		ring.artifact.Clear("output")
-	}
-
-	return n, err
+	return ring.artifact.Write(p)
 }
 
 func (ring *ObservationRing) Read(p []byte) (int, error) {

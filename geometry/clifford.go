@@ -189,22 +189,12 @@ NewRotor returns a rotor stage for nomagique.Number pipelines.
 */
 func NewRotor() *Rotor {
 	return &Rotor{
-		artifact: datura.Acquire("rotor", datura.APPJSON).RetainStageAttributes(),
+		artifact: datura.Acquire("rotor", datura.APPJSON),
 	}
 }
 
 func (rotor *Rotor) Write(p []byte) (int, error) {
-	bootstrap := datura.Peek[datura.Map[float64]](rotor.artifact, "output") == nil
-
-	rotor.artifact.Clear("batch")
-
-	n, err := rotor.artifact.Write(p)
-
-	if bootstrap {
-		rotor.artifact.Clear("output")
-	}
-
-	return n, err
+	return rotor.artifact.Write(p)
 }
 
 func (rotor *Rotor) Read(p []byte) (int, error) {
@@ -233,7 +223,7 @@ func (rotor *Rotor) Multivector() Multivector {
 func (rotor *Rotor) Reset() error {
 	rotor.multivector = Multivector{}
 	rotor.output = 0
-	rotor.artifact.Clear("output")
+	rotor.artifact.Poke(datura.Map[float64]{"value": 0}, "output")
 
 	return nil
 }
@@ -252,22 +242,12 @@ NewTranslator returns a translation stage for nomagique.Number pipelines.
 */
 func NewTranslator() *Translator {
 	return &Translator{
-		artifact: datura.Acquire("translator", datura.APPJSON).RetainStageAttributes(),
+		artifact: datura.Acquire("translator", datura.APPJSON),
 	}
 }
 
 func (translator *Translator) Write(p []byte) (int, error) {
-	bootstrap := datura.Peek[datura.Map[float64]](translator.artifact, "output") == nil
-
-	translator.artifact.Clear("batch")
-
-	n, err := translator.artifact.Write(p)
-
-	if bootstrap {
-		translator.artifact.Clear("output")
-	}
-
-	return n, err
+	return translator.artifact.Write(p)
 }
 
 func (translator *Translator) Read(p []byte) (int, error) {
@@ -296,7 +276,7 @@ func (translator *Translator) Multivector() Multivector {
 func (translator *Translator) Reset() error {
 	translator.multivector = Multivector{}
 	translator.output = 0
-	translator.artifact.Clear("output")
+	translator.artifact.Poke(datura.Map[float64]{"value": 0}, "output")
 
 	return nil
 }
@@ -315,23 +295,13 @@ NewSandwich returns a sandwich stage bound to motor.
 */
 func NewSandwich(motor Multivector) *Sandwich {
 	return &Sandwich{
-		artifact: datura.Acquire("sandwich", datura.APPJSON).RetainStageAttributes(),
+		artifact: datura.Acquire("sandwich", datura.APPJSON),
 		motor:    motor,
 	}
 }
 
 func (sandwich *Sandwich) Write(p []byte) (int, error) {
-	bootstrap := datura.Peek[datura.Map[float64]](sandwich.artifact, "output") == nil
-
-	sandwich.artifact.Clear("batch")
-
-	n, err := sandwich.artifact.Write(p)
-
-	if bootstrap {
-		sandwich.artifact.Clear("output")
-	}
-
-	return n, err
+	return sandwich.artifact.Write(p)
 }
 
 func (sandwich *Sandwich) Read(p []byte) (int, error) {
@@ -355,7 +325,7 @@ func (sandwich *Sandwich) Close() error {
 
 func (sandwich *Sandwich) Reset() error {
 	sandwich.output = 0
-	sandwich.artifact.Clear("output")
+	sandwich.artifact.Poke(datura.Map[float64]{"value": 0}, "output")
 
 	return nil
 }

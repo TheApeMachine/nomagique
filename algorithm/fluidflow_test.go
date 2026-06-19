@@ -5,12 +5,13 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/nomagique/equation"
 	"github.com/theapemachine/nomagique/tests"
 )
 
 func TestFluidflowEvaluateLaminar(testingTB *testing.T) {
 	Convey("Given a balanced laminar field", testingTB, func() {
-		stage := NewFluidflow()
+		stage := equation.NewFluidflow()
 		writeErr := tests.WriteSamples(stage,
 			0.5, 0.01, 0.8, 1, 1,
 			2, 4, 0, 0.05, 0,
@@ -34,7 +35,7 @@ func TestFluidflowEvaluateLaminar(testingTB *testing.T) {
 
 func TestFluidflowEvaluateTurbulent(testingTB *testing.T) {
 	Convey("Given Reynolds above the turbulent floor", testingTB, func() {
-		stage := NewFluidflow()
+		stage := equation.NewFluidflow()
 		writeErr := tests.WriteSamples(stage,
 			8, 0.2, 0.5, 1, 1,
 			2, 4, 1, 0.1, 0,
@@ -57,7 +58,7 @@ func TestFluidflowEvaluateTurbulent(testingTB *testing.T) {
 }
 
 func BenchmarkFluidflowRead(testingTB *testing.B) {
-	stage := NewFluidflow()
+	stage := equation.NewFluidflow()
 	batch := []float64{
 		2, 0.1, 0.6, 1, 1,
 		3, 5, 1, 0.08, 0,

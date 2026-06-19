@@ -1,6 +1,7 @@
 package equation
 
 import (
+	"io"
 	"math"
 
 	"github.com/theapemachine/datura"
@@ -26,32 +27,18 @@ type Bookflow struct {
 /*
 NewBookflow returns a depth-flow stage.
 */
-func NewBookflow() *Bookflow {
+func NewBookflow() io.ReadWriteCloser {
 	return &Bookflow{
-		artifact: datura.Acquire("bookflow", datura.APPJSON).RetainStageAttributes(),
+		artifact: datura.Acquire("bookflow", datura.APPJSON),
 	}
-}
-
-func (bookflow *Bookflow) StageArtifact() *datura.Artifact {
-	return bookflow.artifact
 }
 
 func (bookflow *Bookflow) Write(p []byte) (int, error) {
-	bootstrap := datura.Peek[datura.Map[float64]](bookflow.artifact, "output") == nil
-
-	bookflow.artifact.Clear("sample")
-
-	n, err := bookflow.artifact.Write(p)
-
-	if bootstrap {
-		bookflow.artifact.Clear("output")
-	}
-
-	return n, err
+	return bookflow.artifact.Write(p)
 }
 
 func (bookflow *Bookflow) Read(p []byte) (int, error) {
-	batch := FloatBatch(bookflow.artifact)
+	batch := Features(bookflow.artifact)
 	outcome := evaluateBookflow(batch)
 
 	if !outcome.eligible || outcome.strength <= 0 {

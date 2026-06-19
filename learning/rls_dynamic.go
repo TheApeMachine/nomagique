@@ -27,23 +27,13 @@ func NewRLS(dimension int, initialVariance float64) (*RLS, error) {
 	}
 
 	return &RLS{
-		artifact: datura.Acquire("rls", datura.APPJSON).RetainStageAttributes(),
+		artifact: datura.Acquire("rls", datura.APPJSON),
 		filter:   filter,
 	}, nil
 }
 
 func (rls *RLS) Write(p []byte) (int, error) {
-	bootstrap := datura.Peek[datura.Map[float64]](rls.artifact, "output") == nil
-
-	rls.artifact.Clear("batch")
-
-	n, err := rls.artifact.Write(p)
-
-	if bootstrap {
-		rls.artifact.Clear("output")
-	}
-
-	return n, err
+	return rls.artifact.Write(p)
 }
 
 func (rls *RLS) Read(p []byte) (int, error) {
@@ -85,7 +75,7 @@ func (rls *RLS) Reset() error {
 
 	rls.filter.Reset()
 	rls.output = 0
-	rls.artifact.Clear("output")
+	rls.artifact.Poke(datura.Map[float64]{"value": 0}, "output")
 
 	return nil
 }

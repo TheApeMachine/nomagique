@@ -1,6 +1,7 @@
 package equation
 
 import (
+	"io"
 	"math"
 
 	"github.com/theapemachine/datura"
@@ -21,32 +22,18 @@ type Flow struct {
 /*
 NewFlow returns a CVD flow stage for io.ReadWriter pipelines.
 */
-func NewFlow() *Flow {
+func NewFlow() io.ReadWriteCloser {
 	return &Flow{
-		artifact: datura.Acquire("flow", datura.APPJSON).RetainStageAttributes(),
+		artifact: datura.Acquire("flow", datura.APPJSON),
 	}
-}
-
-func (flow *Flow) StageArtifact() *datura.Artifact {
-	return flow.artifact
 }
 
 func (flow *Flow) Write(p []byte) (int, error) {
-	bootstrap := datura.Peek[datura.Map[float64]](flow.artifact, "output") == nil
-
-	flow.artifact.Clear("sample")
-
-	n, err := flow.artifact.Write(p)
-
-	if bootstrap {
-		flow.artifact.Clear("output")
-	}
-
-	return n, err
+	return flow.artifact.Write(p)
 }
 
 func (flow *Flow) Read(p []byte) (int, error) {
-	batch := FloatBatch(flow.artifact)
+	batch := Features(flow.artifact)
 
 	if len(batch) < flowPayloadHeader+2 {
 		flow.artifact.Poke(datura.Map[float64]{"value": 0}, "output")
@@ -128,14 +115,14 @@ func (flow *Flow) Read(p []byte) (int, error) {
 	strength := math.Max(absorption, math.Max(drive, math.Max(balance, starvation)))
 
 	flow.artifact.Poke(datura.Map[float64]{
-		"value":         strength,
-		"absorption":    absorption,
-		"drive":         drive,
-		"balance":       balance,
-		"starvation":    starvation,
-		"net":           net,
-		"netFraction":   netFraction,
-		"category":      float64(category),
+		"value":       strength,
+		"absorption":  absorption,
+		"drive":       drive,
+		"balance":     balance,
+		"starvation":  starvation,
+		"net":         net,
+		"netFraction": netFraction,
+		"category":    float64(category),
 	}, "output")
 
 	return flow.artifact.Read(p)

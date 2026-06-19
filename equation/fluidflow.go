@@ -1,6 +1,7 @@
 package equation
 
 import (
+	"io"
 	"math"
 
 	"github.com/theapemachine/datura"
@@ -22,32 +23,18 @@ type Fluidflow struct {
 /*
 NewFluidflow returns a fluid-dynamics stage for io.ReadWriter pipelines.
 */
-func NewFluidflow() *Fluidflow {
+func NewFluidflow() io.ReadWriteCloser {
 	return &Fluidflow{
-		artifact: datura.Acquire("fluidflow", datura.APPJSON).RetainStageAttributes(),
+		artifact: datura.Acquire("fluidflow", datura.APPJSON),
 	}
-}
-
-func (fluidflow *Fluidflow) StageArtifact() *datura.Artifact {
-	return fluidflow.artifact
 }
 
 func (fluidflow *Fluidflow) Write(p []byte) (int, error) {
-	bootstrap := datura.Peek[datura.Map[float64]](fluidflow.artifact, "output") == nil
-
-	fluidflow.artifact.Clear("sample")
-
-	n, err := fluidflow.artifact.Write(p)
-
-	if bootstrap {
-		fluidflow.artifact.Clear("output")
-	}
-
-	return n, err
+	return fluidflow.artifact.Write(p)
 }
 
 func (fluidflow *Fluidflow) Read(p []byte) (int, error) {
-	batch := FloatBatch(fluidflow.artifact)
+	batch := Features(fluidflow.artifact)
 
 	if len(batch) < fluidflowPayloadFields {
 		fluidflow.artifact.Poke(datura.Map[float64]{"value": 0}, "output")

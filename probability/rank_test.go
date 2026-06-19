@@ -99,15 +99,15 @@ func TestEmpiricalRank_Reset(testingTB *testing.T) {
 		err := transport.NewFlipFlop(artifact, empirical)
 
 		So(err, ShouldBeNil)
-		So(empirical.Reset(), ShouldBeNil)
 
-		err = transport.NewFlipFlop(artifact, empirical)
+		resetArtifact := datura.Acquire("test", datura.APPJSON).Poke(1, "reset")
+		err = transport.NewFlipFlop(resetArtifact, empirical)
 
 		So(err, ShouldBeNil)
 
 		Convey("It should clear derived state", func() {
-			So(datura.Peek[float64](artifact, "output", "ready"), ShouldEqual, 0)
-			So(datura.Peek[float64](artifact, "output", "value"), ShouldEqual, 0)
+			So(datura.Peek[float64](resetArtifact, "output", "ready"), ShouldEqual, 0)
+			So(datura.Peek[float64](resetArtifact, "output", "value"), ShouldEqual, 0)
 		})
 	})
 }

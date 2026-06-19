@@ -18,22 +18,12 @@ NewRegime returns a regime stage.
 */
 func NewRegime() *Regime {
 	return &Regime{
-		artifact: datura.Acquire("regime", datura.APPJSON).RetainStageAttributes(),
+		artifact: datura.Acquire("regime", datura.APPJSON),
 	}
 }
 
 func (regime *Regime) Write(p []byte) (int, error) {
-	bootstrap := datura.Peek[datura.Map[float64]](regime.artifact, "output") == nil
-
-	regime.artifact.Clear("sample")
-
-	n, err := regime.artifact.Write(p)
-
-	if bootstrap {
-		regime.artifact.Clear("output")
-	}
-
-	return n, err
+	return regime.artifact.Write(p)
 }
 
 func (regime *Regime) Read(p []byte) (int, error) {
@@ -52,7 +42,7 @@ func (regime *Regime) Read(p []byte) (int, error) {
 		minHistory = 12
 	}
 
-	table, err := NewNodeTable(rows, target, minHistory)
+	table, err := newNodeTable(rows, target, minHistory)
 
 	if err != nil {
 		regime.artifact.Poke(datura.Map[float64]{"value": 0}, "output")
@@ -74,7 +64,7 @@ func (regime *Regime) Read(p []byte) (int, error) {
 	conditionSwitch := datura.Peek[float64](regime.artifact, "config", "conditionSwitch")
 
 	if conditionSwitch > 0 {
-		pairCondition, condErr := table.PairConditionNumber(
+		pairCondition, condErr := table.pairConditionNumber(
 			int(datura.Peek[float64](regime.artifact, "config", "conditionLeft")),
 			int(datura.Peek[float64](regime.artifact, "config", "conditionRight")),
 		)

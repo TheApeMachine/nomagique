@@ -23,23 +23,13 @@ floor may be zero to derive a per-sample floor from each observation.
 */
 func NewEntropy(floor float64) *Entropy {
 	return &Entropy{
-		artifact: datura.Acquire("entropy", datura.APPJSON).RetainStageAttributes(),
+		artifact: datura.Acquire("entropy", datura.APPJSON),
 		floor:    floor,
 	}
 }
 
 func (entropy *Entropy) Write(p []byte) (int, error) {
-	bootstrap := datura.Peek[datura.Map[float64]](entropy.artifact, "output") == nil
-
-	entropy.artifact.Clear("sample")
-
-	n, err := entropy.artifact.Write(p)
-
-	if bootstrap {
-		entropy.artifact.Clear("output")
-	}
-
-	return n, err
+	return entropy.artifact.Write(p)
 }
 
 func (entropy *Entropy) Read(p []byte) (int, error) {

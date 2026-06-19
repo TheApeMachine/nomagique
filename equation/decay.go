@@ -1,6 +1,7 @@
 package equation
 
 import (
+	"io"
 	"math"
 	"sort"
 
@@ -24,32 +25,18 @@ type Decay struct {
 /*
 NewDecay returns a microstructure decay stage for io.ReadWriter pipelines.
 */
-func NewDecay() *Decay {
+func NewDecay() io.ReadWriteCloser {
 	return &Decay{
-		artifact: datura.Acquire("decay", datura.APPJSON).RetainStageAttributes(),
+		artifact: datura.Acquire("decay", datura.APPJSON),
 	}
-}
-
-func (decay *Decay) StageArtifact() *datura.Artifact {
-	return decay.artifact
 }
 
 func (decay *Decay) Write(p []byte) (int, error) {
-	bootstrap := datura.Peek[datura.Map[float64]](decay.artifact, "output") == nil
-
-	decay.artifact.Clear("sample")
-
-	n, err := decay.artifact.Write(p)
-
-	if bootstrap {
-		decay.artifact.Clear("output")
-	}
-
-	return n, err
+	return decay.artifact.Write(p)
 }
 
 func (decay *Decay) Read(p []byte) (int, error) {
-	batch := FloatBatch(decay.artifact)
+	batch := Features(decay.artifact)
 
 	if len(batch) < decayPayloadHeader {
 		decay.artifact.Poke(datura.Map[float64]{"value": 0}, "output")

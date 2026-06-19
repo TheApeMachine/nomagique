@@ -1,11 +1,71 @@
 package causal
 
-import "fmt"
+import (
+	"fmt"
+	"strconv"
+
+	"github.com/theapemachine/datura"
+)
 
 /*
-Graph is a directed acyclic structural model over node indices.
+Graph evaluates Pearl's backdoor criterion from config.graphParent.* and config.* nodes.
 */
 type Graph struct {
+	artifact *datura.Artifact
+}
+
+/*
+NewGraph returns a DAG admissibility stage.
+*/
+func NewGraph() *Graph {
+	return &Graph{
+		artifact: datura.Acquire("graph", datura.APPJSON),
+	}
+}
+
+func (graphStage *Graph) Write(p []byte) (int, error) {
+	return graphStage.artifact.Write(p)
+}
+
+func (graphStage *Graph) Read(p []byte) (int, error) {
+	dag, err := newDAGFromArtifact(graphStage.artifact)
+
+	if err != nil {
+		graphStage.artifact.Poke(datura.Map[float64]{"value": 0}, "output")
+
+		return graphStage.artifact.Read(p)
+	}
+
+	treatment := int(datura.Peek[float64](graphStage.artifact, "config", "treatment"))
+	target := int(datura.Peek[float64](graphStage.artifact, "config", "target"))
+	controls := intSlice(datura.Peek[[]float64](graphStage.artifact, "config", "controls"))
+	admissible, admErr := dag.backdoorAdmissible(treatment, target, controls)
+
+	if admErr != nil {
+		graphStage.artifact.Poke(datura.Map[float64]{"value": 0}, "output")
+
+		return graphStage.artifact.Read(p)
+	}
+
+	value := 0.0
+
+	if admissible {
+		value = 1
+	}
+
+	graphStage.artifact.Poke(datura.Map[float64]{
+		"value":      value,
+		"admissible": value,
+	}, "output")
+
+	return graphStage.artifact.Read(p)
+}
+
+func (graphStage *Graph) Close() error {
+	return nil
+}
+
+type causalDAG struct {
 	nodeCount int
 	parents   [][]int
 	children  [][]int
@@ -16,52 +76,51 @@ type graphVisit struct {
 	fromParent bool
 }
 
-/*
-NewGraph builds a parent-list DAG and derives child adjacency.
-*/
-func NewGraph(parents [][]int) (Graph, error) {
-	if len(parents) == 0 {
-		return Graph{}, fmt.Errorf("causal: graph requires at least one node")
+func newDAGFromArtifact(artifact *datura.Artifact) (causalDAG, error) {
+	nodeCount := int(datura.Peek[float64](artifact, "config", "graphNodeCount"))
+
+	if nodeCount <= 0 {
+		return causalDAG{}, fmt.Errorf("causal: graph requires at least one node")
 	}
 
-	nodeCount := len(parents)
-	parentsCopy := make([][]int, nodeCount)
+	parents := make([][]int, nodeCount)
 	children := make([][]int, nodeCount)
 
-	for node := range parents {
-		parentsCopy[node] = append([]int(nil), parents[node]...)
+	for node := range nodeCount {
+		parentList := intSlice(datura.Peek[[]float64](artifact, "config", "graphParent", strconv.Itoa(node)))
+		parents[node] = append([]int(nil), parentList...)
 
-		for _, parent := range parentsCopy[node] {
+		for _, parent := range parents[node] {
 			if parent < 0 || parent >= nodeCount {
-				return Graph{}, fmt.Errorf(
+				return causalDAG{}, fmt.Errorf(
 					"causal: parent %d of node %d outside graph width %d",
 					parent, node, nodeCount,
 				)
 			}
 
 			if parent == node {
-				return Graph{}, fmt.Errorf("causal: node %d cannot be its own parent", node)
+				return causalDAG{}, fmt.Errorf("causal: node %d cannot be its own parent", node)
 			}
 
 			children[parent] = append(children[parent], node)
 		}
 	}
 
-	graph := Graph{
+	dag := causalDAG{
 		nodeCount: nodeCount,
-		parents:   parentsCopy,
+		parents:   parents,
 		children:  children,
 	}
 
-	if err := graph.ensureAcyclic(); err != nil {
-		return Graph{}, err
+	if err := dag.ensureAcyclic(); err != nil {
+		return causalDAG{}, err
 	}
 
-	return graph, nil
+	return dag, nil
 }
 
-func (graph Graph) ensureAcyclic() error {
-	state := make([]int, graph.nodeCount)
+func (dag causalDAG) ensureAcyclic() error {
+	state := make([]int, dag.nodeCount)
 
 	var visit func(int) error
 
@@ -75,7 +134,7 @@ func (graph Graph) ensureAcyclic() error {
 
 		state[node] = 1
 
-		for _, child := range graph.children[node] {
+		for _, child := range dag.children[node] {
 			if err := visit(child); err != nil {
 				return err
 			}
@@ -86,7 +145,7 @@ func (graph Graph) ensureAcyclic() error {
 		return nil
 	}
 
-	for node := 0; node < graph.nodeCount; node++ {
+	for node := 0; node < dag.nodeCount; node++ {
 		if err := visit(node); err != nil {
 			return err
 		}
@@ -95,26 +154,23 @@ func (graph Graph) ensureAcyclic() error {
 	return nil
 }
 
-/*
-BackdoorAdmissible reports whether controls satisfy Pearl's backdoor criterion.
-*/
-func (graph Graph) BackdoorAdmissible(treatment, target int, controls []int) (bool, error) {
-	if err := graph.validateNode(treatment); err != nil {
+func (dag causalDAG) backdoorAdmissible(treatment, target int, controls []int) (bool, error) {
+	if err := dag.validateNode(treatment); err != nil {
 		return false, err
 	}
 
-	if err := graph.validateNode(target); err != nil {
+	if err := dag.validateNode(target); err != nil {
 		return false, err
 	}
 
 	for _, control := range controls {
-		if err := graph.validateNode(control); err != nil {
+		if err := dag.validateNode(control); err != nil {
 			return false, err
 		}
 	}
 
 	controlSet := nodeSet(controls)
-	descendants := graph.Descendants(treatment)
+	descendants := dag.descendants(treatment)
 
 	for control := range controlSet {
 		if _, blocked := descendants[control]; blocked {
@@ -122,17 +178,14 @@ func (graph Graph) BackdoorAdmissible(treatment, target int, controls []int) (bo
 		}
 	}
 
-	cutGraph := graph.withoutOutgoing(treatment)
+	cutGraph := dag.withoutOutgoing(treatment)
 
 	return cutGraph.mSeparated(treatment, target, controlSet), nil
 }
 
-/*
-Descendants returns all nodes reachable downstream from node.
-*/
-func (graph Graph) Descendants(node int) map[int]struct{} {
+func (dag causalDAG) descendants(node int) map[int]struct{} {
 	reachable := make(map[int]struct{})
-	queue := append([]int(nil), graph.children[node]...)
+	queue := append([]int(nil), dag.children[node]...)
 
 	for len(queue) > 0 {
 		current := queue[0]
@@ -143,20 +196,20 @@ func (graph Graph) Descendants(node int) map[int]struct{} {
 		}
 
 		reachable[current] = struct{}{}
-		queue = append(queue, graph.children[current]...)
+		queue = append(queue, dag.children[current]...)
 	}
 
 	return reachable
 }
 
-func (graph Graph) mSeparated(start, target int, conditioning map[int]struct{}) bool {
-	reachable := graph.bayesBallReachable(start, conditioning)
+func (dag causalDAG) mSeparated(start, target int, conditioning map[int]struct{}) bool {
+	reachable := dag.bayesBallReachable(start, conditioning)
 	_, connected := reachable[target]
 
 	return !connected
 }
 
-func (graph Graph) bayesBallReachable(start int, conditioning map[int]struct{}) map[int]struct{} {
+func (dag causalDAG) bayesBallReachable(start int, conditioning map[int]struct{}) map[int]struct{} {
 	reached := map[int]struct{}{start: {}}
 	seen := make(map[graphVisit]struct{})
 	queue := []graphVisit{
@@ -179,11 +232,11 @@ func (graph Graph) bayesBallReachable(start int, conditioning map[int]struct{}) 
 
 		if conditioned {
 			if visit.fromParent {
-				for _, parent := range graph.parents[visit.node] {
+				for _, parent := range dag.parents[visit.node] {
 					queue = append(queue, graphVisit{node: parent, fromParent: true})
 				}
 			} else {
-				for _, child := range graph.children[visit.node] {
+				for _, child := range dag.children[visit.node] {
 					queue = append(queue, graphVisit{node: child, fromParent: false})
 				}
 			}
@@ -192,18 +245,18 @@ func (graph Graph) bayesBallReachable(start int, conditioning map[int]struct{}) 
 		}
 
 		if visit.fromParent {
-			for _, child := range graph.children[visit.node] {
+			for _, child := range dag.children[visit.node] {
 				queue = append(queue, graphVisit{node: child, fromParent: false})
 			}
 
 			continue
 		}
 
-		for _, parent := range graph.parents[visit.node] {
+		for _, parent := range dag.parents[visit.node] {
 			queue = append(queue, graphVisit{node: parent, fromParent: true})
 		}
 
-		for _, child := range graph.children[visit.node] {
+		for _, child := range dag.children[visit.node] {
 			queue = append(queue, graphVisit{node: child, fromParent: false})
 		}
 	}
@@ -211,21 +264,21 @@ func (graph Graph) bayesBallReachable(start int, conditioning map[int]struct{}) 
 	return reached
 }
 
-func (graph Graph) withoutOutgoing(treatment int) Graph {
-	parents := make([][]int, graph.nodeCount)
-	children := make([][]int, graph.nodeCount)
+func (dag causalDAG) withoutOutgoing(treatment int) causalDAG {
+	parents := make([][]int, dag.nodeCount)
+	children := make([][]int, dag.nodeCount)
 
-	for node := range graph.parents {
-		parents[node] = append([]int(nil), graph.parents[node]...)
+	for node := range dag.parents {
+		parents[node] = append([]int(nil), dag.parents[node]...)
 
 		if node == treatment {
 			continue
 		}
 
-		children[node] = append([]int(nil), graph.children[node]...)
+		children[node] = append([]int(nil), dag.children[node]...)
 	}
 
-	for _, child := range graph.children[treatment] {
+	for _, child := range dag.children[treatment] {
 		filtered := parents[child][:0]
 
 		for _, parent := range parents[child] {
@@ -239,16 +292,16 @@ func (graph Graph) withoutOutgoing(treatment int) Graph {
 		parents[child] = filtered
 	}
 
-	return Graph{
-		nodeCount: graph.nodeCount,
+	return causalDAG{
+		nodeCount: dag.nodeCount,
 		parents:   parents,
 		children:  children,
 	}
 }
 
-func (graph Graph) validateNode(node int) error {
-	if node < 0 || node >= graph.nodeCount {
-		return fmt.Errorf("causal: node %d outside graph width %d", node, graph.nodeCount)
+func (dag causalDAG) validateNode(node int) error {
+	if node < 0 || node >= dag.nodeCount {
+		return fmt.Errorf("causal: node %d outside graph width %d", node, dag.nodeCount)
 	}
 
 	return nil

@@ -19,22 +19,12 @@ NewMedianAbsolute creates a median-absolute stage.
 */
 func NewMedianAbsolute() *MedianAbsolute {
 	return &MedianAbsolute{
-		artifact: datura.Acquire("median_absolute", datura.APPJSON).RetainStageAttributes(),
+		artifact: datura.Acquire("median_absolute", datura.APPJSON),
 	}
 }
 
 func (medianAbsolute *MedianAbsolute) Write(p []byte) (int, error) {
-	bootstrap := datura.Peek[datura.Map[float64]](medianAbsolute.artifact, "output") == nil
-
-	medianAbsolute.artifact.Clear("sample")
-
-	n, err := medianAbsolute.artifact.Write(p)
-
-	if bootstrap {
-		medianAbsolute.artifact.Clear("output")
-	}
-
-	return n, err
+	return medianAbsolute.artifact.Write(p)
 }
 
 func (medianAbsolute *MedianAbsolute) Read(p []byte) (int, error) {

@@ -30,7 +30,7 @@ func TestPearson_Observe(testingTB *testing.T) {
 		testCase := testCase
 
 		Convey("Given "+testCase.name, testingTB, func() {
-			pearson := NewPearson(nil)
+			pearson := NewPearson()
 			artifact := datura.Acquire("test", datura.APPJSON).Poke(testCase.inputs, "batch")
 			err := transport.NewFlipFlop(artifact, pearson)
 
@@ -45,7 +45,7 @@ func TestPearson_Observe(testingTB *testing.T) {
 	}
 
 	Convey("Given empty Observe inputs", testingTB, func() {
-		pearson := NewPearson(nil)
+		pearson := NewPearson()
 		artifact := datura.Acquire("test", datura.APPJSON)
 		err := transport.NewFlipFlop(artifact, pearson)
 
@@ -57,7 +57,7 @@ func TestPearson_Observe(testingTB *testing.T) {
 	})
 
 	Convey("Given fewer than two inputs", testingTB, func() {
-		pearson := NewPearson(nil)
+		pearson := NewPearson()
 		artifact := datura.Acquire("test", datura.APPJSON).Poke(1, "sample")
 		err := transport.NewFlipFlop(artifact, pearson)
 
@@ -71,7 +71,7 @@ func TestPearson_Observe(testingTB *testing.T) {
 	})
 
 	Convey("Given odd input count", testingTB, func() {
-		pearson := NewPearson(nil)
+		pearson := NewPearson()
 		artifact := datura.Acquire("test", datura.APPJSON).Poke([]float64{1, 2, 3}, "batch")
 		err := transport.NewFlipFlop(artifact, pearson)
 
@@ -87,12 +87,16 @@ func TestPearson_Observe(testingTB *testing.T) {
 
 func TestPearson_Reset(testingTB *testing.T) {
 	Convey("Given an observed Pearson stage", testingTB, func() {
-		pearson := NewPearson(nil)
+		pearson := NewPearson()
 		artifact := datura.Acquire("test", datura.APPJSON).Poke([]float64{1, 2, 1, 2}, "batch")
 		err := transport.NewFlipFlop(artifact, pearson)
 
 		So(err, ShouldBeNil)
-		So(pearson.Reset(), ShouldBeNil)
+
+		resetArtifact := datura.Acquire("test", datura.APPJSON).Poke(1, "reset")
+		err = transport.NewFlipFlop(resetArtifact, pearson)
+
+		So(err, ShouldBeNil)
 
 		fresh := datura.Acquire("test", datura.APPJSON)
 		err = transport.NewFlipFlop(fresh, pearson)
@@ -106,7 +110,7 @@ func TestPearson_Reset(testingTB *testing.T) {
 }
 
 func BenchmarkPearson_Observe(testingTB *testing.B) {
-	pearson := NewPearson(nil)
+	pearson := NewPearson()
 	artifact := datura.Acquire("test", datura.APPJSON)
 
 	for testingTB.Loop() {

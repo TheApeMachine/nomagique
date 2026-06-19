@@ -67,7 +67,8 @@ func TestCircuit_Observe(testingTB *testing.T) {
 
 		above := flipFlopCircuit(circuit, 3)
 
-		_ = circuit.Reset()
+		resetArtifact := datura.Acquire("test", datura.APPJSON).Poke(1, "reset")
+		_ = transport.NewFlipFlop(resetArtifact, circuit)
 
 		below := flipFlopCircuit(circuit, 1)
 
@@ -114,8 +115,9 @@ func TestCircuit_Reset(testingTB *testing.T) {
 		})
 		_ = flipFlopCircuit(circuit, 0)
 
-		Convey("It should reset without error", func() {
-			So(circuit.Reset(), ShouldBeNil)
+		Convey("It should reset through the artifact", func() {
+			resetArtifact := datura.Acquire("test", datura.APPJSON).Poke(1, "reset")
+			So(transport.NewFlipFlop(resetArtifact, circuit), ShouldBeNil)
 			So(flipFlopCircuit(circuit, 0), ShouldEqual, 7)
 		})
 	})

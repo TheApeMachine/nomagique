@@ -5,6 +5,7 @@ import (
 	"io"
 
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/nomagique/equation"
 )
 
 type fixedScore struct {
@@ -32,7 +33,7 @@ func (fixedScore *fixedScore) Close() error {
 
 func readScalar(stage io.ReadWriter, samples ...float64) float64 {
 	inbound := datura.Acquire("test-in", datura.Artifact_Type_json)
-	inbound.WithPayload(encodePayload(samples...))
+	inbound.WithPayload(equation.MarshalFeaturesPayload(samples))
 	buf, _ := inbound.Message().Marshal()
 	_, _ = stage.Write(buf)
 
@@ -57,10 +58,15 @@ func readScalar(stage io.ReadWriter, samples ...float64) float64 {
 
 	outbound := datura.Acquire("test-out", datura.Artifact_Type_json)
 	_, _ = outbound.Write(outBuf.Bytes())
-	payload, payloadOK := outbound.PayloadQuiet()
+
+	if !outbound.HasEncryptedPayload() {
+		return 0
+	}
+
+	payload := outbound.DecryptPayload()
 	value, ok := payloadScalar(payload)
 
-	if !payloadOK || !ok {
+	if !ok {
 		return 0
 	}
 

@@ -18,7 +18,7 @@ NewAccumulator returns an accumulator stage ready for its first observation.
 */
 func NewAccumulator() *Accumulator {
 	return &Accumulator{
-		artifact: datura.Acquire("accumulator", datura.APPJSON).RetainStageAttributes(),
+		artifact: datura.Acquire("accumulator", datura.APPJSON),
 	}
 }
 
@@ -47,17 +47,7 @@ func (accumulator *Accumulator) Read(p []byte) (int, error) {
 }
 
 func (accumulator *Accumulator) Write(p []byte) (int, error) {
-	bootstrap := datura.Peek[datura.Map[float64]](accumulator.artifact, "output") == nil
-
-	accumulator.artifact.Clear("sample")
-
-	n, err := accumulator.artifact.Write(p)
-
-	if bootstrap {
-		accumulator.artifact.Clear("output")
-	}
-
-	return n, err
+	return accumulator.artifact.Write(p)
 }
 
 func (accumulator *Accumulator) Close() error {

@@ -14,43 +14,29 @@ const gapPayloadHeader = 2
 Gap compares asynchronous Hayashi-Yoshida coupling to synchronous Pearson correlation.
 
 Payload layout: syncCount, asyncPairCount, syncLeft..., syncRight..., asyncLeft..., asyncRight...
-Async segments encode time-value pairs. maxInterval may be set via config.maxIntervalSeconds.
+Weights and maxIntervalSeconds may be set on config.
 */
 type Gap struct {
-	artifact    *datura.Artifact
-	weights     []float64
-	maxInterval time.Duration
+	artifact *datura.Artifact
 }
 
 /*
 NewGap creates a dual-correlation gap stage.
 */
-func NewGap(weights []float64, maxInterval time.Duration) *Gap {
+func NewGap() *Gap {
 	return &Gap{
-		artifact:    datura.Acquire("correlate-gap", datura.APPJSON).RetainStageAttributes(),
-		weights:     weights,
-		maxInterval: maxInterval,
+		artifact: datura.Acquire("correlate-gap", datura.APPJSON),
 	}
 }
 
 func (gap *Gap) Write(p []byte) (int, error) {
-	bootstrap := datura.Peek[datura.Map[float64]](gap.artifact, "output") == nil
-
-	gap.artifact.Clear("sample")
-	gap.artifact.Clear("batch")
-
-	n, err := gap.artifact.Write(p)
-
-	if bootstrap {
-		gap.artifact.Clear("output")
-	}
-
-	return n, err
+	return gap.artifact.Write(p)
 }
 
 func (gap *Gap) Read(p []byte) (int, error) {
 	batch := gapBatch(gap.artifact)
-	pearsonValue := gapPearson(batch, gap.weights)
+	weights := datura.Peek[[]float64](gap.artifact, "config", "weights")
+	pearsonValue := gapPearson(batch, weights)
 	hayashiValue := gapHayashi(batch, gap.maxIntervalFromArtifact())
 	divergence := hayashiValue - pearsonValue
 
@@ -73,10 +59,6 @@ func (gap *Gap) Close() error {
 }
 
 func (gap *Gap) maxIntervalFromArtifact() time.Duration {
-	if gap.maxInterval > 0 {
-		return gap.maxInterval
-	}
-
 	seconds := datura.Peek[float64](gap.artifact, "config", "maxIntervalSeconds")
 
 	if seconds <= 0 {
@@ -93,9 +75,13 @@ func gapBatch(artifact *datura.Artifact) []float64 {
 		return values
 	}
 
-	payload, ok := artifact.PayloadQuiet()
+	if !artifact.HasEncryptedPayload() {
+		return nil
+	}
 
-	if !ok || len(payload) == 0 || len(payload)%8 != 0 {
+	payload := artifact.DecryptPayload()
+
+	if len(payload) == 0 || len(payload)%8 != 0 {
 		return nil
 	}
 
@@ -203,29 +189,4 @@ func gapHayashi(batch []float64, maxInterval time.Duration) float64 {
 	}
 
 	return correlationValue
-}
-
-func EncodeGapBatch(
-	syncLeft, syncRight, asyncLeft, asyncRight []float64,
-) []float64 {
-	if len(syncLeft) != len(syncRight) {
-		return nil
-	}
-
-	if len(asyncLeft) == 0 || len(asyncLeft)%2 != 0 || len(asyncLeft) != len(asyncRight) {
-		return nil
-	}
-
-	batch := make(
-		[]float64,
-		0,
-		gapPayloadHeader+len(syncLeft)+len(syncRight)+len(asyncLeft)+len(asyncRight),
-	)
-	batch = append(batch, float64(len(syncLeft)), float64(len(asyncLeft)/2))
-	batch = append(batch, syncLeft...)
-	batch = append(batch, syncRight...)
-	batch = append(batch, asyncLeft...)
-	batch = append(batch, asyncRight...)
-
-	return batch
 }

@@ -59,7 +59,7 @@ func (verticality *Verticality) Write(p []byte) (int, error) {
 }
 
 func (verticality *Verticality) Read(p []byte) (int, error) {
-	features := datura.PeekPayload[[]float64](verticality.artifact, "features")
+	features := datura.Peek[[]float64](verticality.artifact, "features")
 
 	if len(features) < 6 {
 		return verticality.artifact.Read(p)

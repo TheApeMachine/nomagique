@@ -10,7 +10,7 @@ import (
 
 func TestCovariance_Observe(testingTB *testing.T) {
 	Convey("Given positively coupled streams", testingTB, func() {
-		covariance := NewCovariance(nil)
+		covariance := NewCovariance()
 		artifact := datura.Acquire("test", datura.APPJSON).
 			Poke([]float64{1, 2, 3, 4, 2, 4, 6, 8}, "batch")
 		err := transport.NewFlipFlop(artifact, covariance)
@@ -25,7 +25,7 @@ func TestCovariance_Observe(testingTB *testing.T) {
 	})
 
 	Convey("Given empty Observe inputs", testingTB, func() {
-		covariance := NewCovariance(nil)
+		covariance := NewCovariance()
 		artifact := datura.Acquire("test", datura.APPJSON)
 		err := transport.NewFlipFlop(artifact, covariance)
 
@@ -39,13 +39,17 @@ func TestCovariance_Observe(testingTB *testing.T) {
 
 func TestCovariance_Reset(testingTB *testing.T) {
 	Convey("Given an observed covariance stage", testingTB, func() {
-		covariance := NewCovariance(nil)
+		covariance := NewCovariance()
 		artifact := datura.Acquire("test", datura.APPJSON).
 			Poke([]float64{1, 2, 3, 4, 2, 4, 6, 8}, "batch")
 		err := transport.NewFlipFlop(artifact, covariance)
 
 		So(err, ShouldBeNil)
-		So(covariance.Reset(), ShouldBeNil)
+
+		resetArtifact := datura.Acquire("test", datura.APPJSON).Poke(1, "reset")
+		err = transport.NewFlipFlop(resetArtifact, covariance)
+
+		So(err, ShouldBeNil)
 
 		fresh := datura.Acquire("test", datura.APPJSON)
 		err = transport.NewFlipFlop(fresh, covariance)
@@ -59,7 +63,7 @@ func TestCovariance_Reset(testingTB *testing.T) {
 }
 
 func BenchmarkCovariance_Observe(testingTB *testing.B) {
-	covariance := NewCovariance(nil)
+	covariance := NewCovariance()
 	artifact := datura.Acquire("test", datura.APPJSON)
 
 	for testingTB.Loop() {

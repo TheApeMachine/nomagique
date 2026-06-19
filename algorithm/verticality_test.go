@@ -6,11 +6,12 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/transport"
+	"github.com/theapemachine/nomagique/equation"
 )
 
 func TestNewVerticality(testingTB *testing.T) {
 	Convey("Given extracted verticality features on the artifact", testingTB, func() {
-		verticality := NewVerticality()
+		verticality := equation.NewVerticality()
 
 		So(verticality, ShouldNotBeNil)
 
@@ -29,7 +30,7 @@ func TestNewVerticality(testingTB *testing.T) {
 }
 
 func BenchmarkVerticalityRead(b *testing.B) {
-	verticality := NewVerticality()
+	verticality := equation.NewVerticality()
 	artifact := datura.Acquire("verticality-bench", datura.APPJSON).
 		WithPayload([]byte(`{"features":[4.0,0.8,0.2,0.05]}`))
 

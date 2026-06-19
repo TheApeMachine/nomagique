@@ -1,6 +1,7 @@
 package equation
 
 import (
+	"io"
 	"math"
 	"sort"
 
@@ -21,32 +22,18 @@ type Depth struct {
 /*
 NewDepth returns a cross-section liquidity depth stage.
 */
-func NewDepth() *Depth {
+func NewDepth() io.ReadWriteCloser {
 	return &Depth{
-		artifact: datura.Acquire("depth", datura.APPJSON).RetainStageAttributes(),
+		artifact: datura.Acquire("depth", datura.APPJSON),
 	}
-}
-
-func (depth *Depth) StageArtifact() *datura.Artifact {
-	return depth.artifact
 }
 
 func (depth *Depth) Write(p []byte) (int, error) {
-	bootstrap := datura.Peek[datura.Map[float64]](depth.artifact, "output") == nil
-
-	depth.artifact.Clear("sample")
-
-	n, err := depth.artifact.Write(p)
-
-	if bootstrap {
-		depth.artifact.Clear("output")
-	}
-
-	return n, err
+	return depth.artifact.Write(p)
 }
 
 func (depth *Depth) Read(p []byte) (int, error) {
-	batch := FloatBatch(depth.artifact)
+	batch := Features(depth.artifact)
 
 	if len(batch) < 2 {
 		depth.artifact.Poke(datura.Map[float64]{"value": 0}, "output")

@@ -44,17 +44,22 @@ func TestIntegration(t *testing.T) {
 		Convey("When Classifier and Transition run in sequence", func() {
 			classifier := probability.NewClassifier(
 				datura.Acquire("schema", datura.APPJSON).
-					RetainStageAttributes().
 					Poke(
 						[]string{"s0", "s1", "s2"},
 						"inputs",
 					),
 			)
+			transition := probability.NewTransitionSurprise(
+				datura.Acquire("transition", datura.APPJSON).
+					Poke(float64(3), "numStates").
+					Poke(0.1, "alpha"),
+			)
 			pipeline := nomagique.Number(
 				classifier,
-				probability.NewTransitionSurprise(3, 0.1),
+				transition,
 			)
 			artifact := datura.Acquire("test", datura.APPJSON).
+				WithPayload([]byte(`{}`)).
 				Poke(0.1, "output", "s0").
 				Poke(0.8, "output", "s1").
 				Poke(0.2, "output", "s2")
@@ -63,11 +68,11 @@ func TestIntegration(t *testing.T) {
 
 			So(err, ShouldBeNil)
 
-			surprise := datura.Peek[float64](artifact, "transition", "surprise")
+			surprise := datura.Peek[float64](artifact, "output", "value")
 
-			So(datura.Peek[float64](artifact, "output", "value"), ShouldEqual, surprise)
+			So(surprise, ShouldBeGreaterThan, 0)
 			So(math.IsNaN(surprise), ShouldBeFalse)
-			So(datura.Peek[int](artifact, "classifier", "category"), ShouldEqual, 2)
+			So(int(datura.Peek[float64](artifact, "output", "category")), ShouldEqual, 2)
 		})
 	})
 }

@@ -1,6 +1,7 @@
 package equation
 
 import (
+	"io"
 	"math"
 
 	"github.com/theapemachine/datura"
@@ -20,32 +21,18 @@ type Manifoldstate struct {
 /*
 NewManifoldstate returns a manifold-state stage.
 */
-func NewManifoldstate() *Manifoldstate {
+func NewManifoldstate() io.ReadWriteCloser {
 	return &Manifoldstate{
-		artifact: datura.Acquire("manifoldstate", datura.APPJSON).RetainStageAttributes(),
+		artifact: datura.Acquire("manifoldstate", datura.APPJSON),
 	}
-}
-
-func (manifoldstate *Manifoldstate) StageArtifact() *datura.Artifact {
-	return manifoldstate.artifact
 }
 
 func (manifoldstate *Manifoldstate) Write(p []byte) (int, error) {
-	bootstrap := datura.Peek[datura.Map[float64]](manifoldstate.artifact, "output") == nil
-
-	manifoldstate.artifact.Clear("sample")
-
-	n, err := manifoldstate.artifact.Write(p)
-
-	if bootstrap {
-		manifoldstate.artifact.Clear("output")
-	}
-
-	return n, err
+	return manifoldstate.artifact.Write(p)
 }
 
 func (manifoldstate *Manifoldstate) Read(p []byte) (int, error) {
-	batch := FloatBatch(manifoldstate.artifact)
+	batch := Features(manifoldstate.artifact)
 	outcome := evaluateManifoldstate(batch)
 
 	if !outcome.eligible || outcome.strength <= 0 {

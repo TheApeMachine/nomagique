@@ -5,12 +5,13 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/nomagique/equation"
 	"github.com/theapemachine/nomagique/tests"
 )
 
 func TestManifoldstateEvaluateHerd(testingTB *testing.T) {
 	Convey("Given high coherence and guidance speed", testingTB, func() {
-		stage := NewManifoldstate()
+		stage := equation.NewManifoldstate()
 		writeErr := tests.WriteSamples(stage, 0.5, 8, 1, 0.5, 50000)
 
 		So(writeErr, ShouldBeNil)
@@ -30,7 +31,7 @@ func TestManifoldstateEvaluateHerd(testingTB *testing.T) {
 
 func TestManifoldstateEvaluateShock(testingTB *testing.T) {
 	Convey("Given dominant pressure gradient", testingTB, func() {
-		stage := NewManifoldstate()
+		stage := equation.NewManifoldstate()
 		writeErr := tests.WriteSamples(stage, 12, 0.2, 0.5, 0.5, 50000)
 
 		So(writeErr, ShouldBeNil)
@@ -50,7 +51,7 @@ func TestManifoldstateEvaluateShock(testingTB *testing.T) {
 
 func TestManifoldstateEvaluateDrift(testingTB *testing.T) {
 	Convey("Given laminar guidance with low viscosity", testingTB, func() {
-		stage := NewManifoldstate()
+		stage := equation.NewManifoldstate()
 		writeErr := tests.WriteSamples(stage, 0.1, 0.2, 4, 0.1, 50000)
 
 		So(writeErr, ShouldBeNil)
@@ -70,7 +71,7 @@ func TestManifoldstateEvaluateDrift(testingTB *testing.T) {
 
 func TestManifoldstateEvaluateNoise(testingTB *testing.T) {
 	Convey("Given low coherence and high viscosity", testingTB, func() {
-		stage := NewManifoldstate()
+		stage := equation.NewManifoldstate()
 		writeErr := tests.WriteSamples(stage, 0.1, 0.1, 0.5, 2, 50000)
 
 		So(writeErr, ShouldBeNil)
@@ -90,7 +91,7 @@ func TestManifoldstateEvaluateNoise(testingTB *testing.T) {
 
 func TestManifoldstateEvaluateIneligible(testingTB *testing.T) {
 	Convey("Given non-positive observables", testingTB, func() {
-		stage := NewManifoldstate()
+		stage := equation.NewManifoldstate()
 		writeErr := tests.WriteSamples(stage, 0.5, 0, 1, 0.5, 50000)
 
 		So(writeErr, ShouldBeNil)
@@ -107,7 +108,7 @@ func TestManifoldstateEvaluateIneligible(testingTB *testing.T) {
 }
 
 func BenchmarkManifoldstateRead(testingTB *testing.B) {
-	stage := NewManifoldstate()
+	stage := equation.NewManifoldstate()
 	batch := []float64{0.5, 8, 1, 0.5, 50000}
 	frame := make([]byte, 4096)
 

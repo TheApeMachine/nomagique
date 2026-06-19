@@ -18,7 +18,7 @@ NewVariance returns a variance stage ready to bootstrap from its first observati
 */
 func NewVariance() *Variance {
 	return &Variance{
-		artifact: datura.Acquire("variance", datura.APPJSON).RetainStageAttributes(),
+		artifact: datura.Acquire("variance", datura.APPJSON),
 	}
 }
 
@@ -73,17 +73,7 @@ func (variance *Variance) Read(p []byte) (int, error) {
 }
 
 func (variance *Variance) Write(p []byte) (int, error) {
-	bootstrap := datura.Peek[datura.Map[float64]](variance.artifact, "output") == nil
-
-	variance.artifact.Clear("sample")
-
-	n, err := variance.artifact.Write(p)
-
-	if bootstrap {
-		variance.artifact.Clear("output")
-	}
-
-	return n, err
+	return variance.artifact.Write(p)
 }
 
 func (variance *Variance) Close() error {

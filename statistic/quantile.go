@@ -25,24 +25,14 @@ func NewQuantile(
 	kind stat.CumulantKind,
 ) *Quantile {
 	return &Quantile{
-		artifact:   datura.Acquire("quantile", datura.APPJSON).RetainStageAttributes(),
+		artifact:   datura.Acquire("quantile", datura.APPJSON),
 		percentile: percentile,
 		kind:       kind,
 	}
 }
 
 func (quantile *Quantile) Write(p []byte) (int, error) {
-	bootstrap := datura.Peek[datura.Map[float64]](quantile.artifact, "output") == nil
-
-	quantile.artifact.Clear("sample")
-
-	n, err := quantile.artifact.Write(p)
-
-	if bootstrap {
-		quantile.artifact.Clear("output")
-	}
-
-	return n, err
+	return quantile.artifact.Write(p)
 }
 
 func (quantile *Quantile) Read(p []byte) (int, error) {

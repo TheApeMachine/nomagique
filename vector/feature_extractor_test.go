@@ -61,10 +61,8 @@ func TestFeatureExtractor_Write(t *testing.T) {
 				Convey("Then the staged artifact should carry the inbound payload", func() {
 					So(err, ShouldBeNil)
 
-					var payload []byte
-
-					payload, err = extractor.staged.DecryptPayload()
-					So(err, ShouldBeNil)
+					payload := extractor.staged.DecryptPayload()
+					So(len(payload), ShouldBeGreaterThan, 0)
 					So(payload, ShouldResemble, []byte{1, 2, 3})
 				})
 
@@ -108,10 +106,8 @@ func TestFeatureExtractor_Read(t *testing.T) {
 				_, err = decoded.Write(buffer.Bytes())
 				So(err, ShouldBeNil)
 
-				var payload []byte
-
-				payload, err = decoded.DecryptPayload()
-				So(err, ShouldBeNil)
+				payload := decoded.DecryptPayload()
+				So(len(payload), ShouldBeGreaterThan, 0)
 				So(string(payload), ShouldEqual, `{"features":[2500,100,101,100.9,101.1,1]}`)
 			})
 		})

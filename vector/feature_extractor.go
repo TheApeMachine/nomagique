@@ -92,7 +92,7 @@ func (extractor *FeatureExtractor) sample(
 	input string,
 	inputConfig map[string]any,
 ) float64 {
-	value := datura.PeekPayload[float64](artifact, rootKey, 0, input)
+	value := datura.Peek[float64](artifact, rootKey, 0, input)
 
 	if math.IsNaN(value) || math.IsInf(value, 0) {
 		return 0

@@ -18,7 +18,7 @@ NewMin creates a min stage.
 */
 func NewMin() *Min {
 	return &Min{
-		artifact: datura.Acquire("min", datura.APPJSON).RetainStageAttributes(),
+		artifact: datura.Acquire("min", datura.APPJSON),
 	}
 }
 
@@ -51,17 +51,7 @@ func (min *Min) Read(p []byte) (int, error) {
 }
 
 func (min *Min) Write(p []byte) (int, error) {
-	bootstrap := datura.Peek[datura.Map[float64]](min.artifact, "output") == nil
-
-	min.artifact.Clear("sample")
-
-	n, err := min.artifact.Write(p)
-
-	if bootstrap {
-		min.artifact.Clear("output")
-	}
-
-	return n, err
+	return min.artifact.Write(p)
 }
 
 func (min *Min) Close() error {

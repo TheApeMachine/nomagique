@@ -5,12 +5,13 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/nomagique/equation"
 	"github.com/theapemachine/nomagique/tests"
 )
 
 func TestDepthEvaluate(testingTB *testing.T) {
 	Convey("Given deep quote volume versus peers", testingTB, func() {
-		depth := NewDepth()
+		depth := equation.NewDepth()
 		writeErr := tests.WriteSamples(depth,
 			1200, 4,
 			800, 900, 1000, 1100,
@@ -31,7 +32,7 @@ func TestDepthEvaluate(testingTB *testing.T) {
 	})
 
 	Convey("Given peak scarcity volume", testingTB, func() {
-		depth := NewDepth()
+		depth := equation.NewDepth()
 		writeErr := tests.WriteSamples(depth,
 			50, 3,
 			1100, 950, 50,
@@ -52,7 +53,7 @@ func TestDepthEvaluate(testingTB *testing.T) {
 }
 
 func BenchmarkDepthRead(b *testing.B) {
-	depth := NewDepth()
+	depth := equation.NewDepth()
 	samples := []float64{
 		1200, 4,
 		800, 900, 1000, 1100,

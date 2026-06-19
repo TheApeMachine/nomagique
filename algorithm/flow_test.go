@@ -5,12 +5,13 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/nomagique/equation"
 	"github.com/theapemachine/nomagique/tests"
 )
 
 func TestFlowEvaluate(testingTB *testing.T) {
 	Convey("Given aggressive buy flow with rising price", testingTB, func() {
-		flow := NewFlow()
+		flow := equation.NewFlow()
 		writeErr := tests.WriteSamples(flow,
 			500, 0, 5, 0, 100,
 			100, 100.01, 100.02, 100.03, 100.04,
@@ -33,7 +34,7 @@ func TestFlowEvaluate(testingTB *testing.T) {
 	})
 
 	Convey("Given aggressive buy flow with flat price", testingTB, func() {
-		flow := NewFlow()
+		flow := equation.NewFlow()
 		writeErr := tests.WriteSamples(flow,
 			200, 0, 4, 0, 50,
 			50, 50.001, 50, 50.001,
@@ -53,7 +54,7 @@ func TestFlowEvaluate(testingTB *testing.T) {
 }
 
 func BenchmarkFlowRead(b *testing.B) {
-	flow := NewFlow()
+	flow := equation.NewFlow()
 	samples := []float64{
 		500, 0, 5, 0, 100,
 		100, 100.01, 100.02, 100.03, 100.04,

@@ -8,9 +8,9 @@ import (
 	"github.com/theapemachine/datura/transport"
 )
 
-func TestWindowSetSnapshot(testingTB *testing.T) {
+func TestWindowSetObserve(testingTB *testing.T) {
 	Convey("Given a window set", testingTB, func() {
-		windowSet := NewWindowSet(16)
+		windowSet := NewWindowSet()
 		artifact := datura.Acquire("test", datura.APPJSON)
 
 		for index := range 13 {
@@ -21,16 +21,8 @@ func TestWindowSetSnapshot(testingTB *testing.T) {
 			So(err, ShouldBeNil)
 		}
 
-		snapshot := windowSet.Snapshot(TierWindows{
-			Fast:   4,
-			Medium: 8,
-			Slow:   12,
-		})
-
-		Convey("It should materialize tier views", func() {
-			So(snapshot.Fast.Len(), ShouldEqual, 4)
-			So(snapshot.Medium.Len(), ShouldEqual, 8)
-			So(snapshot.Slow.Len(), ShouldEqual, 12)
+		Convey("It should publish the latest return magnitude", func() {
+			So(datura.Peek[float64](artifact, "output", "value"), ShouldBeGreaterThan, 0)
 		})
 	})
 }

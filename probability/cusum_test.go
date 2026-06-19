@@ -98,15 +98,15 @@ func TestChangeSum_Reset(testingTB *testing.T) {
 		err := transport.NewFlipFlop(artifact, changeSum)
 
 		So(err, ShouldBeNil)
-		So(changeSum.Reset(), ShouldBeNil)
 
-		err = transport.NewFlipFlop(artifact, changeSum)
+		resetArtifact := datura.Acquire("test", datura.APPJSON).Poke(1, "reset")
+		err = transport.NewFlipFlop(resetArtifact, changeSum)
 
 		So(err, ShouldBeNil)
 
 		Convey("It should clear derived state", func() {
-			So(datura.Peek[float64](artifact, "output", "ready"), ShouldEqual, 0)
-			So(datura.Peek[float64](artifact, "output", "value"), ShouldEqual, 0)
+			So(datura.Peek[float64](resetArtifact, "output", "ready"), ShouldEqual, 0)
+			So(datura.Peek[float64](resetArtifact, "output", "value"), ShouldEqual, 0)
 		})
 	})
 }

@@ -1,6 +1,7 @@
 package equation
 
 import (
+	"io"
 	"math"
 
 	"github.com/theapemachine/datura"
@@ -18,32 +19,18 @@ type Conviction struct {
 /*
 NewConviction returns a market-breadth conviction stage.
 */
-func NewConviction() *Conviction {
+func NewConviction() io.ReadWriteCloser {
 	return &Conviction{
-		artifact: datura.Acquire("conviction", datura.APPJSON).RetainStageAttributes(),
+		artifact: datura.Acquire("conviction", datura.APPJSON),
 	}
-}
-
-func (conviction *Conviction) StageArtifact() *datura.Artifact {
-	return conviction.artifact
 }
 
 func (conviction *Conviction) Write(p []byte) (int, error) {
-	bootstrap := datura.Peek[datura.Map[float64]](conviction.artifact, "output") == nil
-
-	conviction.artifact.Clear("sample")
-
-	n, err := conviction.artifact.Write(p)
-
-	if bootstrap {
-		conviction.artifact.Clear("output")
-	}
-
-	return n, err
+	return conviction.artifact.Write(p)
 }
 
 func (conviction *Conviction) Read(p []byte) (int, error) {
-	batch := FloatBatch(conviction.artifact)
+	batch := Features(conviction.artifact)
 
 	if len(batch) < 5 {
 		conviction.artifact.Poke(datura.Map[float64]{"value": 0}, "output")

@@ -1,6 +1,7 @@
 package equation
 
 import (
+	"io"
 	"math"
 	"sort"
 
@@ -23,32 +24,18 @@ type Cohort struct {
 /*
 NewCohort returns a cross-section correlation stage.
 */
-func NewCohort() *Cohort {
+func NewCohort() io.ReadWriteCloser {
 	return &Cohort{
-		artifact: datura.Acquire("cohort", datura.APPJSON).RetainStageAttributes(),
+		artifact: datura.Acquire("cohort", datura.APPJSON),
 	}
-}
-
-func (cohort *Cohort) StageArtifact() *datura.Artifact {
-	return cohort.artifact
 }
 
 func (cohort *Cohort) Write(p []byte) (int, error) {
-	bootstrap := datura.Peek[datura.Map[float64]](cohort.artifact, "output") == nil
-
-	cohort.artifact.Clear("sample")
-
-	n, err := cohort.artifact.Write(p)
-
-	if bootstrap {
-		cohort.artifact.Clear("output")
-	}
-
-	return n, err
+	return cohort.artifact.Write(p)
 }
 
 func (cohort *Cohort) Read(p []byte) (int, error) {
-	batch := FloatBatch(cohort.artifact)
+	batch := Features(cohort.artifact)
 	outcome := evaluateCohort(batch)
 
 	if !outcome.eligible || outcome.strength <= 0 {

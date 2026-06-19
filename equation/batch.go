@@ -1,34 +1,27 @@
 package equation
 
 import (
-	"encoding/binary"
-	"math"
-
+	"github.com/bytedance/sonic"
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/errnie"
 )
 
 /*
-FloatBatch decodes a little-endian float64 batch from the merged artifact payload.
+Features returns the feature vector staged on the merged artifact payload.
 */
-func FloatBatch(artifact *datura.Artifact) []float64 {
-	payload, ok := artifact.PayloadQuiet()
+func Features(artifact *datura.Artifact) []float64 {
+	return datura.Peek[[]float64](artifact, "features")
+}
 
-	if !ok || len(payload) == 0 || len(payload)%8 != 0 {
-		return nil
-	}
+/*
+MarshalFeaturesPayload encodes a feature vector as JSON payload bytes.
+*/
+func MarshalFeaturesPayload(samples []float64) []byte {
+	payload := errnie.Does(func() ([]byte, error) {
+		return sonic.Marshal(datura.Map[[]float64]{"features": samples})
+	}).Or(func(err error) {
+		errnie.Error(errnie.Err(errnie.IO, "equation: marshal features payload", err))
+	}).Value()
 
-	samples := make([]float64, len(payload)/8)
-
-	for index := range samples {
-		offset := index * 8
-		value := math.Float64frombits(binary.BigEndian.Uint64(payload[offset : offset+8]))
-
-		if math.IsNaN(value) || math.IsInf(value, 0) {
-			return nil
-		}
-
-		samples[index] = value
-	}
-
-	return samples
+	return payload
 }

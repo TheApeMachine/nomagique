@@ -9,12 +9,12 @@ temptation to insert configuration layers full of static/magic values between
 the data and the algorithm. Write an artifact into the head, read the result
 out of the tail; the stages in between carry everything.
 */
-func Number(stages ...io.ReadWriter) io.ReadWriter {
+func Number(stages ...io.ReadWriteCloser) io.ReadWriteCloser {
 	return &pipeline{stages: stages}
 }
 
 type pipeline struct {
-	stages []io.ReadWriter
+	stages []io.ReadWriteCloser
 }
 
 /*
@@ -47,5 +47,15 @@ func (pipeline *pipeline) Read(p []byte) (int, error) {
 }
 
 func (pipeline *pipeline) Close() error {
+	for _, stage := range pipeline.stages {
+		if stage == nil {
+			continue
+		}
+
+		if closeErr := stage.Close(); closeErr != nil {
+			return closeErr
+		}
+	}
+
 	return nil
 }

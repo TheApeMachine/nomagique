@@ -18,7 +18,7 @@ NewRange returns a range stage ready to bootstrap from its first observation.
 */
 func NewRange() *Range {
 	return &Range{
-		artifact: datura.Acquire("range", datura.APPJSON).RetainStageAttributes(),
+		artifact: datura.Acquire("range", datura.APPJSON),
 	}
 }
 
@@ -53,17 +53,7 @@ func (extent *Range) Read(p []byte) (int, error) {
 }
 
 func (extent *Range) Write(p []byte) (int, error) {
-	bootstrap := datura.Peek[datura.Map[float64]](extent.artifact, "output") == nil
-
-	extent.artifact.Clear("sample")
-
-	n, err := extent.artifact.Write(p)
-
-	if bootstrap {
-		extent.artifact.Clear("output")
-	}
-
-	return n, err
+	return extent.artifact.Write(p)
 }
 
 func (extent *Range) Close() error {

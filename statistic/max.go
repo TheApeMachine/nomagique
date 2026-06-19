@@ -18,7 +18,7 @@ NewMax creates a max stage.
 */
 func NewMax() *Max {
 	return &Max{
-		artifact: datura.Acquire("max", datura.APPJSON).RetainStageAttributes(),
+		artifact: datura.Acquire("max", datura.APPJSON),
 	}
 }
 
@@ -51,17 +51,7 @@ func (max *Max) Read(p []byte) (int, error) {
 }
 
 func (max *Max) Write(p []byte) (int, error) {
-	bootstrap := datura.Peek[datura.Map[float64]](max.artifact, "output") == nil
-
-	max.artifact.Clear("sample")
-
-	n, err := max.artifact.Write(p)
-
-	if bootstrap {
-		max.artifact.Clear("output")
-	}
-
-	return n, err
+	return max.artifact.Write(p)
 }
 
 func (max *Max) Close() error {

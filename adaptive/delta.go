@@ -18,7 +18,7 @@ NewDelta returns a delta stage ready to bootstrap from its first observation.
 */
 func NewDelta() *Delta {
 	return &Delta{
-		artifact: datura.Acquire("delta", datura.APPJSON).RetainStageAttributes(),
+		artifact: datura.Acquire("delta", datura.APPJSON),
 	}
 }
 
@@ -65,17 +65,7 @@ func (delta *Delta) Read(p []byte) (int, error) {
 }
 
 func (delta *Delta) Write(p []byte) (int, error) {
-	bootstrap := datura.Peek[datura.Map[float64]](delta.artifact, "output") == nil
-
-	delta.artifact.Clear("sample")
-
-	n, err := delta.artifact.Write(p)
-
-	if bootstrap {
-		delta.artifact.Clear("output")
-	}
-
-	return n, err
+	return delta.artifact.Write(p)
 }
 
 func (delta *Delta) Close() error {

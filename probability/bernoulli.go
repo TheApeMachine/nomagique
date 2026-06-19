@@ -18,23 +18,12 @@ NewBernoulli returns a Beta-Bernoulli stage ready from its first observation.
 */
 func NewBernoulli() *Bernoulli {
 	return &Bernoulli{
-		artifact: datura.Acquire("bernoulli", datura.APPJSON).RetainStageAttributes(),
+		artifact: datura.Acquire("bernoulli", datura.APPJSON),
 	}
 }
 
 func (bernoulli *Bernoulli) Write(p []byte) (int, error) {
-	bootstrap := datura.Peek[datura.Map[float64]](bernoulli.artifact, "output") == nil
-
-	bernoulli.artifact.Clear("sample")
-	bernoulli.artifact.Clear("paired")
-
-	n, err := bernoulli.artifact.Write(p)
-
-	if bootstrap {
-		bernoulli.artifact.Clear("output")
-	}
-
-	return n, err
+	return bernoulli.artifact.Write(p)
 }
 
 func (bernoulli *Bernoulli) Read(p []byte) (int, error) {
@@ -104,90 +93,5 @@ func (bernoulli *Bernoulli) Read(p []byte) (int, error) {
 }
 
 func (bernoulli *Bernoulli) Close() error {
-	return nil
-}
-
-/*
-ObserveSamples runs the exact batch kernel over outcomes into out.
-*/
-func (bernoulli *Bernoulli) ObserveSamples(outcomes []float64, out []float64) {
-	output := datura.Peek[datura.Map[float64]](bernoulli.artifact, "output")
-	state := BetaState{}
-
-	if output != nil {
-		state.Alpha = output["alpha"]
-		state.Beta = output["beta"]
-		state.Prev = output["prev"]
-		state.Min = output["min"]
-		state.Max = output["max"]
-		state.Rate = output["rate"]
-		state.Ready = output["ready"] != 0
-	}
-
-	observeBetaSamples(&state, outcomes, out)
-
-	ready := 0.0
-
-	if state.Ready {
-		ready = 1
-	}
-
-	bernoulli.artifact.Poke(datura.Map[float64]{
-		"alpha": state.Alpha,
-		"beta":  state.Beta,
-		"prev":  state.Prev,
-		"min":   state.Min,
-		"max":   state.Max,
-		"rate":  state.Rate,
-		"ready": ready,
-		"value": posteriorMean(&state),
-	}, "output")
-}
-
-/*
-ObservePairSamples runs the exact batch kernel over pairs into out.
-*/
-func (bernoulli *Bernoulli) ObservePairSamples(
-	predicted []float64, actual []float64, out []float64,
-) {
-	output := datura.Peek[datura.Map[float64]](bernoulli.artifact, "output")
-	state := BetaState{}
-
-	if output != nil {
-		state.Alpha = output["alpha"]
-		state.Beta = output["beta"]
-		state.Prev = output["prev"]
-		state.Min = output["min"]
-		state.Max = output["max"]
-		state.Rate = output["rate"]
-		state.Ready = output["ready"] != 0
-	}
-
-	observeBetaPairSamples(&state, predicted, actual, out)
-
-	ready := 0.0
-
-	if state.Ready {
-		ready = 1
-	}
-
-	bernoulli.artifact.Poke(datura.Map[float64]{
-		"alpha": state.Alpha,
-		"beta":  state.Beta,
-		"prev":  state.Prev,
-		"min":   state.Min,
-		"max":   state.Max,
-		"rate":  state.Rate,
-		"ready": ready,
-		"value": posteriorMean(&state),
-	}, "output")
-}
-
-/*
-Reset clears derived state.
-*/
-func (bernoulli *Bernoulli) Reset() error {
-	bernoulli.artifact.Clear("output")
-
 	return nil
 }

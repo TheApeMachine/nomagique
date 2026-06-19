@@ -18,7 +18,7 @@ NewFracDiff returns a fractional differencing stage ready to bootstrap from its 
 */
 func NewFracDiff() *FracDiff {
 	return &FracDiff{
-		artifact: datura.Acquire("fracdiff", datura.APPJSON).RetainStageAttributes(),
+		artifact: datura.Acquire("fracdiff", datura.APPJSON),
 	}
 }
 
@@ -81,17 +81,7 @@ func (fractional *FracDiff) Read(p []byte) (int, error) {
 }
 
 func (fractional *FracDiff) Write(p []byte) (int, error) {
-	bootstrap := datura.Peek[datura.Map[float64]](fractional.artifact, "output") == nil
-
-	fractional.artifact.Clear("sample")
-
-	n, err := fractional.artifact.Write(p)
-
-	if bootstrap {
-		fractional.artifact.Clear("output")
-	}
-
-	return n, err
+	return fractional.artifact.Write(p)
 }
 
 func (fractional *FracDiff) Close() error {

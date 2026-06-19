@@ -5,12 +5,13 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/nomagique/equation"
 	"github.com/theapemachine/nomagique/tests"
 )
 
 func TestConvictionEvaluate(testingTB *testing.T) {
 	Convey("Given broad positive breadth", testingTB, func() {
-		conviction := NewConviction()
+		conviction := equation.NewConviction()
 		writeErr := tests.WriteSamples(conviction, 1.0, 2.0, 0.5, 1, 2.0)
 
 		So(writeErr, ShouldBeNil)
@@ -27,7 +28,7 @@ func TestConvictionEvaluate(testingTB *testing.T) {
 	})
 
 	Convey("Given a local leader in a weak market", testingTB, func() {
-		conviction := NewConviction()
+		conviction := equation.NewConviction()
 		writeErr := tests.WriteSamples(conviction, 0.33, 4.0, 0.5, 1, 4.0)
 
 		So(writeErr, ShouldBeNil)
@@ -43,7 +44,7 @@ func TestConvictionEvaluate(testingTB *testing.T) {
 	})
 
 	Convey("Given weak breadth without leadership", testingTB, func() {
-		conviction := NewConviction()
+		conviction := equation.NewConviction()
 		writeErr := tests.WriteSamples(conviction, 0.2, -1.0, 0.5, 0, -1.0)
 
 		So(writeErr, ShouldBeNil)
@@ -60,7 +61,7 @@ func TestConvictionEvaluate(testingTB *testing.T) {
 }
 
 func BenchmarkConvictionRead(b *testing.B) {
-	conviction := NewConviction()
+	conviction := equation.NewConviction()
 	samples := []float64{1.0, 2.0, 0.5, 1, 2.0}
 	frame := make([]byte, 4096)
 

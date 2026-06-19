@@ -4,22 +4,23 @@ import (
 	"math"
 
 	"github.com/theapemachine/datura"
-	"github.com/theapemachine/errnie"
 )
 
 /*
 EMA is a volatility-adaptive exponential moving average stage.
 */
 type EMA struct {
+	config   *datura.Artifact
 	artifact *datura.Artifact
 }
 
 /*
 NewEMA returns an EMA stage ready to bootstrap from its first observation.
 */
-func NewEMA() *EMA {
+func NewEMA(config *datura.Artifact) *EMA {
 	return &EMA{
-		artifact: datura.Acquire("ema", datura.Artifact_Type_json),
+		config:   config,
+		artifact: datura.Acquire("ema", datura.APPJSON).RetainStageAttributes(),
 	}
 }
 
@@ -41,7 +42,7 @@ func (ema *EMA) Read(p []byte) (int, error) {
 			"value": sample,
 		}
 
-		ema.artifact.Poke("output", output)
+		ema.artifact.Poke(output, "output")
 
 		return ema.artifact.Read(p)
 	}
@@ -53,7 +54,7 @@ func (ema *EMA) Read(p []byte) (int, error) {
 
 	if span == 0 {
 		output["prev"] = sample
-		ema.artifact.Poke("output", output)
+		ema.artifact.Poke(output, "output")
 
 		return ema.artifact.Read(p)
 	}
@@ -63,25 +64,22 @@ func (ema *EMA) Read(p []byte) (int, error) {
 	output["value"] += output["rate"] * (sample - output["value"])
 	output["prev"] = sample
 
-	ema.artifact.Poke("output", output)
+	ema.artifact.Poke(output, "output")
 
 	return ema.artifact.Read(p)
 }
 
-func (ema *EMA) Write(p []byte) (n int, err error) {
-	output := datura.Peek[datura.Map[float64]](ema.artifact, "output")
+func (ema *EMA) Write(p []byte) (int, error) {
+	bootstrap := datura.Peek[datura.Map[float64]](ema.artifact, "output") == nil
 
-	n = errnie.Does(func() (int, error) {
-		return ema.artifact.Write(p)
-	}).Or(func(err error) {
-		errnie.Error(errnie.Err(errnie.IO, "ema", err))
-	}).Value()
+	ema.artifact.Clear("sample")
 
-	if output == nil {
-		return n, err
+	n, err := ema.artifact.Write(p)
+
+	if bootstrap {
+		ema.artifact.Clear("output")
 	}
 
-	ema.artifact.Poke("output", output)
 	return n, err
 }
 

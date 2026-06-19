@@ -4,53 +4,26 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/datura"
+	"github.com/theapemachine/datura/transport"
 )
 
-func TestMin_Observe(testingTB *testing.T) {
-	cases := []struct {
-		name    string
-		samples []float64
-		expect  float64
-	}{
-		{"mixed batch", []float64{3, 1, 4, 2}, 1},
-		{"negative floor", []float64{-5, -1, -3}, -5},
-		{"single value", []float64{9}, 9},
-		{"empty input", nil, 0},
-	}
-
-	for _, testCase := range cases {
-		testCase := testCase
-
-		Convey("Given "+testCase.name, testingTB, func() {
-			minStage := NewMin()
-			got := observeInputs(minStage, testCase.samples...)
-
-			Convey("It should return the expected minimum", func() {
-				So(float64(got), ShouldEqual, testCase.expect)
-			})
-		})
-	}
-}
-
-func TestMin_Reset(testingTB *testing.T) {
-	Convey("Given an observed min", testingTB, func() {
+func TestMinSeries(t *testing.T) {
+	Convey("Given a Min stage", t, func() {
 		minStage := NewMin()
-		_ = observeInputs(minStage, 3, 1)
+		artifact := datura.Acquire("test", datura.APPJSON)
 
-		So(minStage.Reset(), ShouldBeNil)
+		for _, sample := range []float64{3, 1, 2} {
+			artifact.Poke(sample, "sample")
+			err := transport.NewFlipFlop(artifact, minStage)
 
-		Convey("It should clear output", func() {
-			So(float64(observeInputs(minStage)), ShouldEqual, 0)
+			So(err, ShouldBeNil)
+		}
+
+		got := datura.Peek[float64](artifact, "output", "value")
+
+		Convey("It should return the minimum", func() {
+			So(got, ShouldEqual, 1)
 		})
 	})
-}
-
-func BenchmarkMin_Observe(b *testing.B) {
-	minStage := NewMin()
-
-	b.ReportAllocs()
-
-	for b.Loop() {
-		_ = observeInputs(minStage)
-	}
 }

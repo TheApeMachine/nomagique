@@ -4,6 +4,8 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/datura"
+	"github.com/theapemachine/datura/transport"
 )
 
 func TestEigenmodeMembers(t *testing.T) {
@@ -39,8 +41,11 @@ func TestModePartition_Observe(t *testing.T) {
 
 	Convey("Given no participants", t, func() {
 		partition := NewModePartition(0.5, nil, nil, nil)
+		artifact := datura.Acquire("test", datura.APPJSON)
+		err := transport.NewFlipFlop(artifact, partition)
 
-		So(float64(observeInputs(partition)), ShouldEqual, 0)
+		So(err, ShouldBeNil)
+		So(datura.Peek[float64](artifact, "output", "value"), ShouldEqual, 0)
 		So(partition.Snap(), ShouldBeNil)
 	})
 
@@ -55,9 +60,14 @@ func TestModePartition_Observe(t *testing.T) {
 				0, 0, 1,
 			},
 		)
-		energy := observeInputs(partition)
+		artifact := datura.Acquire("test", datura.APPJSON)
+		err := transport.NewFlipFlop(artifact, partition)
 
-		So(float64(energy), ShouldEqual, 4)
+		So(err, ShouldBeNil)
+
+		energy := datura.Peek[float64](artifact, "output", "value")
+
+		So(energy, ShouldEqual, 4)
 		So(len(partition.Snap().Modes()), ShouldEqual, 2)
 		So(len(partition.Snap().Modes()[0].Members()), ShouldEqual, 2)
 	})
@@ -73,10 +83,15 @@ func TestModePartition_Observe(t *testing.T) {
 				0, 0, 1,
 			},
 		)
-		energy := observeInputs(partition)
+		artifact := datura.Acquire("test", datura.APPJSON)
+		err := transport.NewFlipFlop(artifact, partition)
+
+		So(err, ShouldBeNil)
+
+		energy := datura.Peek[float64](artifact, "output", "value")
 
 		Convey("It should return dominant mode energy", func() {
-			So(float64(energy), ShouldEqual, 4)
+			So(energy, ShouldEqual, 4)
 			So(len(partition.Snap().Modes()), ShouldEqual, 2)
 		})
 	})
@@ -88,9 +103,13 @@ func TestModePartition_Observe(t *testing.T) {
 			[]float64{1},
 			[]float64{1, 0, 0, 1},
 		)
+		artifact := datura.Acquire("test", datura.APPJSON)
+		err := transport.NewFlipFlop(artifact, partition)
+
+		So(err, ShouldBeNil)
 
 		Convey("It should return zero output", func() {
-			So(float64(observeInputs(partition)), ShouldEqual, 0)
+			So(datura.Peek[float64](artifact, "output", "value"), ShouldEqual, 0)
 		})
 	})
 }
@@ -107,8 +126,10 @@ func TestModePartition_Reset(t *testing.T) {
 				0, 0, 1,
 			},
 		)
-		_ = observeInputs(partition)
+		artifact := datura.Acquire("test", datura.APPJSON)
+		err := transport.NewFlipFlop(artifact, partition)
 
+		So(err, ShouldBeNil)
 		So(partition.Reset(), ShouldBeNil)
 
 		Convey("It should clear snap", func() {
@@ -139,10 +160,11 @@ func BenchmarkModePartition_Observe(testingTB *testing.B) {
 	}
 
 	partition := NewModePartition(0.9, origins, energies, matrix)
+	artifact := datura.Acquire("test", datura.APPJSON)
 
 	testingTB.ReportAllocs()
 
 	for testingTB.Loop() {
-		_ = observeInputs(partition)
+		_ = transport.NewFlipFlop(artifact, partition)
 	}
 }

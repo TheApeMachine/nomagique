@@ -6,6 +6,7 @@ import (
 	"math"
 	"sort"
 
+	"github.com/theapemachine/datura"
 	"github.com/theapemachine/nomagique/statistic"
 	"gonum.org/v1/gonum/stat"
 )
@@ -364,4 +365,99 @@ func nodeDistance(left, right []float64, features []int) float64 {
 	}
 
 	return math.Sqrt(sum)
+}
+
+func tableRows(artifact *datura.Artifact) ([][]float64, bool) {
+	rowCount := int(datura.Peek[float64](artifact, "table", "rowCount"))
+	nodeCount := int(datura.Peek[float64](artifact, "table", "nodeCount"))
+	flat := datura.Peek[[]float64](artifact, "table", "rows")
+
+	if rowCount <= 0 || nodeCount <= 0 || len(flat) != rowCount*nodeCount {
+		return nil, false
+	}
+
+	rows := make([][]float64, rowCount)
+
+	for rowIndex := range rows {
+		rows[rowIndex] = make([]float64, nodeCount)
+		offset := rowIndex * nodeCount
+
+		for nodeIndex := range nodeCount {
+			rows[rowIndex][nodeIndex] = flat[offset+nodeIndex]
+		}
+	}
+
+	return rows, true
+}
+
+func pokeTable(artifact *datura.Artifact, streams [][]float64) {
+	rows, ok := ZipNodeRows(streams)
+
+	if !ok {
+		return
+	}
+
+	rowCount := len(rows)
+	nodeCount := len(rows[0])
+	flat := make([]float64, 0, rowCount*nodeCount)
+
+	for rowIndex := range rows {
+		flat = append(flat, rows[rowIndex]...)
+	}
+
+	artifact.
+		Poke(float64(rowCount), "table", "rowCount").
+		Poke(float64(nodeCount), "table", "nodeCount").
+		Poke(flat, "table", "rows")
+}
+
+func deriveBandwidth(rows [][]float64, treatmentNode int) float64 {
+	if treatmentNode < 0 || len(rows) == 0 || treatmentNode >= len(rows[0]) {
+		return 0
+	}
+
+	if len(rows) < 12 {
+		return 0
+	}
+
+	values := make([]float64, len(rows))
+
+	for index := range rows {
+		values[index] = rows[index][treatmentNode]
+	}
+
+	mean := 0.0
+
+	for _, value := range values {
+		mean += value
+	}
+
+	mean /= float64(len(values))
+
+	variance := 0.0
+
+	for _, value := range values {
+		delta := value - mean
+		variance += delta * delta
+	}
+
+	if len(values) > 1 {
+		variance /= float64(len(values) - 1)
+	}
+
+	if variance <= 0 {
+		return 0
+	}
+
+	return 1.06 * math.Sqrt(variance) * math.Pow(float64(len(values)), -0.2)
+}
+
+func intSlice(values []float64) []int {
+	out := make([]int, len(values))
+
+	for index, value := range values {
+		out[index] = int(value)
+	}
+
+	return out
 }

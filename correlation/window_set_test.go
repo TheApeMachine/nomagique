@@ -4,14 +4,21 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/datura"
+	"github.com/theapemachine/datura/transport"
 )
 
 func TestWindowSetSnapshot(testingTB *testing.T) {
 	Convey("Given a window set", testingTB, func() {
 		windowSet := NewWindowSet(16)
+		artifact := datura.Acquire("test", datura.APPJSON)
 
 		for index := range 13 {
-			observeEpochLevel(windowSet, int64((index+1)*1_000), 100+float64(index))
+			artifact.Poke(float64((index+1)*1_000), "sample").
+				Poke(100+float64(index), "paired")
+			err := transport.NewFlipFlop(artifact, windowSet)
+
+			So(err, ShouldBeNil)
 		}
 
 		snapshot := windowSet.Snapshot(TierWindows{

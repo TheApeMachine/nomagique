@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/datura"
+	"github.com/theapemachine/datura/transport"
 	"gonum.org/v1/gonum/mat"
 )
 
@@ -21,11 +23,16 @@ func TestProcrustes_Observe(t *testing.T) {
 			stage, err := NewProcrustesFromRows(matA, matB, nSamples, nDim)
 			So(err, ShouldBeNil)
 
-			residual := observeInputs(stage)
+			artifact := datura.Acquire("test", datura.APPJSON)
+			err = transport.NewFlipFlop(artifact, stage)
+
+			So(err, ShouldBeNil)
+
+			residual := datura.Peek[float64](artifact, "output", "value")
 			So(stage.Err(), ShouldBeNil)
 
 			Convey("It should return R ≈ I with near-zero residual", func() {
-				So(float64(residual), ShouldBeLessThan, 1e-10)
+				So(residual, ShouldBeLessThan, 1e-10)
 
 				result := stage.Result()
 
@@ -54,7 +61,10 @@ func TestProcrustes_Observe(t *testing.T) {
 			stage, err := NewProcrustesFromRows(matA, matB, nSamples, nDim)
 			So(err, ShouldBeNil)
 
-			_ = observeInputs(stage)
+			artifact := datura.Acquire("test", datura.APPJSON)
+			err = transport.NewFlipFlop(artifact, stage)
+
+			So(err, ShouldBeNil)
 			So(stage.Err(), ShouldBeNil)
 
 			Convey("It should recover the known rotation with low residual", func() {
@@ -74,8 +84,10 @@ func TestProcrustes_Observe(t *testing.T) {
 				denseA := mat.NewDense(1, 2, []float64{1, 2})
 				denseB := mat.NewDense(2, 2, []float64{1, 2, 3, 4})
 				stage := NewProcrustes(denseA, denseB)
-				_ = observeInputs(stage)
+				artifact := datura.Acquire("test", datura.APPJSON)
+				err := transport.NewFlipFlop(artifact, stage)
 
+				So(err, ShouldBeNil)
 				So(stage.Err(), ShouldNotBeNil)
 			})
 
@@ -87,8 +99,10 @@ func TestProcrustes_Observe(t *testing.T) {
 				denseB, err := denseFromRows(matB, 4, 2)
 				So(err, ShouldBeNil)
 				stage := NewProcrustes(denseA, denseB)
-				_ = observeInputs(stage)
+				artifact := datura.Acquire("test", datura.APPJSON)
+				err = transport.NewFlipFlop(artifact, stage)
 
+				So(err, ShouldBeNil)
 				So(stage.Err(), ShouldNotBeNil)
 			})
 		})
@@ -168,7 +182,8 @@ func BenchmarkProcrustes_Observe(b *testing.B) {
 	b.ReportAllocs()
 
 	for b.Loop() {
-		_ = observeInputs(stage)
+		artifact := datura.Acquire("test", datura.APPJSON)
+		_ = transport.NewFlipFlop(artifact, stage)
 	}
 }
 

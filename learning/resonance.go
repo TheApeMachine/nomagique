@@ -191,7 +191,7 @@ func NewResonanceManifold(
 	}
 
 	return &ResonanceManifold{
-		artifact:              datura.Acquire("resonance", datura.Artifact_Type_json),
+		artifact:              datura.Acquire("resonance", datura.APPJSON).RetainStageAttributes(),
 		cfg:                   cfg,
 		arch:                  arch,
 		targetDim:             targetDim,
@@ -258,11 +258,22 @@ func (rm *ResonanceManifold) SetStreamAdvanceTemporal(enabled bool) {
 }
 
 func (rm *ResonanceManifold) Write(payload []byte) (int, error) {
-	return rm.artifact.Write(payload)
+	bootstrap := datura.Peek[datura.Map[float64]](rm.artifact, "output") == nil
+
+	rm.artifact.Clear("batch")
+
+	n, err := rm.artifact.Write(payload)
+
+	if bootstrap {
+		rm.artifact.Clear("output")
+		rm.artifact.Clear("latent")
+	}
+
+	return n, err
 }
 
 func (rm *ResonanceManifold) Read(payload []byte) (int, error) {
-	values := float64Batch(rm.artifact)
+	values := datura.Peek[[]float64](rm.artifact, "batch")
 
 	if len(values) >= rm.arch[0] {
 		input := values[:rm.arch[0]]
@@ -273,8 +284,8 @@ func (rm *ResonanceManifold) Read(payload []byte) (int, error) {
 		}
 
 		reconstruction := rm.SettleFromBatch(input, target)
-		output := append([]float64{reconstruction}, rm.LatentState()...)
-		putFloat64SlicePayload(&rm.artifact, "resonance", output)
+		rm.artifact.Poke(datura.Map[float64]{"value": reconstruction}, "output")
+		rm.artifact.Poke(rm.LatentState(), "latent")
 	}
 
 	return rm.artifact.Read(payload)

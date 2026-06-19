@@ -18,23 +18,32 @@ NewTransitionSurprise returns a transition surprisal stage for io.ReadWriter pip
 */
 func NewTransitionSurprise(numStates int, alpha float64) *Transition {
 	return &Transition{
-		artifact: datura.Acquire("transition", datura.Artifact_Type_json),
+		artifact: datura.Acquire("transition", datura.APPJSON).RetainStageAttributes(),
 		matrix:   NewTransitionMatrix(numStates, alpha),
 	}
 }
 
 func (transition *Transition) Write(p []byte) (int, error) {
-	return transition.artifact.Write(p)
+	bootstrap := datura.Peek[datura.Map[float64]](transition.artifact, "output") == nil
+
+	transition.artifact.Clear("sample")
+	transition.artifact.Clear("classifier")
+
+	n, err := transition.artifact.Write(p)
+
+	if bootstrap {
+		transition.artifact.Clear("output")
+	}
+
+	return n, err
 }
 
 func (transition *Transition) Read(p []byte) (int, error) {
-	rehydrateArtifact(&transition.artifact, "transition", datura.Artifact_Type_json)
-
 	if transition == nil || transition.matrix == nil {
 		return transition.artifact.Read(p)
 	}
 
-	probabilities := datura.Peek[[]float64](transition.artifact, "classifier.probabilities")
+	probabilities := datura.Peek[[]float64](transition.artifact, "classifier", "probabilities")
 
 	if len(probabilities) == 0 || len(probabilities) < transition.matrix.numStates {
 		return transition.artifact.Read(p)
@@ -43,16 +52,17 @@ func (transition *Transition) Read(p []byte) (int, error) {
 	observed := probabilities[:transition.matrix.numStates]
 	surprise, surpriseErr := transition.matrix.Surprise(observed)
 
-	if surpriseErr == nil {
-		out := encodePayload(surprise)
-		_ = transition.artifact.SetPayload(out)
-		pokeFloat(transition.artifact, "transition.surprise", surprise)
+	if surpriseErr != nil {
+		return transition.artifact.Read(p)
+	}
 
-		categoryIndex, categoryOK := datura.PeekOK[int](transition.artifact, "classifier.category")
+	transition.artifact.Poke(surprise, "transition", "surprise")
+	transition.artifact.Poke(surprise, "output", "value")
 
-		if categoryOK && categoryIndex >= 1 && categoryIndex <= transition.matrix.numStates {
-			transition.matrix.Update(categoryIndex - 1)
-		}
+	categoryIndex := datura.Peek[int](transition.artifact, "classifier", "category")
+
+	if categoryIndex >= 1 && categoryIndex <= transition.matrix.numStates {
+		transition.matrix.Update(categoryIndex - 1)
 	}
 
 	return transition.artifact.Read(p)
@@ -107,6 +117,8 @@ func (transition *Transition) Reset() error {
 	}
 
 	transition.matrix.Reset()
+	transition.artifact.Clear("output")
+	transition.artifact.Clear("transition")
 
 	return nil
 }

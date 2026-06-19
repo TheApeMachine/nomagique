@@ -21,27 +21,63 @@ NewCovariance creates a covariance dynamic.
 */
 func NewCovariance(weights []float64) *Covariance {
 	return &Covariance{
-		artifact: datura.Acquire("covariance", datura.Artifact_Type_json),
+		artifact: datura.Acquire("covariance", datura.APPJSON).RetainStageAttributes(),
 		weights:  weights,
 	}
 }
 
 func (covariance *Covariance) Write(p []byte) (int, error) {
-	return covariance.artifact.Write(p)
+	bootstrap := datura.Peek[datura.Map[float64]](covariance.artifact, "output") == nil
+
+	covariance.artifact.Clear("sample")
+	covariance.artifact.Clear("paired")
+	covariance.artifact.Clear("batch")
+	covariance.artifact.Clear("left")
+	covariance.artifact.Clear("right")
+
+	n, err := covariance.artifact.Write(p)
+
+	if bootstrap {
+		covariance.artifact.Clear("output")
+	}
+
+	return n, err
 }
 
 func (covariance *Covariance) Read(p []byte) (int, error) {
-	values := float64Batch(covariance.artifact)
+	values := datura.Peek[[]float64](covariance.artifact, "batch")
+
+	if len(values) == 0 {
+		left := datura.Peek[[]float64](covariance.artifact, "left")
+		right := datura.Peek[[]float64](covariance.artifact, "right")
+
+		if len(left) > 0 || len(right) > 0 {
+			values = append(append([]float64(nil), left...), right...)
+		}
+	}
+
 	count := len(values)
 
 	if count >= 2 && count%2 == 0 {
 		half := count / 2
 		left := values[:half]
 		right := values[half:]
-		weights, weightsOK := weightSamplesFor(covariance.weights, half)
+
+		weightsOK := len(covariance.weights) == 0 || len(covariance.weights) == half
+		weights := covariance.weights
+
+		for _, weight := range weights {
+			if math.IsNaN(weight) || math.IsInf(weight, 0) || weight < 0 {
+				weightsOK = false
+			}
+		}
+
+		if len(weights) == 0 {
+			weights = nil
+		}
 
 		if !weightsOK {
-			putFloat64Payload(&covariance.artifact, "covariance", 0)
+			covariance.artifact.Poke(datura.Map[float64]{"value": 0}, "output")
 
 			return covariance.artifact.Read(p)
 		}
@@ -52,7 +88,9 @@ func (covariance *Covariance) Read(p []byte) (int, error) {
 			covarianceValue = 0
 		}
 
-		putFloat64Payload(&covariance.artifact, "covariance", covarianceValue)
+		covariance.artifact.Poke(datura.Map[float64]{"value": covarianceValue}, "output")
+
+		return covariance.artifact.Read(p)
 	}
 
 	if count > 0 && count < 2 {
@@ -69,6 +107,10 @@ func (covariance *Covariance) Read(p []byte) (int, error) {
 		)
 	}
 
+	if count == 0 || count < 2 || count%2 != 0 {
+		covariance.artifact.Poke(datura.Map[float64]{"value": 0}, "output")
+	}
+
 	return covariance.artifact.Read(p)
 }
 
@@ -78,6 +120,7 @@ func (covariance *Covariance) Close() error {
 
 func (covariance *Covariance) Reset() error {
 	covariance.weights = nil
+	covariance.artifact.Clear("output")
 
 	return nil
 }

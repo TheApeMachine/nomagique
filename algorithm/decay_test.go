@@ -4,8 +4,7 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/nomagique"
-	"github.com/theapemachine/nomagique/probability"
+	"github.com/theapemachine/datura"
 	"github.com/theapemachine/nomagique/tests"
 )
 
@@ -35,14 +34,6 @@ func decayPayload(
 	return payload
 }
 
-func TestDepthTrend(testingTB *testing.T) {
-	Convey("Given shrinking depth samples", testingTB, func() {
-		Convey("It should report positive thinning trend", func() {
-			So(depthTrend([]float64{10, 10, 10, 10, 8, 6}), ShouldBeGreaterThan, 0)
-		})
-	})
-}
-
 func TestDecayEvaluate(testingTB *testing.T) {
 	Convey("Given deteriorating long-side book history", testingTB, func() {
 		decay := NewDecay()
@@ -57,12 +48,16 @@ func TestDecayEvaluate(testingTB *testing.T) {
 			100, bidDepths, askDepths, densities, spreads, pressures, imbalances,
 		)...)
 		So(writeErr, ShouldBeNil)
-		_, _ = decay.Read(make([]byte, 4096))
+
+		frame := make([]byte, 4096)
+		_, _ = decay.Read(frame)
+		outbound := datura.Acquire("test-out", datura.APPJSON)
+		_, _ = outbound.Write(frame)
 
 		Convey("It should publish an eligible exhaustion outcome", func() {
-			So(decay.outcome.Eligible, ShouldBeTrue)
-			So(decay.outcome.Urgency, ShouldBeGreaterThan, 0)
-			So(decay.outcome.Category, ShouldEqual, 1)
+			So(datura.Peek[float64](outbound, "output", "value"), ShouldBeGreaterThan, 0)
+			So(datura.Peek[float64](outbound, "output", "urgency"), ShouldBeGreaterThan, 0)
+			So(int(datura.Peek[float64](outbound, "output", "category")), ShouldEqual, 1)
 		})
 	})
 
@@ -79,10 +74,14 @@ func TestDecayEvaluate(testingTB *testing.T) {
 			100, bidDepths, askDepths, densities, spreads, pressures, imbalances,
 		)...)
 		So(writeErr, ShouldBeNil)
-		_, _ = decay.Read(make([]byte, 4096))
+
+		frame := make([]byte, 4096)
+		_, _ = decay.Read(frame)
+		outbound := datura.Acquire("test-out", datura.APPJSON)
+		_, _ = outbound.Write(frame)
 
 		Convey("It should classify thermal exhaustion", func() {
-			So(decay.outcome.Category, ShouldEqual, 3)
+			So(int(datura.Peek[float64](outbound, "output", "category")), ShouldEqual, 3)
 		})
 	})
 
@@ -99,46 +98,15 @@ func TestDecayEvaluate(testingTB *testing.T) {
 			100, bidDepths, askDepths, densities, spreads, pressures, imbalances,
 		)...)
 		So(writeErr, ShouldBeNil)
-		_, _ = decay.Read(make([]byte, 4096))
+
+		frame := make([]byte, 4096)
+		_, _ = decay.Read(frame)
+		outbound := datura.Acquire("test-out", datura.APPJSON)
+		_, _ = outbound.Write(frame)
 
 		Convey("It should let the stronger short-side score win", func() {
-			So(decay.outcome.Eligible, ShouldBeTrue)
-			So(decay.outcome.Category, ShouldEqual, 1)
-		})
-	})
-}
-
-func TestDecayClassifier(testingTB *testing.T) {
-	Convey("Given a decay stage wired into a classifier", testingTB, func() {
-		decay := NewDecay()
-		classifier := probability.NewClassifier(
-			decay.MechanicalReading(),
-			decay.FragileReading(),
-			decay.ThermalReading(),
-			decay.ReversalReading(),
-		)
-		pipeline := nomagique.Number(decay, classifier)
-		bidDepths := []float64{20, 18, 16, 14, 12, 10, 8, 6}
-
-		writeErr := tests.WriteSamples(pipeline, decayPayload(
-			100,
-			bidDepths,
-			[]float64{10, 10, 10, 10, 10, 10, 10, 10},
-			[]float64{8, 8, 8, 8, 8, 8, 8, 8},
-			[]float64{4, 4, 4, 4, 4, 4, 4, 4},
-			[]float64{0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2},
-			[]float64{0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1},
-		)...)
-		So(writeErr, ShouldBeNil)
-		_, _ = pipeline.Read(make([]byte, 4096))
-
-		Convey("It should select a category", func() {
-			So(classifier.CategoryIndex(), ShouldBeGreaterThan, 0)
-
-			confidence, confidenceErr := classifier.Confidence(classifier.CategoryIndex())
-
-			So(confidenceErr, ShouldBeNil)
-			So(confidence, ShouldBeGreaterThan, 0)
+			So(datura.Peek[float64](outbound, "output", "value"), ShouldBeGreaterThan, 0)
+			So(int(datura.Peek[float64](outbound, "output", "category")), ShouldEqual, 1)
 		})
 	})
 }
@@ -154,11 +122,12 @@ func BenchmarkDecayRead(b *testing.B) {
 		[]float64{0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2},
 		[]float64{0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1},
 	)
+	frame := make([]byte, 4096)
 
 	b.ReportAllocs()
 
 	for b.Loop() {
 		_ = tests.WriteSamples(decay, samples...)
-		_, _ = decay.Read(make([]byte, 4096))
+		_, _ = decay.Read(frame)
 	}
 }

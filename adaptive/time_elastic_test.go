@@ -1,70 +1,40 @@
 package adaptive
 
 import (
+	"io"
 	"testing"
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/datura"
 )
 
-func TestNewTimeElastic(testingTB *testing.T) {
-	Convey("Given NewTimeElastic", testingTB, func() {
-		stage := NewTimeElastic(time.Hour, 0)
+func TestTimeElasticRead(t *testing.T) {
+	Convey("Given a TimeElastic", t, func() {
+		timeElastic := NewTimeElastic(time.Hour, 1e-6)
+		input := datura.Acquire("test", datura.APPJSON).
+			Poke(10, "sample").
+			Poke(float64(time.Unix(0, 1).UnixNano()), "at")
+		io.Copy(timeElastic, input)
 
-		Convey("It should return a usable stage", func() {
-			So(stage, ShouldNotBeNil)
-		})
-	})
-}
-
-func TestTimeElastic_Observe(testingTB *testing.T) {
-	Convey("Given sample and timestamp scalars", testingTB, func() {
-		stage := NewTimeElastic(time.Hour, 1e-6)
-		start := time.Date(2026, 6, 11, 12, 0, 0, 0, time.UTC)
-
-		got := observeWithWork(stage, 10, float64(start.UnixNano()))
-
-		Convey("It should seed unity on cold start", func() {
-			So(got, ShouldEqual, 1.0)
-		})
-	})
-
-	Convey("Given fewer than two scalars", testingTB, func() {
-		stage := NewTimeElastic(time.Hour, 1e-6)
-
-		got := observeInputs(stage, 10)
-
-		Convey("It should return zero output", func() {
-			So(got, ShouldEqual, 0.0)
-		})
-	})
-}
-
-func TestTimeElastic_Reset(testingTB *testing.T) {
-	Convey("Given a reset stage", testingTB, func() {
-		stage := NewTimeElastic(time.Hour, 1e-6)
-		start := time.Date(2026, 6, 11, 12, 0, 0, 0, time.UTC)
-
-		_ = observeWithWork(stage, 10, float64(start.UnixNano()))
-
-		err := stage.Reset()
-
-		Convey("It should clear derived state", func() {
+		Convey("When Read is called", func() {
+			_, err := timeElastic.Read([]byte{1, 2, 3})
 			So(err, ShouldBeNil)
-			So(stage.memory.Initialized(), ShouldBeFalse)
+			So(datura.Peek[float64](timeElastic.artifact, "output", "value"), ShouldEqual, 1)
 		})
 	})
 }
 
-func BenchmarkTimeElastic_Observe(b *testing.B) {
-	stage := NewTimeElastic(time.Hour, 1e-6)
-	at := time.Date(2026, 6, 11, 12, 0, 0, 0, time.UTC)
+func TestTimeElasticWrite(t *testing.T) {
+	Convey("Given a TimeElastic", t, func() {
+		timeElastic := NewTimeElastic(time.Hour, 1e-6)
 
-	b.ReportAllocs()
-
-	for b.Loop() {
-		_ = observeWithWork(stage, 10, float64(at.UnixNano()))
-
-		at = at.Add(time.Millisecond)
-	}
+		Convey("When Write is called", func() {
+			input := datura.Acquire("test", datura.APPJSON).
+				Poke(10, "sample").
+				Poke(float64(time.Unix(0, 1).UnixNano()), "at")
+			_, err := io.Copy(timeElastic, input)
+			So(err, ShouldBeNil)
+		})
+	})
 }

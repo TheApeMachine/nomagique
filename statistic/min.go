@@ -1,15 +1,13 @@
 package statistic
 
 import (
-	"encoding/binary"
 	"math"
 
 	"github.com/theapemachine/datura"
-	"gonum.org/v1/gonum/floats"
 )
 
 /*
-Min returns the smallest value in a batch passed to Read.
+Min tracks the smallest streamed sample.
 */
 type Min struct {
 	artifact *datura.Artifact
@@ -20,36 +18,52 @@ NewMin creates a min stage.
 */
 func NewMin() *Min {
 	return &Min{
-		artifact: datura.Acquire("min", datura.Artifact_Type_json),
+		artifact: datura.Acquire("min", datura.APPJSON).RetainStageAttributes(),
 	}
-}
-
-func (min *Min) Write(p []byte) (int, error) {
-	return min.artifact.Write(p)
 }
 
 func (min *Min) Read(p []byte) (int, error) {
-	payload, err := min.artifact.Payload()
+	sample := datura.Peek[float64](min.artifact, "sample")
 
-	if err == nil && len(payload) >= 8 && len(payload)%8 == 0 {
-		count := len(payload) / 8
-		values := make([]float64, count)
+	if math.IsNaN(sample) || math.IsInf(sample, 0) {
+		return min.artifact.Read(p)
+	}
 
-		for index := range count {
-			offset := index * 8
-			values[index] = math.Float64frombits(binary.BigEndian.Uint64(payload[offset : offset+8]))
+	output := datura.Peek[datura.Map[float64]](min.artifact, "output")
+
+	if output == nil {
+		output = datura.Map[float64]{
+			"value": sample,
 		}
 
-		putFloat64Payload(&min.artifact, "min", floats.Min(values))
+		min.artifact.Poke(output, "output")
+
+		return min.artifact.Read(p)
 	}
+
+	if sample < output["value"] {
+		output["value"] = sample
+	}
+
+	min.artifact.Poke(output, "output")
 
 	return min.artifact.Read(p)
 }
 
-func (min *Min) Close() error {
-	return nil
+func (min *Min) Write(p []byte) (int, error) {
+	bootstrap := datura.Peek[datura.Map[float64]](min.artifact, "output") == nil
+
+	min.artifact.Clear("sample")
+
+	n, err := min.artifact.Write(p)
+
+	if bootstrap {
+		min.artifact.Clear("output")
+	}
+
+	return n, err
 }
 
-func (min *Min) Reset() error {
+func (min *Min) Close() error {
 	return nil
 }

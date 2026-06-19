@@ -6,6 +6,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/datura/transport"
 )
 
 func TestTransitionMatrixSurprise(testingTB *testing.T) {
@@ -86,13 +87,15 @@ func TestTransitionSurprise_Read(testingTB *testing.T) {
 		stage := NewTransitionSurprise(5, 0.1)
 		matrix := stage.matrix
 		observed := matrix.PadObserved([]float64{0.25, 0.25, 0.25, 0.25}, 0)
-		inbound := datura.Acquire("transition-test", datura.Artifact_Type_json)
-		pokeFloatList(inbound, "classifier.probabilities", observed)
-		pokeInt(inbound, "classifier.category", 1)
-		buf, _ := inbound.Message().Marshal()
-		_, _ = stage.Write(buf)
+		artifact := datura.Acquire("transition-test", datura.APPJSON).
+			Poke(observed, "classifier", "probabilities").
+			Poke(1, "classifier", "category")
 
-		got := readScalar(stage)
+		err := transport.NewFlipFlop(artifact, stage)
+
+		So(err, ShouldBeNil)
+
+		got := datura.Peek[float64](artifact, "output", "value")
 
 		Convey("It should return finite surprisal", func() {
 			So(math.IsNaN(got), ShouldBeFalse)
@@ -118,16 +121,14 @@ func BenchmarkTransitionSurprise_Read(testingTB *testing.B) {
 	stage := NewTransitionSurprise(5, 0.1)
 	matrix := stage.matrix
 	observed := matrix.PadObserved([]float64{0.4, 0.3, 0.2, 0.1}, 0)
-	inbound := datura.Acquire("transition-bench", datura.Artifact_Type_json)
-	pokeFloatList(inbound, "classifier.probabilities", observed)
-	pokeInt(inbound, "classifier.category", 2)
-	buf, _ := inbound.Message().Marshal()
+	artifact := datura.Acquire("transition-bench", datura.APPJSON).
+		Poke(observed, "classifier", "probabilities").
+		Poke(2, "classifier", "category")
 
 	testingTB.ReportAllocs()
 
 	for testingTB.Loop() {
-		_, _ = stage.Write(buf)
-		_ = readScalar(stage)
+		_ = transport.NewFlipFlop(artifact, stage)
 	}
 }
 

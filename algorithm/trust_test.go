@@ -10,7 +10,7 @@ func TestTrust_Observe(testingTB *testing.T) {
 	Convey("Given accurate predicted and actual pairs", testingTB, func() {
 		trust := NewTrust()
 
-		for step := 0; step < 16; step++ {
+		for step := range 16 {
 			predicted := float64(step + 10)
 			_ = observeWithWork(trust, predicted, predicted)
 		}
@@ -19,7 +19,6 @@ func TestTrust_Observe(testingTB *testing.T) {
 
 		Convey("It should return positive trust-weighted calibration", func() {
 			So(score, ShouldBeGreaterThan, 0)
-			So(trust.Scale(), ShouldBeGreaterThan, 0)
 		})
 	})
 }

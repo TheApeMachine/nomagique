@@ -9,19 +9,22 @@ import (
 	"github.com/theapemachine/datura"
 )
 
-var featureExtractorPayloadFixture = []byte(`{"inputs":["price","volume"],"data":{"price":[{"label":"price","value":10.5,"transform":"ema"}],"volume":[{"label":"pad","value":0,"transform":"ema"},{"label":"volume","value":2500,"transform":"ema"}]}}`)
+var featureExtractorPayloadFixture = []byte(
+	`{"channel":"ticker","type":"update","data":[{"symbol":"BTC/USD","volume":2500,"vwap":100,"last":101,"bid":100.9,"ask":101.1,"change_pct":1.0}]}`,
+)
 
 func featureExtractorSchema() *datura.Artifact {
-	return datura.Acquire("feature-extractor-test", datura.APPJSON).WithPayload(featureExtractorPayloadFixture)
-}
-
-func WithFeatureExtractor(
-	schema *datura.Artifact,
-	block func(extractor *FeatureExtractor),
-) func() {
-	return func() {
-		block(NewFeatureExtractor(schema))
-	}
+	return datura.Acquire("feature-extractor-test", datura.APPJSON).
+		Poke("data", "root").
+		Poke([]string{"volume", "vwap", "last", "bid", "ask", "change_pct"}, "order").
+		Poke(map[string]any{
+			"volume":     map[string]any{},
+			"vwap":       map[string]any{},
+			"last":       map[string]any{},
+			"bid":        map[string]any{},
+			"ask":        map[string]any{},
+			"change_pct": map[string]any{},
+		}, "inputs")
 }
 
 func TestNewFeatureExtractor(t *testing.T) {
@@ -33,7 +36,7 @@ func TestNewFeatureExtractor(t *testing.T) {
 
 			Convey("It should retain the schema and initialize transform cache", func() {
 				So(extractor, ShouldNotBeNil)
-				So(extractor.artifact, ShouldEqual, schema)
+				So(extractor.config, ShouldEqual, schema)
 				So(extractor.transforms, ShouldNotBeNil)
 			})
 		})
@@ -42,22 +45,31 @@ func TestNewFeatureExtractor(t *testing.T) {
 
 func TestFeatureExtractor_Write(t *testing.T) {
 	Convey("Given a feature extractor", t, func() {
-		extractor := NewFeatureExtractor(datura.Acquire("test", datura.Artifact_Type_json))
+		extractor := NewFeatureExtractor(
+			datura.Acquire("test", datura.APPJSON).
+				Poke("data", "root").
+				Poke([]string{"volume"}, "order").
+				Poke(map[string]any{"volume": map[string]any{}}, "inputs"),
+		)
 
 		Convey("And an inbound artifact with a payload", func() {
-			inbound := datura.Acquire("test", datura.Artifact_Type_json).WithPayload([]byte{1, 2, 3})
+			inbound := datura.Acquire("test", datura.APPJSON).WithPayload([]byte{1, 2, 3})
 
 			Convey("When the inbound artifact is copied into the extractor", func() {
 				_, err := io.Copy(extractor, inbound)
 
-				Convey("Then the extractor artifact should carry the inbound payload", func() {
+				Convey("Then the staged artifact should carry the inbound payload", func() {
 					So(err, ShouldBeNil)
 
 					var payload []byte
 
-					payload, err = extractor.artifact.Payload()
+					payload, err = extractor.staged.DecryptPayload()
 					So(err, ShouldBeNil)
 					So(payload, ShouldResemble, []byte{1, 2, 3})
+				})
+
+				Convey("Then the schema config should remain on the config artifact", func() {
+					So(datura.Peek[string](extractor.config, "root"), ShouldEqual, "data")
 				})
 			})
 		})
@@ -79,15 +91,19 @@ func TestFeatureExtractor_Close(t *testing.T) {
 }
 
 func TestFeatureExtractor_Read(t *testing.T) {
-	Convey("Given a feature extractor with schema payload", t, func() {
+	Convey("Given a feature extractor with ticker payload", t, func() {
 		extractor := NewFeatureExtractor(featureExtractorSchema())
 
-		Convey("When the extractor is read", func() {
-			buffer := bytes.NewBuffer([]byte{})
-			_, err := io.Copy(buffer, extractor)
+		Convey("When ticker payload is written then read", func() {
+			inbound := datura.Acquire("test", datura.APPJSON).WithPayload(featureExtractorPayloadFixture)
+			_, err := io.Copy(extractor, inbound)
 			So(err, ShouldBeNil)
 
-			Convey("Then the output artifact payload should carry extracted features", func() {
+			buffer := bytes.NewBuffer([]byte{})
+			_, err = io.Copy(buffer, extractor)
+			So(err, ShouldBeNil)
+
+			Convey("Then the payload should carry extracted features", func() {
 				decoded := datura.Acquire("feature-extractor", datura.APPJSON)
 				_, err = decoded.Write(buffer.Bytes())
 				So(err, ShouldBeNil)
@@ -96,17 +112,16 @@ func TestFeatureExtractor_Read(t *testing.T) {
 
 				payload, err = decoded.DecryptPayload()
 				So(err, ShouldBeNil)
-				So(string(payload), ShouldEqual, `{"features":[10.5,2500]}`)
+				So(string(payload), ShouldEqual, `{"features":[2500,100,101,100.9,101.1,1]}`)
 			})
 		})
 	})
 }
 
 func BenchmarkFeatureExtractor_Read(b *testing.B) {
-	extractor := NewFeatureExtractor(
-		datura.Acquire("feature-extractor-bench", datura.APPJSON).
-			WithPayload(featureExtractorPayloadFixture),
-	)
+	extractor := NewFeatureExtractor(featureExtractorSchema())
+	inbound := datura.Acquire("test", datura.APPJSON).WithPayload(featureExtractorPayloadFixture)
+	_, _ = io.Copy(extractor, inbound)
 
 	buffer := make([]byte, 65536)
 

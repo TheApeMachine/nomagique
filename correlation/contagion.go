@@ -64,7 +64,7 @@ func NewContagion(
 	}
 
 	return &Contagion{
-		artifact:   datura.Acquire("contagion", datura.Artifact_Type_json),
+		artifact:   datura.Acquire("contagion", datura.APPJSON).RetainStageAttributes(),
 		windowSets: windowSets,
 		tiers:      tiers,
 		config:     config,
@@ -73,18 +73,35 @@ func NewContagion(
 }
 
 func (contagion *Contagion) Write(p []byte) (int, error) {
-	return contagion.artifact.Write(p)
+	bootstrap := datura.Peek[datura.Map[float64]](contagion.artifact, "output") == nil
+
+	contagion.artifact.Clear("sample")
+	contagion.artifact.Clear("paired")
+
+	n, err := contagion.artifact.Write(p)
+
+	if bootstrap {
+		contagion.artifact.Clear("output")
+	}
+
+	return n, err
 }
 
 func (contagion *Contagion) Read(p []byte) (int, error) {
-	if contagion != nil {
-		snapshots := contagion.snapshots()
-
-		if len(snapshots) > 0 {
-			contagion.output = contagion.observeSnapshots(snapshots)
-			putFloat64Payload(&contagion.artifact, "contagion", contagion.output)
-		}
+	if contagion == nil {
+		return 0, nil
 	}
+
+	snapshots := contagion.snapshots()
+
+	if len(snapshots) == 0 {
+		contagion.artifact.Poke(datura.Map[float64]{"value": 0}, "output")
+
+		return contagion.artifact.Read(p)
+	}
+
+	contagion.output = contagion.observeSnapshots(snapshots)
+	contagion.artifact.Poke(datura.Map[float64]{"value": contagion.output}, "output")
 
 	return contagion.artifact.Read(p)
 }
@@ -103,6 +120,7 @@ func (contagion *Contagion) Reset() error {
 
 	contagion.spread = newSpreadRing(contagion.config.SpreadCapacity)
 	contagion.output = 0
+	contagion.artifact.Clear("output")
 
 	return nil
 }

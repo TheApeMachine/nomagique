@@ -25,18 +25,42 @@ When maxInterval is zero, consecutive sample spacing is not capped.
 */
 func NewHayashiYoshida(weights []float64, maxInterval time.Duration) *HayashiYoshida {
 	return &HayashiYoshida{
-		artifact:    datura.Acquire("hayashi", datura.Artifact_Type_json),
+		artifact:    datura.Acquire("hayashi", datura.APPJSON).RetainStageAttributes(),
 		weights:     weights,
 		maxInterval: maxInterval,
 	}
 }
 
 func (hayashi *HayashiYoshida) Write(p []byte) (int, error) {
-	return hayashi.artifact.Write(p)
+	bootstrap := datura.Peek[datura.Map[float64]](hayashi.artifact, "output") == nil
+
+	hayashi.artifact.Clear("sample")
+	hayashi.artifact.Clear("paired")
+	hayashi.artifact.Clear("batch")
+	hayashi.artifact.Clear("left")
+	hayashi.artifact.Clear("right")
+
+	n, err := hayashi.artifact.Write(p)
+
+	if bootstrap {
+		hayashi.artifact.Clear("output")
+	}
+
+	return n, err
 }
 
 func (hayashi *HayashiYoshida) Read(p []byte) (int, error) {
-	values := float64Batch(hayashi.artifact)
+	values := datura.Peek[[]float64](hayashi.artifact, "batch")
+
+	if len(values) == 0 {
+		left := datura.Peek[[]float64](hayashi.artifact, "left")
+		right := datura.Peek[[]float64](hayashi.artifact, "right")
+
+		if len(left) > 0 || len(right) > 0 {
+			values = append(append([]float64(nil), left...), right...)
+		}
+	}
+
 	count := len(values)
 
 	if count >= 4 && count%2 == 0 {
@@ -48,7 +72,7 @@ func (hayashi *HayashiYoshida) Read(p []byte) (int, error) {
 			correlation, ok := hayashiYoshidaCorrelation(left, right, hayashi.maxInterval)
 
 			if ok {
-				putFloat64Payload(&hayashi.artifact, "hayashi", correlation)
+				hayashi.artifact.Poke(datura.Map[float64]{"value": correlation}, "output")
 
 				return hayashi.artifact.Read(p)
 			}
@@ -74,7 +98,7 @@ func (hayashi *HayashiYoshida) Read(p []byte) (int, error) {
 		)
 	}
 
-	putFloat64Payload(&hayashi.artifact, "hayashi", 0)
+	hayashi.artifact.Poke(datura.Map[float64]{"value": 0}, "output")
 
 	return hayashi.artifact.Read(p)
 }
@@ -85,8 +109,47 @@ func (hayashi *HayashiYoshida) Close() error {
 
 func (hayashi *HayashiYoshida) Reset() error {
 	hayashi.weights = nil
+	hayashi.artifact.Clear("output")
 
 	return nil
+}
+
+/*
+Sample is a time-stamped observation for asynchronous correlation.
+Each input pair encodes Unix seconds at an even index and value at the next index.
+*/
+type Sample struct {
+	At    time.Time
+	Value float64
+}
+
+func samplesFromScalars(values []float64) ([]Sample, bool) {
+	if len(values) < 4 || len(values)%2 != 0 {
+		return nil, false
+	}
+
+	samples := make([]Sample, len(values)/2)
+
+	for index := range samples {
+		pair := index * 2
+		seconds := values[pair]
+		value := values[pair+1]
+
+		if math.IsNaN(seconds) || math.IsInf(seconds, 0) ||
+			math.IsNaN(value) || math.IsInf(value, 0) {
+			return nil, false
+		}
+
+		wholeSeconds := int64(seconds)
+		nanoseconds := int64((seconds - float64(wholeSeconds)) * float64(time.Second))
+
+		samples[index] = Sample{
+			At:    time.Unix(wholeSeconds, nanoseconds),
+			Value: value,
+		}
+	}
+
+	return samples, true
 }
 
 func hayashiYoshidaCorrelation(

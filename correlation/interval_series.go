@@ -26,7 +26,6 @@ type IntervalSeries struct {
 	capacity  int
 	lastLevel float64
 	lastEpoch int64
-	output    float64
 }
 
 /*
@@ -38,26 +37,41 @@ func NewIntervalSeries(capacity int) *IntervalSeries {
 	}
 
 	return &IntervalSeries{
-		artifact:  datura.Acquire("interval-series", datura.Artifact_Type_json),
+		artifact:  datura.Acquire("interval-series", datura.APPJSON).RetainStageAttributes(),
 		intervals: make([]ReturnInterval, 0, capacity),
 		capacity:  capacity,
 	}
 }
 
 func (series *IntervalSeries) Write(p []byte) (int, error) {
-	return series.artifact.Write(p)
+	bootstrap := datura.Peek[datura.Map[float64]](series.artifact, "output") == nil
+
+	series.artifact.Clear("sample")
+	series.artifact.Clear("paired")
+
+	n, err := series.artifact.Write(p)
+
+	if bootstrap {
+		series.artifact.Clear("output")
+	}
+
+	return n, err
 }
 
 func (series *IntervalSeries) Read(p []byte) (int, error) {
-	if series != nil {
-		epoch, level, ok := parseEpochLevel(series.artifact)
+	level := datura.Peek[float64](series.artifact, "paired")
 
-		if ok {
-			series.ingest(epoch, level)
-			series.output = series.LastReturnMagnitude()
-			putFloat64Payload(&series.artifact, "series", series.output)
-		}
+	if level <= 0 {
+		return series.artifact.Read(p)
 	}
+
+	epoch := int64(datura.Peek[float64](series.artifact, "sample"))
+	series.ingest(epoch, level)
+
+	series.artifact.Poke(
+		datura.Map[float64]{"value": series.LastReturnMagnitude()},
+		"output",
+	)
 
 	return series.artifact.Read(p)
 }
@@ -74,7 +88,7 @@ func (series *IntervalSeries) Reset() error {
 	series.intervals = series.intervals[:0]
 	series.lastLevel = 0
 	series.lastEpoch = 0
-	series.output = 0
+	series.artifact.Clear("output")
 
 	return nil
 }
@@ -201,7 +215,6 @@ func (series *IntervalSeries) Clone() *IntervalSeries {
 		capacity:  series.capacity,
 		lastLevel: series.lastLevel,
 		lastEpoch: series.lastEpoch,
-		output:    series.output,
 	}
 }
 

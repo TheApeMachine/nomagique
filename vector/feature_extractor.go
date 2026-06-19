@@ -2,6 +2,7 @@ package vector
 
 import (
 	"io"
+	"math"
 
 	"github.com/bytedance/sonic"
 	"github.com/theapemachine/datura"
@@ -15,83 +16,103 @@ FeatureExtractor holds raw input channels and derived feature slots in reusable
 buffers. Write brings an artifact in; Read updates one channel and refreshes features.
 */
 type FeatureExtractor struct {
-	artifact   *datura.Artifact
-	transforms map[string]io.ReadWriter
+	config *datura.Artifact
+	staged *datura.Artifact
+	output *datura.Artifact
+
+	transforms map[string]func(*datura.Artifact) io.ReadWriter
+	stages     map[string]io.ReadWriter
 }
 
 /*
-NewFeatureExtractor builds an extractor with inputCount channels and one formula
-per derived feature, evaluated in registration order.
+NewFeatureExtractor builds an extractor wired from schema.inputs payload keys.
 */
 func NewFeatureExtractor(artifact *datura.Artifact) *FeatureExtractor {
 	return &FeatureExtractor{
-		artifact:   artifact,
-		transforms: make(map[string]io.ReadWriter),
+		config: artifact,
+		staged: datura.Acquire(
+			"nomagique", datura.APPJSON,
+		).WithRole(
+			"feature-extractor",
+		).WithScope(
+			"staged",
+		),
+		output: datura.Acquire(
+			"nomagique", datura.APPJSON,
+		).WithRole(
+			"feature-extractor",
+		).WithScope(
+			"output",
+		),
+		transforms: map[string]func(*datura.Artifact) io.ReadWriter{
+			"ema": func(config *datura.Artifact) io.ReadWriter {
+				return adaptive.NewEMA(config)
+			},
+		},
+		stages: make(map[string]io.ReadWriter),
 	}
 }
 
 func (extractor *FeatureExtractor) Read(p []byte) (int, error) {
-	inputs := datura.Peek[[]string](extractor.artifact, "inputs")
-	features := datura.Map[[]float64]{
-		"features": make([]float64, len(inputs)),
-	}
+	rootKey := datura.Peek[string](extractor.config, "root")
+	order := datura.Peek[[]string](extractor.config, "order")
+	features := make([]float64, len(order))
 
-	for index, input := range inputs {
-		features["features"][index] = extractor.transform(
-			extractor.artifact, input, index,
-		)
+	for index, key := range order {
+		inputConfig := datura.Peek[map[string]any](extractor.config, "inputs", key)
+		features[index] = extractor.sample(extractor.staged, rootKey, key, inputConfig)
 	}
 
 	payload := errnie.Does(func() ([]byte, error) {
-		return sonic.Marshal(features)
+		return sonic.Marshal(datura.Map[[]float64]{"features": features})
 	}).Or(func(err error) {
-		extractor.artifact.WithError(errnie.Error(errnie.Err(
+		extractor.output.WithError(errnie.Error(errnie.Err(
 			errnie.IO,
 			"feature-extractor",
 			err,
 		)))
 	}).Value()
 
-	return datura.Acquire(
-		"feature-extractor", datura.APPJSON,
-	).WithPayload(payload).Read(p)
+	extractor.output.WithPayload(payload)
+
+	return extractor.output.Read(p)
 }
 
 func (extractor *FeatureExtractor) Write(p []byte) (int, error) {
-	return extractor.artifact.Write(p)
+	return extractor.staged.Write(p)
 }
 
 func (extractor *FeatureExtractor) Close() error {
 	return nil
 }
 
-var transformMap = map[string]func() io.ReadWriter{
-	"ema": func() io.ReadWriter { return adaptive.NewEMA() },
-}
-
-func (extractor *FeatureExtractor) transform(
+func (extractor *FeatureExtractor) sample(
 	artifact *datura.Artifact,
+	rootKey string,
 	input string,
-	index int,
+	inputConfig map[string]any,
 ) float64 {
-	var ok bool
+	value := datura.PeekPayload[float64](artifact, rootKey, 0, input)
 
-	typedData := datura.PeekPayload[map[string]any](
-		artifact, "data", input, index,
-	)
-
-	label := typedData["label"].(string)
-	value := typedData["value"].(float64)
-	transform := typedData["transform"].(string)
-
-	var transformer io.ReadWriter
-
-	if transformer, ok = extractor.transforms[label]; !ok {
-		transformer = transformMap[transform]()
-		extractor.transforms[label] = transformer
-		artifact.Poke("sample", value)
-		transport.NewFlipFlop(artifact, transformer)
+	if math.IsNaN(value) || math.IsInf(value, 0) {
+		return 0
 	}
 
-	return value
+	transform, _ := inputConfig["transform"].(string)
+
+	if transform != "ema" {
+		return value
+	}
+
+	transformer, ok := extractor.stages[input]
+
+	if !ok {
+		transformer = extractor.transforms[transform](extractor.config)
+		extractor.stages[input] = transformer
+	}
+
+	artifact.Poke(value, "sample")
+	transport.NewFlipFlop(artifact, transformer)
+
+	return datura.Peek[float64](artifact, "output", "value")
 }

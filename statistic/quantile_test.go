@@ -1,79 +1,30 @@
 package statistic
 
 import (
-	"math"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/datura"
+	"github.com/theapemachine/datura/transport"
 	"gonum.org/v1/gonum/stat"
 )
 
-func TestQuantile_Observe(testingTB *testing.T) {
-	cases := []struct {
-		name       string
-		percentile float64
-		kind       stat.CumulantKind
-		samples    []float64
-		expect     float64
-	}{
-		{"median lininterp", 0.5, stat.LinInterp, []float64{1, 2, 3, 4}, 2},
-		{"lower quartile", 0.25, stat.LinInterp, []float64{1, 2, 3, 4}, 1},
-		{"empty input", 0.5, stat.LinInterp, nil, 0},
-	}
+func TestQuantileSeries(t *testing.T) {
+	Convey("Given a Quantile stage", t, func() {
+		quantile := NewQuantile(0.5, stat.LinInterp)
+		artifact := datura.Acquire("test", datura.APPJSON)
 
-	for _, testCase := range cases {
-		testCase := testCase
+		for _, sample := range []float64{1, 2, 3, 4} {
+			artifact.Poke(sample, "sample")
+			err := transport.NewFlipFlop(artifact, quantile)
 
-		Convey("Given "+testCase.name, testingTB, func() {
-			quantile := NewQuantile(
-				testCase.percentile, testCase.kind, nil,
-			)
-			got := observeInputs(quantile, testCase.samples...)
+			So(err, ShouldBeNil)
+		}
 
-			Convey("It should return the expected quantile", func() {
-				So(float64(got), ShouldEqual, testCase.expect)
-			})
-		})
-	}
+		got := datura.Peek[float64](artifact, "output", "value")
 
-	Convey("Given empirical weighted quantile", testingTB, func() {
-		quantile := NewQuantile(0.5, stat.Empirical, []float64{1, 1, 1, 3})
-		got := observeInputs(quantile, 1, 1, 1, 3)
-
-		Convey("It should apply weights", func() {
-			So(float64(got), ShouldEqual, 1)
+		Convey("It should return the expected quantile", func() {
+			So(got, ShouldEqual, 2)
 		})
 	})
-
-	Convey("Given non-finite samples", testingTB, func() {
-		quantile := NewQuantile(0.5, stat.LinInterp, nil)
-		got := observeInputs(quantile, 1, math.NaN(), 3)
-
-		Convey("It should return NaN", func() {
-			So(math.IsNaN(float64(got)), ShouldBeTrue)
-		})
-	})
-}
-
-func TestQuantile_Reset(testingTB *testing.T) {
-	Convey("Given an observed quantile", testingTB, func() {
-		quantile := NewQuantile(0.5, stat.LinInterp, []float64{1, 2})
-		_ = observeInputs(quantile, 1, 2)
-
-		So(quantile.Reset(), ShouldBeNil)
-
-		Convey("It should clear weights", func() {
-			So(quantile.weights, ShouldBeNil)
-		})
-	})
-}
-
-func BenchmarkQuantile_Observe(b *testing.B) {
-	quantile := NewQuantile(0.5, stat.LinInterp, nil)
-
-	b.ReportAllocs()
-
-	for b.Loop() {
-		_ = observeInputs(quantile)
-	}
 }

@@ -1,29 +1,56 @@
-package algorithm
+package algorithm_test
 
 import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/nomagique/causal"
+	"github.com/theapemachine/datura"
+	"github.com/theapemachine/datura/transport"
+	"github.com/theapemachine/nomagique/algorithm"
 )
 
-func TestPearl_Readings(testingTB *testing.T) {
-	Convey("Given a Pearl ladder", testingTB, func() {
-		ladder := NewPearl(
-			3,
-			causal.LadderConfig{MinHistory: 12},
-			nil,
-			newFixedScore(0),
-			nil,
-		)
+func pearlArtifact() *datura.Artifact {
+	nodeCount := 4
+	rowCount := 16
+	flat := make([]float64, 0, rowCount*nodeCount)
 
-		Convey("It should publish composable ladder score sources", func() {
-			So(ladder.UpliftReading(), ShouldNotBeNil)
-			So(ladder.ContagionReading(), ShouldNotBeNil)
-			So(ladder.AssociationReading(), ShouldNotBeNil)
-			So(ladder.InterventionReading(), ShouldNotBeNil)
-		})
-	})
+	for rowIndex := range rowCount {
+		flat = append(flat,
+			float64(rowIndex)*0.1,
+			float64(rowIndex)*0.2,
+			float64(rowIndex)*0.5,
+			float64(rowIndex)*0.05,
+		)
+	}
+
+	return datura.Acquire("test", datura.APPJSON).
+		Poke(float64(3), "config", "target").
+		Poke(float64(12), "config", "minHistory").
+		Poke(float64(2), "config", "treatmentNormal").
+		Poke([]float64{0, 1}, "config", "controlsNormal").
+		Poke(float64(1), "config", "treatmentInverted").
+		Poke([]float64{0}, "config", "controlsInverted").
+		Poke(float64(1), "config", "conditionLeft").
+		Poke(float64(2), "config", "conditionRight").
+		Poke([]float64{0, 3}, "config", "contagionSkip").
+		Poke(0.35, "config", "kernelBandwidth")
+}
+
+func nodeRingFromStreams(streams [][]float64) *algorithm.NodeRing {
+	nodeRing := algorithm.NewNodeRing(len(streams), len(streams[0]))
+
+	for rowIndex := range streams[0] {
+		row := make([]float64, len(streams))
+
+		for nodeIndex := range streams {
+			row[nodeIndex] = streams[nodeIndex][rowIndex]
+		}
+
+		artifact := datura.Acquire("test", datura.APPJSON).Poke(row, "batch")
+		_ = transport.NewFlipFlop(artifact, nodeRing)
+	}
+
+	return nodeRing
 }
 
 func TestPearl_Read(testingTB *testing.T) {
@@ -40,25 +67,17 @@ func TestPearl_Read(testingTB *testing.T) {
 			nodeThree[index] = float64(index) * 0.05
 		}
 
-		config := causal.LadderConfig{
-			TreatmentNormal:   2,
-			ControlsNormal:    []int{0, 1},
-			TreatmentInverted: 1,
-			ControlsInverted:  []int{0},
-			ConditionLeft:     1,
-			ConditionRight:    2,
-			MinHistory:        12,
-		}
-
 		streams := [][]float64{nodeZero, nodeOne, nodeTwo, nodeThree}
 		nodes := nodeRingFromStreams(streams)
-		ladder := NewPearl(3, config, nodes, newFixedScore(0), nil)
+		pearl := algorithm.NewPearl()
+		pearl.SetNodes(nodes)
 
-		intervention := observeInputs(ladder)
+		artifact := pearlArtifact()
+		err := transport.NewFlipFlop(artifact, pearl)
 
-		Convey("It should return a positive intervention effect", func() {
-			So(intervention, ShouldBeGreaterThan, 0)
-		})
+		So(err, ShouldBeNil)
+		So(datura.Peek[int](artifact, "classifier.category"), ShouldBeGreaterThan, 0)
+		So(datura.Peek[float64](artifact, "classifier.confidence"), ShouldBeGreaterThan, 0)
 	})
 }
 
@@ -75,23 +94,15 @@ func BenchmarkPearl_Read(testingTB *testing.B) {
 		nodeThree[index] = float64(index) * 0.05
 	}
 
-	config := causal.LadderConfig{
-		TreatmentNormal:   2,
-		ControlsNormal:    []int{0, 1},
-		TreatmentInverted: 1,
-		ControlsInverted:  []int{0},
-		ConditionLeft:     1,
-		ConditionRight:    2,
-		MinHistory:        12,
-	}
-
 	streams := [][]float64{nodeZero, nodeOne, nodeTwo, nodeThree}
 	nodes := nodeRingFromStreams(streams)
-	ladder := NewPearl(3, config, nodes, newFixedScore(0), nil)
+	pearl := algorithm.NewPearl()
+	pearl.SetNodes(nodes)
 
 	testingTB.ReportAllocs()
 
 	for testingTB.Loop() {
-		_ = observeInputs(ladder)
+		artifact := pearlArtifact()
+		_ = transport.NewFlipFlop(artifact, pearl)
 	}
 }

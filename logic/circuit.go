@@ -23,9 +23,10 @@ type Rules []Rule
 Circuit walks rules and routes observations through the first matching Then stage.
 */
 type Circuit struct {
-	artifact *datura.Artifact
-	rules    Rules
-	output   float64
+	artifact    *datura.Artifact
+	rules       Rules
+	output      float64
+	inboundWire []byte
 }
 
 /*
@@ -33,17 +34,34 @@ NewCircuit returns a branching stage for the given ordered rules.
 */
 func NewCircuit(rules Rules) *Circuit {
 	return &Circuit{
-		artifact: datura.Acquire("circuit", datura.Artifact_Type_json),
+		artifact: datura.Acquire("circuit", datura.APPJSON).RetainStageAttributes(),
 		rules:    rules,
 	}
 }
 
 func (circuit *Circuit) Write(p []byte) (int, error) {
-	return circuit.artifact.Write(p)
+	bootstrap := datura.Peek[datura.Map[float64]](circuit.artifact, "output") == nil
+
+	circuit.artifact.Clear("sample")
+
+	n, err := circuit.artifact.Write(p)
+
+	if bootstrap {
+		circuit.artifact.Clear("output")
+	}
+
+	circuit.inboundWire = append(circuit.inboundWire[:0], p...)
+
+	return n, err
 }
 
 func (circuit *Circuit) Read(p []byte) (int, error) {
-	inbound, inboundOK := artifactBytes(circuit.artifact)
+	inbound := circuit.inboundWire
+	inboundOK := len(inbound) > 0
+
+	if !inboundOK {
+		inbound, inboundOK = artifactBytes(circuit.artifact)
+	}
 
 	for _, rule := range circuit.rules {
 		if !rule.Condition.Match(circuit.artifact) {
@@ -52,13 +70,9 @@ func (circuit *Circuit) Read(p []byte) (int, error) {
 
 		if constant, isConstant := rule.Then.(*Constant); isConstant {
 			circuit.output = constant.value
-
-			putFloat64Payload(&circuit.artifact, "circuit", circuit.output)
-
-			return circuit.artifact.Read(p)
 		}
 
-		if inboundOK {
+		if !isConstantStage(rule.Then) && inboundOK {
 			value, valueOK := readOperand(rule.Then, inbound)
 
 			if valueOK {
@@ -66,12 +80,12 @@ func (circuit *Circuit) Read(p []byte) (int, error) {
 			}
 		}
 
-		putFloat64Payload(&circuit.artifact, "circuit", circuit.output)
+		circuit.artifact.Poke(datura.Map[float64]{"value": circuit.output}, "output")
 
 		return circuit.artifact.Read(p)
 	}
 
-	putFloat64Payload(&circuit.artifact, "circuit", circuit.output)
+	circuit.artifact.Poke(datura.Map[float64]{"value": circuit.output}, "output")
 
 	return circuit.artifact.Read(p)
 }
@@ -85,6 +99,7 @@ Reset clears derived state on every rule.
 */
 func (circuit *Circuit) Reset() error {
 	circuit.output = 0
+	circuit.inboundWire = circuit.inboundWire[:0]
 
 	for _, rule := range circuit.rules {
 		if resetErr := rule.Condition.Reset(); resetErr != nil {
@@ -97,4 +112,10 @@ func (circuit *Circuit) Reset() error {
 	}
 
 	return nil
+}
+
+func isConstantStage(stage io.ReadWriter) bool {
+	_, isConstant := stage.(*Constant)
+
+	return isConstant
 }

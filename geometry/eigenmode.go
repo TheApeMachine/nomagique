@@ -145,7 +145,7 @@ func NewModePartition(
 	origins, energies, coupling []float64,
 ) *ModePartition {
 	return &ModePartition{
-		artifact:  datura.Acquire("mode-partition", datura.Artifact_Type_json),
+		artifact:  datura.Acquire("mode-partition", datura.APPJSON).RetainStageAttributes(),
 		threshold: threshold,
 		origins:   origins,
 		energies:  energies,
@@ -154,7 +154,18 @@ func NewModePartition(
 }
 
 func (partition *ModePartition) Write(p []byte) (int, error) {
-	return partition.artifact.Write(p)
+	bootstrap := datura.Peek[datura.Map[float64]](partition.artifact, "output") == nil
+
+	partition.artifact.Clear("sample")
+	partition.artifact.Clear("paired")
+
+	n, err := partition.artifact.Write(p)
+
+	if bootstrap {
+		partition.artifact.Clear("output")
+	}
+
+	return n, err
 }
 
 func (partition *ModePartition) Read(p []byte) (int, error) {
@@ -163,7 +174,7 @@ func (partition *ModePartition) Read(p []byte) (int, error) {
 	if !ok {
 		partition.snap = nil
 		partition.output = 0
-		putFloat64Payload(&partition.artifact, "partition", partition.output)
+		partition.artifact.Poke(datura.Map[float64]{"value": 0}, "output")
 
 		return partition.artifact.Read(p)
 	}
@@ -173,13 +184,13 @@ func (partition *ModePartition) Read(p []byte) (int, error) {
 
 	if dominant < 0 {
 		partition.output = 0
-		putFloat64Payload(&partition.artifact, "partition", partition.output)
+		partition.artifact.Poke(datura.Map[float64]{"value": 0}, "output")
 
 		return partition.artifact.Read(p)
 	}
 
 	partition.output = modes[dominant].Energy()
-	putFloat64Payload(&partition.artifact, "partition", partition.output)
+	partition.artifact.Poke(datura.Map[float64]{"value": partition.output}, "output")
 
 	return partition.artifact.Read(p)
 }
@@ -198,6 +209,7 @@ func (partition *ModePartition) Snap() *EigenSnap {
 func (partition *ModePartition) Reset() error {
 	partition.snap = nil
 	partition.output = 0
+	partition.artifact.Clear("output")
 
 	return nil
 }

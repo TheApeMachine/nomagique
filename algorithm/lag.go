@@ -57,9 +57,9 @@ func (lag *Lag) Write(p []byte) (int, error) {
 func (lag *Lag) Read(p []byte) (int, error) {
 	rehydrateArtifact(&lag.artifact, "lag", datura.Artifact_Type_json)
 
-	payload, err := lag.artifact.Payload()
+	payload, payloadOK := lag.artifact.PayloadQuiet()
 
-	if err == nil {
+	if payloadOK {
 		lag.outcome = lag.evaluate(payloadSamples(payload))
 		lag.publishReadings()
 	}
@@ -263,6 +263,11 @@ func (lag *Lag) publishReadings() {
 	pokeFloat(lag.artifact, "lag.decoupled", lag.outcome.DecoupledScore)
 	pokeFloat(lag.artifact, "lag.stall", lag.outcome.StallScore)
 	pokeFloat(lag.artifact, "lag.strength", lag.outcome.Strength)
+
+	lag.artifact.Poke(lag.outcome.InefficientScore, "output", "inefficient")
+	lag.artifact.Poke(lag.outcome.SyncScore, "output", "sync")
+	lag.artifact.Poke(lag.outcome.DecoupledScore, "output", "decoupled")
+	lag.artifact.Poke(lag.outcome.StallScore, "output", "stall")
 }
 
 func (lag *Lag) InefficientReading() *LagReading {
@@ -318,7 +323,7 @@ func (reading *LagReading) Read(p []byte) (int, error) {
 		value = reading.project(reading.lag.outcome)
 	}
 
-	_ = reading.artifact.SetPayload(encodePayload(value))
+	reading.artifact.WithPayload(encodePayload(value))
 
 	return reading.artifact.Read(p)
 }

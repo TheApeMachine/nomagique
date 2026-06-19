@@ -4,90 +4,54 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/datura"
+	"github.com/theapemachine/datura/transport"
 )
 
-func buildRegimeTable(testingTB *testing.T) NodeTable {
-	testingTB.Helper()
+func TestRegime_Read(testingTB *testing.T) {
+	Convey("Given low contagion and a populated table", testingTB, func() {
+		stage := NewRegime()
+		artifact := tableArtifact(16, 0.1, 0.8)
+		artifact.Poke(0.1, "paired")
+		err := transport.NewFlipFlop(artifact, stage)
 
-	rows := make([][]float64, 16)
-
-	for index := range rows {
-		rows[index] = []float64{
-			float64(index) * 0.1,
-			float64(index) * 0.2,
-			float64(index) * 0.05,
-			float64(index) * 0.3,
-		}
-	}
-
-	table, err := NewNodeTable(rows, 3, 12)
-
-	So(err, ShouldBeNil)
-
-	return table
-}
-
-func TestSelectRoles(testingTB *testing.T) {
-	config := LadderConfig{
-		TreatmentNormal:   2,
-		ControlsNormal:    []int{0, 1},
-		TreatmentInverted: 1,
-		ControlsInverted:  []int{0, 2},
-		ContagionBreak:    0.8,
-	}
-
-	Convey("Given low contagion", testingTB, func() {
-		table := buildRegimeTable(testingTB)
-		roles, inverted, condition := SelectRoles(table, 0.1, config)
-
-		Convey("It should select normal roles", func() {
-			So(inverted, ShouldBeFalse)
-			So(roles.Label, ShouldEqual, "normal")
-			So(roles.Treatment, ShouldEqual, config.TreatmentNormal)
-			So(roles.Controls, ShouldResemble, config.ControlsNormal)
-			So(condition, ShouldBeGreaterThanOrEqualTo, 0)
-		})
+		So(err, ShouldBeNil)
+		So(datura.Peek[float64](stage.artifact, "output", "rawInverted"), ShouldEqual, 0)
 	})
 
 	Convey("Given contagion above break", testingTB, func() {
-		table := buildRegimeTable(testingTB)
-		roles, inverted, _ := SelectRoles(table, 0.95, config)
+		stage := NewRegime()
+		artifact := tableArtifact(16, 0.1, 0.5)
+		artifact.Poke(0.95, "paired")
+		err := transport.NewFlipFlop(artifact, stage)
 
-		Convey("It should invert roles", func() {
-			So(inverted, ShouldBeTrue)
-			So(roles.Label, ShouldEqual, "inverted")
-			So(roles.Treatment, ShouldEqual, config.TreatmentInverted)
-			So(roles.Controls, ShouldResemble, config.ControlsInverted)
-		})
+		So(err, ShouldBeNil)
+		So(datura.Peek[float64](stage.artifact, "output", "rawInverted"), ShouldEqual, 1)
 	})
 }
 
-func TestRoles_Predictors(testingTB *testing.T) {
-	Convey("Given role assignment", testingTB, func() {
-		roles := Roles{Treatment: 2, Controls: []int{0, 1}}
+func tableArtifact(rowCount int, step float64, contagionBreak float64) *datura.Artifact {
+	nodeCount := 4
+	flat := make([]float64, 0, rowCount*nodeCount)
 
-		Convey("It should append treatment after controls", func() {
-			So(roles.Predictors(), ShouldResemble, []int{0, 1, 2})
-		})
-	})
-}
-
-func TestSelectRolesWithTracker(testingTB *testing.T) {
-	config := LadderConfig{
-		TreatmentNormal:   2,
-		ControlsNormal:    []int{0},
-		TreatmentInverted: 1,
-		ControlsInverted:  []int{0},
-		ContagionBreak:    0.5,
+	for rowIndex := range rowCount {
+		flat = append(flat,
+			float64(rowIndex)*step*0.1,
+			float64(rowIndex)*step*0.2,
+			float64(rowIndex)*step*0.5,
+			float64(rowIndex)*step*0.05,
+		)
 	}
 
-	Convey("Given nil tracker", testingTB, func() {
-		table := buildRegimeTable(testingTB)
-		roles, inverted, _ := SelectRolesWithTracker(table, 0.9, config, nil, 16)
-
-		Convey("It should pass through raw inversion", func() {
-			So(inverted, ShouldBeTrue)
-			So(roles.Label, ShouldEqual, "inverted")
-		})
-	})
+	return datura.Acquire("test", datura.APPJSON).
+		Poke(float64(3), "config", "target").
+		Poke(float64(12), "config", "minHistory").
+		Poke(float64(2), "config", "treatmentNormal").
+		Poke([]float64{0, 1}, "config", "controlsNormal").
+		Poke(float64(1), "config", "treatmentInverted").
+		Poke([]float64{0, 2}, "config", "controlsInverted").
+		Poke(contagionBreak, "config", "contagionBreak").
+		Poke(float64(rowCount), "table", "rowCount").
+		Poke(float64(nodeCount), "table", "nodeCount").
+		Poke(flat, "table", "rows")
 }

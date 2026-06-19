@@ -72,7 +72,7 @@ func (excitation *Excitation) Read(p []byte) (int, error) {
 	}
 
 	if scope == "" {
-		scope = excitation.artifact.Peek("scope")
+		scope = datura.Peek[string](excitation.artifact, "scope")
 	}
 
 	payload, payloadOK := excitation.artifact.PayloadQuiet()
@@ -139,6 +139,11 @@ func (excitation *Excitation) publishReadings() {
 	pokeFloat(excitation.artifact, "excitation.stationarity_margin", excitation.outcome.StationarityMargin)
 	pokeFloat(excitation.artifact, "excitation.poisson_improvement", excitation.outcome.PoissonImprovement)
 	pokeFloat(excitation.artifact, "excitation.event_count", float64(excitation.outcome.EventCount))
+
+	excitation.artifact.Poke(excitation.outcome.Frenzy, "output", "frenzy")
+	excitation.artifact.Poke(excitation.outcome.Saturation, "output", "saturation")
+	excitation.artifact.Poke(excitation.outcome.Organic, "output", "organic")
+	excitation.artifact.Poke(excitation.outcome.Exhaustion, "output", "exhaustion")
 
 	if excitation.outcome.Eligible {
 		pokeFloat(excitation.artifact, "excitation.eligible", 1)
@@ -210,7 +215,7 @@ func (reading *ExcitationReading) Read(p []byte) (int, error) {
 		value = reading.project(reading.excitation.outcome)
 	}
 
-	_ = reading.artifact.SetPayload(encodePayload(value))
+	reading.artifact.WithPayload(encodePayload(value))
 
 	return reading.artifact.Read(p)
 }
@@ -256,7 +261,7 @@ type fitEventKey struct {
 func newExcitationSymbol() *excitationSymbol {
 	return &excitationSymbol{
 		minFitEvents: bivariateParamCount * 2,
-		rawBase:      adaptive.NewEMA(),
+		rawBase:      adaptive.NewEMA(nil),
 	}
 }
 
@@ -451,7 +456,7 @@ func (symbol *excitationSymbol) measureFit(fit hawkes.BivariateFit) (excitationR
 
 func (symbol *excitationSymbol) rawBaseStep(sample float64) float64 {
 	inbound := datura.Acquire("excitation-ema-in", datura.Artifact_Type_json)
-	_ = inbound.SetPayload(encodePayload(sample))
+	inbound.WithPayload(encodePayload(sample))
 	frame, err := inbound.Message().Marshal()
 
 	if err != nil {
@@ -463,9 +468,9 @@ func (symbol *excitationSymbol) rawBaseStep(sample float64) float64 {
 	readCount, _ := symbol.rawBase.Read(out)
 	outbound := datura.Acquire("excitation-ema-out", datura.Artifact_Type_json)
 	_, _ = outbound.Write(out[:readCount])
-	payload, payloadErr := outbound.Payload()
+	payload, payloadOK := outbound.PayloadQuiet()
 
-	if payloadErr != nil {
+	if !payloadOK {
 		return sample
 	}
 

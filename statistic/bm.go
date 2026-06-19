@@ -1,7 +1,6 @@
 package statistic
 
 import (
-	"encoding/binary"
 	"math"
 
 	"github.com/theapemachine/datura"
@@ -10,118 +9,82 @@ import (
 )
 
 /*
-BivariateMoment computes E[(x - mu_x)^r (y - mu_y)^s] for two configured streams.
+BivariateMoment computes E[(x - mu_x)^r (y - mu_y)^s] for paired sample streams.
 */
 type BivariateMoment struct {
 	artifact *datura.Artifact
 	r        float64
 	s        float64
-	weights  []float64
 }
 
 /*
 NewBivariateMoment creates a bivariate moment stage at exponents r and s.
-Payload carries aligned x then y samples as big-endian float64 values.
 */
-func NewBivariateMoment(
-	r, s float64,
-	weights []float64,
-) *BivariateMoment {
+func NewBivariateMoment(r, s float64) *BivariateMoment {
 	return &BivariateMoment{
-		artifact: datura.Acquire("bivariate_moment", datura.Artifact_Type_json),
+		artifact: datura.Acquire("bivariate_moment", datura.APPJSON).RetainStageAttributes(),
 		r:        r,
 		s:        s,
-		weights:  weights,
 	}
-}
-
-/*
-Powers returns the mixed-moment exponents r and s.
-*/
-func (bivariateMoment *BivariateMoment) Powers() (r float64, s float64) {
-	return bivariateMoment.r, bivariateMoment.s
 }
 
 func (bivariateMoment *BivariateMoment) Write(p []byte) (int, error) {
-	return bivariateMoment.artifact.Write(p)
+	bootstrap := datura.Peek[datura.Map[float64]](bivariateMoment.artifact, "output") == nil
+
+	bivariateMoment.artifact.Clear("sample")
+	bivariateMoment.artifact.Clear("paired")
+
+	n, err := bivariateMoment.artifact.Write(p)
+
+	if bootstrap {
+		bivariateMoment.artifact.Clear("output")
+	}
+
+	return n, err
 }
 
 func (bivariateMoment *BivariateMoment) Read(p []byte) (int, error) {
-	payload, err := bivariateMoment.artifact.Payload()
+	sample := datura.Peek[float64](bivariateMoment.artifact, "sample")
+	paired := datura.Peek[float64](bivariateMoment.artifact, "paired")
 
-	if err != nil || len(payload) < 16 || len(payload)%8 != 0 {
+	if math.IsNaN(sample) || math.IsInf(sample, 0) {
 		return bivariateMoment.artifact.Read(p)
 	}
 
-	count := len(payload) / 8
-
-	if count%2 != 0 {
-		errnie.Err(
-			errnie.Validation, "unable to compute bivariate moment",
-			BivariateMomentError(BivariateMomentErrorInvalidStreams),
-		)
-
-		putFloat64Payload(&bivariateMoment.artifact, "bivariate_moment", 0)
-
+	if math.IsNaN(paired) || math.IsInf(paired, 0) {
 		return bivariateMoment.artifact.Read(p)
 	}
 
-	half := count / 2
-	xValues := make([]float64, half)
-	yValues := make([]float64, half)
+	xValues := datura.Peek[[]float64](bivariateMoment.artifact, "history")
+	xValues = append(xValues, sample)
+	bivariateMoment.artifact.Poke(xValues, "history")
 
-	for index := range half {
-		xOffset := index * 8
-		yOffset := (index + half) * 8
-		xValues[index] = math.Float64frombits(binary.BigEndian.Uint64(payload[xOffset : xOffset+8]))
-		yValues[index] = math.Float64frombits(binary.BigEndian.Uint64(payload[yOffset : yOffset+8]))
-	}
-
-	weights := bivariateMoment.weights
-
-	if len(weights) == 0 {
-		weights = nil
-	}
+	yValues := datura.Peek[[]float64](bivariateMoment.artifact, "pairedHistory")
+	yValues = append(yValues, paired)
+	bivariateMoment.artifact.Poke(yValues, "pairedHistory")
 
 	if len(xValues) != len(yValues) || len(xValues) < 2 {
-		errnie.Err(
+		errnie.Error(errnie.Err(
 			errnie.Validation, "unable to compute bivariate moment",
 			BivariateMomentError(BivariateMomentErrorInvalidStreams),
-		)
+		))
 
-		putFloat64Payload(&bivariateMoment.artifact, "bivariate_moment", 0)
-
-		return bivariateMoment.artifact.Read(p)
-	}
-
-	if len(weights) != 0 && len(weights) != len(xValues) {
-		errnie.Err(
-			errnie.Validation, "unable to compute bivariate moment",
-			BivariateMomentError(BivariateMomentErrorWeightLengthMismatch),
-		)
-
-		putFloat64Payload(&bivariateMoment.artifact, "bivariate_moment", 0)
+		bivariateMoment.artifact.Poke(datura.Map[float64]{"value": 0}, "output")
 
 		return bivariateMoment.artifact.Read(p)
 	}
 
 	moment := stat.BivariateMoment(
 		bivariateMoment.r, bivariateMoment.s,
-		xValues, yValues, weights,
+		xValues, yValues, nil,
 	)
 
-	putFloat64Payload(&bivariateMoment.artifact, "bivariateMoment", moment)
+	bivariateMoment.artifact.Poke(datura.Map[float64]{"value": moment}, "output")
 
 	return bivariateMoment.artifact.Read(p)
 }
 
 func (bivariateMoment *BivariateMoment) Close() error {
-	return nil
-}
-
-func (bivariateMoment *BivariateMoment) Reset() error {
-	bivariateMoment.weights = nil
-
 	return nil
 }
 

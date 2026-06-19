@@ -4,39 +4,38 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/nomagique/tests"
+	"github.com/theapemachine/datura"
+	"github.com/theapemachine/datura/transport"
 )
 
-func TestVerticalityEvaluate(testingTB *testing.T) {
-	Convey("Given a volume spike with rising price", testingTB, func() {
-		verticality, err := NewVerticality()
+func TestNewVerticality(testingTB *testing.T) {
+	Convey("Given extracted verticality features on the artifact", testingTB, func() {
+		verticality := NewVerticality()
+
+		So(verticality, ShouldNotBeNil)
+
+		artifact := datura.Acquire("verticality-test", datura.APPJSON).
+			WithPayload([]byte(`{"features":[4.0,0.8,0.2,0.05]}`))
+
+		err := transport.NewFlipFlop(artifact, verticality)
+
 		So(err, ShouldBeNil)
 
-		writeErr := tests.WriteSamples(verticality, 4.0, 0.8, 0.2, 0.05)
-		So(writeErr, ShouldBeNil)
-		_, _ = verticality.Read(make([]byte, 4096))
-
-		Convey("It should publish an eligible verticality outcome", func() {
-			So(verticality.outcome.Eligible, ShouldBeTrue)
-			So(verticality.outcome.Strength, ShouldBeGreaterThan, 0)
-			So(verticality.outcome.Category, ShouldBeGreaterThan, 0)
+		Convey("It should publish category scores on output", func() {
+			So(datura.Peek[float64](artifact, "output", "ignitionScore"), ShouldBeGreaterThan, 0)
+			So(datura.Peek[float64](artifact, "output", "value"), ShouldBeGreaterThan, 0)
 		})
 	})
 }
 
 func BenchmarkVerticalityRead(b *testing.B) {
-	verticality, err := NewVerticality()
-
-	if err != nil {
-		b.Fatal(err)
-	}
-
-	samples := []float64{4.0, 0.8, 0.2, 0.05}
+	verticality := NewVerticality()
+	artifact := datura.Acquire("verticality-bench", datura.APPJSON).
+		WithPayload([]byte(`{"features":[4.0,0.8,0.2,0.05]}`))
 
 	b.ReportAllocs()
 
 	for b.Loop() {
-		_ = tests.WriteSamples(verticality, samples...)
-		_, _ = verticality.Read(make([]byte, 4096))
+		_ = transport.NewFlipFlop(artifact, verticality)
 	}
 }

@@ -1,12 +1,12 @@
 package learning
 
 import (
-	"io"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/datura"
+	"github.com/theapemachine/datura/transport"
 	"github.com/theapemachine/nomagique/adaptive"
-	"github.com/theapemachine/nomagique/tests"
 )
 
 func TestForecast(testingTB *testing.T) {
@@ -22,26 +22,46 @@ func TestForecast(testingTB *testing.T) {
 func TestForecaster_Observe(testingTB *testing.T) {
 	Convey("Given empty Observe inputs", testingTB, func() {
 		forecaster := Forecast()
+		artifact := datura.Acquire("test", datura.APPJSON)
+		err := transport.NewFlipFlop(artifact, forecaster)
+
+		So(err, ShouldBeNil)
 
 		Convey("It should return zero output", func() {
-			So(observeInputs(forecaster), ShouldEqual, 0)
+			So(datura.Peek[float64](artifact, "output", "value"), ShouldEqual, 0)
 		})
 	})
 
 	Convey("Given a fresh forecaster", testingTB, func() {
 		forecaster := Forecast()
-		got := observeInputs(forecaster, 10, 10)
+		artifact := datura.Acquire("test", datura.APPJSON).
+			Poke(10, "sample").
+			Poke(10, "paired")
+		err := transport.NewFlipFlop(artifact, forecaster)
+
+		So(err, ShouldBeNil)
+
+		got := datura.Peek[float64](artifact, "output", "value")
 
 		Convey("It should return unit scale", func() {
-			So(float64(got), ShouldEqual, 1)
+			So(got, ShouldEqual, 1)
 			So(forecaster.Scale(), ShouldEqual, 1)
 		})
 	})
 
 	Convey("Given forecast history", testingTB, func() {
 		forecaster := Forecast()
-		_ = observeInputs(forecaster, 10, 10)
-		_ = observeInputs(forecaster, 10, 15)
+		artifact := datura.Acquire("test", datura.APPJSON)
+
+		artifact.Poke(10, "sample").Poke(10, "paired")
+		err := transport.NewFlipFlop(artifact, forecaster)
+
+		So(err, ShouldBeNil)
+
+		artifact.Poke(10, "sample").Poke(15, "paired")
+		err = transport.NewFlipFlop(artifact, forecaster)
+
+		So(err, ShouldBeNil)
 
 		Convey("It should expose scale for feedback", func() {
 			So(forecaster.Scale(), ShouldBeGreaterThan, 1)
@@ -69,13 +89,22 @@ func TestForecaster_ObserveSamples(testingTB *testing.T) {
 func TestForecaster_Reset(testingTB *testing.T) {
 	Convey("Given a forecaster with state", testingTB, func() {
 		forecaster := Forecast()
-		_ = observeInputs(forecaster, 10, 10)
+		artifact := datura.Acquire("test", datura.APPJSON).
+			Poke(10, "sample").
+			Poke(10, "paired")
+		err := transport.NewFlipFlop(artifact, forecaster)
 
+		So(err, ShouldBeNil)
 		So(forecaster.Reset(), ShouldBeNil)
+
+		fresh := datura.Acquire("test", datura.APPJSON)
+		err = transport.NewFlipFlop(fresh, forecaster)
+
+		So(err, ShouldBeNil)
 
 		Convey("It should clear derived state", func() {
 			So(forecaster.state.Ready, ShouldBeFalse)
-			So(float64(observeInputs(forecaster)), ShouldEqual, 0)
+			So(datura.Peek[float64](fresh, "output", "value"), ShouldEqual, 0)
 		})
 	})
 }
@@ -85,12 +114,32 @@ func TestForecaster_learningComposition(testingTB *testing.T) {
 		trustWeight := Weight()
 		calibrator := SampleRatio()
 		forecaster := Forecast()
+		artifact := datura.Acquire("test", datura.APPJSON)
 
-		_ = observeInputs(trustWeight, 10, 10)
-		_ = observeInputs(calibrator, 10, 10)
-		_ = observeInputs(calibrator, 10, 15)
-		_ = observeInputs(forecaster, 10, 10)
-		_ = observeInputs(forecaster, 10, 15)
+		artifact.Poke(10, "sample").Poke(10, "paired")
+		err := transport.NewFlipFlop(artifact, trustWeight)
+
+		So(err, ShouldBeNil)
+
+		artifact.Poke(10, "sample").Poke(10, "paired")
+		err = transport.NewFlipFlop(artifact, calibrator)
+
+		So(err, ShouldBeNil)
+
+		artifact.Poke(10, "sample").Poke(15, "paired")
+		err = transport.NewFlipFlop(artifact, calibrator)
+
+		So(err, ShouldBeNil)
+
+		artifact.Poke(10, "sample").Poke(10, "paired")
+		err = transport.NewFlipFlop(artifact, forecaster)
+
+		So(err, ShouldBeNil)
+
+		artifact.Poke(10, "sample").Poke(15, "paired")
+		err = transport.NewFlipFlop(artifact, forecaster)
+
+		So(err, ShouldBeNil)
 
 		Convey("It should raise learned scale", func() {
 			So(forecaster.Scale(), ShouldBeGreaterThan, 1)
@@ -100,13 +149,22 @@ func TestForecaster_learningComposition(testingTB *testing.T) {
 
 func TestForecaster_withAdaptiveSignal(testingTB *testing.T) {
 	Convey("Given EMA and forecast feedback", testingTB, func() {
-		exponential := adaptive.NewEMA()
+		exponential := adaptive.NewEMA(nil)
 		forecaster := Forecast()
-		level, _ := tests.PipelineSample([]io.ReadWriter{exponential}, 10)
+		signal := datura.Acquire("test", datura.APPJSON).Poke(10, "sample")
+		err := transport.NewFlipFlop(signal, exponential)
+
+		So(err, ShouldBeNil)
+
+		level := datura.Peek[float64](signal, "output", "value")
 
 		Convey("When comparing EMA level to the outcome", func() {
-			_ = observeWithWork(forecaster, level, 12)
+			outcome := datura.Acquire("test", datura.APPJSON).
+				Poke(level, "sample").
+				Poke(12, "paired")
+			err := transport.NewFlipFlop(outcome, forecaster)
 
+			So(err, ShouldBeNil)
 			So(forecaster.Scale(), ShouldBeGreaterThan, 0)
 		})
 	})
@@ -114,12 +172,16 @@ func TestForecaster_withAdaptiveSignal(testingTB *testing.T) {
 
 func BenchmarkForecast_Observe(testingTB *testing.B) {
 	forecaster := Forecast()
-	_ = observeInputs(forecaster, 10, 10)
+	artifact := datura.Acquire("test", datura.APPJSON)
+
+	artifact.Poke(10, "sample").Poke(10, "paired")
+	_ = transport.NewFlipFlop(artifact, forecaster)
 
 	testingTB.ReportAllocs()
 
 	for testingTB.Loop() {
-		_ = observeInputs(forecaster, 10, 11)
+		artifact.Poke(10, "sample").Poke(11, "paired")
+		_ = transport.NewFlipFlop(artifact, forecaster)
 	}
 }
 

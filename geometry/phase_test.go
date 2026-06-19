@@ -4,6 +4,8 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/datura"
+	"github.com/theapemachine/datura/transport"
 )
 
 func TestCoupling_Observe(testingTB *testing.T) {
@@ -23,28 +25,51 @@ func TestCoupling_Observe(testingTB *testing.T) {
 
 		Convey("Given "+testCase.name, testingTB, func() {
 			stage := NewCoupling()
-			got := observeInputs(stage, testCase.left, testCase.right)
+			artifact := datura.Acquire("test", datura.APPJSON).
+				Poke(testCase.left, "sample").
+				Poke(testCase.right, "paired")
+			err := transport.NewFlipFlop(artifact, stage)
+
+			So(err, ShouldBeNil)
+
+			got := datura.Peek[float64](artifact, "output", "value")
 
 			Convey("It should return the expected coupling", func() {
-				So(float64(got), ShouldAlmostEqual, testCase.expect, 1e-9)
+				So(got, ShouldAlmostEqual, testCase.expect, 1e-9)
 			})
 		})
 	}
 
 	Convey("Given empty Observe inputs", testingTB, func() {
 		stage := NewCoupling()
+		artifact := datura.Acquire("test", datura.APPJSON)
+		err := transport.NewFlipFlop(artifact, stage)
+
+		So(err, ShouldBeNil)
 
 		Convey("It should return zero output", func() {
-			So(observeInputs(stage), ShouldEqual, 0)
+			So(datura.Peek[float64](artifact, "output", "value"), ShouldEqual, 0)
 		})
 	})
 
 	Convey("Given a non-scalar first input", testingTB, func() {
 		stage := NewCoupling()
-		before := observeInputs(stage, 2, 2)
+		artifact := datura.Acquire("test", datura.APPJSON)
+
+		artifact.Poke(2, "sample").Poke(2, "paired")
+		err := transport.NewFlipFlop(artifact, stage)
+
+		So(err, ShouldBeNil)
+
+		before := datura.Peek[float64](artifact, "output", "value")
+
+		fresh := datura.Acquire("test", datura.APPJSON)
+		err = transport.NewFlipFlop(fresh, stage)
+
+		So(err, ShouldBeNil)
 
 		Convey("It should leave output unchanged", func() {
-			So(observeWithoutSample(stage, 0), ShouldEqual, before)
+			So(datura.Peek[float64](fresh, "output", "value"), ShouldEqual, before)
 		})
 	})
 }
@@ -52,12 +77,21 @@ func TestCoupling_Observe(testingTB *testing.T) {
 func TestCoupling_Reset(testingTB *testing.T) {
 	Convey("Given an observed coupling stage", testingTB, func() {
 		stage := NewCoupling()
-		_ = observeInputs(stage, 2, 2)
+		artifact := datura.Acquire("test", datura.APPJSON).
+			Poke(2, "sample").
+			Poke(2, "paired")
+		err := transport.NewFlipFlop(artifact, stage)
 
+		So(err, ShouldBeNil)
 		So(stage.Reset(), ShouldBeNil)
 
+		fresh := datura.Acquire("test", datura.APPJSON)
+		err = transport.NewFlipFlop(fresh, stage)
+
+		So(err, ShouldBeNil)
+
 		Convey("It should clear output", func() {
-			So(float64(observeInputs(stage)), ShouldEqual, 0)
+			So(datura.Peek[float64](fresh, "output", "value"), ShouldEqual, 0)
 		})
 	})
 }
@@ -65,16 +99,31 @@ func TestCoupling_Reset(testingTB *testing.T) {
 func TestVelocity_Observe(testingTB *testing.T) {
 	Convey("Given empty Observe inputs", testingTB, func() {
 		stage := NewVelocity()
+		artifact := datura.Acquire("test", datura.APPJSON)
+		err := transport.NewFlipFlop(artifact, stage)
+
+		So(err, ShouldBeNil)
 
 		Convey("It should return zero output", func() {
-			So(observeInputs(stage), ShouldEqual, 0)
+			So(datura.Peek[float64](artifact, "output", "value"), ShouldEqual, 0)
 		})
 	})
 
 	Convey("Given velocity history", testingTB, func() {
 		stage := NewVelocity()
-		_ = observeInputs(stage, 1)
-		got := observeInputs(stage, 1.5)
+		artifact := datura.Acquire("test", datura.APPJSON)
+
+		artifact.Poke(1, "sample")
+		err := transport.NewFlipFlop(artifact, stage)
+
+		So(err, ShouldBeNil)
+
+		artifact.Poke(1.5, "sample")
+		err = transport.NewFlipFlop(artifact, stage)
+
+		So(err, ShouldBeNil)
+
+		got := datura.Peek[float64](artifact, "output", "value")
 
 		Convey("It should return the velocity", func() {
 			So(got, ShouldAlmostEqual, 0.5, 1e-12)
@@ -83,13 +132,35 @@ func TestVelocity_Observe(testingTB *testing.T) {
 
 	Convey("Given a scalar plus work sample", testingTB, func() {
 		stage := NewVelocity()
-		_ = observeInputs(stage, 1)
+		artifact := datura.Acquire("test", datura.APPJSON)
+
+		artifact.Poke(1, "sample")
+		err := transport.NewFlipFlop(artifact, stage)
+
+		So(err, ShouldBeNil)
 
 		Convey("It should match a single combined scalar", func() {
-			withWork := observeWithWork(stage, 0.5, 1.0)
+			artifact.Poke(1.5, "sample")
+			err := transport.NewFlipFlop(artifact, stage)
+
+			So(err, ShouldBeNil)
+
+			withWork := datura.Peek[float64](artifact, "output", "value")
+
 			expect := NewVelocity()
-			_ = observeInputs(expect, 1)
-			combined := observeInputs(expect, 1.5)
+			expectArtifact := datura.Acquire("test", datura.APPJSON)
+
+			expectArtifact.Poke(1, "sample")
+			err = transport.NewFlipFlop(expectArtifact, expect)
+
+			So(err, ShouldBeNil)
+
+			expectArtifact.Poke(1.5, "sample")
+			err = transport.NewFlipFlop(expectArtifact, expect)
+
+			So(err, ShouldBeNil)
+
+			combined := datura.Peek[float64](expectArtifact, "output", "value")
 
 			So(withWork, ShouldEqual, combined)
 		})
@@ -117,34 +188,47 @@ func TestVelocity_ObserveSamples(testingTB *testing.T) {
 func TestVelocity_Reset(testingTB *testing.T) {
 	Convey("Given an observed velocity stage", testingTB, func() {
 		stage := NewVelocity()
-		_ = observeInputs(stage, 1)
+		artifact := datura.Acquire("test", datura.APPJSON).Poke(1, "sample")
+		err := transport.NewFlipFlop(artifact, stage)
 
+		So(err, ShouldBeNil)
 		So(stage.Reset(), ShouldBeNil)
+
+		fresh := datura.Acquire("test", datura.APPJSON)
+		err = transport.NewFlipFlop(fresh, stage)
+
+		So(err, ShouldBeNil)
 
 		Convey("It should clear derived state", func() {
 			So(stage.ready, ShouldBeFalse)
-			So(observeInputs(stage), ShouldEqual, 0)
+			So(datura.Peek[float64](fresh, "output", "value"), ShouldEqual, 0)
 		})
 	})
 }
 
 func BenchmarkCoupling_Observe(testingTB *testing.B) {
 	stage := NewCoupling()
+	artifact := datura.Acquire("test", datura.APPJSON)
 
 	testingTB.ReportAllocs()
 
 	for testingTB.Loop() {
-		_ = observeInputs(stage, 1.7, -0.9)
+		artifact.Poke(1.7, "sample").Poke(-0.9, "paired")
+		_ = transport.NewFlipFlop(artifact, stage)
 	}
 }
 
 func BenchmarkVelocity_Observe(testingTB *testing.B) {
 	stage := NewVelocity()
-	_ = observeInputs(stage, 1)
+	artifact := datura.Acquire("test", datura.APPJSON)
+
+	artifact.Poke(1, "sample")
+	_ = transport.NewFlipFlop(artifact, stage)
 
 	testingTB.ReportAllocs()
 
 	for testingTB.Loop() {
-		_ = observeInputs(stage, 1.5)
+		artifact.Poke(1.5, "sample")
+		_ = transport.NewFlipFlop(artifact, stage)
 	}
 }

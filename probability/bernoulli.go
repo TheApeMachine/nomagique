@@ -1,7 +1,6 @@
 package probability
 
 import (
-	"encoding/binary"
 	"math"
 
 	"github.com/theapemachine/datura"
@@ -12,7 +11,6 @@ Bernoulli tracks a Beta posterior mean from Bernoulli outcomes.
 */
 type Bernoulli struct {
 	artifact *datura.Artifact
-	state    BetaState
 }
 
 /*
@@ -20,63 +18,89 @@ NewBernoulli returns a Beta-Bernoulli stage ready from its first observation.
 */
 func NewBernoulli() *Bernoulli {
 	return &Bernoulli{
-		artifact: datura.Acquire("bernoulli", datura.Artifact_Type_json),
+		artifact: datura.Acquire("bernoulli", datura.APPJSON).RetainStageAttributes(),
 	}
 }
 
 func (bernoulli *Bernoulli) Write(p []byte) (int, error) {
-	return bernoulli.artifact.Write(p)
+	bootstrap := datura.Peek[datura.Map[float64]](bernoulli.artifact, "output") == nil
+
+	bernoulli.artifact.Clear("sample")
+	bernoulli.artifact.Clear("paired")
+
+	n, err := bernoulli.artifact.Write(p)
+
+	if bootstrap {
+		bernoulli.artifact.Clear("output")
+	}
+
+	return n, err
 }
 
 func (bernoulli *Bernoulli) Read(p []byte) (int, error) {
-	rehydrateArtifact(&bernoulli.artifact, "bernoulli", datura.Artifact_Type_json)
+	pairedPresent := attributeKeyPresent(bernoulli.artifact, "paired")
+	samplePresent := attributeKeyPresent(bernoulli.artifact, "sample")
 
-	payload, err := bernoulli.artifact.Payload()
+	if !samplePresent && !pairedPresent {
+		return bernoulli.artifact.Read(p)
+	}
 
-	if err == nil && len(payload) >= 8 {
-		samples := payloadSamples(payload)
+	sample := datura.Peek[float64](bernoulli.artifact, "sample")
 
-		if len(samples) >= 2 {
-			predicted, actual, parseErr := parsePredictedActual(samples[0], samples[1:])
+	output := datura.Peek[datura.Map[float64]](bernoulli.artifact, "output")
+	state := BetaState{}
 
-			if parseErr == nil {
-				derived := ObserveBetaPair(&bernoulli.state, predicted, actual)
-				out := make([]byte, 8)
-				binary.BigEndian.PutUint64(out, math.Float64bits(derived))
-				_ = bernoulli.artifact.SetPayload(out)
-			}
-		}
+	if output != nil {
+		state.Alpha = output["alpha"]
+		state.Beta = output["beta"]
+		state.Prev = output["prev"]
+		state.Min = output["min"]
+		state.Max = output["max"]
+		state.Rate = output["rate"]
+		state.Ready = output["ready"] != 0
+	}
 
-		if len(samples) == 1 {
-			outcome, parseErr := parseBernoulliOutcome(samples[0], nil)
+	value := 0.0
 
-			if parseErr == nil {
-				derived := ObserveBeta(&bernoulli.state, outcome)
-				out := make([]byte, 8)
-				binary.BigEndian.PutUint64(out, math.Float64bits(derived))
-				_ = bernoulli.artifact.SetPayload(out)
-			}
+	if pairedPresent {
+		paired := datura.Peek[float64](bernoulli.artifact, "paired")
+		predicted, actual, parseErr := parsePredictedActual(sample, []float64{paired})
 
-			if parseErr != nil {
-				out := make([]byte, 8)
-				binary.BigEndian.PutUint64(out, math.Float64bits(0))
-				_ = bernoulli.artifact.SetPayload(out)
-			}
+		if parseErr == nil {
+			value = ObserveBetaPair(&state, predicted, actual)
 		}
 	}
+
+	if !pairedPresent {
+		if math.IsNaN(sample) || math.IsInf(sample, 0) {
+			return bernoulli.artifact.Read(p)
+		}
+
+		outcome, parseErr := parseBernoulliOutcome(sample, nil)
+
+		if parseErr == nil {
+			value = ObserveBeta(&state, outcome)
+		}
+	}
+
+	ready := 0.0
+
+	if state.Ready {
+		ready = 1
+	}
+
+	bernoulli.artifact.Poke(datura.Map[float64]{
+		"alpha": state.Alpha,
+		"beta":  state.Beta,
+		"prev":  state.Prev,
+		"min":   state.Min,
+		"max":   state.Max,
+		"rate":  state.Rate,
+		"ready": ready,
+		"value": value,
+	}, "output")
 
 	return bernoulli.artifact.Read(p)
-}
-
-func (bernoulli *Bernoulli) Value() float64 {
-	payload, _ := bernoulli.artifact.Payload()
-	value, ok := payloadScalar(payload)
-
-	if !ok {
-		return 0
-	}
-
-	return value
 }
 
 func (bernoulli *Bernoulli) Close() error {
@@ -87,7 +111,37 @@ func (bernoulli *Bernoulli) Close() error {
 ObserveSamples runs the exact batch kernel over outcomes into out.
 */
 func (bernoulli *Bernoulli) ObserveSamples(outcomes []float64, out []float64) {
-	bernoulli.state.ObserveSamples(outcomes, out)
+	output := datura.Peek[datura.Map[float64]](bernoulli.artifact, "output")
+	state := BetaState{}
+
+	if output != nil {
+		state.Alpha = output["alpha"]
+		state.Beta = output["beta"]
+		state.Prev = output["prev"]
+		state.Min = output["min"]
+		state.Max = output["max"]
+		state.Rate = output["rate"]
+		state.Ready = output["ready"] != 0
+	}
+
+	observeBetaSamples(&state, outcomes, out)
+
+	ready := 0.0
+
+	if state.Ready {
+		ready = 1
+	}
+
+	bernoulli.artifact.Poke(datura.Map[float64]{
+		"alpha": state.Alpha,
+		"beta":  state.Beta,
+		"prev":  state.Prev,
+		"min":   state.Min,
+		"max":   state.Max,
+		"rate":  state.Rate,
+		"ready": ready,
+		"value": posteriorMean(&state),
+	}, "output")
 }
 
 /*
@@ -96,14 +150,44 @@ ObservePairSamples runs the exact batch kernel over pairs into out.
 func (bernoulli *Bernoulli) ObservePairSamples(
 	predicted []float64, actual []float64, out []float64,
 ) {
-	bernoulli.state.ObservePairSamples(predicted, actual, out)
+	output := datura.Peek[datura.Map[float64]](bernoulli.artifact, "output")
+	state := BetaState{}
+
+	if output != nil {
+		state.Alpha = output["alpha"]
+		state.Beta = output["beta"]
+		state.Prev = output["prev"]
+		state.Min = output["min"]
+		state.Max = output["max"]
+		state.Rate = output["rate"]
+		state.Ready = output["ready"] != 0
+	}
+
+	observeBetaPairSamples(&state, predicted, actual, out)
+
+	ready := 0.0
+
+	if state.Ready {
+		ready = 1
+	}
+
+	bernoulli.artifact.Poke(datura.Map[float64]{
+		"alpha": state.Alpha,
+		"beta":  state.Beta,
+		"prev":  state.Prev,
+		"min":   state.Min,
+		"max":   state.Max,
+		"rate":  state.Rate,
+		"ready": ready,
+		"value": posteriorMean(&state),
+	}, "output")
 }
 
 /*
 Reset clears derived state.
 */
 func (bernoulli *Bernoulli) Reset() error {
-	bernoulli.state.Reset()
+	bernoulli.artifact.Clear("output")
 
 	return nil
 }

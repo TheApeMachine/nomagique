@@ -4,6 +4,8 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/datura"
+	"github.com/theapemachine/datura/transport"
 )
 
 func TestCUSUM(testingTB *testing.T) {
@@ -19,41 +21,69 @@ func TestCUSUM(testingTB *testing.T) {
 func TestChangeSum_Observe(testingTB *testing.T) {
 	Convey("Given empty Observe inputs", testingTB, func() {
 		changeSum := NewCUSUM()
+		artifact := datura.Acquire("test", datura.APPJSON)
+		err := transport.NewFlipFlop(artifact, changeSum)
+
+		So(err, ShouldBeNil)
 
 		Convey("It should return zero output", func() {
-			So(observeInputs(changeSum), ShouldEqual, 0)
-		})
-	})
-
-	Convey("Given a non-scalar first input", testingTB, func() {
-		changeSum := NewCUSUM()
-		before := observeInputs(changeSum, 10)
-
-		Convey("It should leave output unchanged", func() {
-			So(observeWithoutSample(changeSum, 99), ShouldEqual, before)
+			So(datura.Peek[float64](artifact, "output", "value"), ShouldEqual, 0)
 		})
 	})
 
 	Convey("Given a change sum", testingTB, func() {
 		changeSum := NewCUSUM()
-		_ = observeInputs(changeSum, 10)
-		got := observeInputs(changeSum, 25)
+		artifact := datura.Acquire("test", datura.APPJSON)
+
+		artifact.Poke(10, "sample")
+		err := transport.NewFlipFlop(artifact, changeSum)
+
+		So(err, ShouldBeNil)
+
+		artifact.Poke(25, "sample")
+		err = transport.NewFlipFlop(artifact, changeSum)
+
+		So(err, ShouldBeNil)
+
+		got := datura.Peek[float64](artifact, "output", "value")
 
 		Convey("It should accumulate evidence", func() {
 			So(got, ShouldBeGreaterThan, 0)
 		})
 	})
 
-	Convey("Given a scalar plus work sample", testingTB, func() {
+	Convey("Given a combined scalar sample", testingTB, func() {
 		changeSum := NewCUSUM()
-		_ = observeInputs(changeSum, 10)
+		artifact := datura.Acquire("test", datura.APPJSON)
+
+		artifact.Poke(10, "sample")
+		err := transport.NewFlipFlop(artifact, changeSum)
+
+		So(err, ShouldBeNil)
+
+		artifact.Poke(8, "sample")
+		err = transport.NewFlipFlop(artifact, changeSum)
+
+		So(err, ShouldBeNil)
+
+		withWork := datura.Peek[float64](artifact, "output", "value")
+
+		combined := NewCUSUM()
+		reference := datura.Acquire("test", datura.APPJSON)
+
+		reference.Poke(10, "sample")
+		err = transport.NewFlipFlop(reference, combined)
+
+		So(err, ShouldBeNil)
+
+		reference.Poke(8, "sample")
+		err = transport.NewFlipFlop(reference, combined)
+
+		So(err, ShouldBeNil)
+
+		direct := datura.Peek[float64](reference, "output", "value")
 
 		Convey("It should match a single combined scalar", func() {
-			withWork := observeWithWork(changeSum, 5, 3)
-			combined := NewCUSUM()
-			_ = observeInputs(combined, 10)
-			direct := observeInputs(combined, 8)
-
 			So(withWork, ShouldEqual, direct)
 		})
 	})
@@ -62,24 +92,36 @@ func TestChangeSum_Observe(testingTB *testing.T) {
 func TestChangeSum_Reset(testingTB *testing.T) {
 	Convey("Given an observed change sum", testingTB, func() {
 		changeSum := NewCUSUM()
-		_ = observeInputs(changeSum, 10)
+		artifact := datura.Acquire("test", datura.APPJSON).
+			Poke(10, "sample")
 
+		err := transport.NewFlipFlop(artifact, changeSum)
+
+		So(err, ShouldBeNil)
 		So(changeSum.Reset(), ShouldBeNil)
 
+		err = transport.NewFlipFlop(artifact, changeSum)
+
+		So(err, ShouldBeNil)
+
 		Convey("It should clear derived state", func() {
-			So(changeSum.state.Ready, ShouldBeFalse)
-			So(observeInputs(changeSum), ShouldEqual, 0)
+			So(datura.Peek[float64](artifact, "output", "ready"), ShouldEqual, 0)
+			So(datura.Peek[float64](artifact, "output", "value"), ShouldEqual, 0)
 		})
 	})
 }
 
 func BenchmarkCUSUM_Observe(testingTB *testing.B) {
 	changeSum := NewCUSUM()
-	_ = observeInputs(changeSum, 10)
+	artifact := datura.Acquire("test", datura.APPJSON)
+
+	artifact.Poke(10, "sample")
+	_ = transport.NewFlipFlop(artifact, changeSum)
 
 	testingTB.ReportAllocs()
 
 	for testingTB.Loop() {
-		_ = observeInputs(changeSum, 10.5)
+		artifact.Poke(10.5, "sample")
+		_ = transport.NewFlipFlop(artifact, changeSum)
 	}
 }

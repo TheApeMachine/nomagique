@@ -6,10 +6,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
-	"github.com/theapemachine/nomagique"
 	"github.com/theapemachine/nomagique/hawkes"
-	"github.com/theapemachine/nomagique/probability"
-	"github.com/theapemachine/nomagique/tests"
 )
 
 func TestExcitationMeasure(testingTB *testing.T) {
@@ -17,38 +14,19 @@ func TestExcitationMeasure(testingTB *testing.T) {
 		excitation := NewExcitation()
 		base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
 		samples := excitationBurstSamples(base, 128)
-		batch := payloadSamples(encodePayload(samples...))
+		inbound := daturaBurstArtifact("ALT/EUR", samples)
+		frame, frameErr := inbound.Message().Marshal()
+
+		So(frameErr, ShouldBeNil)
 
 		for index := range 4 {
-			excitation.outcome = excitation.evaluate("ALT/EUR", batch)
+			_, _ = excitation.Write(frame)
+			_, _ = excitation.Read(make([]byte, 4096))
 			_ = index
 		}
 
 		Convey("It should publish thermal scores", func() {
 			So(excitation.Outcome().Strength, ShouldBeGreaterThan, 0)
-		})
-	})
-}
-
-func TestExcitationClassifier(testingTB *testing.T) {
-	Convey("Given excitation wired into a classifier", testingTB, func() {
-		excitation := NewExcitation()
-		classifier := probability.NewClassifier(
-			excitation.FrenzyReading(),
-			excitation.SaturationReading(),
-			excitation.OrganicReading(),
-			excitation.ExhaustionReading(),
-		)
-		pipeline := nomagique.Number(excitation, classifier)
-		base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
-		inbound := daturaBurstArtifact("BTC/EUR", excitationBurstSamples(base, 128))
-		frame, _ := inbound.Message().Marshal()
-
-		_, _ = pipeline.Write(frame)
-		_, _ = pipeline.Read(make([]byte, 4096))
-
-		Convey("It should select a category", func() {
-			So(classifier.CategoryIndex(), ShouldBeGreaterThan, 0)
 		})
 	})
 }
@@ -131,7 +109,7 @@ func excitationBurstSamples(base time.Time, count int) []float64 {
 func daturaBurstArtifact(scope string, samples []float64) *datura.Artifact {
 	inbound := datura.Acquire("excitation-test", datura.Artifact_Type_json)
 	inbound.WithScope(scope)
-	_ = inbound.SetPayload(encodePayload(samples...))
+	inbound.WithPayload(encodePayload(samples...))
 
 	return inbound
 }
@@ -140,11 +118,14 @@ func BenchmarkExcitationRead(b *testing.B) {
 	excitation := NewExcitation()
 	base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
 	samples := excitationBurstSamples(base, 128)
+	inbound := daturaBurstArtifact("ALT/EUR", samples)
+	frame, _ := inbound.Message().Marshal()
+	readFrame := make([]byte, 4096)
 
 	b.ReportAllocs()
 
 	for b.Loop() {
-		_ = tests.WriteSamples(excitation, samples...)
-		_, _ = excitation.Read(make([]byte, 4096))
+		_, _ = excitation.Write(frame)
+		_, _ = excitation.Read(readFrame)
 	}
 }

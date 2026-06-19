@@ -1,15 +1,13 @@
 package statistic
 
 import (
-	"encoding/binary"
 	"math"
 
 	"github.com/theapemachine/datura"
-	"gonum.org/v1/gonum/floats"
 )
 
 /*
-Max returns the largest value in a batch passed to Read.
+Max tracks the largest streamed sample.
 */
 type Max struct {
 	artifact *datura.Artifact
@@ -20,36 +18,52 @@ NewMax creates a max stage.
 */
 func NewMax() *Max {
 	return &Max{
-		artifact: datura.Acquire("max", datura.Artifact_Type_json),
+		artifact: datura.Acquire("max", datura.APPJSON).RetainStageAttributes(),
 	}
-}
-
-func (max *Max) Write(p []byte) (int, error) {
-	return max.artifact.Write(p)
 }
 
 func (max *Max) Read(p []byte) (int, error) {
-	payload, err := max.artifact.Payload()
+	sample := datura.Peek[float64](max.artifact, "sample")
 
-	if err == nil && len(payload) >= 8 && len(payload)%8 == 0 {
-		count := len(payload) / 8
-		values := make([]float64, count)
+	if math.IsNaN(sample) || math.IsInf(sample, 0) {
+		return max.artifact.Read(p)
+	}
 
-		for index := range count {
-			offset := index * 8
-			values[index] = math.Float64frombits(binary.BigEndian.Uint64(payload[offset : offset+8]))
+	output := datura.Peek[datura.Map[float64]](max.artifact, "output")
+
+	if output == nil {
+		output = datura.Map[float64]{
+			"value": sample,
 		}
 
-		putFloat64Payload(&max.artifact, "max", floats.Max(values))
+		max.artifact.Poke(output, "output")
+
+		return max.artifact.Read(p)
 	}
+
+	if sample > output["value"] {
+		output["value"] = sample
+	}
+
+	max.artifact.Poke(output, "output")
 
 	return max.artifact.Read(p)
 }
 
-func (max *Max) Close() error {
-	return nil
+func (max *Max) Write(p []byte) (int, error) {
+	bootstrap := datura.Peek[datura.Map[float64]](max.artifact, "output") == nil
+
+	max.artifact.Clear("sample")
+
+	n, err := max.artifact.Write(p)
+
+	if bootstrap {
+		max.artifact.Clear("output")
+	}
+
+	return n, err
 }
 
-func (max *Max) Reset() error {
+func (max *Max) Close() error {
 	return nil
 }

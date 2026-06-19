@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/datura"
 	"github.com/theapemachine/nomagique/tests"
 )
 
@@ -17,13 +18,17 @@ func TestBookQualityToxicBluff(testingTB *testing.T) {
 			0.15, 0.8, 0, 2,
 			100,
 		)
+
 		So(writeErr, ShouldBeNil)
-		_, _ = bookQuality.Read(make([]byte, 4096))
+
+		frame := make([]byte, 4096)
+		_, _ = bookQuality.Read(frame)
+		outbound := datura.Acquire("test-out", datura.APPJSON)
+		_, _ = outbound.Write(frame)
 
 		Convey("It should classify toxic bluff", func() {
-			So(bookQuality.outcome.Eligible, ShouldBeTrue)
-			So(bookQuality.outcome.Category, ShouldEqual, 1)
-			So(bookQuality.outcome.Strength, ShouldEqual, 4.5)
+			So(int(datura.Peek[float64](outbound, "output", "category")), ShouldEqual, 1)
+			So(datura.Peek[float64](outbound, "output", "value"), ShouldEqual, 4.5)
 		})
 	})
 }
@@ -38,12 +43,17 @@ func TestBookQualityLiquidityVacuum(testingTB *testing.T) {
 			0.15, 0, 0, 2,
 			50000,
 		)
+
 		So(writeErr, ShouldBeNil)
-		_, _ = bookQuality.Read(make([]byte, 4096))
+
+		frame := make([]byte, 4096)
+		_, _ = bookQuality.Read(frame)
+		outbound := datura.Acquire("test-out", datura.APPJSON)
+		_, _ = outbound.Write(frame)
 
 		Convey("It should classify liquidity vacuum", func() {
-			So(bookQuality.outcome.Category, ShouldEqual, 2)
-			So(bookQuality.outcome.Strength, ShouldBeGreaterThan, 0)
+			So(int(datura.Peek[float64](outbound, "output", "category")), ShouldEqual, 2)
+			So(datura.Peek[float64](outbound, "output", "value"), ShouldBeGreaterThan, 0)
 		})
 	})
 }
@@ -58,12 +68,17 @@ func TestBookQualityHardSupport(testingTB *testing.T) {
 			0.15, 0, 0, 1,
 			100,
 		)
+
 		So(writeErr, ShouldBeNil)
-		_, _ = bookQuality.Read(make([]byte, 4096))
+
+		frame := make([]byte, 4096)
+		_, _ = bookQuality.Read(frame)
+		outbound := datura.Acquire("test-out", datura.APPJSON)
+		_, _ = outbound.Write(frame)
 
 		Convey("It should classify hard support", func() {
-			So(bookQuality.outcome.Category, ShouldEqual, 3)
-			So(bookQuality.outcome.Strength, ShouldEqual, 1)
+			So(int(datura.Peek[float64](outbound, "output", "category")), ShouldEqual, 3)
+			So(datura.Peek[float64](outbound, "output", "value"), ShouldEqual, 1)
 		})
 	})
 }
@@ -77,11 +92,12 @@ func BenchmarkBookQualityRead(b *testing.B) {
 		0.15, 0, 0, 2,
 		50000,
 	}
+	frame := make([]byte, 4096)
 
 	b.ReportAllocs()
 
 	for b.Loop() {
 		_ = tests.WriteSamples(bookQuality, samples...)
-		_, _ = bookQuality.Read(make([]byte, 4096))
+		_, _ = bookQuality.Read(frame)
 	}
 }

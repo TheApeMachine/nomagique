@@ -1,9 +1,8 @@
 package correlation
 
 import (
-	"io"
-
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/datura/transport"
 )
 
 /*
@@ -30,7 +29,6 @@ WindowSet holds one live interval series and materializes tier views on demand.
 type WindowSet struct {
 	artifact *datura.Artifact
 	series   *IntervalSeries
-	output   float64
 }
 
 /*
@@ -38,13 +36,24 @@ NewWindowSet creates a window set backed by a bounded interval series.
 */
 func NewWindowSet(capacity int) *WindowSet {
 	return &WindowSet{
-		artifact: datura.Acquire("window-set", datura.Artifact_Type_json),
+		artifact: datura.Acquire("window-set", datura.APPJSON).RetainStageAttributes(),
 		series:   NewIntervalSeries(capacity),
 	}
 }
 
 func (windowSet *WindowSet) Write(p []byte) (int, error) {
-	return windowSet.artifact.Write(p)
+	bootstrap := datura.Peek[datura.Map[float64]](windowSet.artifact, "output") == nil
+
+	windowSet.artifact.Clear("sample")
+	windowSet.artifact.Clear("paired")
+
+	n, err := windowSet.artifact.Write(p)
+
+	if bootstrap {
+		windowSet.artifact.Clear("output")
+	}
+
+	return n, err
 }
 
 func (windowSet *WindowSet) Read(p []byte) (int, error) {
@@ -52,27 +61,26 @@ func (windowSet *WindowSet) Read(p []byte) (int, error) {
 		return windowSet.artifact.Read(p)
 	}
 
-	inbound, inboundOK := artifactBytes(windowSet.artifact)
+	level := datura.Peek[float64](windowSet.artifact, "paired")
 
-	if !inboundOK {
+	if level <= 0 {
 		return windowSet.artifact.Read(p)
 	}
 
-	_, writeErr := windowSet.series.Write(inbound)
+	inbound := datura.Acquire("inbound", datura.APPJSON).
+		Poke(datura.Peek[float64](windowSet.artifact, "sample"), "sample").
+		Poke(level, "paired")
 
-	if writeErr != nil {
+	err := transport.NewFlipFlop(inbound, windowSet.series)
+
+	if err != nil {
 		return windowSet.artifact.Read(p)
 	}
 
-	outBuf := make([]byte, 4096)
-	_, readErr := windowSet.series.Read(outBuf)
-
-	if readErr != nil && readErr != io.EOF && readErr != io.ErrShortBuffer {
-		return windowSet.artifact.Read(p)
-	}
-
-	windowSet.output = seriesOutput(windowSet.series)
-	putFloat64Payload(&windowSet.artifact, "window-set", windowSet.output)
+	windowSet.artifact.Poke(
+		datura.Map[float64]{"value": windowSet.series.LastReturnMagnitude()},
+		"output",
+	)
 
 	return windowSet.artifact.Read(p)
 }
@@ -86,7 +94,7 @@ func (windowSet *WindowSet) Reset() error {
 		return nil
 	}
 
-	windowSet.output = 0
+	windowSet.artifact.Clear("output")
 
 	return windowSet.series.Reset()
 }

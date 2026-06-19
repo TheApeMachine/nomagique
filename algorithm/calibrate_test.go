@@ -8,36 +8,27 @@ import (
 
 func TestCalibrate_Observe(testingTB *testing.T) {
 	Convey("Given a linear feature-target relation", testingTB, func() {
-		feature := make([]float64, 32)
-		target := make([]float64, 32)
-
-		for index := range feature {
-			feature[index] = float64(index) / 32
-			target[index] = 2*feature[index] + 1
-		}
-
-		calibrate, err := NewCalibrate(
-			[][]float64{feature},
-			target,
-			1000,
-			1,
-		)
+		calibrate, err := NewCalibrate(1, 1000)
 
 		So(err, ShouldBeNil)
 
-		residual := observeInputs(calibrate)
+		var prediction float64
+
+		for index := range 32 {
+			feature := float64(index) / 32
+			target := 2*feature + 1
+			prediction = observeInputs(calibrate, feature, target)
+		}
 
 		Convey("It should converge to a small residual", func() {
-			So(float64(residual), ShouldBeLessThan, 0.25)
-			So(len(calibrate.Coefficients()), ShouldEqual, 2)
-			So(float64(calibrate.ConditionNumber()), ShouldBeGreaterThan, 0)
+			So(prediction, ShouldAlmostEqual, 2, 0.25)
 		})
 	})
 }
 
 func TestNewCalibrate(testingTB *testing.T) {
-	Convey("Given no feature streams", testingTB, func() {
-		_, err := NewCalibrate(nil, []float64{1}, 1000, 1)
+	Convey("Given a non-positive dimension", testingTB, func() {
+		_, err := NewCalibrate(0, 1000)
 
 		Convey("It should return an error", func() {
 			So(err, ShouldNotBeNil)
@@ -46,20 +37,7 @@ func TestNewCalibrate(testingTB *testing.T) {
 }
 
 func BenchmarkCalibrate_Observe(testingTB *testing.B) {
-	feature := make([]float64, 32)
-	target := make([]float64, 32)
-
-	for index := range feature {
-		feature[index] = float64(index) / 32
-		target[index] = 2*feature[index] + 1
-	}
-
-	calibrate, err := NewCalibrate(
-		[][]float64{feature},
-		target,
-		1000,
-		1,
-	)
+	calibrate, err := NewCalibrate(1, 1000)
 
 	if err != nil {
 		testingTB.Fatal(err)
@@ -68,6 +46,6 @@ func BenchmarkCalibrate_Observe(testingTB *testing.B) {
 	testingTB.ReportAllocs()
 
 	for testingTB.Loop() {
-		_ = observeInputs(calibrate)
+		_ = observeInputs(calibrate, 0.5, 2)
 	}
 }

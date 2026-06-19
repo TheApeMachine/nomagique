@@ -1,6 +1,8 @@
-package algorithm
+package causal
 
 import (
+	"math"
+
 	"github.com/theapemachine/datura"
 )
 
@@ -36,7 +38,7 @@ func NewNodeRing(nodeCount int, capacity int) *NodeRing {
 	}
 
 	return &NodeRing{
-		artifact:  datura.Acquire("node-ring", datura.Artifact_Type_json),
+		artifact:  datura.Acquire("node-ring", datura.APPJSON).RetainStageAttributes(),
 		nodeCount: nodeCount,
 		capacity:  capacity,
 		streams:   streams,
@@ -44,38 +46,48 @@ func NewNodeRing(nodeCount int, capacity int) *NodeRing {
 }
 
 func (nodeRing *NodeRing) Write(p []byte) (int, error) {
-	return nodeRing.artifact.Write(p)
+	bootstrap := datura.Peek[datura.Map[float64]](nodeRing.artifact, "output") == nil
+
+	nodeRing.artifact.Clear("sample")
+	nodeRing.artifact.Clear("batch")
+
+	n, err := nodeRing.artifact.Write(p)
+
+	if bootstrap {
+		nodeRing.artifact.Clear("output")
+	}
+
+	return n, err
 }
 
 func (nodeRing *NodeRing) Read(p []byte) (int, error) {
-	rehydrateArtifact(&nodeRing.artifact, "node-ring", datura.Artifact_Type_json)
+	row := datura.Peek[[]float64](nodeRing.artifact, "batch")
+	output := datura.Map[float64]{"value": 0}
 
-	payload, err := nodeRing.artifact.Payload()
+	if len(row) == nodeRing.nodeCount {
+		for nodeIndex, sample := range row {
+			if math.IsNaN(sample) || math.IsInf(sample, 0) {
+				nodeRing.artifact.Poke(output, "output")
 
-	if err == nil {
-		row := payloadSamples(payload)
-
-		if len(row) == nodeRing.nodeCount {
-			for nodeIndex, sample := range row {
-				stream := nodeRing.streams[nodeIndex]
-				stream = append(stream, sample)
-
-				if len(stream) > nodeRing.capacity {
-					stream = stream[len(stream)-nodeRing.capacity:]
-				}
-
-				nodeRing.streams[nodeIndex] = stream
+				return nodeRing.artifact.Read(p)
 			}
 
-			out := encodePayload(row[nodeRing.nodeCount-1])
-			_ = nodeRing.artifact.SetPayload(out)
+			stream := nodeRing.streams[nodeIndex]
+			stream = append(stream, sample)
+
+			if len(stream) > nodeRing.capacity {
+				stream = stream[len(stream)-nodeRing.capacity:]
+			}
+
+			nodeRing.streams[nodeIndex] = stream
 		}
 
-		if len(row) != nodeRing.nodeCount {
-			out := encodePayload(0)
-			_ = nodeRing.artifact.SetPayload(out)
-		}
+		output["value"] = row[nodeRing.nodeCount-1]
 	}
+
+	pokeTable(nodeRing.artifact, nodeRing.streams)
+
+	nodeRing.artifact.Poke(output, "output")
 
 	return nodeRing.artifact.Read(p)
 }
@@ -119,22 +131,4 @@ func (nodeRing *NodeRing) Reset() error {
 	}
 
 	return nil
-}
-
-func alignedStreamLength(streams [][]float64) int {
-	length := 0
-
-	for nodeIndex := range streams {
-		streamLength := len(streams[nodeIndex])
-
-		if streamLength == 0 {
-			return 0
-		}
-
-		if length == 0 || streamLength < length {
-			length = streamLength
-		}
-	}
-
-	return length
 }

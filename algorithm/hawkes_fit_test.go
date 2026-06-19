@@ -5,6 +5,7 @@ import (
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/datura"
 	"github.com/theapemachine/nomagique/hawkes"
 )
 
@@ -24,15 +25,26 @@ func TestHawkesFit_Observe(testingTB *testing.T) {
 		}
 
 		horizon := float64(start.Add(4 * time.Second).UnixNano())
-		fitProcess := NewHawkesFit(xTimes, yTimes, horizon, hawkes.BivariateFit{})
+		fitProcess := NewHawkesFit(horizon, hawkes.BivariateFit{})
+		inbound := datura.Acquire("hawkes-fit-test", datura.APPJSON).
+			Poke(float64(len(xTimes)), "config", "xCount").
+			Poke(float64(len(yTimes)), "config", "yCount").
+			WithPayload(encodePayload(append(xTimes, yTimes...)...))
+		frame, frameErr := inbound.Message().Marshal()
 
-		excitation := observeInputs(fitProcess)
-		fit, ok := fitProcess.Fit()
+		So(frameErr, ShouldBeNil)
+
+		_, writeErr := fitProcess.Write(frame)
+
+		So(writeErr, ShouldBeNil)
+
+		readFrame := make([]byte, 4096)
+		_, _ = fitProcess.Read(readFrame)
+		outbound := datura.Acquire("test-out", datura.APPJSON)
+		_, _ = outbound.Write(readFrame)
 
 		Convey("It should fit and return a positive excitation ratio", func() {
-			So(ok, ShouldBeTrue)
-			So(fit.MuX, ShouldBeGreaterThan, 0)
-			So(excitation, ShouldBeGreaterThan, 0)
+			So(datura.Peek[float64](outbound, "output", "value"), ShouldBeGreaterThan, 0)
 		})
 	})
 }
@@ -48,11 +60,18 @@ func BenchmarkHawkesFit_Observe(testingTB *testing.B) {
 	}
 
 	horizon := float64(start.Add(4 * time.Second).UnixNano())
-	fitProcess := NewHawkesFit(xTimes, yTimes, horizon, hawkes.BivariateFit{})
+	fitProcess := NewHawkesFit(horizon, hawkes.BivariateFit{})
+	inbound := datura.Acquire("hawkes-fit-bench", datura.APPJSON).
+		Poke(float64(len(xTimes)), "config", "xCount").
+		Poke(float64(len(yTimes)), "config", "yCount").
+		WithPayload(encodePayload(append(xTimes, yTimes...)...))
+	frame, _ := inbound.Message().Marshal()
+	readFrame := make([]byte, 4096)
 
 	testingTB.ReportAllocs()
 
 	for testingTB.Loop() {
-		_ = observeInputs(fitProcess)
+		_, _ = fitProcess.Write(frame)
+		_, _ = fitProcess.Read(readFrame)
 	}
 }

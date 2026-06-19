@@ -4,8 +4,11 @@ import (
 	"math"
 	"time"
 
+	"github.com/theapemachine/datura"
+	"github.com/theapemachine/datura/transport"
 	"github.com/theapemachine/nomagique/probability"
 	"github.com/theapemachine/nomagique/statistic"
+	"gonum.org/v1/gonum/stat"
 )
 
 const (
@@ -150,34 +153,64 @@ func maxFloat(left, right float64) float64 {
 BookGates derives classification thresholds from observation rings.
 */
 type BookGates struct {
-	ChurnRatios     *statistic.ObservationRing
-	FillMatchRatios *statistic.ObservationRing
-	CancelQtys      *statistic.ObservationRing
-	LevelSizeFracs  *statistic.ObservationRing
-	VacuumRatios    *statistic.ObservationRing
+	ChurnRatios     gateChannel
+	FillMatchRatios gateChannel
+	CancelQtys      gateChannel
+	LevelSizeFracs  gateChannel
+	VacuumRatios    gateChannel
+}
+
+type gateChannel struct {
+	artifact *datura.Artifact
+	ring     *statistic.ObservationRing
+	quantile *statistic.Quantile
+}
+
+func newGateChannel(percentile float64) gateChannel {
+	return gateChannel{
+		artifact: datura.Acquire("book-gate", datura.APPJSON),
+		ring:     statistic.NewObservationRing(),
+		quantile: statistic.NewQuantile(percentile, stat.LinInterp),
+	}
+}
+
+func (channel gateChannel) observe(value float64) {
+	channel.artifact.Poke(value, "sample")
+	_ = transport.NewFlipFlop(channel.artifact, channel.ring)
+}
+
+func (channel gateChannel) len() int {
+	return len(datura.Peek[[]float64](channel.artifact, "history"))
+}
+
+func (channel gateChannel) quantileValue() float64 {
+	channel.artifact.Poke(math.NaN(), "sample")
+	_ = transport.NewFlipFlop(channel.artifact, channel.quantile)
+
+	return datura.Peek[float64](channel.artifact, "output", "value")
 }
 
 func NewBookGates() *BookGates {
 	return &BookGates{
-		ChurnRatios:     statistic.NewObservationRing(),
-		FillMatchRatios: statistic.NewObservationRing(),
-		CancelQtys:      statistic.NewObservationRing(),
-		LevelSizeFracs:  statistic.NewObservationRing(),
-		VacuumRatios:    statistic.NewObservationRing(),
+		ChurnRatios:     newGateChannel(0.75),
+		FillMatchRatios: newGateChannel(0.5),
+		CancelQtys:      newGateChannel(0.5),
+		LevelSizeFracs:  newGateChannel(0.75),
+		VacuumRatios:    newGateChannel(0.9),
 	}
 }
 
 func (gates *BookGates) ChurnRatioGate() float64 {
-	if gates.ChurnRatios.Len() >= 3 {
-		return gates.ChurnRatios.Quantile(0.75)
+	if gates.ChurnRatios.len() >= 3 {
+		return gates.ChurnRatios.quantileValue()
 	}
 
 	return 0
 }
 
 func (gates *BookGates) FillCoverageGate() float64 {
-	if gates.FillMatchRatios.Len() >= 3 {
-		return gates.FillMatchRatios.Quantile(0.5)
+	if gates.FillMatchRatios.len() >= 3 {
+		return gates.FillMatchRatios.quantileValue()
 	}
 
 	return 1
@@ -188,12 +221,12 @@ func (gates *BookGates) LargeBlockQtyThreshold(sideDepth float64, medianLevelQty
 		return mathInf(1)
 	}
 
-	if gates.CancelQtys.Len() >= 3 {
-		return gates.CancelQtys.Quantile(0.5)
+	if gates.CancelQtys.len() >= 3 {
+		return gates.CancelQtys.quantileValue()
 	}
 
-	if gates.LevelSizeFracs.Len() >= 3 {
-		frac := gates.LevelSizeFracs.Quantile(0.75)
+	if gates.LevelSizeFracs.len() >= 3 {
+		frac := gates.LevelSizeFracs.quantileValue()
 
 		return frac * sideDepth
 	}
@@ -210,8 +243,8 @@ func (gates *BookGates) VacuumStrengthLimit(threshold, peakVacuumRatio float64) 
 		return 1
 	}
 
-	if gates.VacuumRatios.Len() >= 3 {
-		peak := gates.VacuumRatios.Quantile(0.9)
+	if gates.VacuumRatios.len() >= 3 {
+		peak := gates.VacuumRatios.quantileValue()
 
 		return maxFloat(peak/threshold, peak)
 	}
@@ -224,11 +257,14 @@ func (gates *BookGates) VacuumStrengthLimit(threshold, peakVacuumRatio float64) 
 }
 
 func (gates *BookGates) SupportRatioGate(threshold float64) float64 {
-	if threshold <= 0 || gates.VacuumRatios.Len() < 3 {
+	if threshold <= 0 || gates.VacuumRatios.len() < 3 {
 		return 0
 	}
 
-	low := gates.VacuumRatios.Quantile(0.25)
+	channel := newGateChannel(0.25)
+	channel.artifact = gates.VacuumRatios.artifact
+	channel.quantile = statistic.NewQuantile(0.25, stat.LinInterp)
+	low := channel.quantileValue()
 
 	return low / threshold
 }

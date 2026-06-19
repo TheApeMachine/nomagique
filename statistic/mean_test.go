@@ -1,76 +1,69 @@
 package statistic
 
 import (
+	"io"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/datura"
+	"github.com/theapemachine/datura/transport"
 )
 
-func TestNewMean(testingTB *testing.T) {
-	Convey("Given NewMean", testingTB, func() {
-		mean := NewMean(nil)
+var meanInput = datura.Acquire("test", datura.APPJSON).Poke(1, "sample")
 
-		Convey("It should return a usable stage", func() {
-			So(mean, ShouldNotBeNil)
+func TestMeanRead(t *testing.T) {
+	Convey("Given a Mean", t, func() {
+		mean := NewMean()
+		_, err := io.Copy(mean, meanInput)
+
+		So(err, ShouldBeNil)
+
+		Convey("When Read is called", func() {
+			_, err := mean.Read([]byte{1, 2, 3})
+			So(err, ShouldBeNil)
+			So(datura.Peek[float64](mean.artifact, "output", "value"), ShouldEqual, 1)
 		})
 	})
 }
 
-func TestMean_Observe(testingTB *testing.T) {
-	cases := []struct {
-		name    string
-		samples []float64
-		expect  float64
-	}{
-		{"uniform batch", []float64{1, 2, 3, 4}, 2.5},
-		{"negative mix", []float64{-4, 8}, 2},
-		{"single value", []float64{5}, 5},
-		{"empty input", nil, 0},
-	}
+func TestMeanWrite(t *testing.T) {
+	Convey("Given a Mean", t, func() {
+		mean := NewMean()
 
-	for _, testCase := range cases {
-		testCase := testCase
-
-		Convey("Given "+testCase.name, testingTB, func() {
-			mean := NewMean(nil)
-			got := observeInputs(mean, testCase.samples...)
-
-			Convey("It should return the expected mean", func() {
-				So(float64(got), ShouldEqual, testCase.expect)
-			})
-		})
-	}
-
-	Convey("Given weighted samples", testingTB, func() {
-		mean := NewMean([]float64{1, 1, 1, 3})
-		got := observeInputs(mean, 10, 10, 10, 30)
-
-		Convey("It should apply weights", func() {
-			So(float64(got), ShouldEqual, 20)
+		Convey("When Write is called", func() {
+			_, err := io.Copy(mean, meanInput)
+			So(err, ShouldBeNil)
 		})
 	})
 }
 
-func TestMean_Reset(testingTB *testing.T) {
-	Convey("Given an observed mean", testingTB, func() {
-		mean := NewMean([]float64{1, 2})
-		_ = observeInputs(mean, 1, 2)
+func TestMeanSeries(t *testing.T) {
+	Convey("Given a sample series", t, func() {
+		mean := NewMean()
+		artifact := datura.Acquire("test", datura.APPJSON)
 
-		So(mean.Reset(), ShouldBeNil)
+		for _, sample := range []float64{1, 2, 3, 4} {
+			artifact.Poke(sample, "sample")
+			err := transport.NewFlipFlop(artifact, mean)
 
-		Convey("It should clear weights and output", func() {
-			So(mean.weights, ShouldBeNil)
-			So(float64(observeInputs(mean)), ShouldEqual, 0)
+			So(err, ShouldBeNil)
+		}
+
+		got := datura.Peek[float64](artifact, "output", "value")
+
+		Convey("It should return the running mean", func() {
+			So(got, ShouldEqual, 2.5)
 		})
 	})
 }
 
-func BenchmarkMean_Observe(b *testing.B) {
-	mean := NewMean(nil)
+func BenchmarkMeanRead(b *testing.B) {
+	mean := NewMean()
+	_, _ = io.Copy(mean, meanInput)
 
 	b.ReportAllocs()
 
 	for b.Loop() {
-		_ = observeInputs(mean)
+		_, _ = mean.Read([]byte{1, 2, 3})
 	}
 }

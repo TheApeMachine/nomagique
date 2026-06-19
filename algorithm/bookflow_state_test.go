@@ -5,6 +5,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/theapemachine/datura"
+	"github.com/theapemachine/datura/transport"
 	"github.com/theapemachine/nomagique/statistic"
 	. "github.com/smartystreets/goconvey/convey"
 )
@@ -178,11 +180,11 @@ func TestBookGates(testingTB *testing.T) {
 	Convey("Given populated observation rings", testingTB, func() {
 		gates := NewBookGates()
 		for _, value := range []float64{1, 2, 3, 4} {
-			gates.ChurnRatios.Observe(value)
-			gates.FillMatchRatios.Observe(value * 0.1)
-			gates.CancelQtys.Observe(value * 10)
-			gates.LevelSizeFracs.Observe(value * 0.05)
-			gates.VacuumRatios.Observe(value * 0.2)
+			gates.ChurnRatios.observe(value)
+			gates.FillMatchRatios.observe(value * 0.1)
+			gates.CancelQtys.observe(value * 10)
+			gates.LevelSizeFracs.observe(value * 0.05)
+			gates.VacuumRatios.observe(value * 0.2)
 		}
 
 		Convey("It should derive quantile gates", func() {
@@ -215,11 +217,15 @@ func TestBookGates(testingTB *testing.T) {
 func TestObservationRingAdversarial(testingTB *testing.T) {
 	Convey("Given non-positive observations", testingTB, func() {
 		ring := statistic.NewObservationRing()
-		ring.Observe(0)
-		ring.Observe(-1)
+		artifact := datura.Acquire("test", datura.APPJSON)
+
+		for _, value := range []float64{0, -1} {
+			artifact.Poke(value, "sample")
+			_ = transport.NewFlipFlop(artifact, ring)
+		}
 
 		Convey("It should ignore invalid samples", func() {
-			So(ring.Len(), ShouldEqual, 0)
+			So(len(datura.Peek[[]float64](artifact, "history")), ShouldEqual, 0)
 		})
 	})
 }

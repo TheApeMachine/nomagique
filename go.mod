@@ -58,4 +58,7 @@ require (
 	gonum.org/v1/gonum v0.17.0
 )
 
-replace github.com/theapemachine/datura => ../datura
+replace (
+	github.com/bytedance/sonic => ../sonic
+	github.com/theapemachine/datura => ../datura
+)

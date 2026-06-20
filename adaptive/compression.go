@@ -8,64 +8,64 @@ import (
 
 /*
 Compression scores how far below the running baseline the current sample sits.
+The config artifact holds the rolling baseline across frames; the inbound
+artifact wire is buffered between Write and Read.
 */
 type Compression struct {
-	artifact *datura.Artifact
+	config *datura.Artifact
+	bytes  []byte
 }
 
 /*
 NewCompression returns a compression stage ready to bootstrap from its first observation.
 */
-func NewCompression(artifact *datura.Artifact) *Compression {
+func NewCompression(config *datura.Artifact) *Compression {
 	return &Compression{
-		artifact: artifact,
+		config: config,
 	}
-}
-
-func (compression *Compression) Read(p []byte) (int, error) {
-	sample := datura.Peek[float64](compression.artifact, "sample")
-
-	if math.IsNaN(sample) || math.IsInf(sample, 0) {
-		return compression.artifact.Read(p)
-	}
-
-	output := datura.Peek[datura.Map[float64]](compression.artifact, "output")
-
-	if output == nil {
-		output = datura.Map[float64]{
-			"baseline": sample,
-			"value":    0,
-		}
-
-		compression.artifact.Poke(output, "output")
-
-		return compression.artifact.Read(p)
-	}
-
-	if sample > output["baseline"] {
-		output["baseline"] = sample
-		output["value"] = 0
-		compression.artifact.Poke(output, "output")
-
-		return compression.artifact.Read(p)
-	}
-
-	if output["baseline"] == 0 {
-		output["value"] = 0
-		compression.artifact.Poke(output, "output")
-
-		return compression.artifact.Read(p)
-	}
-
-	output["value"] = (output["baseline"] - sample) / output["baseline"]
-
-	compression.artifact.Poke(output, "output")
-
-	return compression.artifact.Read(p)
 }
 
 func (compression *Compression) Write(p []byte) (int, error) {
-	return compression.artifact.Write(p)
+	compression.bytes = append(compression.bytes[:0], p...)
+
+	return len(p), nil
+}
+
+func (compression *Compression) Read(p []byte) (int, error) {
+	state := datura.Acquire("compression-state", datura.APPJSON)
+
+	if _, err := state.Write(compression.bytes); err != nil {
+		state.Release()
+
+		return 0, err
+	}
+
+	defer state.Release()
+
+	sample := datura.Peek[float64](state, "sample")
+
+	if math.IsNaN(sample) || math.IsInf(sample, 0) {
+		return state.Read(p)
+	}
+
+	baseline := datura.Peek[float64](compression.config, "baseline")
+	value := 0.0
+
+	switch {
+	case baseline == 0 || sample > baseline:
+		baseline = sample
+	default:
+		value = (baseline - sample) / baseline
+	}
+
+	compression.config.Merge("baseline", baseline)
+
+	output := datura.Acquire("compression-output", datura.APPJSON)
+	output.WithPayload(state.DecryptPayload())
+	output.MergeOutput("baseline", baseline)
+	output.MergeOutput("value", value)
+
+	return output.Read(p)
 }
 
 func (compression *Compression) Close() error {

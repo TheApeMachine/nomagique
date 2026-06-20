@@ -11,7 +11,7 @@ GeometricMean combines two configured output fields with a geometric mean.
 */
 type GeometricMean struct {
 	config *datura.Artifact
-	staged *datura.Artifact
+	bytes  []byte
 }
 
 /*
@@ -20,34 +20,47 @@ NewGeometricMean returns a geometric-mean stage configured on the artifact.
 func NewGeometricMean(config *datura.Artifact) *GeometricMean {
 	return &GeometricMean{
 		config: config,
-		staged: datura.Acquire("geometric-mean", datura.APPJSON),
 	}
 }
 
-func (geometricMean *GeometricMean) Write(payload []byte) (int, error) {
-	return geometricMean.staged.Write(payload)
+func (geometricMean *GeometricMean) Write(p []byte) (int, error) {
+	geometricMean.bytes = append(geometricMean.bytes[:0], p...)
+
+	return len(p), nil
 }
 
-func (geometricMean *GeometricMean) Read(payload []byte) (int, error) {
+func (geometricMean *GeometricMean) Read(p []byte) (int, error) {
+	state := datura.Acquire("geometric-mean-state", datura.APPJSON)
+
+	if _, err := state.Write(geometricMean.bytes); err != nil {
+		state.Release()
+
+		return 0, err
+	}
+
+	defer state.Release()
+
 	leftKey := datura.Peek[string](geometricMean.config, "inputs", "joint", "leftKey")
 	rightKey := datura.Peek[string](geometricMean.config, "inputs", "joint", "rightKey")
 	destinationKey := datura.Peek[string](geometricMean.config, "inputs", "joint", "destinationKey")
 
 	if leftKey == "" || rightKey == "" || destinationKey == "" {
-		return geometricMean.staged.Read(payload)
+		return state.Read(p)
 	}
 
-	left := datura.Peek[float64](geometricMean.staged, "output", leftKey)
-	right := datura.Peek[float64](geometricMean.staged, "output", rightKey)
+	left := datura.Peek[float64](state, "output", leftKey)
+	right := datura.Peek[float64](state, "output", rightKey)
 	mean := 0.0
 
 	if left > 0 && right > 0 {
 		mean = math.Sqrt(left * right)
 	}
 
-	geometricMean.staged.Poke(mean, "output", destinationKey)
+	output := datura.Acquire("geometric-mean-output", datura.APPJSON)
+	output.WithPayload(state.DecryptPayload())
+	output.MergeOutput(destinationKey, mean)
 
-	return geometricMean.staged.Read(payload)
+	return output.Read(p)
 }
 
 func (geometricMean *GeometricMean) Close() error {

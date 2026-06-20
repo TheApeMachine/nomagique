@@ -11,7 +11,7 @@ SpreadSample derives a relative spread sample from two feature slots.
 */
 type SpreadSample struct {
 	config *datura.Artifact
-	staged *datura.Artifact
+	bytes  []byte
 }
 
 /*
@@ -20,25 +20,36 @@ NewSpreadSample returns a spread sample stage configured on the artifact.
 func NewSpreadSample(config *datura.Artifact) *SpreadSample {
 	return &SpreadSample{
 		config: config,
-		staged: datura.Acquire("spread-sample", datura.APPJSON),
 	}
 }
 
-func (spreadSample *SpreadSample) Write(payload []byte) (int, error) {
-	return spreadSample.staged.Write(payload)
+func (spreadSample *SpreadSample) Write(p []byte) (int, error) {
+	spreadSample.bytes = append(spreadSample.bytes[:0], p...)
+
+	return len(p), nil
 }
 
-func (spreadSample *SpreadSample) Read(payload []byte) (int, error) {
-	rootKey := datura.Peek[string](spreadSample.staged, "root")
-	channelKeys := datura.Peek[[]string](spreadSample.staged, "inputs")
+func (spreadSample *SpreadSample) Read(p []byte) (int, error) {
+	state := datura.Acquire("spread-sample-state", datura.APPJSON)
+
+	if _, err := state.Write(spreadSample.bytes); err != nil {
+		state.Release()
+
+		return 0, err
+	}
+
+	defer state.Release()
+
+	rootKey := datura.Peek[string](state, "root")
+	channelKeys := datura.Peek[[]string](state, "inputs")
 	sourceKeys := datura.Peek[[]string](spreadSample.config, "inputs", "spread", "inputs")
 
 	if rootKey == "" || len(channelKeys) == 0 || len(sourceKeys) < 2 {
-		return spreadSample.staged.Read(payload)
+		return state.Read(p)
 	}
 
-	left := spreadSample.sample(spreadSample.staged, rootKey, channelKeys, sourceKeys[0])
-	right := spreadSample.sample(spreadSample.staged, rootKey, channelKeys, sourceKeys[1])
+	left := spreadSample.sample(state, rootKey, channelKeys, sourceKeys[0])
+	right := spreadSample.sample(state, rootKey, channelKeys, sourceKeys[1])
 	mid := (left + right) / 2
 	spread := 0.0
 
@@ -46,9 +57,11 @@ func (spreadSample *SpreadSample) Read(payload []byte) (int, error) {
 		spread = math.Abs(right-left) / mid
 	}
 
-	spreadSample.staged.Poke(spread, "sample")
+	output := datura.Acquire("spread-sample-output", datura.APPJSON)
+	output.WithPayload(state.DecryptPayload())
+	output.Merge("sample", spread)
 
-	return spreadSample.staged.Read(payload)
+	return output.Read(p)
 }
 
 func (spreadSample *SpreadSample) sample(

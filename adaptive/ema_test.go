@@ -1,6 +1,7 @@
 package adaptive
 
 import (
+	"bytes"
 	"io"
 	"testing"
 
@@ -19,7 +20,8 @@ func TestEMARead(t *testing.T) {
 		io.Copy(ema, emaInput)
 
 		Convey("When Read is called", func() {
-			_, err := ema.Read([]byte{1, 2, 3})
+			buffer := bytes.NewBuffer(nil)
+			_, err := io.Copy(buffer, ema)
 			So(err, ShouldBeNil)
 			So(datura.Peek[float64](ema.artifact, "output", "value"), ShouldEqual, 1)
 		})
@@ -47,4 +49,25 @@ func TestEMAFlipFlop(t *testing.T) {
 		So(err, ShouldBeNil)
 		So(datura.Peek[float64](artifact, "output", "value"), ShouldEqual, 2)
 	})
+}
+
+func BenchmarkEMARead(b *testing.B) {
+	ema := NewEMA(datura.Acquire("ema-config", datura.APPJSON))
+	buffer := make([]byte, 65536)
+
+	b.ReportAllocs()
+
+	for range b.N {
+		inbound := datura.Acquire("bench-inbound", datura.APPJSON).Poke(1, "sample")
+
+		if _, err := io.Copy(ema, inbound); err != nil {
+			b.Fatal(err)
+		}
+
+		if _, err := ema.Read(buffer); err != nil && err != io.EOF {
+			b.Fatal(err)
+		}
+
+		inbound.Release()
+	}
 }

@@ -17,29 +17,33 @@ laminarCeiling, turbulentFloor, turbulentReady, divergenceEdge, icebergScore,
 price, spreadBPS, changePct, volume.
 */
 type Fluidflow struct {
-	artifact *datura.Artifact
+	bytes []byte
 }
 
 /*
 NewFluidflow returns a fluid-dynamics stage for io.ReadWriter pipelines.
 */
 func NewFluidflow() io.ReadWriteCloser {
-	return &Fluidflow{
-		artifact: datura.Acquire("fluidflow", datura.APPJSON),
-	}
+	return &Fluidflow{}
 }
 
 func (fluidflow *Fluidflow) Write(p []byte) (int, error) {
-	return fluidflow.artifact.Write(p)
+	fluidflow.bytes = append(fluidflow.bytes[:0], p...)
+
+	return len(p), nil
 }
 
 func (fluidflow *Fluidflow) Read(p []byte) (int, error) {
-	batch := Features(fluidflow.artifact)
+	state, err := stageState(fluidflow.bytes)
+
+	if err != nil {
+		return 0, err
+	}
+
+	batch := Features(state)
 
 	if len(batch) < fluidflowPayloadFields {
-		fluidflow.artifact.Poke(datura.Map[float64]{"value": 0}, "output")
-
-		return fluidflow.artifact.Read(p)
+		return emitZero(state, p)
 	}
 
 	reynolds := batch[0]
@@ -56,15 +60,11 @@ func (fluidflow *Fluidflow) Read(p []byte) (int, error) {
 	volume := batch[13]
 
 	if price <= 0 || spreadBPS <= 0 || changePct <= 0 || volume <= 0 {
-		fluidflow.artifact.Poke(datura.Map[float64]{"value": 0}, "output")
-
-		return fluidflow.artifact.Read(p)
+		return emitZero(state, p)
 	}
 
 	if viscosity <= 0 || math.IsNaN(reynolds) || math.IsInf(reynolds, 0) {
-		fluidflow.artifact.Poke(datura.Map[float64]{"value": 0}, "output")
-
-		return fluidflow.artifact.Read(p)
+		return emitZero(state, p)
 	}
 
 	if divergenceEdge <= 0 && divergence > 0 {
@@ -129,12 +129,10 @@ func (fluidflow *Fluidflow) Read(p []byte) (int, error) {
 	}
 
 	if strength <= 0 || math.IsNaN(strength) || math.IsInf(strength, 0) {
-		fluidflow.artifact.Poke(datura.Map[float64]{"value": 0}, "output")
-
-		return fluidflow.artifact.Read(p)
+		return emitZero(state, p)
 	}
 
-	fluidflow.artifact.Poke(datura.Map[float64]{
+	return emitOutput(state, p, datura.Map[float64]{
 		"value":          strength,
 		"laminarScore":   laminarScore,
 		"turbulentScore": turbulentScore,
@@ -146,9 +144,7 @@ func (fluidflow *Fluidflow) Read(p []byte) (int, error) {
 		"spreadBPS":      spreadBPS,
 		"changePct":      changePct,
 		"volume":         volume,
-	}, "output")
-
-	return fluidflow.artifact.Read(p)
+	})
 }
 
 func (fluidflow *Fluidflow) Close() error {

@@ -18,29 +18,33 @@ toxicNear, toxicBluffStrength, fillToCancelThreshold, churnGate, supportGate,
 vacuumStrengthCap, lastPrice.
 */
 type BookQuality struct {
-	artifact *datura.Artifact
+	bytes []byte
 }
 
 /*
 NewBookQuality returns a book-flow quality stage.
 */
 func NewBookQuality() io.ReadWriteCloser {
-	return &BookQuality{
-		artifact: datura.Acquire("bookquality", datura.APPJSON),
-	}
+	return &BookQuality{}
 }
 
 func (bookQuality *BookQuality) Write(p []byte) (int, error) {
-	return bookQuality.artifact.Write(p)
+	bookQuality.bytes = append(bookQuality.bytes[:0], p...)
+
+	return len(p), nil
 }
 
 func (bookQuality *BookQuality) Read(p []byte) (int, error) {
-	batch := Features(bookQuality.artifact)
+	state, err := stageState(bookQuality.bytes)
+
+	if err != nil {
+		return 0, err
+	}
+
+	batch := Features(state)
 
 	if len(batch) < bookQualityPayloadFields+1 {
-		bookQuality.artifact.Poke(datura.Map[float64]{"value": 0}, "output")
-
-		return bookQuality.artifact.Read(p)
+		return emitZero(state, p)
 	}
 
 	cancelBid := batch[0]
@@ -58,9 +62,7 @@ func (bookQuality *BookQuality) Read(p []byte) (int, error) {
 	lastPrice := batch[12]
 
 	if lastPrice <= 0 {
-		bookQuality.artifact.Poke(datura.Map[float64]{"value": 0}, "output")
-
-		return bookQuality.artifact.Read(p)
+		return emitZero(state, p)
 	}
 
 	category, strength, bluffScore, vacuumScore, supportScore := classifyBookQuality(
@@ -71,26 +73,20 @@ func (bookQuality *BookQuality) Read(p []byte) (int, error) {
 	)
 
 	if category == 0 || strength <= 0 {
-		bookQuality.artifact.Poke(datura.Map[float64]{"value": 0}, "output")
-
-		return bookQuality.artifact.Read(p)
+		return emitZero(state, p)
 	}
 
 	if math.IsNaN(strength) || math.IsInf(strength, 0) {
-		bookQuality.artifact.Poke(datura.Map[float64]{"value": 0}, "output")
-
-		return bookQuality.artifact.Read(p)
+		return emitZero(state, p)
 	}
 
 	evidence := math.Max(bluffScore, math.Max(vacuumScore, supportScore))
 
 	if evidence <= 0 {
-		bookQuality.artifact.Poke(datura.Map[float64]{"value": 0}, "output")
-
-		return bookQuality.artifact.Read(p)
+		return emitZero(state, p)
 	}
 
-	bookQuality.artifact.Poke(datura.Map[float64]{
+	return emitOutput(state, p, datura.Map[float64]{
 		"value":        strength,
 		"bluffScore":   bluffScore,
 		"vacuumScore":  vacuumScore,
@@ -98,9 +94,7 @@ func (bookQuality *BookQuality) Read(p []byte) (int, error) {
 		"strength":     strength,
 		"category":     float64(category),
 		"price":        lastPrice,
-	}, "output")
-
-	return bookQuality.artifact.Read(p)
+	})
 }
 
 func (bookQuality *BookQuality) Close() error {

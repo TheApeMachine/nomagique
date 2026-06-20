@@ -18,33 +18,37 @@ Payload layout: window, symbolReturnCount, marketReturnCount,
 peerCorrelationCount, peerEnergyCount, then each series oldest→newest.
 */
 type Cohort struct {
-	artifact *datura.Artifact
+	bytes []byte
 }
 
 /*
 NewCohort returns a cross-section correlation stage.
 */
 func NewCohort() io.ReadWriteCloser {
-	return &Cohort{
-		artifact: datura.Acquire("cohort", datura.APPJSON),
-	}
+	return &Cohort{}
 }
 
 func (cohort *Cohort) Write(p []byte) (int, error) {
-	return cohort.artifact.Write(p)
+	cohort.bytes = append(cohort.bytes[:0], p...)
+
+	return len(p), nil
 }
 
 func (cohort *Cohort) Read(p []byte) (int, error) {
-	batch := Features(cohort.artifact)
+	state, err := stageState(cohort.bytes)
+
+	if err != nil {
+		return 0, err
+	}
+
+	batch := Features(state)
 	outcome := evaluateCohort(batch)
 
 	if !outcome.eligible || outcome.strength <= 0 {
-		cohort.artifact.Poke(datura.Map[float64]{"value": 0}, "output")
-
-		return cohort.artifact.Read(p)
+		return emitZero(state, p)
 	}
 
-	cohort.artifact.Poke(datura.Map[float64]{
+	return emitOutput(state, p, datura.Map[float64]{
 		"value":       outcome.strength,
 		"herdScore":   outcome.herdScore,
 		"alphaScore":  outcome.alphaScore,
@@ -53,9 +57,7 @@ func (cohort *Cohort) Read(p []byte) (int, error) {
 		"category":    float64(outcome.category),
 		"correlation": outcome.correlation,
 		"energy":      outcome.energy,
-	}, "output")
-
-	return cohort.artifact.Read(p)
+	})
 }
 
 func (cohort *Cohort) Close() error {

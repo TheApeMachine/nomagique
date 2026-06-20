@@ -1,6 +1,10 @@
 package nomagique
 
-import "io"
+import (
+	"io"
+
+	"github.com/theapemachine/datura/transport"
+)
 
 /*
 Number composes the stages into one pipeline and is named "no magic number" on
@@ -10,52 +14,5 @@ the data and the algorithm. Write an artifact into the head, read the result
 out of the tail; the stages in between carry everything.
 */
 func Number(stages ...io.ReadWriteCloser) io.ReadWriteCloser {
-	return &pipeline{stages: stages}
-}
-
-type pipeline struct {
-	stages []io.ReadWriteCloser
-}
-
-/*
-Write feeds the artifact into the head stage.
-*/
-func (pipeline *pipeline) Write(p []byte) (int, error) {
-	if len(pipeline.stages) == 0 {
-		return len(p), nil
-	}
-
-	return pipeline.stages[0].Write(p)
-}
-
-/*
-Read runs every stage in order, copying each stage's output into the next, and
-returns the tail stage's result.
-*/
-func (pipeline *pipeline) Read(p []byte) (int, error) {
-	if len(pipeline.stages) == 0 {
-		return 0, io.EOF
-	}
-
-	for index := 0; index < len(pipeline.stages)-1; index++ {
-		if _, err := io.Copy(pipeline.stages[index+1], pipeline.stages[index]); err != nil && err != io.EOF {
-			return 0, err
-		}
-	}
-
-	return pipeline.stages[len(pipeline.stages)-1].Read(p)
-}
-
-func (pipeline *pipeline) Close() error {
-	for _, stage := range pipeline.stages {
-		if stage == nil {
-			continue
-		}
-
-		if closeErr := stage.Close(); closeErr != nil {
-			return closeErr
-		}
-	}
-
-	return nil
+	return transport.NewPipeline(stages...)
 }

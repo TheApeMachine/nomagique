@@ -13,29 +13,33 @@ Conviction classifies risk-on breadth versus idiosyncratic leadership.
 Payload layout: breadth, change, surgeThreshold, leader (0/1), move.
 */
 type Conviction struct {
-	artifact *datura.Artifact
+	bytes []byte
 }
 
 /*
 NewConviction returns a market-breadth conviction stage.
 */
 func NewConviction() io.ReadWriteCloser {
-	return &Conviction{
-		artifact: datura.Acquire("conviction", datura.APPJSON),
-	}
+	return &Conviction{}
 }
 
 func (conviction *Conviction) Write(p []byte) (int, error) {
-	return conviction.artifact.Write(p)
+	conviction.bytes = append(conviction.bytes[:0], p...)
+
+	return len(p), nil
 }
 
 func (conviction *Conviction) Read(p []byte) (int, error) {
-	batch := Features(conviction.artifact)
+	state, err := stageState(conviction.bytes)
+
+	if err != nil {
+		return 0, err
+	}
+
+	batch := Features(state)
 
 	if len(batch) < 5 {
-		conviction.artifact.Poke(datura.Map[float64]{"value": 0}, "output")
-
-		return conviction.artifact.Read(p)
+		return emitZero(state, p)
 	}
 
 	breadth := finiteScore(batch[0])
@@ -62,12 +66,10 @@ func (conviction *Conviction) Read(p []byte) (int, error) {
 	}
 
 	if strength <= 0 && category != 3 {
-		conviction.artifact.Poke(datura.Map[float64]{"value": 0}, "output")
-
-		return conviction.artifact.Read(p)
+		return emitZero(state, p)
 	}
 
-	conviction.artifact.Poke(datura.Map[float64]{
+	return emitOutput(state, p, datura.Map[float64]{
 		"value":          strength,
 		"surgeScore":     surgeScore,
 		"divergentScore": divergentScore,
@@ -75,9 +77,7 @@ func (conviction *Conviction) Read(p []byte) (int, error) {
 		"category":       float64(category),
 		"breadth":        breadth,
 		"change":         change,
-	}, "output")
-
-	return conviction.artifact.Read(p)
+	})
 }
 
 func (conviction *Conviction) Close() error {

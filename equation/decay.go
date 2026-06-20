@@ -19,37 +19,39 @@ Payload layout: lastPrice, bidDepthCount, askDepthCount, densityCount,
 spreadCount, pressureCount, imbalanceCount, then each series oldest→newest.
 */
 type Decay struct {
-	artifact *datura.Artifact
+	bytes []byte
 }
 
 /*
 NewDecay returns a microstructure decay stage for io.ReadWriter pipelines.
 */
 func NewDecay() io.ReadWriteCloser {
-	return &Decay{
-		artifact: datura.Acquire("decay", datura.APPJSON),
-	}
+	return &Decay{}
 }
 
 func (decay *Decay) Write(p []byte) (int, error) {
-	return decay.artifact.Write(p)
+	decay.bytes = append(decay.bytes[:0], p...)
+
+	return len(p), nil
 }
 
 func (decay *Decay) Read(p []byte) (int, error) {
-	batch := Features(decay.artifact)
+	state, err := stageState(decay.bytes)
+
+	if err != nil {
+		return 0, err
+	}
+
+	batch := Features(state)
 
 	if len(batch) < decayPayloadHeader {
-		decay.artifact.Poke(datura.Map[float64]{"value": 0}, "output")
-
-		return decay.artifact.Read(p)
+		return emitZero(state, p)
 	}
 
 	lastPrice := batch[0]
 
 	if lastPrice <= 0 {
-		decay.artifact.Poke(datura.Map[float64]{"value": 0}, "output")
-
-		return decay.artifact.Read(p)
+		return emitZero(state, p)
 	}
 
 	counts := batch[1:decayPayloadHeader]
@@ -60,9 +62,7 @@ func (decay *Decay) Read(p []byte) (int, error) {
 		segmentCount := int(count)
 
 		if segmentCount < 0 || offset+segmentCount > len(batch) {
-			decay.artifact.Poke(datura.Map[float64]{"value": 0}, "output")
-
-			return decay.artifact.Read(p)
+			return emitZero(state, p)
 		}
 
 		series[index] = batch[offset : offset+segmentCount]
@@ -89,12 +89,10 @@ func (decay *Decay) Read(p []byte) (int, error) {
 	}
 
 	if urgency <= 0 || category == 0 {
-		decay.artifact.Poke(datura.Map[float64]{"value": 0}, "output")
-
-		return decay.artifact.Read(p)
+		return emitZero(state, p)
 	}
 
-	decay.artifact.Poke(datura.Map[float64]{
+	return emitOutput(state, p, datura.Map[float64]{
 		"value":      urgency,
 		"mechanical": mechanical,
 		"fragile":    fragile,
@@ -102,9 +100,7 @@ func (decay *Decay) Read(p []byte) (int, error) {
 		"reversal":   reversal,
 		"urgency":    urgency,
 		"category":   float64(category),
-	}, "output")
-
-	return decay.artifact.Read(p)
+	})
 }
 
 func (decay *Decay) Close() error {

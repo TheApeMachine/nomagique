@@ -16,38 +16,40 @@ Payload layout: scaledQuoteVol, peerCount, peer volumes, relativeVolume,
 baselineReady (0/1).
 */
 type Depth struct {
-	artifact *datura.Artifact
+	bytes []byte
 }
 
 /*
 NewDepth returns a cross-section liquidity depth stage.
 */
 func NewDepth() io.ReadWriteCloser {
-	return &Depth{
-		artifact: datura.Acquire("depth", datura.APPJSON),
-	}
+	return &Depth{}
 }
 
 func (depth *Depth) Write(p []byte) (int, error) {
-	return depth.artifact.Write(p)
+	depth.bytes = append(depth.bytes[:0], p...)
+
+	return len(p), nil
 }
 
 func (depth *Depth) Read(p []byte) (int, error) {
-	batch := Features(depth.artifact)
+	state, err := stageState(depth.bytes)
+
+	if err != nil {
+		return 0, err
+	}
+
+	batch := Features(state)
 
 	if len(batch) < 2 {
-		depth.artifact.Poke(datura.Map[float64]{"value": 0}, "output")
-
-		return depth.artifact.Read(p)
+		return emitZero(state, p)
 	}
 
 	scaledQuoteVol := batch[0]
 	peerCount := int(batch[1])
 
 	if peerCount < 2 || len(batch) < 2+peerCount+2 {
-		depth.artifact.Poke(datura.Map[float64]{"value": 0}, "output")
-
-		return depth.artifact.Read(p)
+		return emitZero(state, p)
 	}
 
 	peers := append([]float64(nil), batch[2:2+peerCount]...)
@@ -62,9 +64,7 @@ func (depth *Depth) Read(p []byte) (int, error) {
 	median := stat.Quantile(0.5, stat.LinInterp, sortedPeers, nil)
 
 	if median <= 0 {
-		depth.artifact.Poke(datura.Map[float64]{"value": 0}, "output")
-
-		return depth.artifact.Read(p)
+		return emitZero(state, p)
 	}
 
 	peakScarcity := isPeakScarcity(scaledQuoteVol, peers)
@@ -84,9 +84,7 @@ func (depth *Depth) Read(p []byte) (int, error) {
 	)
 
 	if category == 0 {
-		depth.artifact.Poke(datura.Map[float64]{"value": 0}, "output")
-
-		return depth.artifact.Read(p)
+		return emitZero(state, p)
 	}
 
 	scarcityRaw := math.Max(0, (median-scaledQuoteVol)/median)
@@ -110,21 +108,17 @@ func (depth *Depth) Read(p []byte) (int, error) {
 	}
 
 	if strength <= 0 && category != 2 {
-		depth.artifact.Poke(datura.Map[float64]{"value": 0}, "output")
-
-		return depth.artifact.Read(p)
+		return emitZero(state, p)
 	}
 
-	depth.artifact.Poke(datura.Map[float64]{
+	return emitOutput(state, p, datura.Map[float64]{
 		"value":         strength,
 		"scarcityScore": scarcityScore,
 		"medianScore":   medianScore,
 		"depthScore":    depthRaw,
 		"strength":      strength,
 		"category":      float64(category),
-	}, "output")
-
-	return depth.artifact.Read(p)
+	})
 }
 
 func (depth *Depth) Close() error {

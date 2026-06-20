@@ -96,24 +96,14 @@ func (excitation *Excitation) Outcome() ExcitationOutcome {
 }
 
 func (excitation *Excitation) evaluate(scope string, batch []float64) ExcitationOutcome {
-	if scope == "" || len(batch) < excitationPayloadHeader {
+	buyCount, _, expectedLen, batchOK := excitationBatchBounds(batch)
+
+	if scope == "" || !batchOK {
 		return ExcitationOutcome{}
 	}
 
 	horizon := time.Unix(0, int64(batch[0]*float64(time.Second)))
 	fitCooldown := time.Duration(batch[1] * float64(time.Second))
-	buyCount := int(batch[2])
-	sellCount := int(batch[3])
-
-	if buyCount < 0 || sellCount < 0 {
-		return ExcitationOutcome{}
-	}
-
-	expectedLen := excitationPayloadHeader + buyCount + sellCount
-
-	if len(batch) < expectedLen {
-		return ExcitationOutcome{}
-	}
 
 	buyTimes := secondsToTimes(batch[excitationPayloadHeader : excitationPayloadHeader+buyCount])
 	sellTimes := secondsToTimes(batch[excitationPayloadHeader+buyCount : expectedLen])
@@ -681,6 +671,39 @@ func excitationEligible(outcome ExcitationOutcome) bool {
 	}
 
 	return outcome.PoissonImprovement > 0
+}
+
+func excitationBatchBounds(batch []float64) (buyCount, sellCount, expectedLen int, ok bool) {
+	if len(batch) < excitationPayloadHeader {
+		return 0, 0, 0, false
+	}
+
+	buyValue := batch[2]
+	sellValue := batch[3]
+
+	if buyValue < 0 || sellValue < 0 ||
+		buyValue != float64(int(buyValue)) ||
+		sellValue != float64(int(sellValue)) {
+		return 0, 0, 0, false
+	}
+
+	buyCount = int(buyValue)
+	sellCount = int(sellValue)
+	available := len(batch) - excitationPayloadHeader
+
+	if buyCount > available {
+		return 0, 0, 0, false
+	}
+
+	remaining := available - buyCount
+
+	if sellCount > remaining {
+		return 0, 0, 0, false
+	}
+
+	expectedLen = excitationPayloadHeader + buyCount + sellCount
+
+	return buyCount, sellCount, expectedLen, true
 }
 
 func secondsToTimes(seconds []float64) []time.Time {

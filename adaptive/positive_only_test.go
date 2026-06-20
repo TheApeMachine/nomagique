@@ -1,0 +1,53 @@
+package adaptive
+
+import (
+	"testing"
+
+	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/datura"
+	"github.com/theapemachine/datura/transport"
+)
+
+func TestPositiveOnlyRead(t *testing.T) {
+	Convey("Given a positive-only gate", t, func() {
+		config := datura.Acquire("positive-only-config", datura.APPJSON).
+			Poke([]string{"rvol", "precursor"}, "order").
+			Poke(1.0, "stageIndex").
+			Poke(map[string]any{
+				"precursor": map[string]any{
+					"outputKey":    "precursor",
+					"positiveOnly": 1.0,
+				},
+			}, "inputs")
+
+		stage := NewPositiveOnly(config)
+		artifact := datura.Acquire("positive-only-test", datura.APPJSON).Poke(-2.0, "sample")
+
+		err := transport.NewFlipFlop(artifact, stage)
+
+		Convey("It should clamp negative scores to zero", func() {
+			So(err, ShouldBeNil)
+			So(datura.Peek[float64](artifact, "output", "precursor"), ShouldEqual, 0)
+		})
+	})
+}
+
+func BenchmarkPositiveOnlyRead(b *testing.B) {
+	config := datura.Acquire("positive-only-bench", datura.APPJSON).
+		Poke([]string{"rvol", "precursor"}, "order").
+		Poke(map[string]any{
+			"precursor": map[string]any{
+				"outputKey":    "precursor",
+				"positiveOnly": 1.0,
+			},
+		}, "inputs")
+
+	stage := NewPositiveOnly(config)
+	artifact := datura.Acquire("positive-only-bench-test", datura.APPJSON).Poke(1.5, "sample")
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = transport.NewFlipFlop(artifact, stage)
+	}
+}

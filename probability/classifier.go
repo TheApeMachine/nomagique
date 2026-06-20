@@ -10,69 +10,60 @@ import (
 /*
 Classifier selects a category from competing scores declared on inputs.
 
-Each input names a key under output on the carried artifact payload. Upstream stages
-poke those scores before Classifier.Read runs.
+The config artifact carries the input score keys; the inbound artifact wire is
+buffered per frame. Read reconstitutes that state, classifies from payload
+output scores, and writes the result back onto the payload.
 */
 type Classifier struct {
-	artifact *datura.Artifact
+	config *datura.Artifact
+	bytes  []byte
 }
 
 /*
 NewClassifier returns a classifier wired from schema.inputs score keys.
 */
-func NewClassifier(artifact *datura.Artifact) *Classifier {
-	return &Classifier{artifact: artifact}
+func NewClassifier(config *datura.Artifact) *Classifier {
+	return &Classifier{config: config}
 }
 
-func (classifier *Classifier) Write(p []byte) (int, error) {
-	inbound := datura.Acquire("classifier-inbound", datura.APPJSON)
-	_, _ = inbound.Write(p)
+func (classifier *Classifier) Write(payload []byte) (int, error) {
+	classifier.bytes = append(classifier.bytes[:0], payload...)
 
-	inputs := datura.Peek[[]string](classifier.artifact, "inputs")
-
-	if len(inputs) == 0 {
-		inputs = datura.Peek[[]string](inbound, "inputs")
-	}
-
-	scores := make(map[string]float64, len(inputs))
-
-	for _, input := range inputs {
-		scores[input] = datura.Peek[float64](inbound, "output", input)
-	}
-
-	n, err := classifier.artifact.Write(p)
-
-	if len(inputs) > 0 {
-		classifier.artifact.Poke(inputs, "inputs")
-	}
-
-	for key, score := range scores {
-		if score != 0 {
-			classifier.artifact.Poke(score, "output", key)
-		}
-	}
-
-	return n, err
+	return len(payload), nil
 }
 
-func (classifier *Classifier) Read(p []byte) (int, error) {
-	inputs := datura.Peek[[]string](classifier.artifact, "inputs")
+func (classifier *Classifier) Read(payload []byte) (int, error) {
+	state := datura.Acquire("classifier-state", datura.APPJSON)
+
+	if _, err := state.Write(classifier.bytes); err != nil {
+		state.Release()
+
+		return 0, err
+	}
+
+	defer state.Release()
+
+	inputs := datura.Peek[[]string](classifier.config, "inputs")
 
 	if len(inputs) == 0 {
-		return classifier.artifact.Read(p)
+		inputs = datura.Peek[[]string](state, "inputs")
+	}
+
+	if len(inputs) == 0 {
+		return state.Read(payload)
 	}
 
 	scores := make([]float64, len(inputs))
 
 	for index, input := range inputs {
 		if input == "" {
-			return classifier.artifact.Read(p)
+			return state.Read(payload)
 		}
 
-		score := datura.Peek[float64](classifier.artifact, "output", input)
+		score := datura.Peek[float64](state, "output", input)
 
 		if math.IsNaN(score) || math.IsInf(score, 0) {
-			return classifier.artifact.Read(p)
+			return state.Read(payload)
 		}
 
 		scores[index] = score
@@ -81,7 +72,7 @@ func (classifier *Classifier) Read(p []byte) (int, error) {
 	probabilities, err := SoftmaxScoresNormalized(scores)
 
 	if err != nil {
-		return classifier.artifact.Read(p)
+		return state.Read(payload)
 	}
 
 	categoryIndex := ArgmaxIndex(probabilities) + 1
@@ -89,22 +80,24 @@ func (classifier *Classifier) Read(p []byte) (int, error) {
 	confidence, confidenceErr := CategoryConfidence(probabilities, categoryIndex)
 
 	if confidenceErr != nil {
-		return classifier.artifact.Read(p)
+		return state.Read(payload)
 	}
 
-	strength := datura.Peek[float64](classifier.artifact, "output", "strength")
+	strength := datura.Peek[float64](state, "output", "strength")
 
 	if strength <= 0 || math.IsNaN(strength) || math.IsInf(strength, 0) {
 		strength = scores[categoryIndex-1]
 	}
 
-	classifier.artifact.Poke(probabilities, "output", "probabilities")
-	classifier.artifact.Poke(float64(categoryIndex), "output", "category")
-	classifier.artifact.Poke(confidence, "output", "confidence")
-	classifier.artifact.Poke(strength, "output", "strength")
-	classifier.artifact.Poke(float64(categoryIndex), "output", "value")
+	output := datura.Acquire("classifier-output", datura.APPJSON)
+	output.WithPayload(state.DecryptPayload())
+	output.MergeOutput("probabilities", probabilities)
+	output.MergeOutput("category", categoryIndex)
+	output.MergeOutput("confidence", confidence)
+	output.MergeOutput("strength", strength)
+	output.MergeOutput("value", categoryIndex)
 
-	return classifier.artifact.Read(p)
+	return output.Read(payload)
 }
 
 func (classifier *Classifier) Close() error {

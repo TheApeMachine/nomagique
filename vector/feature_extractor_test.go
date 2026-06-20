@@ -16,15 +16,7 @@ var featureExtractorPayloadFixture = []byte(
 func featureExtractorSchema() *datura.Artifact {
 	return datura.Acquire("feature-extractor-test", datura.APPJSON).
 		Poke("data", "root").
-		Poke([]string{"volume", "vwap", "last", "bid", "ask", "change_pct"}, "order").
-		Poke(map[string]any{
-			"volume":     map[string]any{},
-			"vwap":       map[string]any{},
-			"last":       map[string]any{},
-			"bid":        map[string]any{},
-			"ask":        map[string]any{},
-			"change_pct": map[string]any{},
-		}, "inputs")
+		Poke([]string{"volume", "vwap", "last", "bid", "ask", "change_pct"}, "inputs")
 }
 
 func TestNewFeatureExtractor(t *testing.T) {
@@ -36,7 +28,7 @@ func TestNewFeatureExtractor(t *testing.T) {
 
 			Convey("It should retain the schema and initialize transform cache", func() {
 				So(extractor, ShouldNotBeNil)
-				So(extractor.config, ShouldEqual, schema)
+				So(extractor.artifact, ShouldEqual, schema)
 				So(extractor.transforms, ShouldNotBeNil)
 			})
 		})
@@ -48,8 +40,7 @@ func TestFeatureExtractor_Write(t *testing.T) {
 		extractor := NewFeatureExtractor(
 			datura.Acquire("test", datura.APPJSON).
 				Poke("data", "root").
-				Poke([]string{"volume"}, "order").
-				Poke(map[string]any{"volume": map[string]any{}}, "inputs"),
+				Poke([]string{"volume"}, "inputs"),
 		)
 
 		Convey("And an inbound artifact with a payload", func() {
@@ -58,16 +49,9 @@ func TestFeatureExtractor_Write(t *testing.T) {
 			Convey("When the inbound artifact is copied into the extractor", func() {
 				_, err := io.Copy(extractor, inbound)
 
-				Convey("Then the staged artifact should carry the inbound payload", func() {
+				Convey("Then the inbound wire should be buffered without mutating schema config", func() {
 					So(err, ShouldBeNil)
-
-					payload := extractor.staged.DecryptPayload()
-					So(len(payload), ShouldBeGreaterThan, 0)
-					So(payload, ShouldResemble, []byte{1, 2, 3})
-				})
-
-				Convey("Then the schema config should remain on the config artifact", func() {
-					So(datura.Peek[string](extractor.config, "root"), ShouldEqual, "data")
+					So(datura.Peek[string](extractor.artifact, "root"), ShouldEqual, "data")
 				})
 			})
 		})
@@ -97,18 +81,41 @@ func TestFeatureExtractor_Read(t *testing.T) {
 			_, err := io.Copy(extractor, inbound)
 			So(err, ShouldBeNil)
 
-			buffer := bytes.NewBuffer([]byte{})
-			_, err = io.Copy(buffer, extractor)
-			So(err, ShouldBeNil)
+			wire := make([]byte, 65536)
+			n, readErr := extractor.Read(wire)
+			So(readErr, ShouldEqual, io.EOF)
 
-			Convey("Then the payload should carry extracted features", func() {
+			buffer := bytes.NewBuffer(wire[:n])
+
+			Convey("Then the payload should carry root, inputs, and features", func() {
 				decoded := datura.Acquire("feature-extractor", datura.APPJSON)
 				_, err = decoded.Write(buffer.Bytes())
 				So(err, ShouldBeNil)
 
-				payload := decoded.DecryptPayload()
-				So(len(payload), ShouldBeGreaterThan, 0)
-				So(string(payload), ShouldEqual, `{"features":[2500,100,101,100.9,101.1,1]}`)
+				So(datura.Peek[string](decoded, "root"), ShouldEqual, "features")
+				So(
+					datura.Peek[[]string](decoded, "inputs"),
+					ShouldResemble,
+					[]string{"volume", "vwap", "last", "bid", "ask", "change_pct"},
+				)
+				So(
+					datura.Peek[[]float64](decoded, "features"),
+					ShouldResemble,
+					[]float64{2500, 100, 101, 100.9, 101.1, 1},
+				)
+
+				replayed := datura.Acquire("feature-extractor-replay", datura.APPJSON)
+				replayed.WithPayload(decoded.DecryptPayload())
+
+				So(datura.Peek[string](replayed, "root"), ShouldEqual, "features")
+				So(
+					datura.Peek[[]string](replayed, "inputs"),
+					ShouldResemble,
+					[]string{"volume", "vwap", "last", "bid", "ask", "change_pct"},
+				)
+
+				decoded.Release()
+				replayed.Release()
 			})
 		})
 	})
@@ -116,14 +123,22 @@ func TestFeatureExtractor_Read(t *testing.T) {
 
 func BenchmarkFeatureExtractor_Read(b *testing.B) {
 	extractor := NewFeatureExtractor(featureExtractorSchema())
-	inbound := datura.Acquire("test", datura.APPJSON).WithPayload(featureExtractorPayloadFixture)
-	_, _ = io.Copy(extractor, inbound)
-
 	buffer := make([]byte, 65536)
 
 	b.ReportAllocs()
 
-	for b.Loop() {
-		_, _ = extractor.Read(buffer)
+	for range b.N {
+		inbound := datura.Acquire("bench-inbound", datura.APPJSON).
+			WithPayload(featureExtractorPayloadFixture)
+
+		if _, err := io.Copy(extractor, inbound); err != nil {
+			b.Fatal(err)
+		}
+
+		if _, err := extractor.Read(buffer); err != nil && err != io.EOF {
+			b.Fatal(err)
+		}
+
+		inbound.Release()
 	}
 }

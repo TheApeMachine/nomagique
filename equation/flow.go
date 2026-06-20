@@ -16,29 +16,33 @@ Payload layout: buyNotional, sellNotional, tradeCount, grossFloor, medianNotiona
 then every observed price in window order.
 */
 type Flow struct {
-	artifact *datura.Artifact
+	bytes []byte
 }
 
 /*
 NewFlow returns a CVD flow stage for io.ReadWriter pipelines.
 */
 func NewFlow() io.ReadWriteCloser {
-	return &Flow{
-		artifact: datura.Acquire("flow", datura.APPJSON),
-	}
+	return &Flow{}
 }
 
 func (flow *Flow) Write(p []byte) (int, error) {
-	return flow.artifact.Write(p)
+	flow.bytes = append(flow.bytes[:0], p...)
+
+	return len(p), nil
 }
 
 func (flow *Flow) Read(p []byte) (int, error) {
-	batch := Features(flow.artifact)
+	state, err := stageState(flow.bytes)
+
+	if err != nil {
+		return 0, err
+	}
+
+	batch := Features(state)
 
 	if len(batch) < flowPayloadHeader+2 {
-		flow.artifact.Poke(datura.Map[float64]{"value": 0}, "output")
-
-		return flow.artifact.Read(p)
+		return emitZero(state, p)
 	}
 
 	buyNotional := batch[0]
@@ -51,9 +55,7 @@ func (flow *Flow) Read(p []byte) (int, error) {
 	gross := buyNotional + sellNotional
 
 	if gross <= 0 || tradeCount < 2 || len(prices) < 2 {
-		flow.artifact.Poke(datura.Map[float64]{"value": 0}, "output")
-
-		return flow.artifact.Read(p)
+		return emitZero(state, p)
 	}
 
 	net := buyNotional - sellNotional
@@ -62,9 +64,7 @@ func (flow *Flow) Read(p []byte) (int, error) {
 	lastPrice := prices[len(prices)-1]
 
 	if firstPrice <= 0 || lastPrice <= 0 {
-		flow.artifact.Poke(datura.Map[float64]{"value": 0}, "output")
-
-		return flow.artifact.Read(p)
+		return emitZero(state, p)
 	}
 
 	priceResponseBps := math.Abs(lastPrice/firstPrice-1) * basisPointsPerUnit
@@ -114,7 +114,7 @@ func (flow *Flow) Read(p []byte) (int, error) {
 
 	strength := math.Max(absorption, math.Max(drive, math.Max(balance, starvation)))
 
-	flow.artifact.Poke(datura.Map[float64]{
+	return emitOutput(state, p, datura.Map[float64]{
 		"value":       strength,
 		"absorption":  absorption,
 		"drive":       drive,
@@ -123,9 +123,7 @@ func (flow *Flow) Read(p []byte) (int, error) {
 		"net":         net,
 		"netFraction": netFraction,
 		"category":    float64(category),
-	}, "output")
-
-	return flow.artifact.Read(p)
+	})
 }
 
 func (flow *Flow) Close() error {

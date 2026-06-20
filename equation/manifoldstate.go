@@ -15,42 +15,44 @@ Manifoldstate classifies systemic herd, liquidity shock, synchronized drift, and
 Payload layout: pressureGradNorm, coherenceMag2, guidanceSpeed, viscosityProxy, price.
 */
 type Manifoldstate struct {
-	artifact *datura.Artifact
+	bytes []byte
 }
 
 /*
 NewManifoldstate returns a manifold-state stage.
 */
 func NewManifoldstate() io.ReadWriteCloser {
-	return &Manifoldstate{
-		artifact: datura.Acquire("manifoldstate", datura.APPJSON),
-	}
+	return &Manifoldstate{}
 }
 
 func (manifoldstate *Manifoldstate) Write(p []byte) (int, error) {
-	return manifoldstate.artifact.Write(p)
+	manifoldstate.bytes = append(manifoldstate.bytes[:0], p...)
+
+	return len(p), nil
 }
 
 func (manifoldstate *Manifoldstate) Read(p []byte) (int, error) {
-	batch := Features(manifoldstate.artifact)
+	state, err := stageState(manifoldstate.bytes)
+
+	if err != nil {
+		return 0, err
+	}
+
+	batch := Features(state)
 	outcome := evaluateManifoldstate(batch)
 
 	if !outcome.eligible || outcome.strength <= 0 {
-		manifoldstate.artifact.Poke(datura.Map[float64]{"value": 0}, "output")
-
-		return manifoldstate.artifact.Read(p)
+		return emitZero(state, p)
 	}
 
-	manifoldstate.artifact.Poke(datura.Map[float64]{
+	return emitOutput(state, p, datura.Map[float64]{
 		"value":      outcome.strength,
 		"herdScore":  outcome.herdScore,
 		"shockScore": outcome.shockScore,
 		"driftScore": outcome.driftScore,
 		"noiseScore": outcome.noiseScore,
 		"category":   float64(outcome.category),
-	}, "output")
-
-	return manifoldstate.artifact.Read(p)
+	})
 }
 
 func (manifoldstate *Manifoldstate) Close() error {

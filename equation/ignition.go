@@ -25,7 +25,7 @@ func NewIgnition(artifact *datura.Artifact) *Ignition {
 		artifact: artifact,
 		pipeline: transport.NewPipeline(
 			statistic.NewMeanMedianRatio(artifact),
-			adaptive.NewLogReturnZScore(artifact),
+			NewLogReturnZScore(artifact),
 			vector.NewSpreadSample(artifact),
 			adaptive.NewCompression(artifact),
 			geometry.NewGeometricMean(artifact),

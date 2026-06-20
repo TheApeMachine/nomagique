@@ -21,42 +21,44 @@ Payload layout: weighted, level1, flat, flatOK, mid, spread, touchDepth,
 tradePressure, weightedCount, level1Count, flatCount, then each abs history.
 */
 type Bookflow struct {
-	artifact *datura.Artifact
+	bytes []byte
 }
 
 /*
 NewBookflow returns a depth-flow stage.
 */
 func NewBookflow() io.ReadWriteCloser {
-	return &Bookflow{
-		artifact: datura.Acquire("bookflow", datura.APPJSON),
-	}
+	return &Bookflow{}
 }
 
 func (bookflow *Bookflow) Write(p []byte) (int, error) {
-	return bookflow.artifact.Write(p)
+	bookflow.bytes = append(bookflow.bytes[:0], p...)
+
+	return len(p), nil
 }
 
 func (bookflow *Bookflow) Read(p []byte) (int, error) {
-	batch := Features(bookflow.artifact)
+	state, err := stageState(bookflow.bytes)
+
+	if err != nil {
+		return 0, err
+	}
+
+	batch := Features(state)
 	outcome := evaluateBookflow(batch)
 
 	if !outcome.eligible || outcome.strength <= 0 {
-		bookflow.artifact.Poke(datura.Map[float64]{"value": 0}, "output")
-
-		return bookflow.artifact.Read(p)
+		return emitZero(state, p)
 	}
 
-	bookflow.artifact.Poke(datura.Map[float64]{
+	return emitOutput(state, p, datura.Map[float64]{
 		"value":        outcome.strength,
 		"loadedScore":  outcome.loadedScore,
 		"spoofScore":   outcome.spoofScore,
 		"thinScore":    outcome.thinScore,
 		"neutralScore": outcome.neutralScore,
 		"category":     float64(outcome.category),
-	}, "output")
-
-	return bookflow.artifact.Read(p)
+	})
 }
 
 func (bookflow *Bookflow) Close() error {

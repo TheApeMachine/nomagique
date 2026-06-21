@@ -42,14 +42,12 @@ func TestCorrelate_Observe(testingTB *testing.T) {
 			[]float64{0, 50, 1, 55, 2, 60.5, 3, 66.55},
 		)
 		correlate := NewCorrelate(
-			datura.Acquire("test-config", datura.APPJSON).Poke(1.0, "config", "maxIntervalSeconds"),
+			datura.Acquire("test-config", datura.APPJSON).
+				Poke(1.0, "config", "maxIntervalSeconds"),
 		)
 		So(tests.WriteSamples(correlate, batch...), ShouldBeNil)
 
-		frame := make([]byte, 4096)
-		readCount, _ := correlate.Read(frame)
-		outbound := datura.Acquire("test-out", datura.APPJSON)
-		_, _ = outbound.Write(frame[:readCount])
+		outbound := readOutbound(correlate)
 
 		pearson := datura.Peek[float64](outbound, "output", "pearson")
 		hayashi := datura.Peek[float64](outbound, "output", "hayashi")

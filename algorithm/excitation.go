@@ -53,8 +53,6 @@ type Excitation struct {
 NewExcitation returns a Hawkes excitation stage wired from config on the artifact.
 */
 func NewExcitation(artifact *datura.Artifact) *Excitation {
-	artifact.Inspect("algorithm", "excitation", "NewExcitation()")
-
 	return &Excitation{
 		artifact: artifact,
 	}
@@ -67,7 +65,6 @@ func (excitation *Excitation) Write(payload []byte) (int, error) {
 
 func (excitation *Excitation) Read(payload []byte) (int, error) {
 	state := datura.Acquire("excitation-state", datura.APPJSON)
-	state.Inspect("algorithm", "excitation", "Read()", "p")
 
 	if _, err := state.Write(excitation.artifact.DecryptPayload()); err != nil {
 		return 0, err

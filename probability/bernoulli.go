@@ -18,8 +18,6 @@ type Bernoulli struct {
 NewBernoulli returns a Beta-Bernoulli stage wired from config attributes on the artifact.
 */
 func NewBernoulli(artifact *datura.Artifact) *Bernoulli {
-	artifact.Inspect("probability", "bernoulli", "NewBernoulli()")
-
 	return &Bernoulli{
 		artifact: artifact,
 	}
@@ -32,11 +30,14 @@ func (bernoulli *Bernoulli) Write(payload []byte) (int, error) {
 
 func (bernoulli *Bernoulli) Read(payload []byte) (int, error) {
 	state := datura.Acquire("bernoulli-state", datura.APPJSON)
-	state.Inspect("probability", "bernoulli", "Read()", "p")
 
 	if _, err := state.Write(bernoulli.artifact.DecryptPayload()); err != nil {
+		state.Release()
+
 		return 0, err
 	}
+
+	defer state.Release()
 
 	if datura.Peek[float64](state, "reset") != 0 {
 		bernoulli.artifact.WithAttributes(datura.Map[any]{})

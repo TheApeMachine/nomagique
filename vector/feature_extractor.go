@@ -73,6 +73,8 @@ func (extractor *FeatureExtractor) Read(payload []byte) (int, error) {
 				"feature-extractor: sample is NaN or Inf",
 				nil,
 			))
+
+			continue
 		}
 
 		transform := datura.Peek[string](extractor.artifact, role, "transforms", input)

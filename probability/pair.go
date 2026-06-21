@@ -66,13 +66,23 @@ func parseBernoulliOutcome(primary float64, extras []float64) (float64, error) {
 }
 
 func attributeKeyPresent(artifact *datura.Artifact, key string) bool {
-	raw, err := artifact.Attributes()
+	rawAttributes, err := artifact.Attributes()
 
-	if err != nil || len(raw) == 0 {
+	if err == nil && len(rawAttributes) > 0 {
+		node, getErr := sonic.Get(rawAttributes, key)
+
+		if getErr == nil && node.Exists() {
+			return true
+		}
+	}
+
+	payload, err := artifact.DecryptPayloadError()
+
+	if err != nil || len(payload) == 0 {
 		return false
 	}
 
-	_, getErr := sonic.Get(raw, key)
+	node, getErr := sonic.Get(payload, key)
 
-	return getErr == nil
+	return getErr == nil && node.Exists()
 }

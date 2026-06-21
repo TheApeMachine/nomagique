@@ -4,6 +4,7 @@ import (
 	"math"
 	"testing"
 
+	"github.com/bytedance/sonic"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/transport"
@@ -74,15 +75,61 @@ func TestTransitionMatrixReset(testingTB *testing.T) {
 	})
 }
 
+func transitionInboundArtifact(probabilities []float64, category float64) *datura.Artifact {
+	payload, err := sonic.Marshal(datura.Map[any]{
+		"output": datura.Map[any]{
+			"probabilities": probabilities,
+			"category":      category,
+		},
+	})
+
+	if err != nil {
+		panic(err)
+	}
+
+	return datura.Acquire("transition-test", datura.APPJSON).WithPayload(payload)
+}
+
+func transitionCounts(artifact *datura.Artifact) []float64 {
+	rawAttributes, err := artifact.Attributes()
+
+	if err != nil || len(rawAttributes) == 0 {
+		return nil
+	}
+
+	node, err := sonic.Get(rawAttributes, "transition", "counts")
+
+	if err != nil || !node.Exists() {
+		return nil
+	}
+
+	rawCounts, err := node.ArrayUseNode()
+
+	if err != nil {
+		return nil
+	}
+
+	counts := make([]float64, len(rawCounts))
+
+	for index, sample := range rawCounts {
+		value, valueErr := sample.Float64()
+
+		if valueErr != nil {
+			return nil
+		}
+
+		counts[index] = value
+	}
+
+	return counts
+}
+
 func TestTransitionSurprise_Read(testingTB *testing.T) {
 	Convey("Given a padded observation through TransitionSurprise", testingTB, func() {
 		stage := NewTransitionSurprise(transitionSchema(5, 0.1))
 		matrix := NewTransitionMatrix(5, 0.1)
 		observed := matrix.PadObserved([]float64{0.25, 0.25, 0.25, 0.25}, 0)
-		artifact := datura.Acquire("transition-test", datura.APPJSON).
-			WithPayload([]byte(`{}`)).
-			Poke(observed, "output", "probabilities").
-			Poke(float64(1), "output", "category")
+		artifact := transitionInboundArtifact(observed, 1)
 
 		err := transport.NewFlipFlop(artifact, stage)
 
@@ -101,24 +148,25 @@ func TestTransitionSurprise_Reset(testingTB *testing.T) {
 		stage := NewTransitionSurprise(transitionSchema(5, 0.1))
 		matrix := NewTransitionMatrix(5, 0.1)
 		observed := matrix.PadObserved([]float64{0.25, 0.25, 0.25, 0.25}, 0)
-		artifact := datura.Acquire("transition-test", datura.APPJSON).
-			WithPayload([]byte(`{}`)).
-			Poke(observed, "output", "probabilities").
-			Poke(float64(2), "output", "category")
+		artifact := transitionInboundArtifact(observed, 2)
 
 		err := transport.NewFlipFlop(artifact, stage)
 
 		So(err, ShouldBeNil)
 		So(datura.Peek[float64](stage.artifact, "transition", "lastCategory"), ShouldEqual, 1)
 
-		artifact.Poke(1, "reset")
+		resetPayload, marshalErr := sonic.Marshal(datura.Map[any]{"reset": 1.0})
+
+		So(marshalErr, ShouldBeNil)
+
+		artifact = datura.Acquire("transition-test", datura.APPJSON).WithPayload(resetPayload)
 		err = transport.NewFlipFlop(artifact, stage)
 
 		So(err, ShouldBeNil)
 
 		Convey("It should clear retained transition state", func() {
 			So(datura.Peek[float64](stage.artifact, "transition", "lastCategory"), ShouldEqual, 0)
-			So(datura.Peek[[]float64](stage.artifact, "transition", "counts"), ShouldBeNil)
+			So(transitionCounts(stage.artifact), ShouldBeNil)
 		})
 	})
 }
@@ -127,10 +175,7 @@ func BenchmarkTransitionSurprise_Read(testingTB *testing.B) {
 	stage := NewTransitionSurprise(transitionSchema(5, 0.1))
 	matrix := NewTransitionMatrix(5, 0.1)
 	observed := matrix.PadObserved([]float64{0.4, 0.3, 0.2, 0.1}, 0)
-	artifact := datura.Acquire("transition-bench", datura.APPJSON).
-		WithPayload([]byte(`{}`)).
-		Poke(observed, "output", "probabilities").
-		Poke(float64(2), "output", "category")
+	artifact := transitionInboundArtifact(observed, 2)
 
 	testingTB.ReportAllocs()
 

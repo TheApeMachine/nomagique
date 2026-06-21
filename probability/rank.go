@@ -18,8 +18,6 @@ type Rank struct {
 NewRank returns an empirical rank probability stage wired from config attributes on the artifact.
 */
 func NewRank(artifact *datura.Artifact) *Rank {
-	artifact.Inspect("probability", "rank", "NewRank()")
-
 	return &Rank{
 		artifact: artifact,
 	}
@@ -32,11 +30,14 @@ func (rank *Rank) Write(payload []byte) (int, error) {
 
 func (rank *Rank) Read(payload []byte) (int, error) {
 	state := datura.Acquire("rank-state", datura.APPJSON)
-	state.Inspect("probability", "rank", "Read()", "p")
 
 	if _, err := state.Write(rank.artifact.DecryptPayload()); err != nil {
+		state.Release()
+
 		return 0, err
 	}
+
+	defer state.Release()
 
 	if datura.Peek[float64](state, "reset") != 0 {
 		rank.artifact.WithAttributes(datura.Map[any]{})

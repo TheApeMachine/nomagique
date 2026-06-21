@@ -18,8 +18,6 @@ type CUSUM struct {
 NewCUSUM returns a change-detection stage wired from config attributes on the artifact.
 */
 func NewCUSUM(artifact *datura.Artifact) *CUSUM {
-	artifact.Inspect("probability", "cusum", "NewCUSUM()")
-
 	return &CUSUM{
 		artifact: artifact,
 	}
@@ -32,11 +30,14 @@ func (cusum *CUSUM) Write(payload []byte) (int, error) {
 
 func (cusum *CUSUM) Read(payload []byte) (int, error) {
 	state := datura.Acquire("cusum-state", datura.APPJSON)
-	state.Inspect("probability", "cusum", "Read()", "p")
 
 	if _, err := state.Write(cusum.artifact.DecryptPayload()); err != nil {
+		state.Release()
+
 		return 0, err
 	}
+
+	defer state.Release()
 
 	if datura.Peek[float64](state, "reset") != 0 {
 		cusum.artifact.WithAttributes(datura.Map[any]{})

@@ -6,6 +6,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/datura/transport"
 	"github.com/theapemachine/nomagique/hawkes"
 )
 
@@ -15,14 +16,9 @@ func TestExcitationMeasure(testingTB *testing.T) {
 		base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
 		samples := excitationBurstSamples(base, 128)
 		inbound := daturaBurstArtifact("ALT/EUR", samples)
-		frame, frameErr := inbound.Message().MarshalPacked()
 
-		So(frameErr, ShouldBeNil)
-
-		for index := range 4 {
-			_, _ = excitation.Write(frame)
-			_, _ = excitation.Read(make([]byte, 4096))
-			_ = index
+		for range 4 {
+			So(transport.NewFlipFlop(inbound, excitation), ShouldBeNil)
 		}
 
 		Convey("It should publish thermal scores", func() {
@@ -119,13 +115,10 @@ func BenchmarkExcitationRead(b *testing.B) {
 	base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
 	samples := excitationBurstSamples(base, 128)
 	inbound := daturaBurstArtifact("ALT/EUR", samples)
-	frame, _ := inbound.Message().MarshalPacked()
-	readFrame := make([]byte, 4096)
 
 	b.ReportAllocs()
 
 	for b.Loop() {
-		_, _ = excitation.Write(frame)
-		_, _ = excitation.Read(readFrame)
+		_ = transport.NewFlipFlop(inbound, excitation)
 	}
 }

@@ -5,7 +5,9 @@ import (
 	"math"
 	"time"
 
+	"github.com/bytedance/sonic"
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/probability"
 	"github.com/theapemachine/nomagique/statistic"
 )
@@ -162,7 +164,7 @@ type GateQuantile struct {
 NewGateQuantile wires a gate stage from a config artifact.
 */
 func NewGateQuantile(artifact *datura.Artifact) *GateQuantile {
-	artifact.Inspect("algorithm", "gate-quantile", "NewGateQuantile()")
+	artifact.Poke([]float64{}, "history")
 
 	return &GateQuantile{
 		artifact: artifact,
@@ -250,11 +252,24 @@ func (gate *GateQuantile) value(percentileOverride float64) float64 {
 observe records one sample through the wire bus and returns the updated quantile.
 */
 func (gate *GateQuantile) observe(sample float64, percentileOverride float64) float64 {
-	frame := datura.Acquire("gate-frame", datura.APPJSON)
-	frame.Poke(sample, "sample")
+	fields := datura.Map[float64]{"sample": sample}
 
 	if percentileOverride > 0 {
-		frame.Poke(percentileOverride, "percentile")
+		fields["percentile"] = percentileOverride
+	}
+
+	payload := errnie.Does(func() ([]byte, error) {
+		return sonic.Marshal(fields)
+	}).Or(func(err error) {
+		errnie.Error(errnie.Err(errnie.IO, "gate-quantile: marshal observe payload", err))
+	}).Value()
+
+	frame := datura.Acquire("gate-frame", datura.APPJSON)
+
+	if frame.WithPayload(payload) == nil {
+		frame.Release()
+
+		return 0
 	}
 
 	packed, err := frame.MarshalPacked()

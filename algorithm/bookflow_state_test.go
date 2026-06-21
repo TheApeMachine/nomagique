@@ -260,6 +260,32 @@ func runGateSample(gate *GateQuantile, sample float64, percentile float64) float
 	return gate.observe(sample, percentile)
 }
 
+func TestGateQuantileObserveWireBus(testingTB *testing.T) {
+	Convey("Given a gate stage and JSON sample payload on the wire", testingTB, func() {
+		gate := NewGateQuantile(
+			datura.Acquire("vacuum-gate", datura.APPJSON).
+				WithAttribute("percentile", 0.75).
+				WithAttribute("minSamples", 3.0),
+		)
+
+		for _, sample := range []float64{1, 2, 3, 4} {
+			So(gate.observe(sample, 0), ShouldBeGreaterThanOrEqualTo, 0)
+		}
+
+		Convey("It should persist history and emit quantile on the bus", func() {
+			So(len(datura.Peek[[]float64](gate.artifact, "history")), ShouldBeGreaterThanOrEqualTo, 3)
+			So(gate.value(0), ShouldBeGreaterThan, 0)
+
+			inbound := datura.Acquire("gate-inbound", datura.APPJSON).
+				WithPayload([]byte(`{"sample":5}`))
+
+			So(transport.NewFlipFlop(inbound, gate), ShouldBeNil)
+			So(datura.Peek[float64](inbound, "output", "value"), ShouldBeGreaterThan, 0)
+			So(len(inbound.DecryptPayload()), ShouldBeGreaterThan, 0)
+		})
+	})
+}
+
 func TestObservationRingAdversarial(testingTB *testing.T) {
 	Convey("Given non-positive observations", testingTB, func() {
 		ringConfig := datura.Acquire("observation-ring-config", datura.APPJSON)

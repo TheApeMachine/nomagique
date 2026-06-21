@@ -4,6 +4,7 @@ import (
 	"math"
 	"testing"
 
+	"github.com/bytedance/sonic"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/transport"
@@ -14,10 +15,13 @@ import (
 func TestIntegration(t *testing.T) {
 	Convey("Given probability stages composed through nomagique.Number", t, func() {
 		Convey("When Bernoulli observes a unit success", func() {
-			artifact := datura.Acquire("test", datura.APPJSON)
+			samplePayload, marshalErr := sonic.Marshal(datura.Map[any]{"sample": 1.0})
+
+			So(marshalErr, ShouldBeNil)
+
+			artifact := datura.Acquire("test", datura.APPJSON).WithPayload(samplePayload)
 			posterior := nomagique.Number(probability.NewBernoulli(datura.Acquire("bernoulli-config", datura.APPJSON)))
 
-			artifact.Poke(1, "sample")
 			err := transport.NewFlipFlop(artifact, posterior)
 
 			So(err, ShouldBeNil)
@@ -25,11 +29,15 @@ func TestIntegration(t *testing.T) {
 		})
 
 		Convey("When Rank streams two samples", func() {
-			artifact := datura.Acquire("test", datura.APPJSON)
 			empirical := nomagique.Number(probability.NewRank(datura.Acquire("rank-config", datura.APPJSON)))
+			var artifact *datura.Artifact
 
 			for _, sample := range []float64{10, 5} {
-				artifact.Poke(sample, "sample")
+				samplePayload, marshalErr := sonic.Marshal(datura.Map[any]{"sample": sample})
+
+				So(marshalErr, ShouldBeNil)
+
+				artifact = datura.Acquire("test", datura.APPJSON).WithPayload(samplePayload)
 				err := transport.NewFlipFlop(artifact, empirical)
 
 				So(err, ShouldBeNil)
@@ -58,11 +66,17 @@ func TestIntegration(t *testing.T) {
 				classifier,
 				transition,
 			)
-			artifact := datura.Acquire("test", datura.APPJSON).
-				WithPayload([]byte(`{}`)).
-				Poke(0.1, "output", "s0").
-				Poke(0.8, "output", "s1").
-				Poke(0.2, "output", "s2")
+			payload, marshalErr := sonic.Marshal(datura.Map[any]{
+				"output": datura.Map[any]{
+					"s0": 0.1,
+					"s1": 0.8,
+					"s2": 0.2,
+				},
+			})
+
+			So(marshalErr, ShouldBeNil)
+
+			artifact := datura.Acquire("test", datura.APPJSON).WithPayload(payload)
 
 			err := transport.NewFlipFlop(artifact, pipeline)
 

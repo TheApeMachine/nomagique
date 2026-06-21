@@ -97,7 +97,7 @@ func BenchmarkBookQualitySample_Read(b *testing.B) {
 
 	for b.Loop() {
 		state := datura.Acquire("measurement", datura.APPJSON).WithPayload(frame)
-		packed, err := state.Message().MarshalPacked()
+		packed, err := state.MarshalPacked()
 
 		if err != nil {
 			b.Fatal(err)

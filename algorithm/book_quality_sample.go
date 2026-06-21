@@ -30,8 +30,6 @@ type BookQualitySample struct {
 NewBookQualitySample returns a book encoder wired from a config artifact.
 */
 func NewBookQualitySample(artifact *datura.Artifact) *BookQualitySample {
-	artifact.Inspect("algorithm", "book-quality-sample", "NewBookQualitySample()")
-
 	return &BookQualitySample{
 		artifact: artifact,
 		vacuumGate: NewGateQuantile(

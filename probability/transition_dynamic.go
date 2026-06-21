@@ -1,7 +1,9 @@
 package probability
 
 import (
+	"github.com/bytedance/sonic"
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/errnie"
 )
 
 /*
@@ -18,8 +20,6 @@ NewTransitionSurprise returns a transition surprisal stage wired from schema
 attributes numStates and alpha.
 */
 func NewTransitionSurprise(artifact *datura.Artifact) *Transition {
-	artifact.Inspect("probability", "transition", "NewTransitionSurprise()")
-
 	return &Transition{artifact: artifact}
 }
 
@@ -30,11 +30,21 @@ func (transition *Transition) Write(payload []byte) (int, error) {
 
 func (transition *Transition) Read(payload []byte) (int, error) {
 	state := datura.Acquire("transition-state", datura.APPJSON)
-	state.Inspect("probability", "transition", "Read()", "p")
+	wire := transition.artifact.DecryptPayload()
 
-	if _, err := state.Write(transition.artifact.DecryptPayload()); err != nil {
+	if len(wire) == 0 {
+		state.Release()
+
+		return 0, errnie.Err(errnie.Validation, "transition stage missing inbound wire", nil)
+	}
+
+	if _, err := state.Write(wire); err != nil {
+		state.Release()
+
 		return 0, err
 	}
+
+	defer state.Release()
 
 	numStates := int(datura.Peek[float64](transition.artifact, "numStates"))
 	alpha := datura.Peek[float64](transition.artifact, "alpha")
@@ -60,7 +70,7 @@ func (transition *Transition) Read(payload []byte) (int, error) {
 		return state.Read(payload)
 	}
 
-	probabilities := datura.Peek[[]float64](state, "output", "probabilities")
+	probabilities := transitionProbabilities(state)
 
 	if len(probabilities) == 0 {
 		return state.Read(payload)
@@ -74,7 +84,7 @@ func (transition *Transition) Read(payload []byte) (int, error) {
 		return state.Read(payload)
 	}
 
-	categoryIndex := int(datura.Peek[float64](state, "output", "category"))
+	categoryIndex := transitionCategory(state)
 
 	if categoryIndex >= 1 && categoryIndex <= numStates {
 		matrix.Update(categoryIndex - 1)
@@ -99,17 +109,50 @@ func transitionMatrixFromPayload(
 	alpha float64,
 ) *TransitionMatrix {
 	matrix := NewTransitionMatrix(numStates, alpha)
-	counts := datura.Peek[[]float64](artifact, "transition", "counts")
+	rawAttributes, err := artifact.Attributes()
 
-	if len(counts) == numStates*numStates {
-		for row := range numStates {
-			for column := range numStates {
-				matrix.counts[row][column] = counts[row*numStates+column]
+	if err != nil || len(rawAttributes) == 0 {
+		return matrix
+	}
+
+	countsNode, err := sonic.Get(rawAttributes, "transition", "counts")
+
+	if err != nil || !countsNode.Exists() {
+		return matrix
+	}
+
+	rawCounts, err := countsNode.ArrayUseNode()
+
+	if err != nil || len(rawCounts) != numStates*numStates {
+		return matrix
+	}
+
+	for row := range numStates {
+		for column := range numStates {
+			index := row*numStates + column
+			sample, sampleErr := rawCounts[index].Float64()
+
+			if sampleErr != nil {
+				return matrix
 			}
+
+			matrix.counts[row][column] = sample
 		}
 	}
 
-	matrix.lastCategory = int(datura.Peek[float64](artifact, "transition", "lastCategory"))
+	lastCategoryNode, err := sonic.Get(rawAttributes, "transition", "lastCategory")
+
+	if err != nil || !lastCategoryNode.Exists() {
+		return matrix
+	}
+
+	lastCategory, err := lastCategoryNode.Float64()
+
+	if err != nil {
+		return matrix
+	}
+
+	matrix.lastCategory = int(lastCategory)
 
 	return matrix
 }
@@ -127,4 +170,60 @@ func pokeTransitionMatrix(artifact *datura.Artifact, matrix *TransitionMatrix) {
 
 	artifact.Poke(flat, "transition", "counts")
 	artifact.Poke(float64(matrix.lastCategory), "transition", "lastCategory")
+}
+
+func transitionProbabilities(state *datura.Artifact) []float64 {
+	body := datura.As[datura.Map[any]](state)
+
+	if body == nil {
+		return nil
+	}
+
+	output, ok := body["output"].(map[string]any)
+
+	if !ok {
+		return nil
+	}
+
+	raw, ok := output["probabilities"].([]any)
+
+	if !ok {
+		return nil
+	}
+
+	probabilities := make([]float64, len(raw))
+
+	for index, sample := range raw {
+		numeric, numericOK := sample.(float64)
+
+		if !numericOK {
+			return nil
+		}
+
+		probabilities[index] = numeric
+	}
+
+	return probabilities
+}
+
+func transitionCategory(state *datura.Artifact) int {
+	body := datura.As[datura.Map[any]](state)
+
+	if body == nil {
+		return 0
+	}
+
+	output, ok := body["output"].(map[string]any)
+
+	if !ok {
+		return 0
+	}
+
+	numeric, ok := output["category"].(float64)
+
+	if !ok {
+		return 0
+	}
+
+	return int(numeric)
 }

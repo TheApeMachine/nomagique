@@ -119,23 +119,18 @@ func (excitation *Excitation) evaluate(scope string, batch []float64) Excitation
 }
 
 func (excitation *Excitation) publishReadings() {
-	pokeFloat(excitation.artifact, "excitation.frenzy", excitation.outcome.Frenzy)
-	pokeFloat(excitation.artifact, "excitation.saturation", excitation.outcome.Saturation)
-	pokeFloat(excitation.artifact, "excitation.organic", excitation.outcome.Organic)
-	pokeFloat(excitation.artifact, "excitation.exhaustion", excitation.outcome.Exhaustion)
-	pokeFloat(excitation.artifact, "excitation.strength", excitation.outcome.Strength)
-	pokeFloat(excitation.artifact, "excitation.branching_ratio", excitation.outcome.BranchingRatio)
-	pokeFloat(excitation.artifact, "excitation.stationarity_margin", excitation.outcome.StationarityMargin)
-	pokeFloat(excitation.artifact, "excitation.poisson_improvement", excitation.outcome.PoissonImprovement)
-	pokeFloat(excitation.artifact, "excitation.event_count", float64(excitation.outcome.EventCount))
-
-	excitation.artifact.Poke(excitation.outcome.Frenzy, "output", "frenzy")
-	excitation.artifact.Poke(excitation.outcome.Saturation, "output", "saturation")
-	excitation.artifact.Poke(excitation.outcome.Organic, "output", "organic")
-	excitation.artifact.Poke(excitation.outcome.Exhaustion, "output", "exhaustion")
+	excitation.artifact = stageWritableArtifact(
+		excitation.artifact,
+		"excitation",
+		datura.Artifact_Type_json,
+	)
+	excitation.artifact.MergeOutput("frenzy", excitation.outcome.Frenzy)
+	excitation.artifact.MergeOutput("saturation", excitation.outcome.Saturation)
+	excitation.artifact.MergeOutput("organic", excitation.outcome.Organic)
+	excitation.artifact.MergeOutput("exhaustion", excitation.outcome.Exhaustion)
 
 	if excitation.outcome.Eligible {
-		pokeFloat(excitation.artifact, "excitation.eligible", 1)
+		excitation.artifact.Merge("excitation.eligible", 1.0)
 	}
 }
 

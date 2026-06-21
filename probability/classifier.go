@@ -23,6 +23,8 @@ type Classifier struct {
 NewClassifier returns a classifier wired from schema.inputs score keys.
 */
 func NewClassifier(config *datura.Artifact) *Classifier {
+	config.Inspect("probability", "classifier", "NewClassifier()")
+
 	return &Classifier{config: config}
 }
 
@@ -34,6 +36,7 @@ func (classifier *Classifier) Write(payload []byte) (int, error) {
 
 func (classifier *Classifier) Read(payload []byte) (int, error) {
 	state := datura.Acquire("classifier-state", datura.APPJSON)
+	state.Inspect("probability", "classifier", "Read()", "p")
 
 	if _, err := state.Write(classifier.bytes); err != nil {
 		state.Release()
@@ -96,6 +99,8 @@ func (classifier *Classifier) Read(payload []byte) (int, error) {
 	output.MergeOutput("confidence", confidence)
 	output.MergeOutput("strength", strength)
 	output.MergeOutput("value", categoryIndex)
+
+	output.Inspect("probability", "classifier", "Read()", "output")
 
 	return output.Read(payload)
 }

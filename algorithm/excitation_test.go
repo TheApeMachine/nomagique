@@ -15,7 +15,7 @@ func TestExcitationMeasure(testingTB *testing.T) {
 		base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
 		samples := excitationBurstSamples(base, 128)
 		inbound := daturaBurstArtifact("ALT/EUR", samples)
-		frame, frameErr := inbound.Message().Marshal()
+		frame, frameErr := inbound.Message().MarshalPacked()
 
 		So(frameErr, ShouldBeNil)
 
@@ -119,7 +119,7 @@ func BenchmarkExcitationRead(b *testing.B) {
 	base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
 	samples := excitationBurstSamples(base, 128)
 	inbound := daturaBurstArtifact("ALT/EUR", samples)
-	frame, _ := inbound.Message().Marshal()
+	frame, _ := inbound.Message().MarshalPacked()
 	readFrame := make([]byte, 4096)
 
 	b.ReportAllocs()

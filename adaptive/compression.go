@@ -20,6 +20,8 @@ type Compression struct {
 NewCompression returns a compression stage ready to bootstrap from its first observation.
 */
 func NewCompression(config *datura.Artifact) *Compression {
+	config.Inspect("adaptive", "compression", "NewCompression()")
+
 	return &Compression{
 		config: config,
 	}
@@ -33,6 +35,7 @@ func (compression *Compression) Write(p []byte) (int, error) {
 
 func (compression *Compression) Read(p []byte) (int, error) {
 	state := datura.Acquire("compression-state", datura.APPJSON)
+	state.Inspect("adaptive", "compression", "Read()", "p")
 
 	if _, err := state.Write(compression.bytes); err != nil {
 		state.Release()
@@ -64,6 +67,8 @@ func (compression *Compression) Read(p []byte) (int, error) {
 	output.WithPayload(state.DecryptPayload())
 	output.MergeOutput("baseline", baseline)
 	output.MergeOutput("value", value)
+
+	output.Inspect("adaptive", "compression", "Read()", "output")
 
 	return output.Read(p)
 }

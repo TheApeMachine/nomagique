@@ -65,12 +65,42 @@ func pokeFloat(artifact *datura.Artifact, key string, value float64) {
 	artifact.Poke(strconv.FormatFloat(value, 'g', -1, 64), key)
 }
 
+func stageWritableArtifact(
+	artifact *datura.Artifact,
+	origin string,
+	artifactType datura.Artifact_Type,
+) *datura.Artifact {
+	if artifact == nil {
+		return nil
+	}
+
+	fresh := datura.Acquire(origin, artifactType)
+
+	if role, err := artifact.Role(); err == nil && role != "" {
+		fresh.WithRole(role)
+	}
+
+	if scope, err := artifact.Scope(); err == nil && scope != "" {
+		fresh.WithScope(scope)
+	}
+
+	body := artifact.DecryptPayload()
+
+	if len(body) == 0 {
+		body = []byte("{}")
+	}
+
+	fresh.WithPayload(body)
+
+	return fresh
+}
+
 func rehydrateArtifact(artifact **datura.Artifact, origin string, artifactType datura.Artifact_Type) {
 	if artifact == nil || *artifact == nil {
 		return
 	}
 
-	wire, err := (*artifact).Message().Marshal()
+	wire, err := (*artifact).Message().MarshalPacked()
 
 	if err != nil || len(wire) == 0 {
 		return

@@ -22,6 +22,8 @@ The config artifact also retains the rolling history across frames; the inbound
 artifact (buffered on the config payload) is the per-frame compute state.
 */
 func NewMeanMedianRatio(config *datura.Artifact) *MeanMedianRatio {
+	config.Inspect("statistic", "mean-median-ratio", "NewMeanMedianRatio()")
+
 	return &MeanMedianRatio{
 		config: config,
 	}
@@ -29,6 +31,7 @@ func NewMeanMedianRatio(config *datura.Artifact) *MeanMedianRatio {
 
 func (meanMedianRatio *MeanMedianRatio) Read(payload []byte) (int, error) {
 	state := datura.Acquire("mean-median-ratio-state", datura.APPJSON)
+	state.Inspect("statistic", "mean-median-ratio", "Read()", "p")
 
 	if _, err := state.Write(meanMedianRatio.bytes); err != nil {
 		state.Release()
@@ -125,6 +128,8 @@ func (meanMedianRatio *MeanMedianRatio) Read(payload []byte) (int, error) {
 	output := datura.Acquire("mean-median-ratio-output", datura.APPJSON)
 	output.WithPayload(state.DecryptPayload())
 	output.MergeOutput(outputKey, ratio)
+
+	output.Inspect("statistic", "mean-median-ratio", "Read()", "output")
 
 	return output.Read(payload)
 }

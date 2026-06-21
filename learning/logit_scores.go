@@ -19,6 +19,8 @@ type LogitScores struct {
 NewLogitScores returns a classifier logit stage configured on the artifact.
 */
 func NewLogitScores(config *datura.Artifact) *LogitScores {
+	config.Inspect("learning", "logit-scores", "NewLogitScores()")
+
 	return &LogitScores{
 		config: config,
 	}
@@ -32,6 +34,7 @@ func (logitScores *LogitScores) Write(p []byte) (int, error) {
 
 func (logitScores *LogitScores) Read(payload []byte) (int, error) {
 	state := datura.Acquire("logit-scores-state", datura.APPJSON)
+	state.Inspect("learning", "logit-scores", "Read()", "p")
 
 	if _, err := state.Write(logitScores.bytes); err != nil {
 		state.Release()
@@ -77,7 +80,13 @@ func (logitScores *LogitScores) Read(payload []byte) (int, error) {
 	overrideValue, overrideOutput := logitScores.jointOverride(state)
 
 	output := datura.Acquire("logit-scores-output", datura.APPJSON)
-	output.WithPayload(state.DecryptPayload())
+	body := state.DecryptPayload()
+
+	if len(body) == 0 {
+		body = []byte("{}")
+	}
+
+	output.WithPayload(body)
 
 	for index, outputKey := range outputs[:4] {
 		score := scores[index]
@@ -96,6 +105,8 @@ func (logitScores *LogitScores) Read(payload []byte) (int, error) {
 	}
 
 	output.MergeOutput("value", scores[0])
+
+	output.Inspect("learning", "logit-scores", "Read()", "output")
 
 	return output.Read(payload)
 }

@@ -27,6 +27,8 @@ type FeatureExtractor struct {
 NewFeatureExtractor builds an extractor wired from schema attributes.
 */
 func NewFeatureExtractor(artifact *datura.Artifact) *FeatureExtractor {
+	artifact.Inspect("feature-extractor", "NewFeatureExtractor()")
+
 	return &FeatureExtractor{
 		artifact:   artifact,
 		emaConfigs: map[string]*datura.Artifact{},
@@ -40,6 +42,7 @@ func NewFeatureExtractor(artifact *datura.Artifact) *FeatureExtractor {
 
 func (extractor *FeatureExtractor) Read(payload []byte) (int, error) {
 	state := datura.Acquire("feature-extractor-state", datura.APPJSON)
+	state.Inspect("feature-extractor", "Read()", "p")
 
 	if _, err := state.Write(extractor.bytes); err != nil {
 		state.Release()
@@ -92,7 +95,9 @@ func (extractor *FeatureExtractor) Read(payload []byte) (int, error) {
 				extractor.emaConfigs[input] = config
 			}
 
+			scratch.Inspect("feature-extractor", "Read()", "transform", transform, "in")
 			transport.NewFlipFlop(scratch, transformer(config))
+			scratch.Inspect("feature-extractor", "Read()", "transform", transform, "out")
 
 			sample = datura.Peek[float64](scratch, "output", "value")
 			scratch.Release()
@@ -102,13 +107,18 @@ func (extractor *FeatureExtractor) Read(payload []byte) (int, error) {
 	}
 
 	output := datura.Acquire("feature-extractor-output", datura.APPJSON)
+	body := state.DecryptPayload()
 
-	output.WithPayload(datura.Map[[]float64]{
-		"features": features,
-	}.Marshal())
+	if len(body) == 0 {
+		body = []byte("{}")
+	}
 
+	output.WithPayload(body)
+	output.Merge("features", features)
 	output.Merge("root", "features")
 	output.Merge("inputs", inputs)
+
+	output.Inspect()
 
 	return output.Read(payload)
 }

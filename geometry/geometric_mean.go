@@ -18,6 +18,8 @@ type GeometricMean struct {
 NewGeometricMean returns a geometric-mean stage configured on the artifact.
 */
 func NewGeometricMean(config *datura.Artifact) *GeometricMean {
+	config.Inspect("geometry", "geometric-mean", "NewGeometricMean()")
+
 	return &GeometricMean{
 		config: config,
 	}
@@ -31,6 +33,7 @@ func (geometricMean *GeometricMean) Write(p []byte) (int, error) {
 
 func (geometricMean *GeometricMean) Read(p []byte) (int, error) {
 	state := datura.Acquire("geometric-mean-state", datura.APPJSON)
+	state.Inspect("geometry", "geometric-mean", "Read()", "p")
 
 	if _, err := state.Write(geometricMean.bytes); err != nil {
 		state.Release()
@@ -59,6 +62,8 @@ func (geometricMean *GeometricMean) Read(p []byte) (int, error) {
 	output := datura.Acquire("geometric-mean-output", datura.APPJSON)
 	output.WithPayload(state.DecryptPayload())
 	output.MergeOutput(destinationKey, mean)
+
+	output.Inspect("geometry", "geometric-mean", "Read()", "output")
 
 	return output.Read(p)
 }

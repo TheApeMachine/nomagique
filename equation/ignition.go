@@ -21,6 +21,8 @@ type Ignition struct {
 NewIgnition composes generic stages for joint volume-and-return ignition scoring.
 */
 func NewIgnition(artifact *datura.Artifact) *Ignition {
+	artifact.Inspect("ignition", "NewIgnition()")
+
 	return &Ignition{
 		artifact: artifact,
 		pipeline: transport.NewPipeline(

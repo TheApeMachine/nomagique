@@ -257,16 +257,15 @@ func minLagFraction() float64 {
 }
 
 func (lag *Lag) publishReadings() {
-	pokeFloat(lag.artifact, "lag.inefficient", lag.outcome.InefficientScore)
-	pokeFloat(lag.artifact, "lag.sync", lag.outcome.SyncScore)
-	pokeFloat(lag.artifact, "lag.decoupled", lag.outcome.DecoupledScore)
-	pokeFloat(lag.artifact, "lag.stall", lag.outcome.StallScore)
-	pokeFloat(lag.artifact, "lag.strength", lag.outcome.Strength)
-
-	lag.artifact.Poke(lag.outcome.InefficientScore, "output", "inefficient")
-	lag.artifact.Poke(lag.outcome.SyncScore, "output", "sync")
-	lag.artifact.Poke(lag.outcome.DecoupledScore, "output", "decoupled")
-	lag.artifact.Poke(lag.outcome.StallScore, "output", "stall")
+	lag.artifact = stageWritableArtifact(
+		lag.artifact,
+		"lag",
+		datura.Artifact_Type_json,
+	)
+	lag.artifact.MergeOutput("inefficient", lag.outcome.InefficientScore)
+	lag.artifact.MergeOutput("sync", lag.outcome.SyncScore)
+	lag.artifact.MergeOutput("decoupled", lag.outcome.DecoupledScore)
+	lag.artifact.MergeOutput("stall", lag.outcome.StallScore)
 }
 
 func (lag *Lag) InefficientReading() *LagReading {

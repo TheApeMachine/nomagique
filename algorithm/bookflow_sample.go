@@ -33,6 +33,10 @@ type bookflowWindow struct {
 	lastSpread      float64
 	touchDepth      float64
 	flatOK          float64
+	touchCancelBid  float64
+	touchCancelAsk  float64
+	frameAddBid     float64
+	frameAddAsk     float64
 }
 
 /*
@@ -113,8 +117,13 @@ func (bookflowSample *BookflowSample) window(symbol string) *bookflowWindow {
 }
 
 func (bookflowSample *BookflowSample) ingestBook(state *datura.Artifact, window *bookflowWindow) {
-	bookflowSample.applyLevels(state, "bids", window.bids)
-	bookflowSample.applyLevels(state, "asks", window.asks)
+	window.touchCancelBid = 0
+	window.touchCancelAsk = 0
+	window.frameAddBid = 0
+	window.frameAddAsk = 0
+
+	bookflowSample.applyLevels(state, "bids", window.bids, window, SideBid)
+	bookflowSample.applyLevels(state, "asks", window.asks, window, SideAsk)
 
 	mid := bookflowMidPrice(window.bids, window.asks)
 	spread := bookflowSpread(window.bids, window.asks)
@@ -124,14 +133,17 @@ func (bookflowSample *BookflowSample) ingestBook(state *datura.Artifact, window 
 	}
 
 	decayRate := bookflowDecayRate(mid, spread)
-	weighted := bookflowImbalance(window.bids, window.asks, mid, decayRate, false, 0)
-	level1 := bookflowImbalance(window.bids, window.asks, mid, decayRate, true, 0)
+	touchDepth := bookflowTouchDepth(window.bids, window.asks)
+	toxicBid := bookflowToxicPenalty(window.touchCancelBid, window.frameAddBid, touchDepth)
+	toxicAsk := bookflowToxicPenalty(window.touchCancelAsk, window.frameAddAsk, touchDepth)
+	weighted := bookflowImbalance(window.bids, window.asks, mid, decayRate, false, 0, toxicBid, toxicAsk)
+	level1 := bookflowImbalance(window.bids, window.asks, mid, decayRate, true, 0, toxicBid, toxicAsk)
 	flatDepth := bookflowFlatDepth(window.bids, window.asks)
-	flat := bookflowImbalance(window.bids, window.asks, mid, decayRate, false, flatDepth)
+	flat := bookflowImbalance(window.bids, window.asks, mid, decayRate, false, flatDepth, toxicBid, toxicAsk)
 
 	window.lastMid = mid
 	window.lastSpread = spread
-	window.touchDepth = bookflowTouchDepth(window.bids, window.asks)
+	window.touchDepth = touchDepth
 	window.flatOK = 1
 
 	if flatDepth > 0 {
@@ -173,6 +185,8 @@ func (bookflowSample *BookflowSample) applyLevels(
 	state *datura.Artifact,
 	sideKey string,
 	book map[float64]float64,
+	window *bookflowWindow,
+	side byte,
 ) {
 	for index := 0; ; index++ {
 		price := datura.Peek[float64](state, "data", 0, sideKey, index, "price")
@@ -182,14 +196,73 @@ func (bookflowSample *BookflowSample) applyLevels(
 			break
 		}
 
+		previousQty := book[price]
+
 		if quantity <= 0 {
 			delete(book, price)
+
+			if previousQty > 0 && bookflowSample.isTouchPrice(side, price, book) {
+				if side == SideBid {
+					window.touchCancelBid += previousQty
+				}
+
+				if side == SideAsk {
+					window.touchCancelAsk += previousQty
+				}
+			}
 
 			continue
 		}
 
+		delta := quantity - previousQty
 		book[price] = quantity
+
+		if delta <= 0 {
+			removed := -delta
+
+			if bookflowSample.isTouchPrice(side, price, book) {
+				if side == SideBid {
+					window.touchCancelBid += removed
+				}
+
+				if side == SideAsk {
+					window.touchCancelAsk += removed
+				}
+			}
+
+			continue
+		}
+
+		if side == SideBid {
+			window.frameAddBid += delta
+		}
+
+		if side == SideAsk {
+			window.frameAddAsk += delta
+		}
 	}
+}
+
+func (bookflowSample *BookflowSample) isTouchPrice(side byte, price float64, book map[float64]float64) bool {
+	if side == SideBid {
+		return price == bookflowBestBid(book)
+	}
+
+	return price == bookflowBestAsk(book)
+}
+
+func bookflowToxicPenalty(touchCancel, frameAdd, touchDepth float64) float64 {
+	if touchCancel <= 0 || frameAdd <= 0 {
+		return 0
+	}
+
+	churn := touchCancel / frameAdd
+
+	if touchDepth <= 0 {
+		return math.Min(1, churn)
+	}
+
+	return math.Min(1, churn*(touchCancel/touchDepth))
 }
 
 func (bookflowSample *BookflowSample) features(window *bookflowWindow) []float64 {
@@ -343,9 +416,19 @@ func bookflowImbalance(
 	mid, decayRate float64,
 	touchOnly bool,
 	flatDepth int,
+	toxicBid, toxicAsk float64,
 ) float64 {
 	bidWeight := bookflowSideWeight(bids, mid, decayRate, touchOnly, flatDepth, SideBid)
 	askWeight := bookflowSideWeight(asks, mid, decayRate, touchOnly, flatDepth, SideAsk)
+
+	if toxicBid > 0 {
+		bidWeight *= 1 - toxicBid
+	}
+
+	if toxicAsk > 0 {
+		askWeight *= 1 - toxicAsk
+	}
+
 	total := bidWeight + askWeight
 
 	if total <= 0 {

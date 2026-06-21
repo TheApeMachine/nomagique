@@ -128,7 +128,7 @@ func (decaySample *DecaySample) ingestBook(state *datura.Artifact, window *decay
 	askDepth := decaySideDepth(window.asks)
 	density := bidDepth + askDepth
 	decayRate := bookflowDecayRate(mid, spread)
-	imbalance := bookflowImbalance(window.bids, window.asks, mid, decayRate, false, 0)
+	imbalance := bookflowImbalance(window.bids, window.asks, mid, decayRate, false, 0, 0, 0)
 
 	window.bidDepthHist = appendRingFloat(window.bidDepthHist, bidDepth, decaySampleHistoryCap)
 	window.askDepthHist = appendRingFloat(window.askDepthHist, askDepth, decaySampleHistoryCap)

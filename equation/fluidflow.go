@@ -7,14 +7,14 @@ import (
 	"github.com/theapemachine/datura"
 )
 
-const fluidflowPayloadFields = 14
+const fluidflowPayloadFields = 16
 
 /*
 Fluidflow classifies laminar, turbulent, inertial, and viscous book-flow regimes.
 
 Payload layout: reynolds, absDivergence, viscosity, midAddRate, midExecuteRate,
 laminarCeiling, turbulentFloor, turbulentReady, divergenceEdge, icebergScore,
-price, spreadBPS, changePct, volume.
+vorticity, turbulence, price, spreadBPS, changePct, volume.
 */
 type Fluidflow struct {
 	artifact *datura.Artifact
@@ -55,10 +55,12 @@ func (fluidflow *Fluidflow) Read(p []byte) (int, error) {
 	turbulentReady := batch[7] > 0
 	divergenceEdge := batch[8]
 	icebergScore := batch[9]
-	price := batch[10]
-	spreadBPS := batch[11]
-	changePct := batch[12]
-	volume := batch[13]
+	vorticity := batch[10]
+	turbulence := batch[11]
+	price := batch[12]
+	spreadBPS := batch[13]
+	changePct := batch[14]
+	volume := batch[15]
 
 	if price <= 0 || spreadBPS <= 0 || changePct <= 0 || volume <= 0 {
 		return emitZero(state, p)
@@ -82,6 +84,22 @@ func (fluidflow *Fluidflow) Read(p []byte) (int, error) {
 
 	if turbulentReady && reynolds >= turbulentFloor {
 		turbulentScore = reynolds / turbulentFloor
+	}
+
+	if turbulence > 0 && turbulentReady {
+		turbulentFromField := turbulence * reynolds
+
+		if turbulentFromField > turbulentScore {
+			turbulentScore = turbulentFromField
+		}
+	}
+
+	if vorticity > 0 && turbulentReady {
+		vortScore := vorticity * turbulence
+
+		if vortScore > turbulentScore {
+			turbulentScore = vortScore
+		}
 	}
 
 	inertialScore := divergence

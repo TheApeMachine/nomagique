@@ -30,6 +30,8 @@ type ExcitationOutcome struct {
 	Strength           float64
 	BranchingRatio     float64
 	StationarityMargin float64
+	BaselineMu         float64
+	IntensityRatio     float64
 	PoissonImprovement float64
 	EventCount         int
 	HighRisk           bool
@@ -59,37 +61,47 @@ func NewExcitation(artifact *datura.Artifact) *Excitation {
 }
 
 func (excitation *Excitation) Write(payload []byte) (int, error) {
-	excitation.artifact.WithPayload(payload)
-	return len(payload), nil
-}
+	n, err := excitation.artifact.Unpack(payload)
 
-func (excitation *Excitation) Read(payload []byte) (int, error) {
-	state := datura.Acquire("excitation-state", datura.APPJSON)
-
-	if _, err := state.Write(excitation.artifact.DecryptPayload()); err != nil {
+	if err != nil {
 		return 0, err
 	}
 
-	scope, _ := state.Scope()
+	return n, nil
+}
+
+func (excitation *Excitation) Read(payload []byte) (int, error) {
+	scope, _ := excitation.artifact.Scope()
 
 	if scope == "" {
-		scope = datura.Peek[string](state, "scope")
+		scope = datura.Peek[string](excitation.artifact, "scope")
 	}
 
-	batch := payloadSamples(state.DecryptPayload())
+	batch := payloadSamples(excitation.artifact.DecryptPayload())
 
 	if len(batch) == 0 {
-		batch = datura.Peek[[]float64](state, "features")
+		batch = datura.Peek[[]float64](excitation.artifact, "features")
 	}
 
 	if scope != "" && len(batch) > 0 {
 		excitation.outcome = excitation.evaluate(scope, batch)
 	}
 
+	state := datura.Acquire("excitation-state", datura.APPJSON)
+
+	if _, err := state.Unpack(excitation.artifact.Pack()); err != nil {
+		return 0, err
+	}
+
 	state.MergeOutput("frenzy", excitation.outcome.Frenzy)
 	state.MergeOutput("saturation", excitation.outcome.Saturation)
 	state.MergeOutput("organic", excitation.outcome.Organic)
 	state.MergeOutput("exhaustion", excitation.outcome.Exhaustion)
+	state.MergeOutput("branchingRatio", excitation.outcome.BranchingRatio)
+	state.MergeOutput("spectralRadius", excitation.outcome.BranchingRatio)
+	state.MergeOutput("stationarityMargin", excitation.outcome.StationarityMargin)
+	state.MergeOutput("baselineMu", excitation.outcome.BaselineMu)
+	state.MergeOutput("intensityRatio", excitation.outcome.IntensityRatio)
 
 	if excitation.outcome.Eligible {
 		state.Merge("excitation.eligible", 1.0)
@@ -222,6 +234,8 @@ type excitationReading struct {
 	strength           float64
 	branchingRatio     float64
 	stationarityMargin float64
+	baselineMu         float64
+	intensityRatio     float64
 	poissonImprovement float64
 	eventCount         int
 	highRisk           bool
@@ -359,6 +373,13 @@ func (symbol *excitationSymbol) enrichReading(
 
 	reading.branchingRatio = fit.SpectralRadius
 	reading.stationarityMargin = 1 - fit.SpectralRadius
+	reading.baselineMu = fit.MuX + fit.MuY
+	reading.intensityRatio = fit.IntensityX + fit.IntensityY
+
+	if reading.baselineMu > 0 {
+		reading.intensityRatio /= reading.baselineMu
+	}
+
 	reading.eventCount = len(stream.BuyTimes()) + len(stream.SellTimes())
 
 	hawkesLikelihood := fit.LogLikelihood(stream, horizon)
@@ -392,11 +413,20 @@ func (symbol *excitationSymbol) measureFit(fit hawkes.BivariateFit) (excitationR
 	gates, gatesReady := hawkes.FitGatesFromHistory(symbol.spectralRadii, symbol.asymmetries)
 
 	if !gatesReady {
+		baseline := fit.MuX + fit.MuY
+		intensityRatio := 0.0
+
+		if baseline > 0 {
+			intensityRatio = (fit.IntensityX + fit.IntensityY) / baseline
+		}
+
 		return excitationReading{
 			strength:           raw,
 			organic:            math.Max(raw, uniformExcitationShare),
 			branchingRatio:     fit.SpectralRadius,
 			stationarityMargin: 1 - fit.SpectralRadius,
+			baselineMu:         baseline,
+			intensityRatio:     intensityRatio,
 		}, true
 	}
 
@@ -439,6 +469,8 @@ func (symbol *excitationSymbol) measureFit(fit hawkes.BivariateFit) (excitationR
 		exhaustion:         exhaustion,
 		branchingRatio:     fit.SpectralRadius,
 		stationarityMargin: 1 - fit.SpectralRadius,
+		baselineMu:         fit.MuX + fit.MuY,
+		intensityRatio:     raw,
 		highRisk: category == hawkes.FitCategoryFrenzy ||
 			category == hawkes.FitCategorySaturation,
 	}, true
@@ -644,6 +676,8 @@ func excitationOutcomeFromReading(reading excitationReading) ExcitationOutcome {
 		Strength:           reading.strength,
 		BranchingRatio:     reading.branchingRatio,
 		StationarityMargin: reading.stationarityMargin,
+		BaselineMu:         reading.baselineMu,
+		IntensityRatio:     reading.intensityRatio,
 		PoissonImprovement: reading.poissonImprovement,
 		EventCount:         reading.eventCount,
 		HighRisk:           reading.highRisk,

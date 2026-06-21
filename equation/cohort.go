@@ -4,6 +4,7 @@ import (
 	"io"
 	"math"
 	"sort"
+	"time"
 
 	"github.com/theapemachine/datura"
 	"gonum.org/v1/gonum/stat"
@@ -112,6 +113,12 @@ func evaluateCohort(batch []float64) cohortOutcome {
 	}
 
 	correlation := stat.Correlation(symbolReturns, marketReturns, nil)
+
+	if hyCorrelation, hyOK := cohortHayashiCorrelation(symbolReturns, marketReturns); hyOK {
+		if math.Abs(correlation) < math.Abs(hyCorrelation) || math.IsNaN(correlation) {
+			correlation = hyCorrelation
+		}
+	}
 	energy := cohortMedianAbsoluteValues(symbolReturns)
 	upperEnergy := cohortQuantileSorted(cohortCopySorted(peerEnergies), 0.75)
 
@@ -299,4 +306,137 @@ func cohortMedianAbsoluteValues(values []float64) float64 {
 	sort.Float64s(absValues)
 
 	return stat.Quantile(0.5, stat.LinInterp, absValues, nil)
+}
+
+func cohortHayashiCorrelation(left, right []float64) (float64, bool) {
+	if len(left) < 2 || len(left) != len(right) {
+		return 0, false
+	}
+
+	barSpacing := 10 * time.Second
+	leftSamples := make([]cohortHayashiSample, len(left))
+	rightSamples := make([]cohortHayashiSample, len(right))
+	start := time.Unix(0, 0)
+
+	for index := range left {
+		at := start.Add(time.Duration(index) * barSpacing)
+		leftSamples[index] = cohortHayashiSample{At: at, Value: left[index]}
+		rightSamples[index] = cohortHayashiSample{At: at, Value: right[index]}
+	}
+
+	return cohortHayashiYoshida(leftSamples, rightSamples, barSpacing*2)
+}
+
+type cohortHayashiSample struct {
+	At    time.Time
+	Value float64
+}
+
+func cohortHayashiYoshida(
+	left, right []cohortHayashiSample,
+	maxInterval time.Duration,
+) (float64, bool) {
+	if len(left) < 2 || len(right) < 2 {
+		return 0, false
+	}
+
+	leftVariance := cohortHayashiVariance(left, maxInterval)
+	rightVariance := cohortHayashiVariance(right, maxInterval)
+
+	if leftVariance <= 0 || rightVariance <= 0 {
+		return 0, false
+	}
+
+	covariance := 0.0
+	rightStart := 0
+
+	for leftIndex := 0; leftIndex < len(left)-1; leftIndex++ {
+		leftStart := left[leftIndex].At
+		leftEnd := left[leftIndex+1].At
+
+		if !cohortHayashiInterval(left[leftIndex], left[leftIndex+1], maxInterval) {
+			continue
+		}
+
+		leftReturn := math.Log(left[leftIndex+1].Value / left[leftIndex].Value)
+
+		for rightStart < len(right)-1 {
+			if !cohortHayashiInterval(right[rightStart], right[rightStart+1], maxInterval) ||
+				!leftStart.Before(right[rightStart+1].At) {
+				rightStart++
+
+				continue
+			}
+
+			break
+		}
+
+		for rightIndex := rightStart; rightIndex < len(right)-1; rightIndex++ {
+			rightIntervalStart := right[rightIndex].At
+
+			if !rightIntervalStart.Before(leftEnd) {
+				break
+			}
+
+			if !cohortHayashiInterval(right[rightIndex], right[rightIndex+1], maxInterval) {
+				continue
+			}
+
+			covariance += leftReturn * math.Log(
+				right[rightIndex+1].Value/right[rightIndex].Value,
+			)
+		}
+	}
+
+	denominator := math.Sqrt(leftVariance * rightVariance)
+
+	if denominator <= 0 {
+		return 0, false
+	}
+
+	correlationValue := covariance / denominator
+
+	if correlationValue > 1 {
+		return 1, true
+	}
+
+	if correlationValue < -1 {
+		return -1, true
+	}
+
+	return correlationValue, true
+}
+
+func cohortHayashiVariance(samples []cohortHayashiSample, maxInterval time.Duration) float64 {
+	if len(samples) < 2 {
+		return 0
+	}
+
+	sum := 0.0
+
+	for index := 1; index < len(samples); index++ {
+		if !cohortHayashiInterval(samples[index-1], samples[index], maxInterval) {
+			continue
+		}
+
+		ret := math.Log(samples[index].Value / samples[index-1].Value)
+		sum += ret * ret
+	}
+
+	return sum
+}
+
+func cohortHayashiInterval(
+	previous, current cohortHayashiSample,
+	maxInterval time.Duration,
+) bool {
+	if previous.Value <= 0 || current.Value <= 0 || !previous.At.Before(current.At) {
+		return false
+	}
+
+	if maxInterval <= 0 {
+		return true
+	}
+
+	return current.At.Sub(previous.At) <= maxInterval
 }

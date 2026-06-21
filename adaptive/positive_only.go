@@ -8,46 +8,44 @@ import (
 
 /*
 PositiveOnly optionally clamps a sample at zero from below.
+The constructor artifact holds config; Write buffers inbound wire on its payload.
 */
 type PositiveOnly struct {
-	config *datura.Artifact
-	bytes  []byte
+	artifact *datura.Artifact
 }
 
 /*
-NewPositiveOnly returns a positive-only gate configured on the artifact.
+NewPositiveOnly returns a positive-only gate wired from config attributes on the artifact.
 */
-func NewPositiveOnly(config *datura.Artifact) *PositiveOnly {
+func NewPositiveOnly(artifact *datura.Artifact) *PositiveOnly {
+	artifact.Inspect("adaptive", "positive-only", "NewPositiveOnly()")
+
 	return &PositiveOnly{
-		config: config,
+		artifact: artifact,
 	}
 }
 
 func (positiveOnly *PositiveOnly) Write(payload []byte) (int, error) {
-	positiveOnly.bytes = append(positiveOnly.bytes[:0], payload...)
-
+	positiveOnly.artifact.WithPayload(payload)
 	return len(payload), nil
 }
 
 func (positiveOnly *PositiveOnly) Read(payload []byte) (int, error) {
 	state := datura.Acquire("positive-only-state", datura.APPJSON)
+	state.Inspect("adaptive", "positive-only", "Read()", "p")
 
-	if _, err := state.Write(positiveOnly.bytes); err != nil {
-		state.Release()
-
+	if _, err := state.Write(positiveOnly.artifact.DecryptPayload()); err != nil {
 		return 0, err
 	}
 
-	defer state.Release()
-
-	stageKey := datura.Peek[string](positiveOnly.config, "stage")
+	stageKey := datura.Peek[string](positiveOnly.artifact, "stage")
 
 	if stageKey == "" {
-		order := datura.Peek[[]string](positiveOnly.config, "order")
-		stageIndex := int(datura.Peek[float64](positiveOnly.config, "inputs", "precursor", "stageIndex"))
+		order := datura.Peek[[]string](positiveOnly.artifact, "order")
+		stageIndex := int(datura.Peek[float64](positiveOnly.artifact, "inputs", "precursor", "stageIndex"))
 
 		if stageIndex <= 0 {
-			stageIndex = int(datura.Peek[float64](positiveOnly.config, "stageIndex"))
+			stageIndex = int(datura.Peek[float64](positiveOnly.artifact, "stageIndex"))
 		}
 
 		if stageIndex >= 0 && len(order) > stageIndex {
@@ -59,7 +57,7 @@ func (positiveOnly *PositiveOnly) Read(payload []byte) (int, error) {
 		return state.Read(payload)
 	}
 
-	outputKey := datura.Peek[string](positiveOnly.config, "inputs", stageKey, "outputKey")
+	outputKey := datura.Peek[string](positiveOnly.artifact, "inputs", stageKey, "outputKey")
 
 	if outputKey == "" {
 		return state.Read(payload)
@@ -67,12 +65,13 @@ func (positiveOnly *PositiveOnly) Read(payload []byte) (int, error) {
 
 	score := datura.Peek[float64](state, "sample")
 
-	if datura.Peek[float64](positiveOnly.config, "inputs", stageKey, "positiveOnly") > 0 {
+	if datura.Peek[float64](positiveOnly.artifact, "inputs", stageKey, "positiveOnly") > 0 {
 		score = math.Max(0, score)
 	}
 
 	state.MergeOutput(outputKey, score)
-
+	state.Merge("root", "output")
+	state.Merge("inputs", []string{outputKey})
 	return state.Read(payload)
 }
 

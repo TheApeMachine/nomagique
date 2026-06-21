@@ -48,6 +48,14 @@ func TestEMAFlipFlop(t *testing.T) {
 
 		So(err, ShouldBeNil)
 		So(datura.Peek[float64](artifact, "output", "value"), ShouldEqual, 2)
+
+		rootKey := datura.Peek[string](artifact, "root")
+
+		Convey("It should publish root and inputs for downstream navigation", func() {
+			So(rootKey, ShouldEqual, "output")
+			So(datura.Peek[[]string](artifact, "inputs"), ShouldResemble, []string{"value"})
+			So(datura.Peek[float64](artifact, rootKey, "value"), ShouldEqual, 2)
+		})
 	})
 }
 

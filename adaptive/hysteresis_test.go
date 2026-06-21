@@ -10,7 +10,7 @@ import (
 
 func TestHysteresis_Read(testingTB *testing.T) {
 	Convey("Given a hysteresis stage", testingTB, func() {
-		stage := NewHysteresis()
+		stage := NewHysteresis(datura.Acquire("hysteresis-config", datura.APPJSON))
 
 		Convey("It should require consecutive high samples before switching on", func() {
 			for range 2 {
@@ -36,7 +36,7 @@ func TestHysteresis_Read(testingTB *testing.T) {
 }
 
 func BenchmarkHysteresis_Read(b *testing.B) {
-	stage := NewHysteresis()
+	stage := NewHysteresis(datura.Acquire("hysteresis-config", datura.APPJSON))
 
 	b.ReportAllocs()
 

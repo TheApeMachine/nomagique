@@ -8,32 +8,54 @@ import (
 
 /*
 Hysteresis debounces a binary signal so brief trips do not flip state.
+The constructor artifact holds config; Write buffers inbound wire on its payload.
 */
 type Hysteresis struct {
 	artifact *datura.Artifact
 }
 
 /*
-NewHysteresis returns a hysteresis stage ready for its first observation.
+NewHysteresis returns a hysteresis stage wired from config attributes on the artifact.
 */
-func NewHysteresis() *Hysteresis {
+func NewHysteresis(artifact *datura.Artifact) *Hysteresis {
+	artifact.Inspect("adaptive", "hysteresis", "NewHysteresis()")
+
 	return &Hysteresis{
-		artifact: datura.Acquire("hysteresis", datura.APPJSON),
+		artifact: artifact,
 	}
 }
 
-func (hysteresis *Hysteresis) Write(p []byte) (int, error) {
-	return hysteresis.artifact.Write(p)
+func (hysteresis *Hysteresis) Write(payload []byte) (int, error) {
+	output := datura.Peek[datura.Map[float64]](hysteresis.artifact, "output")
+
+	hysteresis.artifact.WithPayload(payload)
+
+	if output != nil {
+		hysteresis.artifact.Merge("output", output)
+	}
+
+	return len(payload), nil
 }
 
-func (hysteresis *Hysteresis) Read(p []byte) (int, error) {
-	sample := datura.Peek[float64](hysteresis.artifact, "sample")
+func (hysteresis *Hysteresis) Read(payload []byte) (int, error) {
+	state := datura.Acquire("hysteresis-state", datura.APPJSON)
+	state.Inspect("adaptive", "hysteresis", "Read()", "p")
+
+	if _, err := state.Write(hysteresis.artifact.DecryptPayload()); err != nil {
+		return 0, err
+	}
+
+	sample := datura.Peek[float64](state, "sample")
 
 	if math.IsNaN(sample) || math.IsInf(sample, 0) {
-		return hysteresis.artifact.Read(p)
+		return state.Read(payload)
 	}
 
-	window := int(datura.Peek[float64](hysteresis.artifact, "config", "window"))
+	window := int(datura.Peek[float64](state, "config", "window"))
+
+	if window <= 0 {
+		window = int(datura.Peek[float64](hysteresis.artifact, "config", "window"))
+	}
 
 	if window <= 0 {
 		history := int(datura.Peek[float64](hysteresis.artifact, "config", "history"))
@@ -79,9 +101,11 @@ func (hysteresis *Hysteresis) Read(p []byte) (int, error) {
 		}
 	}
 
-	hysteresis.artifact.Poke(output, "output")
-
-	return hysteresis.artifact.Read(p)
+	hysteresis.artifact.Merge("output", output)
+	state.MergeOutput("value", output["value"])
+	state.Merge("root", "output")
+	state.Merge("inputs", []string{"value"})
+	return state.Read(payload)
 }
 
 func (hysteresis *Hysteresis) Close() error {

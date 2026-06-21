@@ -49,8 +49,8 @@ func TestNewCircuit(testingTB *testing.T) {
 
 func TestCircuit_Observe(testingTB *testing.T) {
 	Convey("Given a carried signal above its threshold", testingTB, func() {
-		consequence := adaptive.NewEMA(nil)
-		alternative := adaptive.NewEMA(nil)
+		consequence := adaptive.NewEMA(datura.Acquire("ema-config", datura.APPJSON))
+		alternative := adaptive.NewEMA(datura.Acquire("ema-config-alt", datura.APPJSON))
 
 		circuit := logic.NewCircuit(logic.Rules{
 			{
@@ -129,7 +129,7 @@ func BenchmarkCircuit_Observe(benchmark *testing.B) {
 			Condition: logic.GreaterThan{
 				Right: logic.NewConstant(2),
 			},
-			Then: adaptive.NewEMA(nil),
+			Then: adaptive.NewEMA(datura.Acquire("ema-config", datura.APPJSON)),
 		},
 		{
 			Condition: logic.True{Operand: true},

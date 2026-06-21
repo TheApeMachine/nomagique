@@ -22,7 +22,7 @@ func TestIntegration(t *testing.T) {
 		})
 
 		Convey("When Circuit routes above threshold to consequence branch", func() {
-			consequence := adaptive.NewEMA(nil)
+			consequence := adaptive.NewEMA(datura.Acquire("ema-config", datura.APPJSON))
 			circuit := logic.NewCircuit(logic.Rules{
 				{
 					Condition: logic.GreaterThan{Right: logic.NewConstant(2)},

@@ -12,7 +12,7 @@ var rangeInput = datura.Acquire("test", datura.APPJSON).Poke(10, "sample")
 
 func TestRangeRead(t *testing.T) {
 	Convey("Given a Range", t, func() {
-		extent := NewRange()
+		extent := NewRange(datura.Acquire("range-config", datura.APPJSON))
 		io.Copy(extent, rangeInput)
 
 		Convey("When Read is called", func() {
@@ -25,7 +25,7 @@ func TestRangeRead(t *testing.T) {
 
 func TestRangeWrite(t *testing.T) {
 	Convey("Given a Range", t, func() {
-		extent := NewRange()
+		extent := NewRange(datura.Acquire("range-config", datura.APPJSON))
 
 		Convey("When Write is called", func() {
 			_, err := io.Copy(extent, rangeInput)

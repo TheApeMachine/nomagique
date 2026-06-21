@@ -16,8 +16,10 @@ func TestIntegration(t *testing.T) {
 	Convey("Given adaptive primitives composed through nomagique.Number", t, func() {
 		Convey("When EMA stages volatility before Delta on a trending series", func() {
 			artifact := datura.Acquire("test", datura.APPJSON).Poke(10, "sample")
+			emaConfig := datura.Acquire("ema-config", datura.APPJSON)
+			deltaConfig := datura.Acquire("delta-config", datura.APPJSON)
 
-			pipeline := nomagique.Number(adaptive.NewEMA(nil), adaptive.NewDelta())
+			pipeline := nomagique.Number(adaptive.NewEMA(emaConfig), adaptive.NewDelta(deltaConfig))
 			err := transport.NewFlipFlop(artifact, pipeline)
 
 			So(err, ShouldBeNil)
@@ -37,7 +39,10 @@ func TestIntegration(t *testing.T) {
 
 			Convey("It should match a freshly composed reference pipeline", func() {
 				reference := datura.Acquire("test", datura.APPJSON).Poke(10, "sample")
-				referencePipeline := nomagique.Number(adaptive.NewEMA(nil), adaptive.NewDelta())
+				referencePipeline := nomagique.Number(
+					adaptive.NewEMA(datura.Acquire("ema-config", datura.APPJSON)),
+					adaptive.NewDelta(datura.Acquire("delta-config", datura.APPJSON)),
+				)
 				err := transport.NewFlipFlop(reference, referencePipeline)
 
 				So(err, ShouldBeNil)
@@ -50,7 +55,7 @@ func TestIntegration(t *testing.T) {
 
 			Convey("It should retain EMA state across sequential FlipFlops", func() {
 				retained := datura.Acquire("test", datura.APPJSON).Poke(10, "sample")
-				exponential := adaptive.NewEMA(nil)
+				exponential := adaptive.NewEMA(datura.Acquire("ema-config", datura.APPJSON))
 
 				err := transport.NewFlipFlop(retained, exponential)
 
@@ -67,11 +72,14 @@ func TestIntegration(t *testing.T) {
 
 		Convey("When EMA, Variance, and ZScore run in sequence", func() {
 			artifact := datura.Acquire("test", datura.APPJSON).Poke(10, "sample")
+			emaConfig := datura.Acquire("ema-config", datura.APPJSON)
+			varianceConfig := datura.Acquire("variance-config", datura.APPJSON)
+			zscoreConfig := datura.Acquire("zscore-config", datura.APPJSON)
 
 			pipeline := nomagique.Number(
-				adaptive.NewEMA(nil),
-				adaptive.NewVariance(),
-				adaptive.NewZScore(),
+				adaptive.NewEMA(emaConfig),
+				adaptive.NewVariance(varianceConfig),
+				adaptive.NewZScore(zscoreConfig),
 			)
 			err := transport.NewFlipFlop(artifact, pipeline)
 
@@ -93,7 +101,10 @@ func TestIntegration(t *testing.T) {
 
 			Convey("It should keep variance on a parallel EMA-Variance path", func() {
 				varianceArtifact := datura.Acquire("test", datura.APPJSON).Poke(22, "sample")
-				variancePipeline := nomagique.Number(adaptive.NewEMA(nil), adaptive.NewVariance())
+				variancePipeline := nomagique.Number(
+					adaptive.NewEMA(datura.Acquire("ema-config", datura.APPJSON)),
+					adaptive.NewVariance(datura.Acquire("variance-config", datura.APPJSON)),
+				)
 				err := transport.NewFlipFlop(varianceArtifact, variancePipeline)
 
 				So(err, ShouldBeNil)
@@ -103,8 +114,10 @@ func TestIntegration(t *testing.T) {
 
 		Convey("When Range and Momentum normalize a volatile series", func() {
 			artifact := datura.Acquire("test", datura.APPJSON).Poke(1, "sample")
+			rangeConfig := datura.Acquire("range-config", datura.APPJSON)
+			momentumConfig := datura.Acquire("momentum-config", datura.APPJSON)
 
-			pipeline := nomagique.Number(adaptive.NewRange(), adaptive.NewMomentum())
+			pipeline := nomagique.Number(adaptive.NewRange(rangeConfig), adaptive.NewMomentum(momentumConfig))
 			err := transport.NewFlipFlop(artifact, pipeline)
 
 			So(err, ShouldBeNil)
@@ -136,10 +149,14 @@ func TestIntegration(t *testing.T) {
 			artifact := datura.Acquire("test", datura.APPJSON).
 				Poke(10, "sample").
 				Poke(float64(time.Unix(0, int64(time.Hour)).UnixNano()), "at")
+			rangeConfig := datura.Acquire("range-config", datura.APPJSON)
+			timeElasticConfig := datura.Acquire("time-elastic-config", datura.APPJSON).
+				Poke(float64(time.Hour), "config", "halflife").
+				Poke(1e-6, "config", "epsilon")
 
 			pipeline := nomagique.Number(
-				adaptive.NewRange(),
-				adaptive.NewTimeElastic(time.Hour, 1e-6),
+				adaptive.NewRange(rangeConfig),
+				adaptive.NewTimeElastic(timeElasticConfig),
 			)
 			err := transport.NewFlipFlop(artifact, pipeline)
 

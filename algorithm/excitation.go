@@ -245,7 +245,7 @@ type fitEventKey struct {
 func newExcitationSymbol() *excitationSymbol {
 	return &excitationSymbol{
 		minFitEvents: bivariateParamCount * 2,
-		rawBase:      adaptive.NewEMA(nil),
+		rawBase:      adaptive.NewEMA(datura.Acquire("excitation-ema", datura.APPJSON)),
 	}
 }
 

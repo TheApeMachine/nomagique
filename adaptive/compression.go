@@ -8,50 +8,43 @@ import (
 
 /*
 Compression scores how far below the running baseline the current sample sits.
-The config artifact holds the rolling baseline across frames; the inbound
-artifact wire is buffered between Write and Read.
+The constructor artifact holds config; Write buffers inbound wire on its payload.
 */
 type Compression struct {
-	config *datura.Artifact
-	bytes  []byte
+	artifact *datura.Artifact
 }
 
 /*
-NewCompression returns a compression stage ready to bootstrap from its first observation.
+NewCompression returns a compression stage wired from config attributes on the artifact.
 */
-func NewCompression(config *datura.Artifact) *Compression {
-	config.Inspect("adaptive", "compression", "NewCompression()")
+func NewCompression(artifact *datura.Artifact) *Compression {
+	artifact.Inspect("adaptive", "compression", "NewCompression()")
 
 	return &Compression{
-		config: config,
+		artifact: artifact,
 	}
 }
 
-func (compression *Compression) Write(p []byte) (int, error) {
-	compression.bytes = append(compression.bytes[:0], p...)
-
-	return len(p), nil
+func (compression *Compression) Write(payload []byte) (int, error) {
+	compression.artifact.WithPayload(payload)
+	return len(payload), nil
 }
 
-func (compression *Compression) Read(p []byte) (int, error) {
+func (compression *Compression) Read(payload []byte) (int, error) {
 	state := datura.Acquire("compression-state", datura.APPJSON)
 	state.Inspect("adaptive", "compression", "Read()", "p")
 
-	if _, err := state.Write(compression.bytes); err != nil {
-		state.Release()
-
+	if _, err := state.Write(compression.artifact.DecryptPayload()); err != nil {
 		return 0, err
 	}
-
-	defer state.Release()
 
 	sample := datura.Peek[float64](state, "sample")
 
 	if math.IsNaN(sample) || math.IsInf(sample, 0) {
-		return state.Read(p)
+		return state.Read(payload)
 	}
 
-	baseline := datura.Peek[float64](compression.config, "baseline")
+	baseline := datura.Peek[float64](compression.artifact, "baseline")
 	value := 0.0
 
 	switch {
@@ -61,12 +54,12 @@ func (compression *Compression) Read(p []byte) (int, error) {
 		value = (baseline - sample) / baseline
 	}
 
-	compression.config.Merge("baseline", baseline)
-
+	compression.artifact.Merge("baseline", baseline)
 	state.MergeOutput("baseline", baseline)
 	state.MergeOutput("value", value)
-
-	return state.Read(p)
+	state.Merge("root", "output")
+	state.Merge("inputs", []string{"baseline", "value"})
+	return state.Read(payload)
 }
 
 func (compression *Compression) Close() error {

@@ -12,7 +12,7 @@ var fracDiffInput = datura.Acquire("test", datura.APPJSON).Poke(10, "sample")
 
 func TestFracDiffRead(t *testing.T) {
 	Convey("Given a FracDiff", t, func() {
-		fractional := NewFracDiff()
+		fractional := NewFracDiff(datura.Acquire("fracdiff-config", datura.APPJSON))
 		io.Copy(fractional, fracDiffInput)
 
 		Convey("When Read is called", func() {
@@ -25,7 +25,7 @@ func TestFracDiffRead(t *testing.T) {
 
 func TestFracDiffWrite(t *testing.T) {
 	Convey("Given a FracDiff", t, func() {
-		fractional := NewFracDiff()
+		fractional := NewFracDiff(datura.Acquire("fracdiff-config", datura.APPJSON))
 
 		Convey("When Write is called", func() {
 			_, err := io.Copy(fractional, fracDiffInput)

@@ -12,7 +12,7 @@ var accumulatorInput = datura.Acquire("test", datura.APPJSON).Poke(1, "sample")
 
 func TestAccumulatorRead(t *testing.T) {
 	Convey("Given an Accumulator", t, func() {
-		accumulator := NewAccumulator()
+		accumulator := NewAccumulator(datura.Acquire("accumulator-config", datura.APPJSON))
 		io.Copy(accumulator, accumulatorInput)
 
 		Convey("When Read is called", func() {
@@ -25,7 +25,7 @@ func TestAccumulatorRead(t *testing.T) {
 
 func TestAccumulatorWrite(t *testing.T) {
 	Convey("Given an Accumulator", t, func() {
-		accumulator := NewAccumulator()
+		accumulator := NewAccumulator(datura.Acquire("accumulator-config", datura.APPJSON))
 
 		Convey("When Write is called", func() {
 			_, err := io.Copy(accumulator, accumulatorInput)

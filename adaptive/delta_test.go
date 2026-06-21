@@ -10,9 +10,11 @@ import (
 
 var deltaInput = datura.Acquire("test", datura.APPJSON).Poke(10, "sample")
 
+var deltaConfig = datura.Acquire("delta-config", datura.APPJSON)
+
 func TestDeltaRead(t *testing.T) {
 	Convey("Given a Delta", t, func() {
-		delta := NewDelta()
+		delta := NewDelta(deltaConfig)
 		io.Copy(delta, deltaInput)
 
 		Convey("When Read is called", func() {
@@ -25,7 +27,7 @@ func TestDeltaRead(t *testing.T) {
 
 func TestDeltaWrite(t *testing.T) {
 	Convey("Given a Delta", t, func() {
-		delta := NewDelta()
+		delta := NewDelta(datura.Acquire("delta-config", datura.APPJSON))
 
 		Convey("When Write is called", func() {
 			_, err := io.Copy(delta, deltaInput)

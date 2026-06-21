@@ -12,7 +12,7 @@ var zscoreInput = datura.Acquire("test", datura.APPJSON).Poke(10, "sample")
 
 func TestZScoreRead(t *testing.T) {
 	Convey("Given a ZScore", t, func() {
-		surprise := NewZScore()
+		surprise := NewZScore(datura.Acquire("zscore-config", datura.APPJSON))
 		io.Copy(surprise, zscoreInput)
 
 		Convey("When Read is called", func() {
@@ -25,7 +25,7 @@ func TestZScoreRead(t *testing.T) {
 
 func TestZScoreWrite(t *testing.T) {
 	Convey("Given a ZScore", t, func() {
-		surprise := NewZScore()
+		surprise := NewZScore(datura.Acquire("zscore-config", datura.APPJSON))
 
 		Convey("When Write is called", func() {
 			_, err := io.Copy(surprise, zscoreInput)

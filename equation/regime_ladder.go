@@ -15,7 +15,7 @@ NewRegimeLadder composes regime selection, hysteresis smoothing, and ladder eval
 func NewRegimeLadder(config *datura.Artifact) io.ReadWriteCloser {
 	return nomagique.Number(
 		causal.NewRegime(config),
-		adaptive.NewHysteresis(),
+		adaptive.NewHysteresis(config),
 		causal.NewLadder(config),
 	)
 }

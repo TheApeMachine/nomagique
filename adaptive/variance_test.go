@@ -12,7 +12,7 @@ var varianceInput = datura.Acquire("test", datura.APPJSON).Poke(10, "sample")
 
 func TestVarianceRead(t *testing.T) {
 	Convey("Given a Variance", t, func() {
-		variance := NewVariance()
+		variance := NewVariance(datura.Acquire("variance-config", datura.APPJSON))
 		io.Copy(variance, varianceInput)
 
 		Convey("When Read is called", func() {
@@ -25,7 +25,7 @@ func TestVarianceRead(t *testing.T) {
 
 func TestVarianceWrite(t *testing.T) {
 	Convey("Given a Variance", t, func() {
-		variance := NewVariance()
+		variance := NewVariance(datura.Acquire("variance-config", datura.APPJSON))
 
 		Convey("When Write is called", func() {
 			_, err := io.Copy(variance, varianceInput)

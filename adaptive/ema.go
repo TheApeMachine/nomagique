@@ -8,31 +8,35 @@ import (
 
 /*
 EMA is a volatility-adaptive exponential moving average stage.
+The constructor artifact holds config; Write buffers inbound wire on its payload.
 */
 type EMA struct {
 	artifact *datura.Artifact
-	bytes    []byte
 }
 
 /*
-NewEMA returns an EMA stage ready to bootstrap from its first observation.
+NewEMA returns an EMA stage wired from config attributes on the artifact.
 */
 func NewEMA(artifact *datura.Artifact) *EMA {
+	artifact.Inspect("adaptive", "ema", "NewEMA()")
+
 	return &EMA{
 		artifact: artifact,
 	}
 }
 
+func (ema *EMA) Write(payload []byte) (int, error) {
+	ema.artifact.WithPayload(payload)
+	return len(payload), nil
+}
+
 func (ema *EMA) Read(payload []byte) (int, error) {
 	state := datura.Acquire("ema-state", datura.APPJSON)
+	state.Inspect("adaptive", "ema", "Read()", "p")
 
-	if _, err := state.Write(ema.bytes); err != nil {
-		state.Release()
-
+	if _, err := state.Write(ema.artifact.DecryptPayload()); err != nil {
 		return 0, err
 	}
-
-	defer state.Release()
 
 	sample := datura.Peek[float64](state, "sample")
 
@@ -68,16 +72,10 @@ func (ema *EMA) Read(payload []byte) (int, error) {
 	}
 
 	ema.artifact.Merge("output", output)
-
 	state.MergeOutput("value", output["value"])
-
+	state.Merge("root", "output")
+	state.Merge("inputs", []string{"value"})
 	return state.Read(payload)
-}
-
-func (ema *EMA) Write(payload []byte) (int, error) {
-	ema.bytes = append(ema.bytes[:0], payload...)
-
-	return len(payload), nil
 }
 
 func (ema *EMA) Close() error {

@@ -12,7 +12,7 @@ var momentumInput = datura.Acquire("test", datura.APPJSON).Poke(10, "sample")
 
 func TestMomentumRead(t *testing.T) {
 	Convey("Given a Momentum", t, func() {
-		momentum := NewMomentum()
+		momentum := NewMomentum(datura.Acquire("momentum-config", datura.APPJSON))
 		io.Copy(momentum, momentumInput)
 
 		Convey("When Read is called", func() {
@@ -25,7 +25,7 @@ func TestMomentumRead(t *testing.T) {
 
 func TestMomentumWrite(t *testing.T) {
 	Convey("Given a Momentum", t, func() {
-		momentum := NewMomentum()
+		momentum := NewMomentum(datura.Acquire("momentum-config", datura.APPJSON))
 
 		Convey("When Write is called", func() {
 			_, err := io.Copy(momentum, momentumInput)

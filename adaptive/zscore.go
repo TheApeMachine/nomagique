@@ -8,28 +8,55 @@ import (
 
 /*
 ZScore tracks adaptive scale for a normalized surprise score.
+The constructor artifact holds config; Write buffers inbound wire on its payload.
 */
 type ZScore struct {
 	artifact *datura.Artifact
 }
 
 /*
-NewZScore returns a z-score stage ready to bootstrap from its first observation.
+NewZScore returns a z-score stage wired from config attributes on the artifact.
 */
-func NewZScore() *ZScore {
+func NewZScore(artifact *datura.Artifact) *ZScore {
+	artifact.Inspect("adaptive", "zscore", "NewZScore()")
+
 	return &ZScore{
-		artifact: datura.Acquire("zscore", datura.APPJSON),
+		artifact: artifact,
 	}
 }
 
-func (surprise *ZScore) Read(p []byte) (int, error) {
-	sample := datura.Peek[float64](surprise.artifact, "sample")
+func (surprise *ZScore) Write(payload []byte) (int, error) {
+	output := datura.Peek[datura.Map[float64]](surprise.artifact, "output")
 
-	if math.IsNaN(sample) || math.IsInf(sample, 0) {
-		return surprise.artifact.Read(p)
+	surprise.artifact.WithPayload(payload)
+
+	if output != nil {
+		surprise.artifact.Merge("output", output)
 	}
 
-	anchor := datura.Peek[float64](surprise.artifact, "anchor")
+	return len(payload), nil
+}
+
+func (surprise *ZScore) Read(payload []byte) (int, error) {
+	state := datura.Acquire("zscore-state", datura.APPJSON)
+	state.Inspect("adaptive", "zscore", "Read()", "p")
+
+	if _, err := state.Write(surprise.artifact.DecryptPayload()); err != nil {
+		return 0, err
+	}
+
+	sample := datura.Peek[float64](state, "sample")
+
+	if math.IsNaN(sample) || math.IsInf(sample, 0) {
+		return state.Read(payload)
+	}
+
+	anchor := datura.Peek[float64](state, "anchor")
+
+	if anchor == 0 {
+		anchor = datura.Peek[float64](surprise.artifact, "anchor")
+	}
+
 	hasAnchor := anchor != 0 && !math.IsNaN(anchor) && !math.IsInf(anchor, 0)
 
 	output := datura.Peek[datura.Map[float64]](surprise.artifact, "output")
@@ -45,9 +72,11 @@ func (surprise *ZScore) Read(p []byte) (int, error) {
 			"value": 0,
 		}
 
-		surprise.artifact.Poke(output, "output")
-
-		return surprise.artifact.Read(p)
+		surprise.artifact.Merge("output", output)
+		state.MergeOutput("value", output["value"])
+		state.Merge("root", "output")
+		state.Merge("inputs", []string{"value"})
+		return state.Read(payload)
 	}
 
 	output["min"] = math.Min(output["min"], sample)
@@ -57,9 +86,11 @@ func (surprise *ZScore) Read(p []byte) (int, error) {
 
 	if span == 0 {
 		output["prev"] = sample
-		surprise.artifact.Poke(output, "output")
-
-		return surprise.artifact.Read(p)
+		surprise.artifact.Merge("output", output)
+		state.MergeOutput("value", output["value"])
+		state.Merge("root", "output")
+		state.Merge("inputs", []string{"value"})
+		return state.Read(payload)
 	}
 
 	delta := math.Abs(sample - output["prev"])
@@ -81,20 +112,20 @@ func (surprise *ZScore) Read(p []byte) (int, error) {
 
 	if output["var"] <= 0 {
 		output["value"] = 0
-		surprise.artifact.Poke(output, "output")
-
-		return surprise.artifact.Read(p)
+		surprise.artifact.Merge("output", output)
+		state.MergeOutput("value", output["value"])
+		state.Merge("root", "output")
+		state.Merge("inputs", []string{"value"})
+		return state.Read(payload)
 	}
 
 	output["value"] = deviation / math.Sqrt(output["var"])
 
-	surprise.artifact.Poke(output, "output")
-
-	return surprise.artifact.Read(p)
-}
-
-func (surprise *ZScore) Write(p []byte) (int, error) {
-	return surprise.artifact.Write(p)
+	surprise.artifact.Merge("output", output)
+	state.MergeOutput("value", output["value"])
+	state.Merge("root", "output")
+	state.Merge("inputs", []string{"value"})
+	return state.Read(payload)
 }
 
 func (surprise *ZScore) Close() error {

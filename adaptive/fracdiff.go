@@ -8,25 +8,57 @@ import (
 
 /*
 FracDiff applies a fractional differencing filter to recent samples.
+The constructor artifact holds config; Write buffers inbound wire on its payload.
 */
 type FracDiff struct {
 	artifact *datura.Artifact
 }
 
 /*
-NewFracDiff returns a fractional differencing stage ready to bootstrap from its first observation.
+NewFracDiff returns a fractional differencing stage wired from config attributes on the artifact.
 */
-func NewFracDiff() *FracDiff {
+func NewFracDiff(artifact *datura.Artifact) *FracDiff {
+	artifact.Inspect("adaptive", "fracdiff", "NewFracDiff()")
+
 	return &FracDiff{
-		artifact: datura.Acquire("fracdiff", datura.APPJSON),
+		artifact: artifact,
 	}
 }
 
-func (fractional *FracDiff) Read(p []byte) (int, error) {
-	sample := datura.Peek[float64](fractional.artifact, "sample")
+func (fractional *FracDiff) Write(payload []byte) (int, error) {
+	output := datura.Peek[datura.Map[float64]](fractional.artifact, "output")
+	history := datura.Peek[[]float64](fractional.artifact, "history")
+	weights := datura.Peek[[]float64](fractional.artifact, "weights")
+
+	fractional.artifact.WithPayload(payload)
+
+	if output != nil {
+		fractional.artifact.Merge("output", output)
+	}
+
+	if len(history) > 0 {
+		fractional.artifact.Merge("history", history)
+	}
+
+	if len(weights) > 0 {
+		fractional.artifact.Merge("weights", weights)
+	}
+
+	return len(payload), nil
+}
+
+func (fractional *FracDiff) Read(payload []byte) (int, error) {
+	state := datura.Acquire("fracdiff-state", datura.APPJSON)
+	state.Inspect("adaptive", "fracdiff", "Read()", "p")
+
+	if _, err := state.Write(fractional.artifact.DecryptPayload()); err != nil {
+		return 0, err
+	}
+
+	sample := datura.Peek[float64](state, "sample")
 
 	if math.IsNaN(sample) || math.IsInf(sample, 0) {
-		return fractional.artifact.Read(p)
+		return state.Read(payload)
 	}
 
 	output := datura.Peek[datura.Map[float64]](fractional.artifact, "output")
@@ -47,11 +79,13 @@ func (fractional *FracDiff) Read(p []byte) (int, error) {
 			"value": sample,
 		}
 
-		fractional.artifact.Poke(output, "output")
-		fractional.artifact.Poke(history, "history")
-		fractional.artifact.Poke([]float64{1}, "weights")
-
-		return fractional.artifact.Read(p)
+		fractional.artifact.Merge("output", output)
+		fractional.artifact.Merge("history", history)
+		fractional.artifact.Merge("weights", []float64{1})
+		state.MergeOutput("value", output["value"])
+		state.Merge("root", "output")
+		state.Merge("inputs", []string{"value"})
+		return state.Read(payload)
 	}
 
 	output["min"] = math.Min(output["min"], sample)
@@ -63,9 +97,11 @@ func (fractional *FracDiff) Read(p []byte) (int, error) {
 		fractional.pushHistory(sample, output)
 		output["prev"] = sample
 		output["value"] = sample
-		fractional.artifact.Poke(output, "output")
-
-		return fractional.artifact.Read(p)
+		fractional.artifact.Merge("output", output)
+		state.MergeOutput("value", output["value"])
+		state.Merge("root", "output")
+		state.Merge("inputs", []string{"value"})
+		return state.Read(payload)
 	}
 
 	rate := math.Abs(sample-output["prev"]) / span
@@ -75,13 +111,11 @@ func (fractional *FracDiff) Read(p []byte) (int, error) {
 	output["prev"] = sample
 	output["value"] = fractional.outputSum(output)
 
-	fractional.artifact.Poke(output, "output")
-
-	return fractional.artifact.Read(p)
-}
-
-func (fractional *FracDiff) Write(p []byte) (int, error) {
-	return fractional.artifact.Write(p)
+	fractional.artifact.Merge("output", output)
+	state.MergeOutput("value", output["value"])
+	state.Merge("root", "output")
+	state.Merge("inputs", []string{"value"})
+	return state.Read(payload)
 }
 
 func (fractional *FracDiff) Close() error {
@@ -105,7 +139,7 @@ func (fractional *FracDiff) rebuildWeights(
 	output["width"] = float64(width)
 
 	fractional.ensureHistoryCapacity(int(capacity), output)
-	fractional.artifact.Poke(weights[:width], "weights")
+	fractional.artifact.Merge("weights", weights[:width])
 }
 
 func (fractional *FracDiff) ensureHistoryCapacity(
@@ -133,7 +167,7 @@ func (fractional *FracDiff) ensureHistoryCapacity(
 		output["head"] = float64(count - 1)
 	}
 
-	fractional.artifact.Poke(next, "history")
+	fractional.artifact.Merge("history", next)
 }
 
 func (fractional *FracDiff) pushHistory(
@@ -157,7 +191,7 @@ func (fractional *FracDiff) pushHistory(
 		output["count"] = float64(count + 1)
 	}
 
-	fractional.artifact.Poke(history, "history")
+	fractional.artifact.Merge("history", history)
 }
 
 func (fractional *FracDiff) outputSum(output datura.Map[float64]) float64 {

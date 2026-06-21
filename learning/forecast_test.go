@@ -149,7 +149,7 @@ func TestForecaster_learningComposition(testingTB *testing.T) {
 
 func TestForecaster_withAdaptiveSignal(testingTB *testing.T) {
 	Convey("Given EMA and forecast feedback", testingTB, func() {
-		exponential := adaptive.NewEMA(nil)
+		exponential := adaptive.NewEMA(datura.Acquire("ema-config", datura.APPJSON))
 		forecaster := Forecast()
 		signal := datura.Acquire("test", datura.APPJSON).Poke(10, "sample")
 		err := transport.NewFlipFlop(signal, exponential)

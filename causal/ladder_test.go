@@ -14,7 +14,7 @@ func TestLadder_Read(testingTB *testing.T) {
 		config := causalPipelineConfig(0.8)
 		config.Poke(0.35, "config", "kernelBandwidth")
 		regime := NewRegime(config)
-		hysteresis := adaptive.NewHysteresis()
+		hysteresis := adaptive.NewHysteresis(config)
 		ladder := NewLadder(config)
 
 		artifact := tableInbound(16, 1.0)
@@ -39,7 +39,7 @@ func BenchmarkLadder_Read(testingTB *testing.B) {
 	config := causalPipelineConfig(0.8)
 	config.Poke(0.35, "config", "kernelBandwidth")
 	regime := NewRegime(config)
-	hysteresis := adaptive.NewHysteresis()
+	hysteresis := adaptive.NewHysteresis(config)
 	ladder := NewLadder(config)
 	artifact := tableInbound(16, 1.0)
 

@@ -9,43 +9,60 @@ import (
 
 /*
 TimeElastic tracks a time-decayed baseline and returns sample/baseline ratios.
+The constructor artifact holds config; Write buffers inbound wire on its payload.
 */
 type TimeElastic struct {
 	artifact *datura.Artifact
 }
 
 /*
-NewTimeElastic returns a time-elastic baseline stage.
+NewTimeElastic returns a time-elastic baseline stage wired from config attributes on the artifact.
 */
-func NewTimeElastic(halflife time.Duration, epsilon float64) *TimeElastic {
-	if epsilon <= 0 {
-		epsilon = math.Sqrt(math.Nextafter(1, 2) - 1)
+func NewTimeElastic(artifact *datura.Artifact) *TimeElastic {
+	artifact.Inspect("adaptive", "time-elastic", "NewTimeElastic()")
+
+	return &TimeElastic{
+		artifact: artifact,
 	}
-
-	stage := &TimeElastic{
-		artifact: datura.Acquire("time_elastic", datura.APPJSON),
-	}
-
-	stage.artifact.Poke(float64(halflife), "halflife")
-	stage.artifact.Poke(epsilon, "epsilon")
-
-	return stage
 }
 
-func (timeElastic *TimeElastic) Read(p []byte) (int, error) {
-	sample := datura.Peek[float64](timeElastic.artifact, "sample")
+func (timeElastic *TimeElastic) Write(payload []byte) (int, error) {
+	output := datura.Peek[datura.Map[float64]](timeElastic.artifact, "output")
+
+	timeElastic.artifact.WithPayload(payload)
+
+	if output != nil {
+		timeElastic.artifact.Merge("output", output)
+	}
+
+	return len(payload), nil
+}
+
+func (timeElastic *TimeElastic) Read(payload []byte) (int, error) {
+	state := datura.Acquire("time-elastic-state", datura.APPJSON)
+	state.Inspect("adaptive", "time-elastic", "Read()", "p")
+
+	if _, err := state.Write(timeElastic.artifact.DecryptPayload()); err != nil {
+		return 0, err
+	}
+
+	sample := datura.Peek[float64](state, "sample")
 
 	if math.IsNaN(sample) || math.IsInf(sample, 0) {
-		return timeElastic.artifact.Read(p)
+		return state.Read(payload)
 	}
 
 	if sample < 0 {
-		return timeElastic.artifact.Read(p)
+		return state.Read(payload)
 	}
 
-	eventAt := time.Unix(0, int64(datura.Peek[float64](timeElastic.artifact, "at")))
-	halflife := time.Duration(datura.Peek[float64](timeElastic.artifact, "halflife"))
-	epsilon := datura.Peek[float64](timeElastic.artifact, "epsilon")
+	eventAt := time.Unix(0, int64(datura.Peek[float64](state, "at")))
+	halflife := time.Duration(datura.Peek[float64](timeElastic.artifact, "config", "halflife"))
+	epsilon := datura.Peek[float64](timeElastic.artifact, "config", "epsilon")
+
+	if epsilon <= 0 {
+		epsilon = math.Sqrt(math.Nextafter(1, 2) - 1)
+	}
 
 	output := datura.Peek[datura.Map[float64]](timeElastic.artifact, "output")
 
@@ -56,13 +73,15 @@ func (timeElastic *TimeElastic) Read(p []byte) (int, error) {
 			"value":    1,
 		}
 
-		timeElastic.artifact.Poke(output, "output")
-
-		return timeElastic.artifact.Read(p)
+		timeElastic.artifact.Merge("output", output)
+		state.MergeOutput("value", output["value"])
+		state.Merge("root", "output")
+		state.Merge("inputs", []string{"value"})
+		return state.Read(payload)
 	}
 
 	if halflife <= 0 || eventAt.IsZero() {
-		return timeElastic.artifact.Read(p)
+		return state.Read(payload)
 	}
 
 	lastAt := time.Unix(0, int64(output["lastAt"]))
@@ -89,13 +108,11 @@ func (timeElastic *TimeElastic) Read(p []byte) (int, error) {
 	output["value"] = sample / (output["baseline"] + epsilon)
 	output["baseline"] = (1.0-alpha)*output["baseline"] + alpha*sample
 
-	timeElastic.artifact.Poke(output, "output")
-
-	return timeElastic.artifact.Read(p)
-}
-
-func (timeElastic *TimeElastic) Write(p []byte) (int, error) {
-	return timeElastic.artifact.Write(p)
+	timeElastic.artifact.Merge("output", output)
+	state.MergeOutput("value", output["value"])
+	state.Merge("root", "output")
+	state.Merge("inputs", []string{"value"})
+	return state.Read(payload)
 }
 
 func (timeElastic *TimeElastic) Close() error {

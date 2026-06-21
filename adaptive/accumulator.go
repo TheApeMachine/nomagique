@@ -8,25 +8,47 @@ import (
 
 /*
 Accumulator integrates signed signal strength into a level with no bounds.
+The constructor artifact holds config; Write buffers inbound wire on its payload.
 */
 type Accumulator struct {
 	artifact *datura.Artifact
 }
 
 /*
-NewAccumulator returns an accumulator stage ready for its first observation.
+NewAccumulator returns an accumulator stage wired from config attributes on the artifact.
 */
-func NewAccumulator() *Accumulator {
+func NewAccumulator(artifact *datura.Artifact) *Accumulator {
+	artifact.Inspect("adaptive", "accumulator", "NewAccumulator()")
+
 	return &Accumulator{
-		artifact: datura.Acquire("accumulator", datura.APPJSON),
+		artifact: artifact,
 	}
 }
 
-func (accumulator *Accumulator) Read(p []byte) (int, error) {
-	sample := datura.Peek[float64](accumulator.artifact, "sample")
+func (accumulator *Accumulator) Write(payload []byte) (int, error) {
+	output := datura.Peek[datura.Map[float64]](accumulator.artifact, "output")
+
+	accumulator.artifact.WithPayload(payload)
+
+	if output != nil {
+		accumulator.artifact.Merge("output", output)
+	}
+
+	return len(payload), nil
+}
+
+func (accumulator *Accumulator) Read(payload []byte) (int, error) {
+	state := datura.Acquire("accumulator-state", datura.APPJSON)
+	state.Inspect("adaptive", "accumulator", "Read()", "p")
+
+	if _, err := state.Write(accumulator.artifact.DecryptPayload()); err != nil {
+		return 0, err
+	}
+
+	sample := datura.Peek[float64](state, "sample")
 
 	if math.IsNaN(sample) || math.IsInf(sample, 0) {
-		return accumulator.artifact.Read(p)
+		return state.Read(payload)
 	}
 
 	output := datura.Peek[datura.Map[float64]](accumulator.artifact, "output")
@@ -41,13 +63,11 @@ func (accumulator *Accumulator) Read(p []byte) (int, error) {
 		output["value"] += sample
 	}
 
-	accumulator.artifact.Poke(output, "output")
-
-	return accumulator.artifact.Read(p)
-}
-
-func (accumulator *Accumulator) Write(p []byte) (int, error) {
-	return accumulator.artifact.Write(p)
+	accumulator.artifact.Merge("output", output)
+	state.MergeOutput("value", output["value"])
+	state.Merge("root", "output")
+	state.Merge("inputs", []string{"value"})
+	return state.Read(payload)
 }
 
 func (accumulator *Accumulator) Close() error {

@@ -18,24 +18,25 @@ Payload layout: window, symbolReturnCount, marketReturnCount,
 peerCorrelationCount, peerEnergyCount, then each series oldest→newest.
 */
 type Cohort struct {
-	bytes []byte
+	artifact *datura.Artifact
 }
 
 /*
 NewCohort returns a cross-section correlation stage.
 */
 func NewCohort() io.ReadWriteCloser {
-	return &Cohort{}
+	return &Cohort{
+		artifact: datura.Acquire("cohort", datura.APPJSON),
+	}
 }
 
 func (cohort *Cohort) Write(p []byte) (int, error) {
-	cohort.bytes = append(cohort.bytes[:0], p...)
-
+	cohort.artifact.WithPayload(p)
 	return len(p), nil
 }
 
 func (cohort *Cohort) Read(p []byte) (int, error) {
-	state, err := stageState(cohort.bytes)
+	state, err := stageState(cohort.artifact.DecryptPayload())
 
 	if err != nil {
 		return 0, err

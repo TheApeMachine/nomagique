@@ -16,24 +16,25 @@ Payload layout: scaledQuoteVol, peerCount, peer volumes, relativeVolume,
 baselineReady (0/1).
 */
 type Depth struct {
-	bytes []byte
+	artifact *datura.Artifact
 }
 
 /*
 NewDepth returns a cross-section liquidity depth stage.
 */
 func NewDepth() io.ReadWriteCloser {
-	return &Depth{}
+	return &Depth{
+		artifact: datura.Acquire("depth", datura.APPJSON),
+	}
 }
 
 func (depth *Depth) Write(p []byte) (int, error) {
-	depth.bytes = append(depth.bytes[:0], p...)
-
+	depth.artifact.WithPayload(p)
 	return len(p), nil
 }
 
 func (depth *Depth) Read(p []byte) (int, error) {
-	state, err := stageState(depth.bytes)
+	state, err := stageState(depth.artifact.DecryptPayload())
 
 	if err != nil {
 		return 0, err

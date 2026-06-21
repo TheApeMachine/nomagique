@@ -45,7 +45,6 @@ Per-scope fit state is keyed from the artifact scope attribute.
 */
 type Excitation struct {
 	artifact *datura.Artifact
-	bytes    []byte
 	symbols  sync.Map
 	outcome  ExcitationOutcome
 }
@@ -62,8 +61,7 @@ func NewExcitation(artifact *datura.Artifact) *Excitation {
 }
 
 func (excitation *Excitation) Write(payload []byte) (int, error) {
-	excitation.bytes = append(excitation.bytes[:0], payload...)
-
+	excitation.artifact.WithPayload(payload)
 	return len(payload), nil
 }
 
@@ -71,7 +69,7 @@ func (excitation *Excitation) Read(payload []byte) (int, error) {
 	state := datura.Acquire("excitation-state", datura.APPJSON)
 	state.Inspect("algorithm", "excitation", "Read()", "p")
 
-	if _, err := state.Write(excitation.bytes); err != nil {
+	if _, err := state.Write(excitation.artifact.DecryptPayload()); err != nil {
 		return 0, err
 	}
 
@@ -91,20 +89,19 @@ func (excitation *Excitation) Read(payload []byte) (int, error) {
 		excitation.outcome = excitation.evaluate(scope, batch)
 	}
 
-	outState := datura.Acquire("excitation-out", datura.APPJSON)
-	outState.MergeOutput("frenzy", excitation.outcome.Frenzy)
-	outState.MergeOutput("saturation", excitation.outcome.Saturation)
-	outState.MergeOutput("organic", excitation.outcome.Organic)
-	outState.MergeOutput("exhaustion", excitation.outcome.Exhaustion)
+	state.MergeOutput("frenzy", excitation.outcome.Frenzy)
+	state.MergeOutput("saturation", excitation.outcome.Saturation)
+	state.MergeOutput("organic", excitation.outcome.Organic)
+	state.MergeOutput("exhaustion", excitation.outcome.Exhaustion)
 
 	if excitation.outcome.Eligible {
-		outState.Merge("excitation.eligible", 1.0)
+		state.Merge("excitation.eligible", 1.0)
 	}
 
-	outState.Merge("root", "output")
-	outState.Merge("inputs", []string{"frenzy", "saturation", "organic", "exhaustion"})
+	state.Merge("root", "output")
+	state.Merge("inputs", []string{"frenzy", "saturation", "organic", "exhaustion"})
 
-	return outState.Read(payload)
+	return state.Read(payload)
 }
 
 func (excitation *Excitation) Close() error {
@@ -192,15 +189,17 @@ func newExcitationReading(
 }
 
 func (reading *ExcitationReading) Write(p []byte) (int, error) {
-	if len(p) == 0 {
-		return 0, nil
-	}
-
+	reading.artifact.WithPayload(p)
 	return len(p), nil
 }
 
 func (reading *ExcitationReading) Read(payload []byte) (int, error) {
 	state := datura.Acquire("excitation-reading-state", datura.APPJSON)
+
+	if _, err := state.Write(reading.artifact.DecryptPayload()); err != nil {
+		return 0, err
+	}
+
 	value := 0.0
 
 	if reading.excitation != nil && reading.project != nil {
@@ -451,7 +450,7 @@ func (symbol *excitationSymbol) measureFit(fit hawkes.BivariateFit) (excitationR
 func (symbol *excitationSymbol) rawBaseStep(sample float64) float64 {
 	inbound := datura.Acquire("excitation-ema-in", datura.Artifact_Type_json)
 	inbound.WithPayload(encodePayload(sample))
-	frame, err := inbound.Message().Marshal()
+	frame, err := inbound.MarshalPacked()
 
 	if err != nil {
 		return sample

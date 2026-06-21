@@ -27,14 +27,7 @@ func NewTimeElastic(artifact *datura.Artifact) *TimeElastic {
 }
 
 func (timeElastic *TimeElastic) Write(payload []byte) (int, error) {
-	output := datura.Peek[datura.Map[float64]](timeElastic.artifact, "output")
-
 	timeElastic.artifact.WithPayload(payload)
-
-	if output != nil {
-		timeElastic.artifact.Merge("output", output)
-	}
-
 	return len(payload), nil
 }
 
@@ -73,7 +66,7 @@ func (timeElastic *TimeElastic) Read(payload []byte) (int, error) {
 			"value":    1,
 		}
 
-		timeElastic.artifact.Merge("output", output)
+		timeElastic.artifact.Poke(output, "output")
 		state.MergeOutput("value", output["value"])
 		state.Merge("root", "output")
 		state.Merge("inputs", []string{"value"})
@@ -108,7 +101,7 @@ func (timeElastic *TimeElastic) Read(payload []byte) (int, error) {
 	output["value"] = sample / (output["baseline"] + epsilon)
 	output["baseline"] = (1.0-alpha)*output["baseline"] + alpha*sample
 
-	timeElastic.artifact.Merge("output", output)
+	timeElastic.artifact.Poke(output, "output")
 	state.MergeOutput("value", output["value"])
 	state.Merge("root", "output")
 	state.Merge("inputs", []string{"value"})

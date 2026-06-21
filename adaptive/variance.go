@@ -26,14 +26,7 @@ func NewVariance(artifact *datura.Artifact) *Variance {
 }
 
 func (variance *Variance) Write(payload []byte) (int, error) {
-	output := datura.Peek[datura.Map[float64]](variance.artifact, "output")
-
 	variance.artifact.WithPayload(payload)
-
-	if output != nil {
-		variance.artifact.Merge("output", output)
-	}
-
 	return len(payload), nil
 }
 
@@ -64,7 +57,7 @@ func (variance *Variance) Read(payload []byte) (int, error) {
 			"value": 0,
 		}
 
-		variance.artifact.Merge("output", output)
+		variance.artifact.Poke(output, "output")
 		state.MergeOutput("value", output["value"])
 		state.Merge("root", "output")
 		state.Merge("inputs", []string{"value"})
@@ -78,7 +71,7 @@ func (variance *Variance) Read(payload []byte) (int, error) {
 
 	if span == 0 {
 		output["prev"] = sample
-		variance.artifact.Merge("output", output)
+		variance.artifact.Poke(output, "output")
 		state.MergeOutput("value", output["value"])
 		state.Merge("root", "output")
 		state.Merge("inputs", []string{"value"})
@@ -93,7 +86,7 @@ func (variance *Variance) Read(payload []byte) (int, error) {
 	output["prev"] = sample
 	output["value"] = output["var"]
 
-	variance.artifact.Merge("output", output)
+	variance.artifact.Poke(output, "output")
 	state.MergeOutput("value", output["value"])
 	state.Merge("root", "output")
 	state.Merge("inputs", []string{"value"})

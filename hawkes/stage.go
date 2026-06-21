@@ -34,16 +34,26 @@ func NewMoment(params BivariateParams, momentR, momentS float64) *Moment {
 }
 
 func (moment *Moment) Write(p []byte) (int, error) {
-	return moment.artifact.Write(p)
+	moment.artifact.WithPayload(p)
+	return len(p), nil
 }
 
 func (moment *Moment) Read(p []byte) (int, error) {
-	xValues, yValues, weights, ok := momentSamples(moment.artifact)
+	state := datura.Acquire("hawkes-moment-state", datura.APPJSON)
+
+	if _, err := state.Write(moment.artifact.DecryptPayload()); err != nil {
+		state.Release()
+
+		return 0, err
+	}
+
+	xValues, yValues, weights, ok := momentSamples(state, moment.artifact)
 
 	if !ok {
-		moment.artifact.Poke(datura.Map[float64]{"value": 0}, "output")
-
-		return moment.artifact.Read(p)
+		state.MergeOutput("value", 0.0)
+		state.Merge("root", "output")
+		state.Merge("inputs", []string{"value"})
+		return state.Read(p)
 	}
 
 	empirical := stat.BivariateMoment(moment.momentR, moment.momentS, xValues, yValues, weights)
@@ -54,14 +64,14 @@ func (moment *Moment) Read(p []byte) (int, error) {
 		confidence = MomentConfidence(empirical, theoretical)
 	}
 
-	moment.artifact.Poke(datura.Map[float64]{
-		"value":       confidence,
-		"empirical":   empirical,
-		"theoretical": theoretical,
-		"confidence":  confidence,
-	}, "output")
+	state.MergeOutput("value", confidence)
+	state.MergeOutput("empirical", empirical)
+	state.MergeOutput("theoretical", theoretical)
+	state.MergeOutput("confidence", confidence)
+	state.Merge("root", "output")
+	state.Merge("inputs", []string{"value", "empirical", "theoretical", "confidence"})
 
-	return moment.artifact.Read(p)
+	return state.Read(p)
 }
 
 func (moment *Moment) Close() error {
@@ -92,16 +102,26 @@ func NewFit(horizonUnixNano int64, prior BivariateFit) *Fit {
 }
 
 func (fit *Fit) Write(p []byte) (int, error) {
-	return fit.artifact.Write(p)
+	fit.artifact.WithPayload(p)
+	return len(p), nil
 }
 
 func (fit *Fit) Read(p []byte) (int, error) {
-	xTimes, yTimes, ok := fitTimes(fit.artifact)
+	state := datura.Acquire("hawkes-fit-state", datura.APPJSON)
+
+	if _, err := state.Write(fit.artifact.DecryptPayload()); err != nil {
+		state.Release()
+
+		return 0, err
+	}
+
+	xTimes, yTimes, ok := fitTimes(state, fit.artifact)
 
 	if !ok {
-		fit.artifact.Poke(datura.Map[float64]{"value": 0}, "output")
-
-		return fit.artifact.Read(p)
+		state.MergeOutput("value", 0.0)
+		state.Merge("root", "output")
+		state.Merge("inputs", []string{"value"})
+		return state.Read(p)
 	}
 
 	stream := NewArrivalStream(fitTimesToTime(xTimes), fitTimesToTime(yTimes))
@@ -109,9 +129,10 @@ func (fit *Fit) Read(p []byte) (int, error) {
 	fitted := fit.estimator.Fit(stream, horizon)
 
 	if !fitted.Valid() {
-		fit.artifact.Poke(datura.Map[float64]{"value": 0}, "output")
-
-		return fit.artifact.Read(p)
+		state.MergeOutput("value", 0.0)
+		state.Merge("root", "output")
+		state.Merge("inputs", []string{"value"})
+		return state.Read(p)
 	}
 
 	asymmetry := fitted.Asymmetry(false)
@@ -125,29 +146,29 @@ func (fit *Fit) Read(p []byte) (int, error) {
 		ratio = fitted.IntensityY / fitted.MuY
 	}
 
-	fit.artifact.Poke(datura.Map[float64]{
-		"value":           ratio,
-		"excitationRatio": ratio,
-		"spectralRadius":  fitted.SpectralRadius,
-		"asymmetry":       asymmetry,
-	}, "output")
+	state.MergeOutput("value", ratio)
+	state.MergeOutput("excitationRatio", ratio)
+	state.MergeOutput("spectralRadius", fitted.SpectralRadius)
+	state.MergeOutput("asymmetry", asymmetry)
+	state.Merge("root", "output")
+	state.Merge("inputs", []string{"value", "excitationRatio", "spectralRadius", "asymmetry"})
 
-	return fit.artifact.Read(p)
+	return state.Read(p)
 }
 
 func (fit *Fit) Close() error {
 	return nil
 }
 
-func momentSamples(artifact *datura.Artifact) (xValues, yValues, weights []float64, ok bool) {
-	batch := fitFloatBatch(artifact)
+func momentSamples(wire, config *datura.Artifact) (xValues, yValues, weights []float64, ok bool) {
+	batch := fitFloatBatch(wire)
 
 	if len(batch) == 0 {
-		batch = datura.Peek[[]float64](artifact, "batch")
+		batch = datura.Peek[[]float64](wire, "batch")
 	}
 
 	if len(batch) == 0 {
-		batch = equation.Features(artifact)
+		batch = equation.Features(wire)
 	}
 
 	if len(batch) < 4 || len(batch)%2 != 0 {
@@ -157,7 +178,11 @@ func momentSamples(artifact *datura.Artifact) (xValues, yValues, weights []float
 	half := len(batch) / 2
 	xValues = batch[:half]
 	yValues = batch[half:]
-	weights = datura.Peek[[]float64](artifact, "config", "weights")
+	weights = datura.Peek[[]float64](wire, "config", "weights")
+
+	if len(weights) == 0 {
+		weights = datura.Peek[[]float64](config, "config", "weights")
+	}
 
 	if len(weights) == 0 {
 		weights = nil
@@ -172,17 +197,26 @@ func momentSamples(artifact *datura.Artifact) (xValues, yValues, weights []float
 	return xValues, yValues, weights, ok
 }
 
-func fitTimes(artifact *datura.Artifact) (xTimes, yTimes []float64, ok bool) {
-	xCount := int(datura.Peek[float64](artifact, "config", "xCount"))
-	yCount := int(datura.Peek[float64](artifact, "config", "yCount"))
-	batch := fitFloatBatch(artifact)
+func fitTimes(wire, config *datura.Artifact) (xTimes, yTimes []float64, ok bool) {
+	xCount := int(datura.Peek[float64](wire, "config", "xCount"))
+	yCount := int(datura.Peek[float64](wire, "config", "yCount"))
+
+	if xCount <= 0 {
+		xCount = int(datura.Peek[float64](config, "config", "xCount"))
+	}
+
+	if yCount <= 0 {
+		yCount = int(datura.Peek[float64](config, "config", "yCount"))
+	}
+
+	batch := fitFloatBatch(wire)
 
 	if len(batch) == 0 {
-		batch = datura.Peek[[]float64](artifact, "batch")
+		batch = datura.Peek[[]float64](wire, "batch")
 	}
 
 	if len(batch) == 0 {
-		batch = equation.Features(artifact)
+		batch = equation.Features(wire)
 	}
 
 	if xCount <= 0 || yCount <= 0 || len(batch) < xCount+yCount {

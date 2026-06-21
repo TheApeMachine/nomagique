@@ -14,7 +14,7 @@ WriteSamples marshals a feature vector into one artifact payload.
 func WriteSamples(stage io.Writer, samples ...float64) error {
 	inbound := datura.Acquire("test-in", datura.APPJSON)
 	inbound.WithPayload(equation.MarshalFeaturesPayload(samples))
-	buf, err := inbound.Message().MarshalPacked()
+	buf, err := inbound.MarshalPacked()
 
 	if err != nil {
 		return err

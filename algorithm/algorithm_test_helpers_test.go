@@ -1,7 +1,6 @@
 package algorithm
 
 import (
-	"bytes"
 	"io"
 
 	"github.com/theapemachine/datura"
@@ -14,17 +13,21 @@ type fixedScore struct {
 }
 
 func (fixedScore *fixedScore) Write(p []byte) (int, error) {
-	if len(p) == 0 {
-		return 0, nil
-	}
-
+	fixedScore.artifact.WithPayload(p)
 	return len(p), nil
 }
 
 func (fixedScore *fixedScore) Read(p []byte) (int, error) {
-	fixedScore.artifact.WithPayload(encodePayload(fixedScore.value))
+	state := datura.Acquire("fixed-score-state", datura.APPJSON)
 
-	return fixedScore.artifact.Read(p)
+	if _, err := state.Write(fixedScore.artifact.DecryptPayload()); err != nil {
+		return 0, err
+	}
+
+	state.MergeOutput("value", fixedScore.value)
+	state.Merge("root", "output")
+	state.Merge("inputs", []string{"value"})
+	return state.Read(p)
 }
 
 func (fixedScore *fixedScore) Close() error {
@@ -32,27 +35,17 @@ func (fixedScore *fixedScore) Close() error {
 }
 
 func readOutbound(stage io.Reader) *datura.Artifact {
-	var outBuf bytes.Buffer
-	chunk := make([]byte, 4096)
+	chunk := make([]byte, 262144)
+	readCount, readErr := stage.Read(chunk)
 
-	for {
-		readCount, readErr := stage.Read(chunk)
+	if readErr != nil && readErr != io.EOF && readErr != io.ErrShortBuffer {
+		outbound := datura.Acquire("test-out", datura.Artifact_Type_json)
 
-		if readCount > 0 {
-			outBuf.Write(chunk[:readCount])
-		}
-
-		if readErr == io.EOF {
-			break
-		}
-
-		if readErr != nil {
-			break
-		}
+		return outbound
 	}
 
 	outbound := datura.Acquire("test-out", datura.Artifact_Type_json)
-	_, _ = outbound.Write(outBuf.Bytes())
+	_, _ = outbound.Write(chunk[:readCount])
 
 	return outbound
 }
@@ -60,7 +53,7 @@ func readOutbound(stage io.Reader) *datura.Artifact {
 func readScalar(stage io.ReadWriter, samples ...float64) float64 {
 	inbound := datura.Acquire("test-in", datura.Artifact_Type_json)
 	inbound.WithPayload(equation.MarshalFeaturesPayload(samples))
-	buf, err := inbound.Message().MarshalPacked()
+	buf, err := inbound.MarshalPacked()
 
 	if err != nil {
 		return 0

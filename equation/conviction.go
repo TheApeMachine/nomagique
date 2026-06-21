@@ -13,24 +13,25 @@ Conviction classifies risk-on breadth versus idiosyncratic leadership.
 Payload layout: breadth, change, surgeThreshold, leader (0/1), move.
 */
 type Conviction struct {
-	bytes []byte
+	artifact *datura.Artifact
 }
 
 /*
 NewConviction returns a market-breadth conviction stage.
 */
 func NewConviction() io.ReadWriteCloser {
-	return &Conviction{}
+	return &Conviction{
+		artifact: datura.Acquire("conviction", datura.APPJSON),
+	}
 }
 
 func (conviction *Conviction) Write(p []byte) (int, error) {
-	conviction.bytes = append(conviction.bytes[:0], p...)
-
+	conviction.artifact.WithPayload(p)
 	return len(p), nil
 }
 
 func (conviction *Conviction) Read(p []byte) (int, error) {
-	state, err := stageState(conviction.bytes)
+	state, err := stageState(conviction.artifact.DecryptPayload())
 
 	if err != nil {
 		return 0, err

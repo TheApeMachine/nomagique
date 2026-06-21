@@ -26,14 +26,7 @@ func NewAccumulator(artifact *datura.Artifact) *Accumulator {
 }
 
 func (accumulator *Accumulator) Write(payload []byte) (int, error) {
-	output := datura.Peek[datura.Map[float64]](accumulator.artifact, "output")
-
 	accumulator.artifact.WithPayload(payload)
-
-	if output != nil {
-		accumulator.artifact.Merge("output", output)
-	}
-
 	return len(payload), nil
 }
 
@@ -63,7 +56,7 @@ func (accumulator *Accumulator) Read(payload []byte) (int, error) {
 		output["value"] += sample
 	}
 
-	accumulator.artifact.Merge("output", output)
+	accumulator.artifact.Poke(output, "output")
 	state.MergeOutput("value", output["value"])
 	state.Merge("root", "output")
 	state.Merge("inputs", []string{"value"})

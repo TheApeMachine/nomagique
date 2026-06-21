@@ -16,24 +16,25 @@ Payload layout: buyNotional, sellNotional, tradeCount, grossFloor, medianNotiona
 then every observed price in window order.
 */
 type Flow struct {
-	bytes []byte
+	artifact *datura.Artifact
 }
 
 /*
 NewFlow returns a CVD flow stage for io.ReadWriter pipelines.
 */
 func NewFlow() io.ReadWriteCloser {
-	return &Flow{}
+	return &Flow{
+		artifact: datura.Acquire("flow", datura.APPJSON),
+	}
 }
 
 func (flow *Flow) Write(p []byte) (int, error) {
-	flow.bytes = append(flow.bytes[:0], p...)
-
+	flow.artifact.WithPayload(p)
 	return len(p), nil
 }
 
 func (flow *Flow) Read(p []byte) (int, error) {
-	state, err := stageState(flow.bytes)
+	state, err := stageState(flow.artifact.DecryptPayload())
 
 	if err != nil {
 		return 0, err

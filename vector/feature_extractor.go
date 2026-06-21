@@ -18,8 +18,6 @@ from Write to Read. Read unpacks the frame, extracts features, and emits output.
 */
 type FeatureExtractor struct {
 	artifact   *datura.Artifact
-	wire       []byte
-	emaConfigs map[string]*datura.Artifact
 	transforms map[string]func(*datura.Artifact) io.ReadWriteCloser
 }
 
@@ -30,8 +28,7 @@ func NewFeatureExtractor(artifact *datura.Artifact) *FeatureExtractor {
 	artifact.Inspect("feature-extractor", "NewFeatureExtractor()")
 
 	return &FeatureExtractor{
-		artifact:   artifact,
-		emaConfigs: map[string]*datura.Artifact{},
+		artifact: artifact,
 		transforms: map[string]func(*datura.Artifact) io.ReadWriteCloser{
 			"ema": func(config *datura.Artifact) io.ReadWriteCloser {
 				return adaptive.NewEMA(config)
@@ -44,7 +41,7 @@ func (extractor *FeatureExtractor) Read(payload []byte) (int, error) {
 	state := datura.Acquire("feature-extractor-state", datura.APPJSON)
 	state.Inspect("feature-extractor", "Read()", "p")
 
-	if _, err := state.Write(extractor.wire); err != nil {
+	if _, err := state.Write(extractor.artifact.DecryptPayload()); err != nil {
 		return 0, err
 	}
 
@@ -88,13 +85,7 @@ func (extractor *FeatureExtractor) Read(payload []byte) (int, error) {
 			scratch := datura.Acquire("feature-extractor-scratch", datura.APPJSON)
 			scratch.WithPayload(datura.Map[any]{"sample": sample}.Marshal())
 
-			config, exists := extractor.emaConfigs[input]
-
-			if !exists {
-				config = datura.Acquire("feature-extractor-ema", datura.APPJSON)
-				extractor.emaConfigs[input] = config
-			}
-
+			config := datura.Acquire("feature-extractor-ema", datura.APPJSON)
 			scratch.Inspect("feature-extractor", "Read()", "transform", transform, "in")
 			transport.NewFlipFlop(scratch, transformer(config))
 			scratch.Inspect("feature-extractor", "Read()", "transform", transform, "out")
@@ -119,8 +110,7 @@ func (extractor *FeatureExtractor) Read(payload []byte) (int, error) {
 }
 
 func (extractor *FeatureExtractor) Write(p []byte) (int, error) {
-	extractor.wire = append(extractor.wire[:0], p...)
-
+	extractor.artifact.WithPayload(p)
 	return len(p), nil
 }
 

@@ -28,7 +28,6 @@ func NewGeometricMean(artifact *datura.Artifact) *GeometricMean {
 
 func (geometricMean *GeometricMean) Write(p []byte) (int, error) {
 	geometricMean.artifact.WithPayload(p)
-
 	return len(p), nil
 }
 

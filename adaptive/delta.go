@@ -26,14 +26,7 @@ func NewDelta(artifact *datura.Artifact) *Delta {
 }
 
 func (delta *Delta) Write(payload []byte) (int, error) {
-	output := datura.Peek[datura.Map[float64]](delta.artifact, "output")
-
 	delta.artifact.WithPayload(payload)
-
-	if output != nil {
-		delta.artifact.Merge("output", output)
-	}
-
 	return len(payload), nil
 }
 
@@ -61,7 +54,7 @@ func (delta *Delta) Read(payload []byte) (int, error) {
 			"value": 0,
 		}
 
-		delta.artifact.Merge("output", output)
+		delta.artifact.Poke(output, "output")
 		state.MergeOutput("value", output["value"])
 		state.Merge("root", "output")
 		state.Merge("inputs", []string{"value"})
@@ -75,7 +68,7 @@ func (delta *Delta) Read(payload []byte) (int, error) {
 
 	if span == 0 {
 		output["prev"] = sample
-		delta.artifact.Merge("output", output)
+		delta.artifact.Poke(output, "output")
 		state.MergeOutput("value", output["value"])
 		state.Merge("root", "output")
 		state.Merge("inputs", []string{"value"})
@@ -85,7 +78,7 @@ func (delta *Delta) Read(payload []byte) (int, error) {
 	output["value"] = math.Abs(sample-output["prev"]) / span
 	output["prev"] = sample
 
-	delta.artifact.Merge("output", output)
+	delta.artifact.Poke(output, "output")
 	state.MergeOutput("value", output["value"])
 	state.Merge("root", "output")
 	state.Merge("inputs", []string{"value"})

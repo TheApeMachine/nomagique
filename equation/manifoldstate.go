@@ -15,24 +15,25 @@ Manifoldstate classifies systemic herd, liquidity shock, synchronized drift, and
 Payload layout: pressureGradNorm, coherenceMag2, guidanceSpeed, viscosityProxy, price.
 */
 type Manifoldstate struct {
-	bytes []byte
+	artifact *datura.Artifact
 }
 
 /*
 NewManifoldstate returns a manifold-state stage.
 */
 func NewManifoldstate() io.ReadWriteCloser {
-	return &Manifoldstate{}
+	return &Manifoldstate{
+		artifact: datura.Acquire("manifoldstate", datura.APPJSON),
+	}
 }
 
 func (manifoldstate *Manifoldstate) Write(p []byte) (int, error) {
-	manifoldstate.bytes = append(manifoldstate.bytes[:0], p...)
-
+	manifoldstate.artifact.WithPayload(p)
 	return len(p), nil
 }
 
 func (manifoldstate *Manifoldstate) Read(p []byte) (int, error) {
-	state, err := stageState(manifoldstate.bytes)
+	state, err := stageState(manifoldstate.artifact.DecryptPayload())
 
 	if err != nil {
 		return 0, err

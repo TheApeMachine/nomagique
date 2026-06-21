@@ -18,24 +18,25 @@ toxicNear, toxicBluffStrength, fillToCancelThreshold, churnGate, supportGate,
 vacuumStrengthCap, lastPrice.
 */
 type BookQuality struct {
-	bytes []byte
+	artifact *datura.Artifact
 }
 
 /*
 NewBookQuality returns a book-flow quality stage.
 */
 func NewBookQuality() io.ReadWriteCloser {
-	return &BookQuality{}
+	return &BookQuality{
+		artifact: datura.Acquire("book-quality", datura.APPJSON),
+	}
 }
 
 func (bookQuality *BookQuality) Write(p []byte) (int, error) {
-	bookQuality.bytes = append(bookQuality.bytes[:0], p...)
-
+	bookQuality.artifact.WithPayload(p)
 	return len(p), nil
 }
 
 func (bookQuality *BookQuality) Read(p []byte) (int, error) {
-	state, err := stageState(bookQuality.bytes)
+	state, err := stageState(bookQuality.artifact.DecryptPayload())
 
 	if err != nil {
 		return 0, err

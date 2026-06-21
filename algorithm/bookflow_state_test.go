@@ -253,34 +253,11 @@ func TestGateQuantile(testingTB *testing.T) {
 }
 
 func runGateSample(gate *GateQuantile, sample float64, percentile float64) float64 {
-	frame := datura.Acquire("gate-frame", datura.APPJSON)
-
-	if sample > 0 {
-		frame.Merge("sample", sample)
+	if sample <= 0 {
+		return gate.value(percentile)
 	}
 
-	if percentile > 0 {
-		frame.Merge("percentile", percentile)
-	}
-
-	packed, err := frame.Message().MarshalPacked()
-
-	frame.Release()
-
-	if err != nil {
-		return 0
-	}
-
-	_, _ = gate.Write(packed)
-
-	buffer := make([]byte, gateReadBufferSize)
-	readCount, _ := gate.Read(buffer)
-	outbound := datura.Acquire("gate-read", datura.APPJSON)
-	_, _ = outbound.Write(buffer[:readCount])
-	value := datura.Peek[float64](outbound, "output", "value")
-	outbound.Release()
-
-	return value
+	return gate.observe(sample, percentile)
 }
 
 func TestObservationRingAdversarial(testingTB *testing.T) {

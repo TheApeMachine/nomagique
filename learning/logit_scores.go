@@ -31,7 +31,6 @@ func NewLogitScores(config *datura.Artifact) *LogitScores {
 
 func (logitScores *LogitScores) Write(p []byte) (int, error) {
 	logitScores.config.WithPayload(p)
-
 	return len(p), nil
 }
 

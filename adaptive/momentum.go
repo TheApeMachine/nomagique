@@ -26,14 +26,7 @@ func NewMomentum(artifact *datura.Artifact) *Momentum {
 }
 
 func (momentum *Momentum) Write(payload []byte) (int, error) {
-	output := datura.Peek[datura.Map[float64]](momentum.artifact, "output")
-
 	momentum.artifact.WithPayload(payload)
-
-	if output != nil {
-		momentum.artifact.Merge("output", output)
-	}
-
 	return len(payload), nil
 }
 
@@ -61,7 +54,7 @@ func (momentum *Momentum) Read(payload []byte) (int, error) {
 			"value": 0,
 		}
 
-		momentum.artifact.Merge("output", output)
+		momentum.artifact.Poke(output, "output")
 		state.MergeOutput("value", output["value"])
 		state.Merge("root", "output")
 		state.Merge("inputs", []string{"value"})
@@ -75,7 +68,7 @@ func (momentum *Momentum) Read(payload []byte) (int, error) {
 
 	if span == 0 {
 		output["prev"] = sample
-		momentum.artifact.Merge("output", output)
+		momentum.artifact.Poke(output, "output")
 		state.MergeOutput("value", output["value"])
 		state.Merge("root", "output")
 		state.Merge("inputs", []string{"value"})
@@ -85,7 +78,7 @@ func (momentum *Momentum) Read(payload []byte) (int, error) {
 	output["value"] = (sample - output["prev"]) / span
 	output["prev"] = sample
 
-	momentum.artifact.Merge("output", output)
+	momentum.artifact.Poke(output, "output")
 	state.MergeOutput("value", output["value"])
 	state.Merge("root", "output")
 	state.Merge("inputs", []string{"value"})

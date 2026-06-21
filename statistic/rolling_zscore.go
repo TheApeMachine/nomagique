@@ -30,7 +30,6 @@ func NewRollingZScore(artifact *datura.Artifact) *RollingZScore {
 
 func (rollingZScore *RollingZScore) Write(payload []byte) (int, error) {
 	rollingZScore.artifact.WithPayload(payload)
-
 	return len(payload), nil
 }
 

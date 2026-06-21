@@ -19,24 +19,25 @@ Payload layout: lastPrice, bidDepthCount, askDepthCount, densityCount,
 spreadCount, pressureCount, imbalanceCount, then each series oldest→newest.
 */
 type Decay struct {
-	bytes []byte
+	artifact *datura.Artifact
 }
 
 /*
 NewDecay returns a microstructure decay stage for io.ReadWriter pipelines.
 */
 func NewDecay() io.ReadWriteCloser {
-	return &Decay{}
+	return &Decay{
+		artifact: datura.Acquire("decay", datura.APPJSON),
+	}
 }
 
 func (decay *Decay) Write(p []byte) (int, error) {
-	decay.bytes = append(decay.bytes[:0], p...)
-
+	decay.artifact.WithPayload(p)
 	return len(p), nil
 }
 
 func (decay *Decay) Read(p []byte) (int, error) {
-	state, err := stageState(decay.bytes)
+	state, err := stageState(decay.artifact.DecryptPayload())
 
 	if err != nil {
 		return 0, err

@@ -156,7 +156,6 @@ gate under output.value. Config attributes: percentile, minSamples.
 */
 type GateQuantile struct {
 	artifact *datura.Artifact
-	bytes    []byte
 }
 
 /*
@@ -171,15 +170,14 @@ func NewGateQuantile(artifact *datura.Artifact) *GateQuantile {
 }
 
 func (gate *GateQuantile) Write(payload []byte) (int, error) {
-	gate.bytes = append(gate.bytes[:0], payload...)
-
+	gate.artifact.WithPayload(payload)
 	return len(payload), nil
 }
 
 func (gate *GateQuantile) Read(payload []byte) (int, error) {
 	state := datura.Acquire("gate-quantile-state", datura.APPJSON)
 
-	if _, err := state.Write(gate.bytes); err != nil {
+	if _, err := state.Write(gate.artifact.DecryptPayload()); err != nil {
 		state.Release()
 
 		return 0, err
@@ -213,19 +211,77 @@ func (gate *GateQuantile) Read(payload []byte) (int, error) {
 		gate.artifact.Poke(history, "history")
 	}
 
-	history := datura.Peek[[]float64](gate.artifact, "history")
-	gateValue := 0.0
+	gateValue := gate.value(percentile)
 
-	if len(history) >= minSamples {
-		gateValue = statistic.QuantileOf(percentile, history)
+	state.MergeOutput("value", gateValue)
+	state.Merge("root", "output")
+	state.Merge("inputs", []string{"value"})
+
+	return state.Read(payload)
+}
+
+/*
+value returns the configured quantile over persisted history.
+percentileOverride replaces the config percentile when positive.
+*/
+func (gate *GateQuantile) value(percentileOverride float64) float64 {
+	percentile := percentileOverride
+
+	if percentile <= 0 {
+		percentile = datura.Peek[float64](gate.artifact, "percentile")
 	}
 
-	outState := datura.Acquire("gate-quantile-out", datura.APPJSON)
-	outState.MergeOutput("value", gateValue)
-	outState.Merge("root", "output")
-	outState.Merge("inputs", []string{"value"})
+	minSamples := int(datura.Peek[float64](gate.artifact, "minSamples"))
 
-	return outState.Read(payload)
+	if minSamples < 1 {
+		minSamples = 3
+	}
+
+	history := datura.Peek[[]float64](gate.artifact, "history")
+
+	if len(history) < minSamples {
+		return 0
+	}
+
+	return statistic.QuantileOf(percentile, history)
+}
+
+/*
+observe records one sample through the wire bus and returns the updated quantile.
+*/
+func (gate *GateQuantile) observe(sample float64, percentileOverride float64) float64 {
+	frame := datura.Acquire("gate-frame", datura.APPJSON)
+	frame.Poke(sample, "sample")
+
+	if percentileOverride > 0 {
+		frame.Poke(percentileOverride, "percentile")
+	}
+
+	packed, err := frame.MarshalPacked()
+
+	frame.Release()
+
+	if err != nil {
+		return 0
+	}
+
+	if _, writeErr := gate.Write(packed); writeErr != nil {
+		return 0
+	}
+
+	buffer := make([]byte, gateReadBufferSize)
+	readCount, readErr := gate.Read(buffer)
+
+	if readErr != nil && readErr != io.EOF && readErr != io.ErrShortBuffer {
+		return 0
+	}
+
+	outbound := datura.Acquire("gate-read", datura.APPJSON)
+	_, _ = outbound.Write(buffer[:readCount])
+	value := datura.Peek[float64](outbound, "output", "value")
+	outbound.Release()
+
+	return value
 }
 
 func (gate *GateQuantile) Close() error {

@@ -26,14 +26,7 @@ func NewRange(artifact *datura.Artifact) *Range {
 }
 
 func (extent *Range) Write(payload []byte) (int, error) {
-	output := datura.Peek[datura.Map[float64]](extent.artifact, "output")
-
 	extent.artifact.WithPayload(payload)
-
-	if output != nil {
-		extent.artifact.Merge("output", output)
-	}
-
 	return len(payload), nil
 }
 
@@ -60,7 +53,7 @@ func (extent *Range) Read(payload []byte) (int, error) {
 			"value": 0,
 		}
 
-		extent.artifact.Merge("output", output)
+		extent.artifact.Poke(output, "output")
 		state.MergeOutput("value", output["value"])
 		state.Merge("root", "output")
 		state.Merge("inputs", []string{"value"})
@@ -71,7 +64,7 @@ func (extent *Range) Read(payload []byte) (int, error) {
 	output["max"] = math.Max(output["max"], sample)
 	output["value"] = output["max"] - output["min"]
 
-	extent.artifact.Merge("output", output)
+	extent.artifact.Poke(output, "output")
 	state.MergeOutput("value", output["value"])
 	state.Merge("root", "output")
 	state.Merge("inputs", []string{"value"})

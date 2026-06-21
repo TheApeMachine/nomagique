@@ -30,7 +30,6 @@ func NewPriceRing(artifact *datura.Artifact) *PriceRing {
 
 func (priceRing *PriceRing) Write(payload []byte) (int, error) {
 	priceRing.artifact.WithPayload(payload)
-
 	return len(payload), nil
 }
 

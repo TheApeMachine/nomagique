@@ -23,10 +23,9 @@ type Rules []Rule
 Circuit walks rules and routes observations through the first matching Then stage.
 */
 type Circuit struct {
-	artifact    *datura.Artifact
-	rules       Rules
-	output      float64
-	inboundWire []byte
+	artifact *datura.Artifact
+	rules    Rules
+	output   float64
 }
 
 /*
@@ -42,7 +41,6 @@ func NewCircuit(rules Rules) *Circuit {
 func (circuit *Circuit) Write(p []byte) (int, error) {
 	if inboundReset(p) {
 		circuit.output = 0
-		circuit.inboundWire = circuit.inboundWire[:0]
 
 		for _, rule := range circuit.rules {
 			resetCondition(rule.Condition)
@@ -50,23 +48,21 @@ func (circuit *Circuit) Write(p []byte) (int, error) {
 		}
 	}
 
-	n, err := circuit.artifact.Write(p)
-
-	circuit.inboundWire = append(circuit.inboundWire[:0], p...)
-
-	return n, err
+	circuit.artifact.WithPayload(p)
+	return len(p), nil
 }
 
 func (circuit *Circuit) Read(p []byte) (int, error) {
-	inbound := circuit.inboundWire
-	inboundOK := len(inbound) > 0
+	state := datura.Acquire("circuit-state", datura.APPJSON)
 
-	if !inboundOK {
-		inbound, inboundOK = artifactBytes(circuit.artifact)
+	if _, err := state.Write(circuit.artifact.DecryptPayload()); err != nil {
+		return 0, err
 	}
 
+	inbound, inboundOK := artifactBytes(state)
+
 	for _, rule := range circuit.rules {
-		if !rule.Condition.Match(circuit.artifact) {
+		if !rule.Condition.Match(state) {
 			continue
 		}
 
@@ -82,14 +78,16 @@ func (circuit *Circuit) Read(p []byte) (int, error) {
 			}
 		}
 
-		circuit.artifact.Poke(datura.Map[float64]{"value": circuit.output}, "output")
-
-		return circuit.artifact.Read(p)
+		state.MergeOutput("value", circuit.output)
+		state.Merge("root", "output")
+		state.Merge("inputs", []string{"value"})
+		return state.Read(p)
 	}
 
-	circuit.artifact.Poke(datura.Map[float64]{"value": circuit.output}, "output")
-
-	return circuit.artifact.Read(p)
+	state.MergeOutput("value", circuit.output)
+	state.Merge("root", "output")
+	state.Merge("inputs", []string{"value"})
+	return state.Read(p)
 }
 
 func (circuit *Circuit) Close() error {

@@ -30,7 +30,6 @@ func NewLogReturn(artifact *datura.Artifact) *LogReturn {
 
 func (logReturn *LogReturn) Write(payload []byte) (int, error) {
 	logReturn.artifact.WithPayload(payload)
-
 	return len(payload), nil
 }
 

@@ -71,7 +71,7 @@ func (ema *EMA) Read(payload []byte) (int, error) {
 		}
 	}
 
-	ema.artifact.Merge("output", output)
+	ema.artifact.Poke(output, "output")
 	state.MergeOutput("value", output["value"])
 	state.Merge("root", "output")
 	state.Merge("inputs", []string{"value"})

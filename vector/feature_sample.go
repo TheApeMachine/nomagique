@@ -9,7 +9,6 @@ FeatureSample copies one feature vector slot onto the sample field.
 */
 type FeatureSample struct {
 	config *datura.Artifact
-	staged *datura.Artifact
 }
 
 /*
@@ -18,25 +17,31 @@ NewFeatureSample returns a feature-index selector configured on the artifact.
 func NewFeatureSample(config *datura.Artifact) *FeatureSample {
 	return &FeatureSample{
 		config: config,
-		staged: datura.Acquire("feature-sample", datura.APPJSON),
 	}
 }
 
 func (featureSample *FeatureSample) Write(payload []byte) (int, error) {
-	return featureSample.staged.Write(payload)
+	featureSample.config.WithPayload(payload)
+	return len(payload), nil
 }
 
 func (featureSample *FeatureSample) Read(payload []byte) (int, error) {
-	features := datura.Peek[[]float64](featureSample.staged, "features")
+	state := datura.Acquire("feature-sample-state", datura.APPJSON)
+
+	if _, err := state.Write(featureSample.config.DecryptPayload()); err != nil {
+		return 0, err
+	}
+
+	features := datura.Peek[[]float64](state, "features")
 	featureIndex := int(datura.Peek[float64](featureSample.config, "featureIndex"))
 
 	if featureIndex < 0 || len(features) <= featureIndex {
-		return featureSample.staged.Read(payload)
+		return state.Read(payload)
 	}
 
-	featureSample.staged.Poke(features[featureIndex], "sample")
+	state.Poke(features[featureIndex], "sample")
 
-	return featureSample.staged.Read(payload)
+	return state.Read(payload)
 }
 
 func (featureSample *FeatureSample) Close() error {

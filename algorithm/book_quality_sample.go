@@ -15,7 +15,6 @@ Ledger and gate state live on the stage instance across Measure calls.
 */
 type BookQualitySample struct {
 	artifact      *datura.Artifact
-	bytes         []byte
 	ledger        SideFlowLedger
 	vacuumGate    *GateQuantile
 	churnGate     *GateQuantile
@@ -66,15 +65,14 @@ func NewBookQualitySample(artifact *datura.Artifact) *BookQualitySample {
 }
 
 func (bookQualitySample *BookQualitySample) Write(payload []byte) (int, error) {
-	bookQualitySample.bytes = append(bookQualitySample.bytes[:0], payload...)
-
+	bookQualitySample.artifact.WithPayload(payload)
 	return len(payload), nil
 }
 
 func (bookQualitySample *BookQualitySample) Read(payload []byte) (int, error) {
 	state := datura.Acquire("book-quality-sample-state", datura.APPJSON)
 
-	if _, err := state.Write(bookQualitySample.bytes); err != nil {
+	if _, err := state.Write(bookQualitySample.artifact.DecryptPayload()); err != nil {
 		state.Release()
 
 		return 0, err
@@ -394,39 +392,11 @@ func (bookQualitySample *BookQualitySample) runGate(
 	sample float64,
 	percentile float64,
 ) float64 {
-	frame := datura.Acquire("gate-frame", datura.APPJSON)
-
-	if sample > 0 {
-		frame.Merge("sample", sample)
+	if sample <= 0 {
+		return gate.value(percentile)
 	}
 
-	if percentile > 0 {
-		frame.Merge("percentile", percentile)
-	}
-
-	packed, err := frame.Message().MarshalPacked()
-
-	frame.Release()
-
-	if err != nil {
-		return 0
-	}
-
-	_, _ = gate.Write(packed)
-
-	buffer := make([]byte, gateReadBufferSize)
-	readCount, err := gate.Read(buffer)
-
-	if err != nil && err != io.EOF && err != io.ErrShortBuffer {
-		return 0
-	}
-
-	outbound := datura.Acquire("gate-read", datura.APPJSON)
-	_, _ = outbound.Write(buffer[:readCount])
-	value := datura.Peek[float64](outbound, "output", "value")
-	outbound.Release()
-
-	return value
+	return gate.observe(sample, percentile)
 }
 
 func (bookQualitySample *BookQualitySample) Close() error {

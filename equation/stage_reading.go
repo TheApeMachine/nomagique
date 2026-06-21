@@ -9,7 +9,7 @@ StageReading exposes one output field from the carried artifact as a classifier 
 */
 type StageReading struct {
 	field string
-	bytes []byte
+	artifact *datura.Artifact
 }
 
 /*
@@ -18,17 +18,17 @@ NewStageReading returns a score source for one output field on the carried artif
 func NewStageReading(field string) *StageReading {
 	return &StageReading{
 		field: field,
+		artifact: datura.Acquire("equation-stage-reading", datura.APPJSON),
 	}
 }
 
 func (reading *StageReading) Write(p []byte) (int, error) {
-	reading.bytes = append(reading.bytes[:0], p...)
-
+	reading.artifact.WithPayload(p)
 	return len(p), nil
 }
 
 func (reading *StageReading) Read(p []byte) (int, error) {
-	state, err := stageState(reading.bytes)
+	state, err := stageState(reading.artifact.DecryptPayload())
 
 	if err != nil {
 		return 0, err

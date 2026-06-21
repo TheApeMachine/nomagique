@@ -20,7 +20,7 @@ func boundarySample(artifact *datura.Artifact) (float64, bool) {
 }
 
 func artifactBytes(artifact *datura.Artifact) ([]byte, bool) {
-	buf, err := artifact.Message().Marshal()
+	buf, err := artifact.MarshalPacked()
 
 	if err != nil {
 		return nil, false
@@ -91,13 +91,21 @@ func NewConstant(value float64) *Constant {
 }
 
 func (constant *Constant) Write(p []byte) (int, error) {
-	return constant.artifact.Write(p)
+	constant.artifact.WithPayload(p)
+	return len(p), nil
 }
 
 func (constant *Constant) Read(p []byte) (int, error) {
-	constant.artifact.Poke(datura.Map[float64]{"value": constant.value}, "output")
+	state := datura.Acquire("constant-state", datura.APPJSON)
 
-	return constant.artifact.Read(p)
+	if _, err := state.Write(constant.artifact.DecryptPayload()); err != nil {
+		return 0, err
+	}
+
+	state.MergeOutput("value", constant.value)
+	state.Merge("root", "output")
+	state.Merge("inputs", []string{"value"})
+	return state.Read(p)
 }
 
 func (constant *Constant) Close() error {

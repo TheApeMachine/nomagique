@@ -38,7 +38,6 @@ lagCorr, contempOK, contempCorr, sampleCount.
 */
 type Lag struct {
 	artifact *datura.Artifact
-	bytes    []byte
 	outcome  LagOutcome
 }
 
@@ -54,8 +53,7 @@ func NewLag(artifact *datura.Artifact) *Lag {
 }
 
 func (lag *Lag) Write(payload []byte) (int, error) {
-	lag.bytes = append(lag.bytes[:0], payload...)
-
+	lag.artifact.WithPayload(payload)
 	return len(payload), nil
 }
 
@@ -63,7 +61,7 @@ func (lag *Lag) Read(payload []byte) (int, error) {
 	state := datura.Acquire("lag-state", datura.APPJSON)
 	state.Inspect("algorithm", "lag", "Read()", "p")
 
-	if _, err := state.Write(lag.bytes); err != nil {
+	if _, err := state.Write(lag.artifact.DecryptPayload()); err != nil {
 		return 0, err
 	}
 
@@ -81,15 +79,14 @@ func (lag *Lag) Read(payload []byte) (int, error) {
 		lag.outcome = lag.evaluate(batch)
 	}
 
-	outState := datura.Acquire("lag-out", datura.APPJSON)
-	outState.MergeOutput("inefficient", lag.outcome.InefficientScore)
-	outState.MergeOutput("sync", lag.outcome.SyncScore)
-	outState.MergeOutput("decoupled", lag.outcome.DecoupledScore)
-	outState.MergeOutput("stall", lag.outcome.StallScore)
-	outState.Merge("root", "output")
-	outState.Merge("inputs", []string{"inefficient", "sync", "decoupled", "stall"})
+	state.MergeOutput("inefficient", lag.outcome.InefficientScore)
+	state.MergeOutput("sync", lag.outcome.SyncScore)
+	state.MergeOutput("decoupled", lag.outcome.DecoupledScore)
+	state.MergeOutput("stall", lag.outcome.StallScore)
+	state.Merge("root", "output")
+	state.Merge("inputs", []string{"inefficient", "sync", "decoupled", "stall"})
 
-	return outState.Read(payload)
+	return state.Read(payload)
 }
 
 func (lag *Lag) Close() error {
@@ -321,15 +318,17 @@ func newLagReading(lag *Lag, project func(LagOutcome) float64) *LagReading {
 }
 
 func (reading *LagReading) Write(p []byte) (int, error) {
-	if len(p) == 0 {
-		return 0, nil
-	}
-
+	reading.artifact.WithPayload(p)
 	return len(p), nil
 }
 
 func (reading *LagReading) Read(payload []byte) (int, error) {
 	state := datura.Acquire("lag-reading-state", datura.APPJSON)
+
+	if _, err := state.Write(reading.artifact.DecryptPayload()); err != nil {
+		return 0, err
+	}
+
 	value := 0.0
 
 	if reading.lag != nil && reading.project != nil {

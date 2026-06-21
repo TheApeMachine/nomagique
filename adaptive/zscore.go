@@ -26,14 +26,7 @@ func NewZScore(artifact *datura.Artifact) *ZScore {
 }
 
 func (surprise *ZScore) Write(payload []byte) (int, error) {
-	output := datura.Peek[datura.Map[float64]](surprise.artifact, "output")
-
 	surprise.artifact.WithPayload(payload)
-
-	if output != nil {
-		surprise.artifact.Merge("output", output)
-	}
-
 	return len(payload), nil
 }
 
@@ -72,7 +65,7 @@ func (surprise *ZScore) Read(payload []byte) (int, error) {
 			"value": 0,
 		}
 
-		surprise.artifact.Merge("output", output)
+		surprise.artifact.Poke(output, "output")
 		state.MergeOutput("value", output["value"])
 		state.Merge("root", "output")
 		state.Merge("inputs", []string{"value"})
@@ -86,7 +79,7 @@ func (surprise *ZScore) Read(payload []byte) (int, error) {
 
 	if span == 0 {
 		output["prev"] = sample
-		surprise.artifact.Merge("output", output)
+		surprise.artifact.Poke(output, "output")
 		state.MergeOutput("value", output["value"])
 		state.Merge("root", "output")
 		state.Merge("inputs", []string{"value"})
@@ -112,7 +105,7 @@ func (surprise *ZScore) Read(payload []byte) (int, error) {
 
 	if output["var"] <= 0 {
 		output["value"] = 0
-		surprise.artifact.Merge("output", output)
+		surprise.artifact.Poke(output, "output")
 		state.MergeOutput("value", output["value"])
 		state.Merge("root", "output")
 		state.Merge("inputs", []string{"value"})
@@ -121,7 +114,7 @@ func (surprise *ZScore) Read(payload []byte) (int, error) {
 
 	output["value"] = deviation / math.Sqrt(output["var"])
 
-	surprise.artifact.Merge("output", output)
+	surprise.artifact.Poke(output, "output")
 	state.MergeOutput("value", output["value"])
 	state.Merge("root", "output")
 	state.Merge("inputs", []string{"value"})

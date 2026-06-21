@@ -17,24 +17,25 @@ laminarCeiling, turbulentFloor, turbulentReady, divergenceEdge, icebergScore,
 price, spreadBPS, changePct, volume.
 */
 type Fluidflow struct {
-	bytes []byte
+	artifact *datura.Artifact
 }
 
 /*
 NewFluidflow returns a fluid-dynamics stage for io.ReadWriter pipelines.
 */
 func NewFluidflow() io.ReadWriteCloser {
-	return &Fluidflow{}
+	return &Fluidflow{
+		artifact: datura.Acquire("fluidflow", datura.APPJSON),
+	}
 }
 
 func (fluidflow *Fluidflow) Write(p []byte) (int, error) {
-	fluidflow.bytes = append(fluidflow.bytes[:0], p...)
-
+	fluidflow.artifact.WithPayload(p)
 	return len(p), nil
 }
 
 func (fluidflow *Fluidflow) Read(p []byte) (int, error) {
-	state, err := stageState(fluidflow.bytes)
+	state, err := stageState(fluidflow.artifact.DecryptPayload())
 
 	if err != nil {
 		return 0, err

@@ -21,24 +21,25 @@ Payload layout: weighted, level1, flat, flatOK, mid, spread, touchDepth,
 tradePressure, weightedCount, level1Count, flatCount, then each abs history.
 */
 type Bookflow struct {
-	bytes []byte
+	artifact *datura.Artifact
 }
 
 /*
 NewBookflow returns a depth-flow stage.
 */
 func NewBookflow() io.ReadWriteCloser {
-	return &Bookflow{}
+	return &Bookflow{
+		artifact: datura.Acquire("bookflow", datura.APPJSON),
+	}
 }
 
 func (bookflow *Bookflow) Write(p []byte) (int, error) {
-	bookflow.bytes = append(bookflow.bytes[:0], p...)
-
+	bookflow.artifact.WithPayload(p)
 	return len(p), nil
 }
 
 func (bookflow *Bookflow) Read(p []byte) (int, error) {
-	state, err := stageState(bookflow.bytes)
+	state, err := stageState(bookflow.artifact.DecryptPayload())
 
 	if err != nil {
 		return 0, err

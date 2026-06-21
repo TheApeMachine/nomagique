@@ -32,14 +32,11 @@ func emitZero(state *datura.Artifact, payload []byte) (int, error) {
 func emitOutput(state *datura.Artifact, payload []byte, fields datura.Map[float64]) (int, error) {
 	defer state.Release()
 
-	output := datura.Acquire("equation-output", datura.APPJSON)
-	output.WithPayload(state.DecryptPayload())
-
 	for key, value := range fields {
-		output.MergeOutput(key, value)
+		state.MergeOutput(key, value)
 	}
 
-	return output.Read(payload)
+	return state.Read(payload)
 }
 
 /*

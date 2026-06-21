@@ -11,30 +11,41 @@ import (
 /*
 Pearson computes the Pearson correlation coefficient between two streams.
 Weights may be supplied on config.weights and are applied before correlation.
+The constructor artifact holds config; Write buffers inbound wire on its payload.
 */
 type Pearson struct {
 	artifact *datura.Artifact
 }
 
 /*
-NewPearson creates a Pearson correlation stage.
+NewPearson creates a Pearson correlation stage wired from config attributes on the artifact.
 */
-func NewPearson() *Pearson {
+func NewPearson(artifact *datura.Artifact) *Pearson {
+	artifact.Inspect("correlation", "pearson", "NewPearson()")
+
 	return &Pearson{
-		artifact: datura.Acquire("pearson", datura.APPJSON),
+		artifact: artifact,
 	}
 }
 
 func (pearson *Pearson) Write(p []byte) (int, error) {
-	return pearson.artifact.Write(p)
+	pearson.artifact.WithPayload(p)
+	return len(p), nil
 }
 
 func (pearson *Pearson) Read(p []byte) (int, error) {
-	values := datura.Peek[[]float64](pearson.artifact, "batch")
+	state := datura.Acquire("pearson-state", datura.APPJSON)
+	state.Inspect("correlation", "pearson", "Read()", "p")
+
+	if _, err := state.Write(pearson.artifact.DecryptPayload()); err != nil {
+		return 0, err
+	}
+
+	values := datura.Peek[[]float64](state, "batch")
 
 	if len(values) == 0 {
-		left := datura.Peek[[]float64](pearson.artifact, "left")
-		right := datura.Peek[[]float64](pearson.artifact, "right")
+		left := datura.Peek[[]float64](state, "left")
+		right := datura.Peek[[]float64](state, "right")
 
 		if len(left) > 0 || len(right) > 0 {
 			values = append(append([]float64(nil), left...), right...)
@@ -61,9 +72,10 @@ func (pearson *Pearson) Read(p []byte) (int, error) {
 		}
 
 		if !weightsOK {
-			pearson.artifact.Poke(datura.Map[float64]{"value": 0}, "output")
-
-			return pearson.artifact.Read(p)
+			state.MergeOutput("value", 0.0)
+			state.Merge("root", "output")
+			state.Merge("inputs", []string{"value"})
+			return state.Read(p)
 		}
 
 		correlation := stat.Correlation(left, right, weights)
@@ -72,9 +84,10 @@ func (pearson *Pearson) Read(p []byte) (int, error) {
 			correlation = 0
 		}
 
-		pearson.artifact.Poke(datura.Map[float64]{"value": correlation}, "output")
-
-		return pearson.artifact.Read(p)
+		state.MergeOutput("value", correlation)
+		state.Merge("root", "output")
+		state.Merge("inputs", []string{"value"})
+		return state.Read(p)
 	}
 
 	if count > 0 && count < 2 {
@@ -91,11 +104,10 @@ func (pearson *Pearson) Read(p []byte) (int, error) {
 		)
 	}
 
-	if count == 0 || count < 2 || count%2 != 0 {
-		pearson.artifact.Poke(datura.Map[float64]{"value": 0}, "output")
-	}
-
-	return pearson.artifact.Read(p)
+	state.MergeOutput("value", 0.0)
+	state.Merge("root", "output")
+	state.Merge("inputs", []string{"value"})
+	return state.Read(p)
 }
 
 func (pearson *Pearson) Close() error {
@@ -115,9 +127,16 @@ func (pearsonError PearsonError) Error() string {
 	return string(pearsonError)
 }
 
-func inboundReset(p []byte) bool {
-	inbound := datura.Acquire("inbound", datura.APPJSON)
-	_, _ = inbound.Write(p)
+func inboundReset(payload []byte) bool {
+	if len(payload) == 0 {
+		return false
+	}
 
-	return datura.Peek[float64](inbound, "reset") > 0
+	state := datura.Acquire("inbound-reset", datura.APPJSON)
+
+	if _, err := state.Write(payload); err != nil {
+		return false
+	}
+
+	return datura.Peek[float64](state, "reset") > 0
 }

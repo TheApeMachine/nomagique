@@ -1,15 +1,16 @@
 package algorithm
 
 import (
+	"io"
 	"math"
 	"time"
 
 	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/transport"
 	"github.com/theapemachine/nomagique/probability"
 	"github.com/theapemachine/nomagique/statistic"
-	"gonum.org/v1/gonum/stat"
 )
+
+const gateReadBufferSize = 65536
 
 const (
 	SideBid byte = 'b'
@@ -150,90 +151,128 @@ func maxFloat(left, right float64) float64 {
 }
 
 /*
-BookGates derives classification thresholds from observation rings.
+GateQuantile retains observations on the config artifact and emits a quantile
+gate under output.value. Config attributes: percentile, minSamples.
 */
-type BookGates struct {
-	ChurnRatios     gateChannel
-	FillMatchRatios gateChannel
-	CancelQtys      gateChannel
-	LevelSizeFracs  gateChannel
-	VacuumRatios    gateChannel
+type GateQuantile struct {
+	config *datura.Artifact
+	bytes  []byte
 }
 
-type gateChannel struct {
-	artifact   *datura.Artifact
-	ring       *statistic.ObservationRing
-	quantile   *statistic.Quantile
-	percentile float64
-}
-
-func newGateChannel(percentile float64) gateChannel {
-	return gateChannel{
-		artifact:   datura.Acquire("book-gate", datura.APPJSON),
-		ring:       statistic.NewObservationRing(),
-		quantile:   statistic.NewQuantile(percentile, stat.LinInterp),
-		percentile: percentile,
+/*
+NewGateQuantile wires a gate stage from a config artifact.
+*/
+func NewGateQuantile(config *datura.Artifact) *GateQuantile {
+	return &GateQuantile{
+		config: config,
 	}
 }
 
-func (channel gateChannel) observe(value float64) {
-	channel.artifact.Poke(value, "sample")
-	_ = transport.NewFlipFlop(channel.artifact, channel.ring)
+func (gate *GateQuantile) Write(payload []byte) (int, error) {
+	gate.bytes = append(gate.bytes[:0], payload...)
+
+	return len(payload), nil
 }
 
-func (channel gateChannel) len() int {
-	return len(datura.Peek[[]float64](channel.artifact, "history"))
-}
+func (gate *GateQuantile) Read(payload []byte) (int, error) {
+	state := datura.Acquire("gate-quantile-state", datura.APPJSON)
 
-func (channel gateChannel) quantileValue() float64 {
-	history := datura.Peek[[]float64](channel.artifact, "history")
+	if _, err := state.Write(gate.bytes); err != nil {
+		state.Release()
 
-	if len(history) == 0 {
-		return 0
+		return 0, err
 	}
 
-	return statistic.QuantileOf(channel.percentile, history)
-}
+	defer state.Release()
 
-func NewBookGates() *BookGates {
-	return &BookGates{
-		ChurnRatios:     newGateChannel(0.75),
-		FillMatchRatios: newGateChannel(0.5),
-		CancelQtys:      newGateChannel(0.5),
-		LevelSizeFracs:  newGateChannel(0.75),
-		VacuumRatios:    newGateChannel(0.9),
-	}
-}
+	sample := datura.Peek[float64](state, "sample")
+	percentile := datura.Peek[float64](state, "percentile")
 
-func (gates *BookGates) ChurnRatioGate() float64 {
-	if gates.ChurnRatios.len() >= 3 {
-		return gates.ChurnRatios.quantileValue()
+	if percentile <= 0 {
+		percentile = datura.Peek[float64](gate.config, "percentile")
 	}
 
-	return 0
-}
+	minSamples := int(datura.Peek[float64](gate.config, "minSamples"))
 
-func (gates *BookGates) FillCoverageGate() float64 {
-	if gates.FillMatchRatios.len() >= 3 {
-		return gates.FillMatchRatios.quantileValue()
+	if minSamples < 1 {
+		minSamples = 3
 	}
 
-	return 1
+	if sample > 0 && !math.IsNaN(sample) && !math.IsInf(sample, 0) {
+		history := datura.Peek[[]float64](gate.config, "history")
+		history = append(history, sample)
+
+		capacity := gateHistoryCapacity(history, minSamples)
+
+		if len(history) > capacity {
+			history = history[len(history)-capacity:]
+		}
+
+		gate.config.Merge("history", history)
+	}
+
+	history := datura.Peek[[]float64](gate.config, "history")
+	gateValue := 0.0
+
+	if len(history) >= minSamples {
+		gateValue = statistic.QuantileOf(percentile, history)
+	}
+
+	state.MergeOutput("value", gateValue)
+
+	return state.Read(payload)
 }
 
-func (gates *BookGates) LargeBlockQtyThreshold(sideDepth float64, medianLevelQty float64) float64 {
+func (gate *GateQuantile) Close() error {
+	return nil
+}
+
+func gateHistoryCapacity(values []float64, minSamples int) int {
+	if len(values) == 0 {
+		return 1
+	}
+
+	if len(values) < 3 {
+		return len(values) + 1
+	}
+
+	span := statistic.SpanOf(values)
+
+	if span <= 0 {
+		if minSamples > 3 {
+			return minSamples
+		}
+
+		return 3
+	}
+
+	capacity := int(span) + 1
+
+	if capacity < minSamples {
+		return minSamples
+	}
+
+	return capacity
+}
+
+func largeBlockQtyThreshold(
+	sideDepth float64,
+	medianLevelQty float64,
+	cancelQtyGate float64,
+	levelSizeFracGate float64,
+	cancelQtyReady bool,
+	levelSizeFracReady bool,
+) float64 {
 	if sideDepth <= 0 {
 		return mathInf(1)
 	}
 
-	if gates.CancelQtys.len() >= 3 {
-		return gates.CancelQtys.quantileValue()
+	if cancelQtyReady {
+		return cancelQtyGate
 	}
 
-	if gates.LevelSizeFracs.len() >= 3 {
-		frac := gates.LevelSizeFracs.quantileValue()
-
-		return frac * sideDepth
+	if levelSizeFracReady {
+		return levelSizeFracGate * sideDepth
 	}
 
 	if medianLevelQty > 0 {
@@ -243,15 +282,18 @@ func (gates *BookGates) LargeBlockQtyThreshold(sideDepth float64, medianLevelQty
 	return sideDepth / maxFloat(1, math.Sqrt(sideDepth))
 }
 
-func (gates *BookGates) VacuumStrengthLimit(threshold, peakVacuumRatio float64) float64 {
+func vacuumStrengthLimit(
+	threshold float64,
+	peakVacuumRatio float64,
+	vacuumPeak float64,
+	vacuumReady bool,
+) float64 {
 	if threshold <= 0 {
 		return 1
 	}
 
-	if gates.VacuumRatios.len() >= 3 {
-		peak := gates.VacuumRatios.quantileValue()
-
-		return maxFloat(peak/threshold, peak)
+	if vacuumReady {
+		return maxFloat(vacuumPeak/threshold, vacuumPeak)
 	}
 
 	if peakVacuumRatio > 0 {
@@ -261,35 +303,20 @@ func (gates *BookGates) VacuumStrengthLimit(threshold, peakVacuumRatio float64) 
 	return 1
 }
 
-func (gates *BookGates) SupportRatioGate(threshold float64) float64 {
-	if threshold <= 0 || gates.VacuumRatios.len() < 3 {
+func supportRatioGate(threshold float64, vacuumLow float64, vacuumReady bool) float64 {
+	if threshold <= 0 || !vacuumReady {
 		return 0
 	}
 
-	channel := newGateChannel(0.25)
-	channel.artifact = gates.VacuumRatios.artifact
-	channel.quantile = statistic.NewQuantile(0.25, stat.LinInterp)
-	low := channel.quantileValue()
-
-	return low / threshold
+	return vacuumLow / threshold
 }
 
-func (gates *BookGates) ObserveVacuumRatio(value float64) {
-	gates.VacuumRatios.observe(value)
-}
-
-func (gates *BookGates) ObserveChurnRatio(value float64) {
-	gates.ChurnRatios.observe(value)
-}
-
-func (gates *BookGates) VacuumRatioThreshold() float64 {
-	if gates.VacuumRatios.len() < 3 {
-		return 0
-	}
-
-	return gates.VacuumRatios.quantileValue()
+func gateReady(config *datura.Artifact) bool {
+	return len(datura.Peek[[]float64](config, "history")) >= 3
 }
 
 func mathInf(sign int) float64 {
 	return math.Inf(sign)
 }
+
+var _ io.ReadWriteCloser = (*GateQuantile)(nil)

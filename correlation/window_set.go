@@ -23,11 +23,13 @@ type windowBranch struct {
 }
 
 /*
-NewWindowSet creates a bounded interval accumulator for one member stream.
+NewWindowSet creates a bounded interval accumulator wired from config attributes on the artifact.
 */
-func NewWindowSet() *WindowSet {
+func NewWindowSet(artifact *datura.Artifact) *WindowSet {
+	artifact.Inspect("correlation", "window-set", "NewWindowSet()")
+
 	return &WindowSet{
-		artifact: datura.Acquire("window-set", datura.APPJSON),
+		artifact: artifact,
 	}
 }
 
@@ -35,15 +37,14 @@ func (windowSet *WindowSet) Write(p []byte) (int, error) {
 	reset := inboundReset(p)
 	preserved := windowSet.preserveBranch()
 
-	n, err := windowSet.artifact.Write(p)
+	windowSet.artifact.WithPayload(p)
 
 	if reset {
-		return n, err
+		return len(p), nil
 	}
 
 	windowSet.restoreBranch(preserved)
-
-	return n, err
+	return len(p), nil
 }
 
 func (windowSet *WindowSet) Read(p []byte) (int, error) {
@@ -51,20 +52,25 @@ func (windowSet *WindowSet) Read(p []byte) (int, error) {
 		return 0, nil
 	}
 
-	level := datura.Peek[float64](windowSet.artifact, "paired")
+	state := datura.Acquire("window-set-state", datura.APPJSON)
+	state.Inspect("correlation", "window-set", "Read()", "p")
 
-	if level <= 0 {
-		return windowSet.artifact.Read(p)
+	if _, err := state.Write(windowSet.artifact.DecryptPayload()); err != nil {
+		return 0, err
 	}
 
-	epoch := int64(datura.Peek[float64](windowSet.artifact, "sample"))
+	level := datura.Peek[float64](state, "paired")
+
+	if level <= 0 {
+		return state.Read(p)
+	}
+
+	epoch := int64(datura.Peek[float64](state, "sample"))
 	windowSet.ingest(windowSet.capacityFromArtifact(), epoch, level)
-
-	windowSet.artifact.Poke(datura.Map[float64]{
-		"value": windowSet.lastReturnMagnitude(),
-	}, "output")
-
-	return windowSet.artifact.Read(p)
+	state.MergeOutput("value", windowSet.lastReturnMagnitude())
+	state.Merge("root", "output")
+	state.Merge("inputs", []string{"value"})
+	return state.Read(p)
 }
 
 func (windowSet *WindowSet) Close() error {

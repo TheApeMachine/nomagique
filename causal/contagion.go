@@ -8,39 +8,48 @@ import (
 
 /*
 Contagion peaks cross-node magnitude from the latest table row for regime gating.
+The constructor artifact holds config; Write buffers inbound table wire on its payload.
 */
 type Contagion struct {
 	artifact *datura.Artifact
 }
 
 /*
-NewContagion returns a contagion stage that writes paired from table history.
+NewContagion returns a contagion stage wired from config attributes on the artifact.
 */
-func NewContagion() *Contagion {
+func NewContagion(artifact *datura.Artifact) *Contagion {
+	artifact.Inspect("causal", "contagion", "NewContagion()")
+
 	return &Contagion{
-		artifact: datura.Acquire("contagion", datura.APPJSON),
+		artifact: artifact,
 	}
 }
 
 func (contagion *Contagion) Write(p []byte) (int, error) {
-	return contagion.artifact.Write(p)
+	contagion.artifact.WithPayload(p)
+	return len(p), nil
 }
 
 func (contagion *Contagion) Read(p []byte) (int, error) {
-	peak := contagion.peakFromTable()
+	state := datura.Acquire("contagion-state", datura.APPJSON)
+	state.Inspect("causal", "contagion", "Read()", "p")
 
-	contagion.artifact.Poke(peak, "paired")
-	contagion.artifact.Poke(datura.Map[float64]{"value": peak}, "output")
+	if _, err := state.Write(contagion.artifact.DecryptPayload()); err != nil {
+		return 0, err
+	}
 
-	return contagion.artifact.Read(p)
+	peak := contagion.peakFromTable(state)
+	state.Merge("paired", peak)
+	state.MergeOutput("value", peak)
+	return state.Read(p)
 }
 
 func (contagion *Contagion) Close() error {
 	return nil
 }
 
-func (contagion *Contagion) peakFromTable() float64 {
-	rows, ok := tableRows(contagion.artifact)
+func (contagion *Contagion) peakFromTable(state *datura.Artifact) float64 {
+	rows, ok := tableRows(state)
 
 	if !ok {
 		return 0

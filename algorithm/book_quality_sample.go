@@ -14,13 +14,17 @@ BookQualitySample turns Kraken book frames into the feature vector BookQuality e
 Ledger and gate state live on the stage instance across Measure calls.
 */
 type BookQualitySample struct {
-	config     *datura.Artifact
-	bytes      []byte
-	ledger     SideFlowLedger
-	gates      *BookGates
-	bids       map[float64]float64
-	asks       map[float64]float64
-	frameCount int
+	config        *datura.Artifact
+	bytes         []byte
+	ledger        SideFlowLedger
+	vacuumGate    *GateQuantile
+	churnGate     *GateQuantile
+	cancelQtyGate *GateQuantile
+	levelSizeGate *GateQuantile
+	fillMatchGate *GateQuantile
+	bids          map[float64]float64
+	asks          map[float64]float64
+	frameCount    int
 }
 
 /*
@@ -29,9 +33,33 @@ NewBookQualitySample returns a book encoder wired from a config artifact.
 func NewBookQualitySample(config *datura.Artifact) *BookQualitySample {
 	return &BookQualitySample{
 		config: config,
-		bids:   map[float64]float64{},
-		asks:   map[float64]float64{},
-		gates:  NewBookGates(),
+		vacuumGate: NewGateQuantile(
+			datura.Acquire("vacuum-gate", datura.APPJSON).
+				WithAttribute("percentile", 0.9).
+				WithAttribute("minSamples", 3.0),
+		),
+		churnGate: NewGateQuantile(
+			datura.Acquire("churn-gate", datura.APPJSON).
+				WithAttribute("percentile", 0.75).
+				WithAttribute("minSamples", 3.0),
+		),
+		cancelQtyGate: NewGateQuantile(
+			datura.Acquire("cancel-qty-gate", datura.APPJSON).
+				WithAttribute("percentile", 0.5).
+				WithAttribute("minSamples", 3.0),
+		),
+		levelSizeGate: NewGateQuantile(
+			datura.Acquire("level-size-gate", datura.APPJSON).
+				WithAttribute("percentile", 0.75).
+				WithAttribute("minSamples", 3.0),
+		),
+		fillMatchGate: NewGateQuantile(
+			datura.Acquire("fill-match-gate", datura.APPJSON).
+				WithAttribute("percentile", 0.5).
+				WithAttribute("minSamples", 3.0),
+		),
+		bids: map[float64]float64{},
+		asks: map[float64]float64{},
 	}
 }
 
@@ -64,17 +92,9 @@ func (bookQualitySample *BookQualitySample) Read(payload []byte) (int, error) {
 		features = make([]float64, bookQualityFeatureCount)
 	}
 
-	output := datura.Acquire("book-quality-sample-output", datura.APPJSON)
-	body := state.DecryptPayload()
+	state.Merge("features", features)
 
-	if len(body) == 0 {
-		body = []byte("{}")
-	}
-
-	output.WithPayload(body)
-	output.Merge("features", features)
-
-	return output.Read(payload)
+	return state.Read(payload)
 }
 
 func (bookQualitySample *BookQualitySample) ingestBook(state *datura.Artifact) {
@@ -124,31 +144,46 @@ func (bookQualitySample *BookQualitySample) ingestBook(state *datura.Artifact) {
 	}
 
 	lastPrice := bookQualitySample.midPrice()
-	threshold := bookQualitySample.gates.VacuumRatioThreshold()
+	threshold := bookQualitySample.runGate(bookQualitySample.vacuumGate, 0, 0)
 
 	if threshold <= 0 && maxRatio > 0 {
 		threshold = maxRatio
 	}
 
-	churnGate := bookQualitySample.gates.ChurnRatioGate()
-	supportGate := bookQualitySample.gates.SupportRatioGate(threshold)
-	vacuumCap := bookQualitySample.gates.VacuumStrengthLimit(threshold, maxRatio)
+	churnGate := bookQualitySample.runGate(bookQualitySample.churnGate, 0, 0)
+	vacuumPeak := bookQualitySample.runGate(bookQualitySample.vacuumGate, 0, 0)
+	vacuumLow := bookQualitySample.runGate(bookQualitySample.vacuumGate, 0, 0.25)
+	supportGate := supportRatioGate(
+		threshold,
+		vacuumLow,
+		gateReady(bookQualitySample.vacuumGate.config),
+	)
+	vacuumCap := vacuumStrengthLimit(
+		threshold,
+		maxRatio,
+		vacuumPeak,
+		gateReady(bookQualitySample.vacuumGate.config),
+	)
 
 	if maxRatio > 0 {
-		bookQualitySample.gates.ObserveVacuumRatio(maxRatio)
+		bookQualitySample.runGate(bookQualitySample.vacuumGate, maxRatio, 0)
 	}
 
 	if churnRatio > 0 {
-		bookQualitySample.gates.ObserveChurnRatio(churnRatio)
+		bookQualitySample.runGate(bookQualitySample.churnGate, churnRatio, 0)
 	}
 	toxicNear := 0.0
 	toxicBluffStrength := 0.0
 
 	if lastPrice > 0 && churnGate > 0 {
 		proximity := bookQualitySample.touchProximity(lastPrice)
-		sizeThreshold := bookQualitySample.gates.LargeBlockQtyThreshold(
+		sizeThreshold := largeBlockQtyThreshold(
 			bookQualitySample.ledger.SideDepth(SideBid),
 			bookQualitySample.medianLevelQty(state, "bids"),
+			bookQualitySample.runGate(bookQualitySample.cancelQtyGate, 0, 0),
+			bookQualitySample.runGate(bookQualitySample.levelSizeGate, 0, 0),
+			gateReady(bookQualitySample.cancelQtyGate.config),
+			gateReady(bookQualitySample.levelSizeGate.config),
 		)
 		bestBid := bookQualitySample.bestBid()
 		bestAsk := bookQualitySample.bestAsk()
@@ -348,6 +383,46 @@ func (bookQualitySample *BookQualitySample) medianLevelQty(
 	}
 
 	return total / float64(len(quantities))
+}
+
+func (bookQualitySample *BookQualitySample) runGate(
+	gate *GateQuantile,
+	sample float64,
+	percentile float64,
+) float64 {
+	frame := datura.Acquire("gate-frame", datura.APPJSON)
+
+	if sample > 0 {
+		frame.Merge("sample", sample)
+	}
+
+	if percentile > 0 {
+		frame.Merge("percentile", percentile)
+	}
+
+	packed, err := frame.Message().MarshalPacked()
+
+	frame.Release()
+
+	if err != nil {
+		return 0
+	}
+
+	_, _ = gate.Write(packed)
+
+	buffer := make([]byte, gateReadBufferSize)
+	readCount, err := gate.Read(buffer)
+
+	if err != nil && err != io.EOF && err != io.ErrShortBuffer {
+		return 0
+	}
+
+	outbound := datura.Acquire("gate-read", datura.APPJSON)
+	_, _ = outbound.Write(buffer[:readCount])
+	value := datura.Peek[float64](outbound, "output", "value")
+	outbound.Release()
+
+	return value
 }
 
 func (bookQualitySample *BookQualitySample) Close() error {

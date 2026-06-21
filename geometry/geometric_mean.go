@@ -59,13 +59,9 @@ func (geometricMean *GeometricMean) Read(p []byte) (int, error) {
 		mean = math.Sqrt(left * right)
 	}
 
-	output := datura.Acquire("geometric-mean-output", datura.APPJSON)
-	output.WithPayload(state.DecryptPayload())
-	output.MergeOutput(destinationKey, mean)
+	state.MergeOutput(destinationKey, mean)
 
-	output.Inspect("geometry", "geometric-mean", "Read()", "output")
-
-	return output.Read(p)
+	return state.Read(p)
 }
 
 func (geometricMean *GeometricMean) Close() error {

@@ -6,31 +6,41 @@ import (
 
 /*
 Do estimates E[Y|do(X=level)] via the g-formula over observed covariates.
+The constructor artifact holds config; Write buffers inbound table wire on its payload.
 */
 type Do struct {
 	artifact *datura.Artifact
 }
 
 /*
-NewDo returns an interventional expectation stage reading config and table rows from the artifact.
+NewDo returns an interventional expectation stage wired from config attributes on the artifact.
 */
-func NewDo() *Do {
+func NewDo(artifact *datura.Artifact) *Do {
+	artifact.Inspect("causal", "do", "NewDo()")
+
 	return &Do{
-		artifact: datura.Acquire("do", datura.APPJSON),
+		artifact: artifact,
 	}
 }
 
 func (doStage *Do) Write(p []byte) (int, error) {
-	return doStage.artifact.Write(p)
+	doStage.artifact.WithPayload(p)
+	return len(p), nil
 }
 
 func (doStage *Do) Read(p []byte) (int, error) {
-	rows, ok := tableRows(doStage.artifact)
+	state := datura.Acquire("do-state", datura.APPJSON)
+	state.Inspect("causal", "do", "Read()", "p")
+
+	if _, err := state.Write(doStage.artifact.DecryptPayload()); err != nil {
+		return 0, err
+	}
+
+	rows, ok := tableRows(state)
 
 	if !ok {
-		doStage.artifact.Poke(datura.Map[float64]{"value": 0}, "output")
-
-		return doStage.artifact.Read(p)
+		state.MergeOutput("value", 0.0)
+		return state.Read(p)
 	}
 
 	target := int(datura.Peek[float64](doStage.artifact, "config", "target"))
@@ -40,28 +50,25 @@ func (doStage *Do) Read(p []byte) (int, error) {
 	minRows := int(datura.Peek[float64](doStage.artifact, "config", "minHistory"))
 
 	if minRows <= 0 {
-		minRows = 12
+		minRows = len(rows)
 	}
 
 	table, err := newNodeTable(rows, target, minRows)
 
 	if err != nil {
-		doStage.artifact.Poke(datura.Map[float64]{"value": 0}, "output")
-
-		return doStage.artifact.Read(p)
+		state.MergeOutput("value", 0.0)
+		return state.Read(p)
 	}
 
-	expectation, expectErr := doExpectation(table, treatment, level, controls...)
+	expectation, err := doExpectation(table, treatment, level, controls...)
 
-	if expectErr != nil {
-		doStage.artifact.Poke(datura.Map[float64]{"value": 0}, "output")
-
-		return doStage.artifact.Read(p)
+	if err != nil {
+		state.MergeOutput("value", 0.0)
+		return state.Read(p)
 	}
 
-	doStage.artifact.Poke(datura.Map[float64]{"value": expectation}, "output")
-
-	return doStage.artifact.Read(p)
+	state.MergeOutput("value", expectation)
+	return state.Read(p)
 }
 
 func (doStage *Do) Close() error {
@@ -84,10 +91,10 @@ func doExpectation(
 	total := 0.0
 
 	for _, row := range nodeTable.rows {
-		prediction, predErr := model.predict(row, treatment, level)
+		prediction, err := model.predict(row, treatment, level)
 
-		if predErr != nil {
-			return 0, predErr
+		if err != nil {
+			return 0, err
 		}
 
 		total += prediction

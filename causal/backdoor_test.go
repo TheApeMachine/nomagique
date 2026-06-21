@@ -8,10 +8,18 @@ import (
 	"github.com/theapemachine/datura/transport"
 )
 
+func backdoorConfig() *datura.Artifact {
+	return datura.Acquire("backdoor-config", datura.APPJSON).
+		Poke(float64(3), "config", "target").
+		Poke(float64(1), "config", "treatment").
+		Poke([]float64{0}, "config", "controls").
+		Poke(float64(12), "config", "minHistory")
+}
+
 func TestBackdoor_Read(testingTB *testing.T) {
-	Convey("Given a linear causal table", testingTB, func() {
-		stage := NewBackdoor()
-		artifact := tableArtifact(16, 1.0, 0.8)
+	Convey("Given config on the constructor artifact and table rows on inbound wire", testingTB, func() {
+		stage := NewBackdoor(backdoorConfig())
+		artifact := tableInbound(16, 1.0)
 		err := transport.NewFlipFlop(artifact, stage)
 
 		So(err, ShouldBeNil)
@@ -24,9 +32,10 @@ func TestBackdoor_Read(testingTB *testing.T) {
 
 func TestLadder_Read_KernelBackdoor(testingTB *testing.T) {
 	Convey("Given enough history rows", testingTB, func() {
-		stage := NewLadder()
-		artifact := tableArtifact(16, 1.0, 0.8)
-		artifact.Poke(0.35, "config", "kernelBandwidth")
+		config := causalPipelineConfig(0.8)
+		config.Poke(0.35, "config", "kernelBandwidth")
+		stage := NewLadder(config)
+		artifact := tableInbound(16, 1.0)
 		err := transport.NewFlipFlop(artifact, stage)
 
 		So(err, ShouldBeNil)
@@ -35,4 +44,15 @@ func TestLadder_Read_KernelBackdoor(testingTB *testing.T) {
 			So(datura.Peek[float64](artifact, "output", "intervention"), ShouldBeGreaterThan, 0)
 		})
 	})
+}
+
+func BenchmarkBackdoor_Read(testingTB *testing.B) {
+	stage := NewBackdoor(backdoorConfig())
+	artifact := tableInbound(16, 1.0)
+
+	testingTB.ReportAllocs()
+
+	for testingTB.Loop() {
+		_ = transport.NewFlipFlop(artifact, stage)
+	}
 }

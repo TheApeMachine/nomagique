@@ -10,6 +10,22 @@ import (
 	"github.com/theapemachine/nomagique"
 )
 
+func zipInbound(streams [][]float64) *datura.Artifact {
+	artifact := datura.Acquire("zip-inbound", datura.APPJSON)
+
+	if len(streams) == 0 {
+		return artifact
+	}
+
+	artifact.Poke(float64(len(streams)), "streams", "nodeCount")
+
+	for nodeIndex, stream := range streams {
+		artifact.Poke(stream, "streams", strconv.Itoa(nodeIndex))
+	}
+
+	return artifact
+}
+
 func TestZip_Read(testingTB *testing.T) {
 	cases := []struct {
 		name      string
@@ -27,17 +43,8 @@ func TestZip_Read(testingTB *testing.T) {
 		testCase := testCase
 
 		Convey("Given zip with "+testCase.name, testingTB, func() {
-			zipStage := NewZip()
-			artifact := datura.Acquire("test", datura.APPJSON)
-
-			if len(testCase.streams) > 0 {
-				artifact.Poke(float64(len(testCase.streams)), "streams", "nodeCount")
-
-				for nodeIndex, stream := range testCase.streams {
-					artifact.Poke(stream, "streams", strconv.Itoa(nodeIndex))
-				}
-			}
-
+			zipStage := NewZip(datura.Acquire("zip-config", datura.APPJSON))
+			artifact := zipInbound(testCase.streams)
 			err := transport.NewFlipFlop(artifact, zipStage)
 
 			So(err, ShouldBeNil)
@@ -54,10 +61,14 @@ func TestZip_Read(testingTB *testing.T) {
 
 func TestNodeRingZip_Read(testingTB *testing.T) {
 	Convey("Given aligned node observations through NodeRing and Zip", testingTB, func() {
-		pipeline := nomagique.Number(NewNodeRing(), NewZip())
-		artifact := datura.Acquire("test", datura.APPJSON).
+		config := datura.Acquire("node-ring-config", datura.APPJSON).
 			Poke(4, "config", "nodeCount").
 			Poke(8, "config", "capacity")
+		pipeline := nomagique.Number(
+			NewNodeRing(config),
+			NewZip(datura.Acquire("zip-config", datura.APPJSON)),
+		)
+		artifact := datura.Acquire("node-ring-inbound", datura.APPJSON)
 
 		for index := range 16 {
 			artifact.Poke([]float64{
@@ -78,10 +89,11 @@ func TestNodeRingZip_Read(testingTB *testing.T) {
 	})
 
 	Convey("Given partial node inputs", testingTB, func() {
-		nodeRing := NewNodeRing()
-		artifact := datura.Acquire("test", datura.APPJSON).
+		config := datura.Acquire("node-ring-config", datura.APPJSON).
 			Poke(4, "config", "nodeCount").
-			Poke(8, "config", "capacity").
+			Poke(8, "config", "capacity")
+		nodeRing := NewNodeRing(config)
+		artifact := datura.Acquire("node-ring-inbound", datura.APPJSON).
 			Poke([]float64{1}, "batch")
 		err := transport.NewFlipFlop(artifact, nodeRing)
 
@@ -94,13 +106,13 @@ func TestNodeRingZip_Read(testingTB *testing.T) {
 }
 
 func BenchmarkZip_Read(testingTB *testing.B) {
-	zipStage := NewZip()
-	artifact := datura.Acquire("test", datura.APPJSON).
-		Poke(float64(4), "streams", "nodeCount").
-		Poke([]float64{0.1, 0.2, 0.3, 0.4}, "streams", "0").
-		Poke([]float64{0.5, 0.6, 0.7, 0.8}, "streams", "1").
-		Poke([]float64{1.0, 1.1, 1.2, 1.3}, "streams", "2").
-		Poke([]float64{2.0, 2.1, 2.2, 2.3}, "streams", "3")
+	zipStage := NewZip(datura.Acquire("zip-config", datura.APPJSON))
+	artifact := zipInbound([][]float64{
+		{0.1, 0.2, 0.3, 0.4},
+		{0.5, 0.6, 0.7, 0.8},
+		{1.0, 1.1, 1.2, 1.3},
+		{2.0, 2.1, 2.2, 2.3},
+	})
 
 	testingTB.ReportAllocs()
 

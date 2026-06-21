@@ -92,17 +92,13 @@ func (classifier *Classifier) Read(payload []byte) (int, error) {
 		strength = scores[categoryIndex-1]
 	}
 
-	output := datura.Acquire("classifier-output", datura.APPJSON)
-	output.WithPayload(state.DecryptPayload())
-	output.MergeOutput("probabilities", probabilities)
-	output.MergeOutput("category", categoryIndex)
-	output.MergeOutput("confidence", confidence)
-	output.MergeOutput("strength", strength)
-	output.MergeOutput("value", categoryIndex)
+	state.MergeOutput("probabilities", probabilities)
+	state.MergeOutput("category", categoryIndex)
+	state.MergeOutput("confidence", confidence)
+	state.MergeOutput("strength", strength)
+	state.MergeOutput("value", categoryIndex)
 
-	output.Inspect("probability", "classifier", "Read()", "output")
-
-	return output.Read(payload)
+	return state.Read(payload)
 }
 
 func (classifier *Classifier) Close() error {

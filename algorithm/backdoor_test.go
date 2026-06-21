@@ -9,9 +9,16 @@ import (
 	"github.com/theapemachine/nomagique/algorithm"
 )
 
-func backdoorArtifact() *datura.Artifact {
+func backdoorConfig() *datura.Artifact {
+	return datura.Acquire("backdoor-config", datura.APPJSON).
+		Poke(float64(3), "config", "target").
+		Poke(float64(2), "config", "treatment").
+		Poke([]float64{0, 1}, "config", "controls").
+		Poke(float64(12), "config", "minHistory")
+}
+
+func backdoorTable(rowCount int) *datura.Artifact {
 	nodeCount := 4
-	rowCount := 16
 	flat := make([]float64, 0, rowCount*nodeCount)
 
 	for rowIndex := range rowCount {
@@ -23,11 +30,7 @@ func backdoorArtifact() *datura.Artifact {
 		)
 	}
 
-	return datura.Acquire("test", datura.APPJSON).
-		Poke(float64(3), "config", "target").
-		Poke(float64(2), "config", "treatment").
-		Poke([]float64{0, 1}, "config", "controls").
-		Poke(float64(12), "config", "minHistory").
+	return datura.Acquire("backdoor-table", datura.APPJSON).
 		Poke(float64(rowCount), "table", "rowCount").
 		Poke(float64(nodeCount), "table", "nodeCount").
 		Poke(flat, "table", "rows")
@@ -35,8 +38,8 @@ func backdoorArtifact() *datura.Artifact {
 
 func TestBackdoor_Observe(testingTB *testing.T) {
 	Convey("Given aligned node streams with causal structure", testingTB, func() {
-		backdoor := algorithm.NewBackdoor()
-		artifact := backdoorArtifact()
+		backdoor := algorithm.NewBackdoor(backdoorConfig())
+		artifact := backdoorTable(16)
 		err := transport.NewFlipFlop(artifact, backdoor)
 
 		So(err, ShouldBeNil)
@@ -48,8 +51,8 @@ func TestBackdoor_Observe(testingTB *testing.T) {
 }
 
 func BenchmarkBackdoor_Observe(testingTB *testing.B) {
-	backdoor := algorithm.NewBackdoor()
-	artifact := backdoorArtifact()
+	backdoor := algorithm.NewBackdoor(backdoorConfig())
+	artifact := backdoorTable(16)
 
 	testingTB.ReportAllocs()
 

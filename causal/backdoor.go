@@ -6,31 +6,41 @@ import (
 
 /*
 Backdoor estimates a linear backdoor-adjusted treatment effect from table.* on the artifact.
+The constructor artifact holds config; Write buffers inbound table wire on its payload.
 */
 type Backdoor struct {
 	artifact *datura.Artifact
 }
 
 /*
-NewBackdoor returns a backdoor stage reading config and table rows from the artifact.
+NewBackdoor returns a backdoor stage wired from config attributes on the artifact.
 */
-func NewBackdoor() *Backdoor {
+func NewBackdoor(artifact *datura.Artifact) *Backdoor {
+	artifact.Inspect("causal", "backdoor", "NewBackdoor()")
+
 	return &Backdoor{
-		artifact: datura.Acquire("backdoor", datura.APPJSON),
+		artifact: artifact,
 	}
 }
 
 func (backdoor *Backdoor) Write(p []byte) (int, error) {
-	return backdoor.artifact.Write(p)
+	backdoor.artifact.WithPayload(p)
+	return len(p), nil
 }
 
 func (backdoor *Backdoor) Read(p []byte) (int, error) {
-	rows, ok := tableRows(backdoor.artifact)
+	state := datura.Acquire("backdoor-state", datura.APPJSON)
+	state.Inspect("causal", "backdoor", "Read()", "p")
+
+	if _, err := state.Write(backdoor.artifact.DecryptPayload()); err != nil {
+		return 0, err
+	}
+
+	rows, ok := tableRows(state)
 
 	if !ok {
-		backdoor.artifact.Poke(datura.Map[float64]{"value": 0}, "output")
-
-		return backdoor.artifact.Read(p)
+		state.MergeOutput("value", 0.0)
+		return state.Read(p)
 	}
 
 	target := int(datura.Peek[float64](backdoor.artifact, "config", "target"))
@@ -39,43 +49,39 @@ func (backdoor *Backdoor) Read(p []byte) (int, error) {
 	minRows := int(datura.Peek[float64](backdoor.artifact, "config", "minHistory"))
 
 	if minRows <= 0 {
-		minRows = 12
+		minRows = len(rows)
 	}
 
 	table, err := newNodeTable(rows, target, minRows)
 
 	if err != nil {
-		backdoor.artifact.Poke(datura.Map[float64]{"value": 0}, "output")
-
-		return backdoor.artifact.Read(p)
+		state.MergeOutput("value", 0.0)
+		return state.Read(p)
 	}
 
-	association, assocErr := table.association(treatment)
+	association, err := table.association(treatment)
 
-	if assocErr != nil {
+	if err != nil {
 		association = 0
 	}
 
-	effect, effectErr := table.backdoorEffect(treatment, controls...)
+	effect, err := table.backdoorEffect(treatment, controls...)
 
-	if effectErr != nil {
+	if err != nil {
 		effect = 0
 	}
 
-	condition, conditionErr := table.pairConditionNumber(treatment, target)
+	condition, err := table.pairConditionNumber(treatment, target)
 
-	if conditionErr != nil {
+	if err != nil {
 		condition = 0
 	}
 
-	backdoor.artifact.Poke(datura.Map[float64]{
-		"value":       effect,
-		"association": association,
-		"effect":      effect,
-		"condition":   condition,
-	}, "output")
-
-	return backdoor.artifact.Read(p)
+	state.MergeOutput("value", effect)
+	state.MergeOutput("association", association)
+	state.MergeOutput("effect", effect)
+	state.MergeOutput("condition", condition)
+	return state.Read(p)
 }
 
 func (backdoor *Backdoor) Close() error {

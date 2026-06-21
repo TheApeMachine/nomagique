@@ -79,15 +79,6 @@ func (logitScores *LogitScores) Read(payload []byte) (int, error) {
 	}
 	overrideValue, overrideOutput := logitScores.jointOverride(state)
 
-	output := datura.Acquire("logit-scores-output", datura.APPJSON)
-	body := state.DecryptPayload()
-
-	if len(body) == 0 {
-		body = []byte("{}")
-	}
-
-	output.WithPayload(body)
-
 	for index, outputKey := range outputs[:4] {
 		score := scores[index]
 
@@ -101,14 +92,12 @@ func (logitScores *LogitScores) Read(payload []byte) (int, error) {
 			}
 		}
 
-		output.MergeOutput(outputKey, score)
+		state.MergeOutput(outputKey, score)
 	}
 
-	output.MergeOutput("value", scores[0])
+	state.MergeOutput("value", scores[0])
 
-	output.Inspect("learning", "logit-scores", "Read()", "output")
-
-	return output.Read(payload)
+	return state.Read(payload)
 }
 
 func (logitScores *LogitScores) featureValue(state *datura.Artifact, key string) float64 {

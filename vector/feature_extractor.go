@@ -106,21 +106,11 @@ func (extractor *FeatureExtractor) Read(payload []byte) (int, error) {
 		features[index] = sample
 	}
 
-	output := datura.Acquire("feature-extractor-output", datura.APPJSON)
-	body := state.DecryptPayload()
+	state.Merge("features", features)
+	state.Merge("root", "features")
+	state.Merge("inputs", inputs)
 
-	if len(body) == 0 {
-		body = []byte("{}")
-	}
-
-	output.WithPayload(body)
-	output.Merge("features", features)
-	output.Merge("root", "features")
-	output.Merge("inputs", inputs)
-
-	output.Inspect()
-
-	return output.Read(payload)
+	return state.Read(payload)
 }
 
 func (extractor *FeatureExtractor) Write(p []byte) (int, error) {

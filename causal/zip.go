@@ -8,48 +8,55 @@ import (
 
 /*
 Zip transposes aligned per-node streams on the artifact payload into table.* rows
-for downstream tabular causal stages.
+for downstream tabular causal stages. The constructor artifact retains stream config;
+Write buffers inbound wire on its payload.
 */
 type Zip struct {
 	artifact *datura.Artifact
 }
 
 /*
-NewZip returns a stream-to-table zip stage.
+NewZip returns a stream-to-table zip stage wired from config attributes on the artifact.
 */
-func NewZip() *Zip {
+func NewZip(artifact *datura.Artifact) *Zip {
+	artifact.Inspect("causal", "zip", "NewZip()")
+
 	return &Zip{
-		artifact: datura.Acquire("zip", datura.APPJSON),
+		artifact: artifact,
 	}
 }
 
 func (zipStage *Zip) Write(p []byte) (int, error) {
 	preserved := zipStage.preserveStreams()
-
-	n, err := zipStage.artifact.Write(p)
+	zipStage.artifact.WithPayload(p)
 
 	if datura.Peek[float64](zipStage.artifact, "streams", "nodeCount") <= 0 {
 		zipStage.restoreStreams(preserved)
 	}
 
-	return n, err
+	return len(p), nil
 }
 
 func (zipStage *Zip) Read(p []byte) (int, error) {
-	streams, ok := zipStage.streamsFromPayload()
+	state := datura.Acquire("zip-state", datura.APPJSON)
+	state.Inspect("causal", "zip", "Read()", "p")
+
+	if _, err := state.Write(zipStage.artifact.DecryptPayload()); err != nil {
+		return 0, err
+	}
+
+	streams, ok := zipStage.streamsFromPayload(state)
 
 	if !ok {
-		zipStage.artifact.Poke(datura.Map[float64]{"value": 0}, "output")
-
-		return zipStage.artifact.Read(p)
+		state.MergeOutput("value", 0.0)
+		return state.Read(p)
 	}
 
 	rows, rowsOK := zipStage.transpose(streams)
 
 	if !rowsOK {
-		zipStage.artifact.Poke(datura.Map[float64]{"value": 0}, "output")
-
-		return zipStage.artifact.Read(p)
+		state.MergeOutput("value", 0.0)
+		return state.Read(p)
 	}
 
 	rowCount := len(rows)
@@ -60,13 +67,11 @@ func (zipStage *Zip) Read(p []byte) (int, error) {
 		flat = append(flat, rows[rowIndex]...)
 	}
 
-	zipStage.artifact.
-		Poke(float64(rowCount), "table", "rowCount").
-		Poke(float64(nodeCount), "table", "nodeCount").
-		Poke(flat, "table", "rows")
-	zipStage.artifact.Poke(datura.Map[float64]{"value": float64(rowCount)}, "output")
-
-	return zipStage.artifact.Read(p)
+	state.Poke(float64(rowCount), "table", "rowCount")
+	state.Poke(float64(nodeCount), "table", "nodeCount")
+	state.Poke(flat, "table", "rows")
+	state.MergeOutput("value", float64(rowCount))
+	return state.Read(p)
 }
 
 func (zipStage *Zip) Close() error {
@@ -106,8 +111,8 @@ func (zipStage *Zip) restoreStreams(preserved preservedStreams) {
 	}
 }
 
-func (zipStage *Zip) streamsFromPayload() ([][]float64, bool) {
-	nodeCount := int(datura.Peek[float64](zipStage.artifact, "streams", "nodeCount"))
+func (zipStage *Zip) streamsFromPayload(state *datura.Artifact) ([][]float64, bool) {
+	nodeCount := int(datura.Peek[float64](state, "streams", "nodeCount"))
 
 	if nodeCount <= 0 {
 		return nil, false
@@ -117,7 +122,7 @@ func (zipStage *Zip) streamsFromPayload() ([][]float64, bool) {
 
 	for nodeIndex := range nodeCount {
 		streams[nodeIndex] = datura.Peek[[]float64](
-			zipStage.artifact,
+			state,
 			"streams",
 			strconv.Itoa(nodeIndex),
 		)

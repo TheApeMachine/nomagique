@@ -8,29 +8,18 @@ import (
 	"github.com/theapemachine/datura/transport"
 )
 
-func TestRegime_Read(testingTB *testing.T) {
-	Convey("Given low contagion and a populated table", testingTB, func() {
-		stage := NewRegime()
-		artifact := tableArtifact(16, 0.1, 0.8)
-		artifact.Poke(0.1, "paired")
-		err := transport.NewFlipFlop(artifact, stage)
-
-		So(err, ShouldBeNil)
-		So(datura.Peek[float64](stage.artifact, "output", "rawInverted"), ShouldEqual, 0)
-	})
-
-	Convey("Given contagion above break", testingTB, func() {
-		stage := NewRegime()
-		artifact := tableArtifact(16, 0.1, 0.5)
-		artifact.Poke(0.95, "paired")
-		err := transport.NewFlipFlop(artifact, stage)
-
-		So(err, ShouldBeNil)
-		So(datura.Peek[float64](stage.artifact, "output", "rawInverted"), ShouldEqual, 1)
-	})
+func causalPipelineConfig(contagionBreak float64) *datura.Artifact {
+	return datura.Acquire("causal-config", datura.APPJSON).
+		Poke(float64(3), "config", "target").
+		Poke(float64(12), "config", "minHistory").
+		Poke(float64(2), "config", "treatmentNormal").
+		Poke([]float64{0, 1}, "config", "controlsNormal").
+		Poke(float64(1), "config", "treatmentInverted").
+		Poke([]float64{0, 2}, "config", "controlsInverted").
+		Poke(contagionBreak, "config", "contagionBreak")
 }
 
-func tableArtifact(rowCount int, step float64, contagionBreak float64) *datura.Artifact {
+func tableInbound(rowCount int, step float64) *datura.Artifact {
 	nodeCount := 4
 	flat := make([]float64, 0, rowCount*nodeCount)
 
@@ -43,15 +32,30 @@ func tableArtifact(rowCount int, step float64, contagionBreak float64) *datura.A
 		)
 	}
 
-	return datura.Acquire("test", datura.APPJSON).
-		Poke(float64(3), "config", "target").
-		Poke(float64(12), "config", "minHistory").
-		Poke(float64(2), "config", "treatmentNormal").
-		Poke([]float64{0, 1}, "config", "controlsNormal").
-		Poke(float64(1), "config", "treatmentInverted").
-		Poke([]float64{0, 2}, "config", "controlsInverted").
-		Poke(contagionBreak, "config", "contagionBreak").
+	return datura.Acquire("causal-inbound", datura.APPJSON).
 		Poke(float64(rowCount), "table", "rowCount").
 		Poke(float64(nodeCount), "table", "nodeCount").
 		Poke(flat, "table", "rows")
+}
+
+func TestRegime_Read(testingTB *testing.T) {
+	Convey("Given low contagion and a populated table", testingTB, func() {
+		stage := NewRegime(causalPipelineConfig(0.8))
+		artifact := tableInbound(16, 0.1)
+		artifact.Poke(0.1, "paired")
+		err := transport.NewFlipFlop(artifact, stage)
+
+		So(err, ShouldBeNil)
+		So(datura.Peek[float64](artifact, "output", "rawInverted"), ShouldEqual, 0)
+	})
+
+	Convey("Given contagion above break", testingTB, func() {
+		stage := NewRegime(causalPipelineConfig(0.5))
+		artifact := tableInbound(16, 0.1)
+		artifact.Poke(0.95, "paired")
+		err := transport.NewFlipFlop(artifact, stage)
+
+		So(err, ShouldBeNil)
+		So(datura.Peek[float64](artifact, "output", "rawInverted"), ShouldEqual, 1)
+	})
 }

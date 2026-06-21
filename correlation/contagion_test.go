@@ -20,8 +20,8 @@ func contagionConfigArtifact() *datura.Artifact {
 
 func TestMedianPairwiseAbsCorrelation(testingTB *testing.T) {
 	Convey("Given proportional members in contagion", testingTB, func() {
-		contagion := NewContagion()
-		artifact := contagionConfigArtifact()
+		contagion := NewContagion(contagionConfigArtifact())
+		artifact := datura.Acquire("test", datura.APPJSON)
 
 		artifact.Poke(1, "member").Poke(float64(1_000), "sample").Poke(100.0, "paired")
 		err := transport.NewFlipFlop(artifact, contagion)
@@ -52,8 +52,8 @@ func TestMedianPairwiseAbsCorrelation(testingTB *testing.T) {
 
 func TestContagionObserve(testingTB *testing.T) {
 	Convey("Given a contagion stage with fed members", testingTB, func() {
-		contagion := NewContagion()
-		artifact := contagionConfigArtifact()
+		contagion := NewContagion(contagionConfigArtifact())
+		artifact := datura.Acquire("test", datura.APPJSON)
 
 		artifact.Poke(1, "member").Poke(float64(1_000), "sample").Poke(100.0, "paired")
 		err := transport.NewFlipFlop(artifact, contagion)
@@ -84,13 +84,15 @@ func TestContagionObserve(testingTB *testing.T) {
 }
 
 func BenchmarkContagionObserve(testingTB *testing.B) {
-	contagion := NewContagion()
-	artifact := datura.Acquire("test", datura.APPJSON).
-		Poke(8, "config", "minSamples").
-		Poke(16, "config", "memberCap").
-		Poke(8, "config", "tier", "fast").
-		Poke(16, "config", "tier", "medium").
-		Poke(32, "config", "tier", "slow")
+	contagion := NewContagion(
+		datura.Acquire("test", datura.APPJSON).
+			Poke(8, "config", "minSamples").
+			Poke(16, "config", "memberCap").
+			Poke(8, "config", "tier", "fast").
+			Poke(16, "config", "tier", "medium").
+			Poke(32, "config", "tier", "slow"),
+	)
+	artifact := datura.Acquire("test", datura.APPJSON)
 
 	for member := range 16 {
 		for step := range 32 {

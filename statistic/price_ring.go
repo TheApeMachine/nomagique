@@ -107,11 +107,9 @@ func (priceRing *PriceRing) Read(payload []byte) (int, error) {
 
 	priceRing.config.Merge("prices", prices)
 
-	output := datura.Acquire("price-ring-output", datura.APPJSON)
-	output.WithPayload(state.DecryptPayload())
-	output.Merge("sample", sample)
+	state.Merge("sample", sample)
 
-	return output.Read(payload)
+	return state.Read(payload)
 }
 
 func (priceRing *PriceRing) Close() error {

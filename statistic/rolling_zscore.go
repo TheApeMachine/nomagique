@@ -59,11 +59,9 @@ func (rollingZScore *RollingZScore) Read(payload []byte) (int, error) {
 		}
 	}
 
-	output := datura.Acquire("rolling-zscore-output", datura.APPJSON)
-	output.WithPayload(state.DecryptPayload())
-	output.Merge("sample", score)
+	state.Merge("sample", score)
 
-	return output.Read(payload)
+	return state.Read(payload)
 }
 
 func (rollingZScore *RollingZScore) Close() error {

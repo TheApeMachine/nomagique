@@ -11,30 +11,41 @@ import (
 /*
 HayashiYoshida estimates asynchronous high-frequency correlation with a sliding
 sweep over overlapping return intervals. maxIntervalSeconds may be set on config.
+The constructor artifact holds config; Write buffers inbound wire on its payload.
 */
 type HayashiYoshida struct {
 	artifact *datura.Artifact
 }
 
 /*
-NewHayashiYoshida creates a Hayashi-Yoshida correlation stage.
+NewHayashiYoshida creates a Hayashi-Yoshida correlation stage wired from config attributes.
 */
-func NewHayashiYoshida() *HayashiYoshida {
+func NewHayashiYoshida(artifact *datura.Artifact) *HayashiYoshida {
+	artifact.Inspect("correlation", "hayashi", "NewHayashiYoshida()")
+
 	return &HayashiYoshida{
-		artifact: datura.Acquire("hayashi", datura.APPJSON),
+		artifact: artifact,
 	}
 }
 
 func (hayashi *HayashiYoshida) Write(p []byte) (int, error) {
-	return hayashi.artifact.Write(p)
+	hayashi.artifact.WithPayload(p)
+	return len(p), nil
 }
 
 func (hayashi *HayashiYoshida) Read(p []byte) (int, error) {
-	values := datura.Peek[[]float64](hayashi.artifact, "batch")
+	state := datura.Acquire("hayashi-state", datura.APPJSON)
+	state.Inspect("correlation", "hayashi", "Read()", "p")
+
+	if _, err := state.Write(hayashi.artifact.DecryptPayload()); err != nil {
+		return 0, err
+	}
+
+	values := datura.Peek[[]float64](state, "batch")
 
 	if len(values) == 0 {
-		left := datura.Peek[[]float64](hayashi.artifact, "left")
-		right := datura.Peek[[]float64](hayashi.artifact, "right")
+		left := datura.Peek[[]float64](state, "left")
+		right := datura.Peek[[]float64](state, "right")
 
 		if len(left) > 0 || len(right) > 0 {
 			values = append(append([]float64(nil), left...), right...)
@@ -52,9 +63,10 @@ func (hayashi *HayashiYoshida) Read(p []byte) (int, error) {
 			correlation, ok := hayashiYoshidaCorrelation(left, right, hayashi.maxIntervalFromArtifact())
 
 			if ok {
-				hayashi.artifact.Poke(datura.Map[float64]{"value": correlation}, "output")
-
-				return hayashi.artifact.Read(p)
+				state.MergeOutput("value", correlation)
+				state.Merge("root", "output")
+				state.Merge("inputs", []string{"value"})
+				return state.Read(p)
 			}
 		}
 
@@ -78,9 +90,10 @@ func (hayashi *HayashiYoshida) Read(p []byte) (int, error) {
 		)
 	}
 
-	hayashi.artifact.Poke(datura.Map[float64]{"value": 0}, "output")
-
-	return hayashi.artifact.Read(p)
+	state.MergeOutput("value", 0.0)
+	state.Merge("root", "output")
+	state.Merge("inputs", []string{"value"})
+	return state.Read(p)
 }
 
 func (hayashi *HayashiYoshida) Close() error {

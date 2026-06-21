@@ -11,12 +11,13 @@ import (
 
 func TestLadder_Read(testingTB *testing.T) {
 	Convey("Given aligned node rows with causal structure", testingTB, func() {
-		regime := NewRegime()
+		config := causalPipelineConfig(0.8)
+		config.Poke(0.35, "config", "kernelBandwidth")
+		regime := NewRegime(config)
 		hysteresis := adaptive.NewHysteresis()
-		ladder := NewLadder()
+		ladder := NewLadder(config)
 
-		artifact := tableArtifact(16, 1.0, 0.8)
-		artifact.Poke(0.35, "config", "kernelBandwidth")
+		artifact := tableInbound(16, 1.0)
 		artifact.Poke(0.0, "paired")
 
 		err := transport.NewFlipFlop(artifact, regime)
@@ -35,11 +36,12 @@ func TestLadder_Read(testingTB *testing.T) {
 }
 
 func BenchmarkLadder_Read(testingTB *testing.B) {
-	regime := NewRegime()
+	config := causalPipelineConfig(0.8)
+	config.Poke(0.35, "config", "kernelBandwidth")
+	regime := NewRegime(config)
 	hysteresis := adaptive.NewHysteresis()
-	ladder := NewLadder()
-	artifact := tableArtifact(16, 1.0, 0.8)
-	artifact.Poke(0.35, "config", "kernelBandwidth")
+	ladder := NewLadder(config)
+	artifact := tableInbound(16, 1.0)
 
 	testingTB.ReportAllocs()
 

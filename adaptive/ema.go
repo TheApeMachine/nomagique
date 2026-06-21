@@ -69,17 +69,9 @@ func (ema *EMA) Read(payload []byte) (int, error) {
 
 	ema.artifact.Merge("output", output)
 
-	result := datura.Acquire("ema-output", datura.APPJSON)
-	body := state.DecryptPayload()
+	state.MergeOutput("value", output["value"])
 
-	if len(body) == 0 {
-		body = []byte("{}")
-	}
-
-	result.WithPayload(body)
-	result.MergeOutput("value", output["value"])
-
-	return result.Read(payload)
+	return state.Read(payload)
 }
 
 func (ema *EMA) Write(payload []byte) (int, error) {

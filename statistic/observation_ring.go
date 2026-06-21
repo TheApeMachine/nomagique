@@ -63,14 +63,8 @@ func (ring *ObservationRing) capacityFor(values []float64) int {
 	span := SpanOf(values)
 
 	if span <= 0 {
-		return len(values) + 1
+		return 3
 	}
 
-	capacity := int(span) + 1
-
-	if capacity < len(values) {
-		return len(values)
-	}
-
-	return capacity
+	return int(span) + 1
 }

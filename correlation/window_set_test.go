@@ -10,7 +10,7 @@ import (
 
 func TestWindowSetObserve(testingTB *testing.T) {
 	Convey("Given a window set", testingTB, func() {
-		windowSet := NewWindowSet()
+		windowSet := NewWindowSet(datura.Acquire("window-set-config", datura.APPJSON))
 		artifact := datura.Acquire("test", datura.APPJSON)
 
 		for index := range 13 {

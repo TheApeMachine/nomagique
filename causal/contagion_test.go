@@ -8,11 +8,16 @@ import (
 	"github.com/theapemachine/datura/transport"
 )
 
+func contagionConfig() *datura.Artifact {
+	return datura.Acquire("contagion-config", datura.APPJSON).
+		Poke(float64(3), "config", "target").
+		Poke([]float64{0, 3}, "config", "contagionSkip")
+}
+
 func TestContagion_Read(testingTB *testing.T) {
 	Convey("Given a populated table", testingTB, func() {
-		stage := NewContagion()
-		artifact := tableArtifact(16, 1.0, 0.8)
-		artifact.Poke([]float64{0, 3}, "config", "contagionSkip")
+		stage := NewContagion(contagionConfig())
+		artifact := tableInbound(16, 1.0)
 		err := transport.NewFlipFlop(artifact, stage)
 
 		So(err, ShouldBeNil)

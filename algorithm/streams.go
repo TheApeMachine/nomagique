@@ -4,7 +4,6 @@ import (
 	"encoding/binary"
 	"errors"
 	"math"
-	"strconv"
 	"time"
 
 	"github.com/theapemachine/datura"
@@ -59,10 +58,6 @@ func payloadScalar(payload []byte) (float64, bool) {
 	}
 
 	return value, true
-}
-
-func pokeFloat(artifact *datura.Artifact, key string, value float64) {
-	artifact.Poke(strconv.FormatFloat(value, 'g', -1, 64), key)
 }
 
 func stageWritableArtifact(

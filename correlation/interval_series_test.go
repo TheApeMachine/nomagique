@@ -10,7 +10,7 @@ import (
 
 func TestIntervalSeriesObserve(testingTB *testing.T) {
 	Convey("Given an interval series", testingTB, func() {
-		series := NewIntervalSeries()
+		series := NewIntervalSeries(datura.Acquire("interval-series-config", datura.APPJSON))
 
 		Convey("It should accumulate log-return intervals", func() {
 			artifact := datura.Acquire("test", datura.APPJSON).
@@ -28,7 +28,7 @@ func TestIntervalSeriesObserve(testingTB *testing.T) {
 		})
 
 		Convey("It should correlate proportional interval streams", func() {
-			coupling := NewIntervalCoupling()
+			coupling := NewIntervalCoupling(datura.Acquire("interval-coupling-config", datura.APPJSON))
 			artifact := datura.Acquire("test", datura.APPJSON)
 
 			artifact.Poke(0, "config", "side").
@@ -67,7 +67,7 @@ func TestIntervalSeriesObserve(testingTB *testing.T) {
 }
 
 func BenchmarkIntervalCorrelation(testingTB *testing.B) {
-	coupling := NewIntervalCoupling()
+	coupling := NewIntervalCoupling(datura.Acquire("interval-coupling-config", datura.APPJSON))
 	artifact := datura.Acquire("test", datura.APPJSON)
 
 	for index := range 128 {

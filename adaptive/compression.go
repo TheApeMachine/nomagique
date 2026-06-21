@@ -63,14 +63,10 @@ func (compression *Compression) Read(p []byte) (int, error) {
 
 	compression.config.Merge("baseline", baseline)
 
-	output := datura.Acquire("compression-output", datura.APPJSON)
-	output.WithPayload(state.DecryptPayload())
-	output.MergeOutput("baseline", baseline)
-	output.MergeOutput("value", value)
+	state.MergeOutput("baseline", baseline)
+	state.MergeOutput("value", value)
 
-	output.Inspect("adaptive", "compression", "Read()", "output")
-
-	return output.Read(p)
+	return state.Read(p)
 }
 
 func (compression *Compression) Close() error {

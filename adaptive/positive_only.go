@@ -71,11 +71,9 @@ func (positiveOnly *PositiveOnly) Read(payload []byte) (int, error) {
 		score = math.Max(0, score)
 	}
 
-	output := datura.Acquire("positive-only-output", datura.APPJSON)
-	output.WithPayload(state.DecryptPayload())
-	output.MergeOutput(outputKey, score)
+	state.MergeOutput(outputKey, score)
 
-	return output.Read(payload)
+	return state.Read(payload)
 }
 
 func (positiveOnly *PositiveOnly) Close() error {

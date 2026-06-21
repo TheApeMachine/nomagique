@@ -95,11 +95,7 @@ func (meanMedianRatio *MeanMedianRatio) Read(payload []byte) (int, error) {
 	ratio := 0.0
 
 	if longWindow > 0 && len(history) >= longWindow {
-		shortCount := shortWindow
-
-		if shortCount > len(history) {
-			shortCount = len(history)
-		}
+		shortCount := min(shortWindow, len(history))
 
 		shortSlice := history[len(history)-shortCount:]
 		shortMean := stat.Mean(shortSlice, nil)
@@ -125,13 +121,9 @@ func (meanMedianRatio *MeanMedianRatio) Read(payload []byte) (int, error) {
 
 	meanMedianRatio.config.Merge("previousRatio", ratio)
 
-	output := datura.Acquire("mean-median-ratio-output", datura.APPJSON)
-	output.WithPayload(state.DecryptPayload())
-	output.MergeOutput(outputKey, ratio)
+	state.MergeOutput(outputKey, ratio)
 
-	output.Inspect("statistic", "mean-median-ratio", "Read()", "output")
-
-	return output.Read(payload)
+	return state.Read(payload)
 }
 
 func (meanMedianRatio *MeanMedianRatio) Write(payload []byte) (int, error) {

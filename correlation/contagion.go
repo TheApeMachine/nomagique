@@ -29,17 +29,19 @@ type contagionBranch struct {
 }
 
 /*
-NewContagion creates an ensemble coupling stage.
+NewContagion creates an ensemble coupling stage wired from config attributes on the artifact.
 */
-func NewContagion() *Contagion {
+func NewContagion(artifact *datura.Artifact) *Contagion {
+	artifact.Inspect("correlation", "contagion", "NewContagion()")
+
 	return &Contagion{
-		artifact: datura.Acquire("contagion", datura.APPJSON),
+		artifact: artifact,
 	}
 }
 
 func (contagion *Contagion) Write(p []byte) (int, error) {
 	reset := inboundReset(p)
-	memberIDs := contagion.memberIDsFromPayload()
+	memberIDs := contagion.memberIDsFromConfig()
 	preservedMembers := make([]contagionBranch, 0, len(memberIDs))
 
 	for _, member := range memberIDs {
@@ -51,10 +53,10 @@ func (contagion *Contagion) Write(p []byte) (int, error) {
 	spreadCount := datura.Peek[float64](contagion.artifact, "spread", "count")
 	memberIDList := datura.Peek[[]float64](contagion.artifact, "member", "ids")
 
-	n, err := contagion.artifact.Write(p)
+	contagion.artifact.WithPayload(p)
 
 	if reset {
-		return n, err
+		return len(p), nil
 	}
 
 	for _, preserved := range preservedMembers {
@@ -71,7 +73,7 @@ func (contagion *Contagion) Write(p []byte) (int, error) {
 		contagion.artifact.Poke(spreadCount, "spread", "count")
 	}
 
-	return n, err
+	return len(p), nil
 }
 
 func (contagion *Contagion) Read(p []byte) (int, error) {
@@ -79,11 +81,18 @@ func (contagion *Contagion) Read(p []byte) (int, error) {
 		return 0, nil
 	}
 
-	member := int(datura.Peek[float64](contagion.artifact, "member"))
-	level := datura.Peek[float64](contagion.artifact, "paired")
+	state := datura.Acquire("contagion-state", datura.APPJSON)
+	state.Inspect("correlation", "contagion", "Read()", "p")
+
+	if _, err := state.Write(contagion.artifact.DecryptPayload()); err != nil {
+		return 0, err
+	}
+
+	member := int(datura.Peek[float64](state, "member"))
+	level := datura.Peek[float64](state, "paired")
 
 	if member > 0 && level > 0 {
-		epoch := int64(datura.Peek[float64](contagion.artifact, "sample"))
+		epoch := int64(datura.Peek[float64](state, "sample"))
 		contagion.recordMember(member)
 		contagion.ingest(
 			contagion.memberCapacityFromArtifact(),
@@ -96,20 +105,20 @@ func (contagion *Contagion) Read(p []byte) (int, error) {
 	snapshots := contagion.snapshots()
 
 	if len(snapshots) == 0 {
-		contagion.artifact.Poke(datura.Map[float64]{"value": 0}, "output")
-
-		return contagion.artifact.Read(p)
+		state.MergeOutput("value", 0.0)
+		state.Merge("root", "output")
+		state.Merge("inputs", []string{"value", "tier.fast", "tier.medium", "tier.slow"})
+		return state.Read(p)
 	}
 
 	output, readings := contagion.observeSnapshots(snapshots)
-	contagion.artifact.Poke(datura.Map[float64]{
-		"value":       output,
-		"tier.fast":   readings.fast,
-		"tier.medium": readings.medium,
-		"tier.slow":   readings.slow,
-	}, "output")
-
-	return contagion.artifact.Read(p)
+	state.MergeOutput("value", output)
+	state.MergeOutput("tier.fast", readings.fast)
+	state.MergeOutput("tier.medium", readings.medium)
+	state.MergeOutput("tier.slow", readings.slow)
+	state.Merge("root", "output")
+	state.Merge("inputs", []string{"value", "tier.fast", "tier.medium", "tier.slow"})
+	return state.Read(p)
 }
 
 func (contagion *Contagion) Close() error {
@@ -212,7 +221,7 @@ func (contagion *Contagion) snapshots() []memberSnapshot {
 	}
 
 	tiers := contagion.tiersFromArtifact()
-	memberIDs := contagion.memberIDsFromPayload()
+	memberIDs := contagion.memberIDsFromConfig()
 	snapshots := make([]memberSnapshot, 0, len(memberIDs))
 
 	for _, member := range memberIDs {
@@ -605,7 +614,7 @@ func (contagion *Contagion) recordMember(member int) {
 	contagion.artifact.Poke(memberIDs, "member", "ids")
 }
 
-func (contagion *Contagion) memberIDsFromPayload() []int {
+func (contagion *Contagion) memberIDsFromConfig() []int {
 	raw := datura.Peek[[]float64](contagion.artifact, "member", "ids")
 	memberIDs := make([]int, 0, len(raw))
 

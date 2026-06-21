@@ -24,11 +24,13 @@ type intervalBranch struct {
 }
 
 /*
-NewIntervalSeries creates a bounded interval accumulator.
+NewIntervalSeries creates a bounded interval accumulator wired from config attributes on the artifact.
 */
-func NewIntervalSeries() *IntervalSeries {
+func NewIntervalSeries(artifact *datura.Artifact) *IntervalSeries {
+	artifact.Inspect("correlation", "interval-series", "NewIntervalSeries()")
+
 	return &IntervalSeries{
-		artifact: datura.Acquire("interval-series", datura.APPJSON),
+		artifact: artifact,
 	}
 }
 
@@ -36,32 +38,36 @@ func (series *IntervalSeries) Write(p []byte) (int, error) {
 	reset := inboundReset(p)
 	preserved := series.preserveBranch()
 
-	n, err := series.artifact.Write(p)
+	series.artifact.WithPayload(p)
 
 	if reset {
-		return n, err
+		return len(p), nil
 	}
 
 	series.restoreBranch(preserved)
-
-	return n, err
+	return len(p), nil
 }
 
 func (series *IntervalSeries) Read(p []byte) (int, error) {
-	level := datura.Peek[float64](series.artifact, "paired")
+	state := datura.Acquire("interval-series-state", datura.APPJSON)
+	state.Inspect("correlation", "interval-series", "Read()", "p")
 
-	if level <= 0 {
-		return series.artifact.Read(p)
+	if _, err := state.Write(series.artifact.DecryptPayload()); err != nil {
+		return 0, err
 	}
 
-	epoch := int64(datura.Peek[float64](series.artifact, "sample"))
+	level := datura.Peek[float64](state, "paired")
+
+	if level <= 0 {
+		return state.Read(p)
+	}
+
+	epoch := int64(datura.Peek[float64](state, "sample"))
 	series.ingest(series.capacityFromArtifact(), epoch, level)
-
-	series.artifact.Poke(datura.Map[float64]{
-		"value": series.lastReturnMagnitude(),
-	}, "output")
-
-	return series.artifact.Read(p)
+	state.MergeOutput("value", series.lastReturnMagnitude())
+	state.Merge("root", "output")
+	state.Merge("inputs", []string{"value"})
+	return state.Read(p)
 }
 
 func (series *IntervalSeries) Close() error {

@@ -3,6 +3,7 @@ package algorithm
 import (
 	"io"
 
+	"github.com/theapemachine/datura"
 	"github.com/theapemachine/nomagique/correlation"
 	"github.com/theapemachine/nomagique/hawkes"
 	"github.com/theapemachine/nomagique/learning"
@@ -19,8 +20,8 @@ func NewCalibrate(dimension int, initialVariance float64) (io.ReadWriteCloser, e
 /*
 NewCorrelate returns a dual-correlation gap stage.
 */
-func NewCorrelate() io.ReadWriteCloser {
-	return correlation.NewGap()
+func NewCorrelate(artifact *datura.Artifact) io.ReadWriteCloser {
+	return correlation.NewGap(artifact)
 }
 
 /*

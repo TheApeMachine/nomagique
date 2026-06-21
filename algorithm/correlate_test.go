@@ -41,23 +41,15 @@ func TestCorrelate_Observe(testingTB *testing.T) {
 			[]float64{0, 100, 1, 110, 2, 121, 3, 133.1},
 			[]float64{0, 50, 1, 55, 2, 60.5, 3, 66.55},
 		)
-		correlate := NewCorrelate()
-		configArtifact := datura.Acquire("test-config", datura.APPJSON)
-		configArtifact.Poke(1.0, "config", "maxIntervalSeconds")
-		configFrame, configErr := configArtifact.Message().Marshal()
-
-		So(configErr, ShouldBeNil)
-
-		writeCount, writeErr := correlate.Write(configFrame)
-
-		So(writeErr, ShouldBeNil)
-		So(writeCount, ShouldBeGreaterThan, 0)
+		correlate := NewCorrelate(
+			datura.Acquire("test-config", datura.APPJSON).Poke(1.0, "config", "maxIntervalSeconds"),
+		)
 		So(tests.WriteSamples(correlate, batch...), ShouldBeNil)
 
 		frame := make([]byte, 4096)
-		_, _ = correlate.Read(frame)
+		readCount, _ := correlate.Read(frame)
 		outbound := datura.Acquire("test-out", datura.APPJSON)
-		_, _ = outbound.Write(frame)
+		_, _ = outbound.Write(frame[:readCount])
 
 		pearson := datura.Peek[float64](outbound, "output", "pearson")
 		hayashi := datura.Peek[float64](outbound, "output", "hayashi")
@@ -81,16 +73,14 @@ func BenchmarkCorrelate_Observe(testingTB *testing.B) {
 		[]float64{0, 100, 1, 110, 2, 120, 3, 130, 4, 140, 5, 150, 6, 160, 7, 170},
 		[]float64{0, 100, 1, 120, 2, 140, 3, 160, 4, 180, 5, 200, 6, 220, 7, 240},
 	)
-	correlate := NewCorrelate()
+	correlate := NewCorrelate(
+		datura.Acquire("test-config", datura.APPJSON).Poke(1.0, "config", "maxIntervalSeconds"),
+	)
 	frame := make([]byte, 4096)
 
 	testingTB.ReportAllocs()
 
 	for testingTB.Loop() {
-		configArtifact := datura.Acquire("test-config", datura.APPJSON)
-		configArtifact.Poke(1.0, "config", "maxIntervalSeconds")
-		configFrame, _ := configArtifact.Message().Marshal()
-		_, _ = correlate.Write(configFrame)
 		_ = tests.WriteSamples(correlate, batch...)
 		_, _ = correlate.Read(frame)
 	}

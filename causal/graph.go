@@ -9,42 +9,51 @@ import (
 
 /*
 Graph evaluates Pearl's backdoor criterion from config.graphParent.* and config.* nodes.
+The constructor artifact holds config; Write buffers inbound wire on its payload.
 */
 type Graph struct {
 	artifact *datura.Artifact
 }
 
 /*
-NewGraph returns a DAG admissibility stage.
+NewGraph returns a DAG admissibility stage wired from config attributes on the artifact.
 */
-func NewGraph() *Graph {
+func NewGraph(artifact *datura.Artifact) *Graph {
+	artifact.Inspect("causal", "graph", "NewGraph()")
+
 	return &Graph{
-		artifact: datura.Acquire("graph", datura.APPJSON),
+		artifact: artifact,
 	}
 }
 
 func (graphStage *Graph) Write(p []byte) (int, error) {
-	return graphStage.artifact.Write(p)
+	graphStage.artifact.WithPayload(p)
+	return len(p), nil
 }
 
 func (graphStage *Graph) Read(p []byte) (int, error) {
+	state := datura.Acquire("graph-state", datura.APPJSON)
+	state.Inspect("causal", "graph", "Read()", "p")
+
+	if _, err := state.Write(graphStage.artifact.DecryptPayload()); err != nil {
+		return 0, err
+	}
+
 	dag, err := newDAGFromArtifact(graphStage.artifact)
 
 	if err != nil {
-		graphStage.artifact.Poke(datura.Map[float64]{"value": 0}, "output")
-
-		return graphStage.artifact.Read(p)
+		state.MergeOutput("value", 0.0)
+		return state.Read(p)
 	}
 
 	treatment := int(datura.Peek[float64](graphStage.artifact, "config", "treatment"))
 	target := int(datura.Peek[float64](graphStage.artifact, "config", "target"))
 	controls := intSlice(datura.Peek[[]float64](graphStage.artifact, "config", "controls"))
-	admissible, admErr := dag.backdoorAdmissible(treatment, target, controls)
+	admissible, err := dag.backdoorAdmissible(treatment, target, controls)
 
-	if admErr != nil {
-		graphStage.artifact.Poke(datura.Map[float64]{"value": 0}, "output")
-
-		return graphStage.artifact.Read(p)
+	if err != nil {
+		state.MergeOutput("value", 0.0)
+		return state.Read(p)
 	}
 
 	value := 0.0
@@ -53,12 +62,9 @@ func (graphStage *Graph) Read(p []byte) (int, error) {
 		value = 1
 	}
 
-	graphStage.artifact.Poke(datura.Map[float64]{
-		"value":      value,
-		"admissible": value,
-	}, "output")
-
-	return graphStage.artifact.Read(p)
+	state.MergeOutput("value", value)
+	state.MergeOutput("admissible", value)
+	return state.Read(p)
 }
 
 func (graphStage *Graph) Close() error {

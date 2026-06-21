@@ -11,30 +11,41 @@ import (
 /*
 Covariance computes sample covariance between two configured streams.
 Weights may be supplied on config.weights.
+The constructor artifact holds config; Write buffers inbound wire on its payload.
 */
 type Covariance struct {
 	artifact *datura.Artifact
 }
 
 /*
-NewCovariance creates a covariance stage.
+NewCovariance creates a covariance stage wired from config attributes on the artifact.
 */
-func NewCovariance() *Covariance {
+func NewCovariance(artifact *datura.Artifact) *Covariance {
+	artifact.Inspect("correlation", "covariance", "NewCovariance()")
+
 	return &Covariance{
-		artifact: datura.Acquire("covariance", datura.APPJSON),
+		artifact: artifact,
 	}
 }
 
 func (covariance *Covariance) Write(p []byte) (int, error) {
-	return covariance.artifact.Write(p)
+	covariance.artifact.WithPayload(p)
+	return len(p), nil
 }
 
 func (covariance *Covariance) Read(p []byte) (int, error) {
-	values := datura.Peek[[]float64](covariance.artifact, "batch")
+	state := datura.Acquire("covariance-state", datura.APPJSON)
+	state.Inspect("correlation", "covariance", "Read()", "p")
+
+	if _, err := state.Write(covariance.artifact.DecryptPayload()); err != nil {
+		return 0, err
+	}
+
+	values := datura.Peek[[]float64](state, "batch")
 
 	if len(values) == 0 {
-		left := datura.Peek[[]float64](covariance.artifact, "left")
-		right := datura.Peek[[]float64](covariance.artifact, "right")
+		left := datura.Peek[[]float64](state, "left")
+		right := datura.Peek[[]float64](state, "right")
 
 		if len(left) > 0 || len(right) > 0 {
 			values = append(append([]float64(nil), left...), right...)
@@ -61,9 +72,10 @@ func (covariance *Covariance) Read(p []byte) (int, error) {
 		}
 
 		if !weightsOK {
-			covariance.artifact.Poke(datura.Map[float64]{"value": 0}, "output")
-
-			return covariance.artifact.Read(p)
+			state.MergeOutput("value", 0.0)
+			state.Merge("root", "output")
+			state.Merge("inputs", []string{"value"})
+			return state.Read(p)
 		}
 
 		covarianceValue := stat.Covariance(left, right, weights)
@@ -72,9 +84,10 @@ func (covariance *Covariance) Read(p []byte) (int, error) {
 			covarianceValue = 0
 		}
 
-		covariance.artifact.Poke(datura.Map[float64]{"value": covarianceValue}, "output")
-
-		return covariance.artifact.Read(p)
+		state.MergeOutput("value", covarianceValue)
+		state.Merge("root", "output")
+		state.Merge("inputs", []string{"value"})
+		return state.Read(p)
 	}
 
 	if count > 0 && count < 2 {
@@ -91,11 +104,10 @@ func (covariance *Covariance) Read(p []byte) (int, error) {
 		)
 	}
 
-	if count == 0 || count < 2 || count%2 != 0 {
-		covariance.artifact.Poke(datura.Map[float64]{"value": 0}, "output")
-	}
-
-	return covariance.artifact.Read(p)
+	state.MergeOutput("value", 0.0)
+	state.Merge("root", "output")
+	state.Merge("inputs", []string{"value"})
+	return state.Read(p)
 }
 
 func (covariance *Covariance) Close() error {

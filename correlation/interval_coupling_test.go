@@ -10,7 +10,7 @@ import (
 
 func TestIntervalCoupling_Observe(testingTB *testing.T) {
 	Convey("Given proportional interval histories", testingTB, func() {
-		coupling := NewIntervalCoupling()
+		coupling := NewIntervalCoupling(datura.Acquire("interval-coupling-config", datura.APPJSON))
 		artifact := datura.Acquire("test", datura.APPJSON)
 
 		artifact.Poke(0, "config", "side").
@@ -50,7 +50,7 @@ func TestIntervalCoupling_Observe(testingTB *testing.T) {
 }
 
 func BenchmarkIntervalCoupling_Observe(testingTB *testing.B) {
-	coupling := NewIntervalCoupling()
+	coupling := NewIntervalCoupling(datura.Acquire("interval-coupling-config", datura.APPJSON))
 	artifact := datura.Acquire("test", datura.APPJSON)
 
 	for step := range 64 {

@@ -9,13 +9,13 @@ import (
 	"github.com/theapemachine/datura/transport"
 )
 
-func graphArtifact(
+func graphConfig(
 	parents [][]int,
 	treatment int,
 	target int,
 	controls []int,
 ) *datura.Artifact {
-	artifact := datura.Acquire("test", datura.APPJSON).
+	config := datura.Acquire("graph-config", datura.APPJSON).
 		Poke(float64(len(parents)), "config", "graphNodeCount").
 		Poke(float64(treatment), "config", "treatment").
 		Poke(float64(target), "config", "target")
@@ -27,7 +27,7 @@ func graphArtifact(
 			parentValues[index] = float64(parent)
 		}
 
-		artifact.Poke(parentValues, "config", "graphParent", strconv.Itoa(node))
+		config.Poke(parentValues, "config", "graphParent", strconv.Itoa(node))
 	}
 
 	if len(controls) > 0 {
@@ -37,21 +37,21 @@ func graphArtifact(
 			controlValues[index] = float64(control)
 		}
 
-		artifact.Poke(controlValues, "config", "controls")
+		config.Poke(controlValues, "config", "controls")
 	}
 
-	return artifact
+	return config
 }
 
 func TestGraph_Read(testingTB *testing.T) {
 	Convey("Given a fork confounder Z -> X and Z -> Y", testingTB, func() {
-		stage := NewGraph()
-		artifact := graphArtifact([][]int{
+		stage := NewGraph(graphConfig([][]int{
 			nil,
 			{0},
 			{0},
 			nil,
-		}, 1, 2, []int{0})
+		}, 1, 2, []int{0}))
+		artifact := datura.Acquire("graph-inbound", datura.APPJSON)
 		err := transport.NewFlipFlop(artifact, stage)
 
 		So(err, ShouldBeNil)
@@ -62,13 +62,13 @@ func TestGraph_Read(testingTB *testing.T) {
 	})
 
 	Convey("Given a fork without adjustment", testingTB, func() {
-		stage := NewGraph()
-		artifact := graphArtifact([][]int{
+		stage := NewGraph(graphConfig([][]int{
 			nil,
 			{0},
 			{0},
 			nil,
-		}, 1, 2, nil)
+		}, 1, 2, nil))
+		artifact := datura.Acquire("graph-inbound", datura.APPJSON)
 		err := transport.NewFlipFlop(artifact, stage)
 
 		So(err, ShouldBeNil)
@@ -79,16 +79,16 @@ func TestGraph_Read(testingTB *testing.T) {
 	})
 
 	Convey("Given a descendant control on the treatment path", testingTB, func() {
-		stage := NewGraph()
-		artifact := graphArtifact([][]int{
+		stage := NewGraph(graphConfig([][]int{
 			nil,
 			{0},
 			{1},
 			nil,
-		}, 1, 3, []int{2})
-		err := transport.NewFlipFlop(artifact, stage)
+		}, 1, 3, []int{2}))
+		artifact := datura.Acquire("graph-inbound", datura.APPJSON)
 
 		Convey("It should reject controls that descend from treatment", func() {
+			err := transport.NewFlipFlop(artifact, stage)
 			So(err, ShouldBeNil)
 			So(datura.Peek[float64](artifact, "output", "admissible"), ShouldEqual, 0)
 		})
@@ -96,13 +96,13 @@ func TestGraph_Read(testingTB *testing.T) {
 }
 
 func BenchmarkGraph_Read(testingTB *testing.B) {
-	stage := NewGraph()
-	artifact := graphArtifact([][]int{
+	stage := NewGraph(graphConfig([][]int{
 		nil,
 		{0},
 		{0, 1},
 		{2},
-	}, 1, 3, []int{0})
+	}, 1, 3, []int{0}))
+	artifact := datura.Acquire("graph-inbound", datura.APPJSON)
 
 	testingTB.ReportAllocs()
 

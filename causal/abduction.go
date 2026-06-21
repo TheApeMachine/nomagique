@@ -8,31 +8,41 @@ import (
 
 /*
 Abduction runs abductive counterfactual inference from table.* and config on the artifact.
+The constructor artifact holds config; Write buffers inbound table wire on its payload.
 */
 type Abduction struct {
 	artifact *datura.Artifact
 }
 
 /*
-NewAbduction returns an abduction stage reading table rows and config from the artifact.
+NewAbduction returns an abduction stage wired from config attributes on the artifact.
 */
-func NewAbduction() *Abduction {
+func NewAbduction(artifact *datura.Artifact) *Abduction {
+	artifact.Inspect("causal", "abduction", "NewAbduction()")
+
 	return &Abduction{
-		artifact: datura.Acquire("abduction", datura.APPJSON),
+		artifact: artifact,
 	}
 }
 
 func (abduction *Abduction) Write(p []byte) (int, error) {
-	return abduction.artifact.Write(p)
+	abduction.artifact.WithPayload(p)
+	return len(p), nil
 }
 
 func (abduction *Abduction) Read(p []byte) (int, error) {
-	rows, ok := tableRows(abduction.artifact)
+	state := datura.Acquire("abduction-state", datura.APPJSON)
+	state.Inspect("causal", "abduction", "Read()", "p")
+
+	if _, err := state.Write(abduction.artifact.DecryptPayload()); err != nil {
+		return 0, err
+	}
+
+	rows, ok := tableRows(state)
 
 	if !ok {
-		abduction.artifact.Poke(datura.Map[float64]{"value": 0}, "output")
-
-		return abduction.artifact.Read(p)
+		state.MergeOutput("value", 0.0)
+		return state.Read(p)
 	}
 
 	target := int(datura.Peek[float64](abduction.artifact, "config", "target"))
@@ -43,19 +53,18 @@ func (abduction *Abduction) Read(p []byte) (int, error) {
 	linear := datura.Peek[float64](abduction.artifact, "config", "linear") > 0
 
 	if minHistory <= 0 {
-		minHistory = 12
+		minHistory = len(rows)
 	}
 
 	table, err := newNodeTable(rows, target, minHistory)
 
 	if err != nil {
-		abduction.artifact.Poke(datura.Map[float64]{"value": 0}, "output")
-
-		return abduction.artifact.Read(p)
+		state.MergeOutput("value", 0.0)
+		return state.Read(p)
 	}
 
 	currentRow := rows[len(rows)-1]
-	uplift, counterfactual, noise, cfErr := abductiveCounterfactual(
+	uplift, counterfactual, noise, err := abductiveCounterfactual(
 		table,
 		features,
 		linear,
@@ -65,20 +74,16 @@ func (abduction *Abduction) Read(p []byte) (int, error) {
 		intervention,
 	)
 
-	if cfErr != nil {
-		abduction.artifact.Poke(datura.Map[float64]{"value": 0}, "output")
-
-		return abduction.artifact.Read(p)
+	if err != nil {
+		state.MergeOutput("value", 0.0)
+		return state.Read(p)
 	}
 
-	abduction.artifact.Poke(datura.Map[float64]{
-		"value":          uplift,
-		"uplift":         uplift,
-		"counterfactual": counterfactual,
-		"noise":          noise,
-	}, "output")
-
-	return abduction.artifact.Read(p)
+	state.MergeOutput("value", uplift)
+	state.MergeOutput("uplift", uplift)
+	state.MergeOutput("counterfactual", counterfactual)
+	state.MergeOutput("noise", noise)
+	return state.Read(p)
 }
 
 func (abduction *Abduction) Close() error {
@@ -101,10 +106,10 @@ func abductiveCounterfactual(
 	observedTarget := row[target]
 
 	if linear {
-		model, modelErr := table.fitLinearModel(features...)
+		model, err := table.fitLinearModel(features...)
 
-		if modelErr != nil {
-			return 0, 0, 0, modelErr
+		if err != nil {
+			return 0, 0, 0, err
 		}
 
 		noise, err = abductNoiseLinear(model, row, observedTarget)

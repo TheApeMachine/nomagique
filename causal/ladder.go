@@ -6,56 +6,67 @@ import (
 
 /*
 Ladder evaluates Judea Pearl's ladder of causation over tabular rows on the artifact.
+The constructor artifact holds config; Write buffers inbound table wire on its payload.
 */
 type Ladder struct {
 	artifact *datura.Artifact
 }
 
 /*
-NewLadder returns a ladder stage.
+NewLadder returns a ladder stage wired from config attributes on the artifact.
 */
-func NewLadder() *Ladder {
+func NewLadder(artifact *datura.Artifact) *Ladder {
+	artifact.Inspect("causal", "ladder", "NewLadder()")
+
 	return &Ladder{
-		artifact: datura.Acquire("ladder", datura.APPJSON),
+		artifact: artifact,
 	}
 }
 
 func (ladder *Ladder) Write(p []byte) (int, error) {
-	return ladder.artifact.Write(p)
+	ladder.artifact.WithPayload(p)
+	return len(p), nil
 }
 
 func (ladder *Ladder) Read(p []byte) (int, error) {
-	rows, ok := tableRows(ladder.artifact)
+	state := datura.Acquire("ladder-state", datura.APPJSON)
+	state.Inspect("causal", "ladder", "Read()", "p")
+
+	if _, err := state.Write(ladder.artifact.DecryptPayload()); err != nil {
+		return 0, err
+	}
+
+	rows, ok := tableRows(state)
 
 	if !ok {
-		return ladder.artifact.Read(p)
+		return state.Read(p)
 	}
 
 	target := int(datura.Peek[float64](ladder.artifact, "config", "target"))
 	minHistory := int(datura.Peek[float64](ladder.artifact, "config", "minHistory"))
 
 	if minHistory <= 0 {
-		minHistory = 12
+		minHistory = len(rows)
 	}
 
 	if len(rows) < minHistory {
-		return ladder.artifact.Read(p)
+		return state.Read(p)
 	}
 
 	table, err := newNodeTable(rows, target, minHistory)
 
 	if err != nil {
-		return ladder.artifact.Read(p)
+		return state.Read(p)
 	}
 
-	inverted := datura.Peek[float64](ladder.artifact, "output", "value") != 0
-	contagion := datura.Peek[float64](ladder.artifact, "paired")
+	inverted := datura.Peek[float64](state, "output", "value") != 0
+	contagion := datura.Peek[float64](state, "paired")
 
 	if contagion == 0 {
-		contagion = datura.Peek[float64](ladder.artifact, "output", "contagion")
+		contagion = datura.Peek[float64](state, "output", "contagion")
 	}
 
-	condition := datura.Peek[float64](ladder.artifact, "output", "condition")
+	condition := datura.Peek[float64](state, "output", "condition")
 	treatment := int(datura.Peek[float64](ladder.artifact, "config", "treatmentNormal"))
 	controls := intSlice(datura.Peek[[]float64](ladder.artifact, "config", "controlsNormal"))
 
@@ -71,18 +82,18 @@ func (ladder *Ladder) Read(p []byte) (int, error) {
 	}
 
 	if bandwidth <= 0 {
-		return ladder.artifact.Read(p)
+		return state.Read(p)
 	}
 
-	association, assocErr := table.association(treatment)
+	association, err := table.association(treatment)
 
-	if assocErr != nil {
+	if err != nil {
 		association = 0
 	}
 
-	intervention, intervErr := table.kernelBackdoorEffect(treatment, bandwidth, controls...)
+	intervention, err := table.kernelBackdoorEffect(treatment, bandwidth, controls...)
 
-	if intervErr != nil {
+	if err != nil {
 		intervention = 0
 	}
 
@@ -97,28 +108,28 @@ func (ladder *Ladder) Read(p []byte) (int, error) {
 		interventionLevel := datura.Peek[float64](ladder.artifact, "config", "interventionLevel")
 
 		if interventionLevel <= 0 {
-			level, levelErr := table.percentile(treatment, 0.75)
+			level, err := table.percentile(treatment, 0.75)
 
-			if levelErr == nil {
+			if err == nil {
 				interventionLevel = level
 			}
 		}
 
 		if fitOK {
-			upliftValue, upliftErr := nonLinear.counterfactualUplift(currentRow, treatment, interventionLevel)
+			upliftValue, err := nonLinear.counterfactualUplift(currentRow, treatment, interventionLevel)
 
-			if upliftErr == nil {
+			if err == nil {
 				uplift = upliftValue
 			}
 		}
 
 		if !fitOK {
-			linear, linearErr := table.fitLinearModel(predictors...)
+			linear, err := table.fitLinearModel(predictors...)
 
-			if linearErr == nil {
-				upliftValue, upliftErr := linear.counterfactualUplift(currentRow, treatment, interventionLevel)
+			if err == nil {
+				upliftValue, err := linear.counterfactualUplift(currentRow, treatment, interventionLevel)
 
-				if upliftErr == nil {
+				if err == nil {
 					uplift = upliftValue
 				}
 			}
@@ -131,17 +142,14 @@ func (ladder *Ladder) Read(p []byte) (int, error) {
 		invertedValue = 1
 	}
 
-	ladder.artifact.Poke(datura.Map[float64]{
-		"value":        raw,
-		"association":  association,
-		"intervention": intervention,
-		"uplift":       uplift,
-		"contagion":    contagion,
-		"condition":    condition,
-		"inverted":     invertedValue,
-	}, "output")
-
-	return ladder.artifact.Read(p)
+	state.MergeOutput("value", raw)
+	state.MergeOutput("association", association)
+	state.MergeOutput("intervention", intervention)
+	state.MergeOutput("uplift", uplift)
+	state.MergeOutput("contagion", contagion)
+	state.MergeOutput("condition", condition)
+	state.MergeOutput("inverted", invertedValue)
+	return state.Read(p)
 }
 
 func (ladder *Ladder) Close() error {

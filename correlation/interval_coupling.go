@@ -24,11 +24,13 @@ type couplingBranch struct {
 }
 
 /*
-NewIntervalCoupling creates an interval-correlation stage over left and right streams.
+NewIntervalCoupling creates an interval-correlation stage wired from config attributes on the artifact.
 */
-func NewIntervalCoupling() *IntervalCoupling {
+func NewIntervalCoupling(artifact *datura.Artifact) *IntervalCoupling {
+	artifact.Inspect("correlation", "interval-coupling", "NewIntervalCoupling()")
+
 	return &IntervalCoupling{
-		artifact: datura.Acquire("interval-coupling", datura.APPJSON),
+		artifact: artifact,
 	}
 }
 
@@ -36,12 +38,10 @@ func (coupling *IntervalCoupling) Write(p []byte) (int, error) {
 	leftPreserved := coupling.preserveBranch("left")
 	rightPreserved := coupling.preserveBranch("right")
 
-	n, err := coupling.artifact.Write(p)
-
+	coupling.artifact.WithPayload(p)
 	coupling.restoreBranch(leftPreserved)
 	coupling.restoreBranch(rightPreserved)
-
-	return n, err
+	return len(p), nil
 }
 
 func (coupling *IntervalCoupling) Read(p []byte) (int, error) {
@@ -49,13 +49,20 @@ func (coupling *IntervalCoupling) Read(p []byte) (int, error) {
 		return 0, nil
 	}
 
-	level := datura.Peek[float64](coupling.artifact, "paired")
+	state := datura.Acquire("interval-coupling-state", datura.APPJSON)
+	state.Inspect("correlation", "interval-coupling", "Read()", "p")
+
+	if _, err := state.Write(coupling.artifact.DecryptPayload()); err != nil {
+		return 0, err
+	}
+
+	level := datura.Peek[float64](state, "paired")
 
 	if level > 0 {
-		epoch := int64(datura.Peek[float64](coupling.artifact, "sample"))
+		epoch := int64(datura.Peek[float64](state, "sample"))
 		side := "left"
 
-		if int(datura.Peek[float64](coupling.artifact, "config", "side")) == 1 {
+		if int(datura.Peek[float64](state, "config", "side")) == 1 {
 			side = "right"
 		}
 
@@ -65,14 +72,16 @@ func (coupling *IntervalCoupling) Read(p []byte) (int, error) {
 	value, ok := coupling.correlateSides()
 
 	if !ok {
-		coupling.artifact.Poke(datura.Map[float64]{"value": 0}, "output")
-
-		return coupling.artifact.Read(p)
+		state.MergeOutput("value", 0.0)
+		state.Merge("root", "output")
+		state.Merge("inputs", []string{"value"})
+		return state.Read(p)
 	}
 
-	coupling.artifact.Poke(datura.Map[float64]{"value": value}, "output")
-
-	return coupling.artifact.Read(p)
+	state.MergeOutput("value", value)
+	state.Merge("root", "output")
+	state.Merge("inputs", []string{"value"})
+	return state.Read(p)
 }
 
 func (coupling *IntervalCoupling) Close() error {

@@ -3,6 +3,7 @@ package equation
 import (
 	"io"
 
+	"github.com/theapemachine/datura"
 	"github.com/theapemachine/nomagique"
 	"github.com/theapemachine/nomagique/adaptive"
 	"github.com/theapemachine/nomagique/causal"
@@ -11,10 +12,10 @@ import (
 /*
 NewRegimeLadder composes regime selection, hysteresis smoothing, and ladder evaluation.
 */
-func NewRegimeLadder() io.ReadWriteCloser {
+func NewRegimeLadder(config *datura.Artifact) io.ReadWriteCloser {
 	return nomagique.Number(
-		causal.NewRegime(),
+		causal.NewRegime(config),
 		adaptive.NewHysteresis(),
-		causal.NewLadder(),
+		causal.NewLadder(config),
 	)
 }

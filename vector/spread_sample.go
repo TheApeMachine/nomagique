@@ -60,13 +60,9 @@ func (spreadSample *SpreadSample) Read(p []byte) (int, error) {
 		spread = math.Abs(right-left) / mid
 	}
 
-	output := datura.Acquire("spread-sample-output", datura.APPJSON)
-	output.WithPayload(state.DecryptPayload())
-	output.Merge("sample", spread)
+	state.Merge("sample", spread)
 
-	output.Inspect("vector", "spread-sample", "Read()", "output")
-
-	return output.Read(p)
+	return state.Read(p)
 }
 
 func (spreadSample *SpreadSample) sample(

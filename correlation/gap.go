@@ -15,26 +15,37 @@ Gap compares asynchronous Hayashi-Yoshida coupling to synchronous Pearson correl
 
 Payload layout: syncCount, asyncPairCount, syncLeft..., syncRight..., asyncLeft..., asyncRight...
 Weights and maxIntervalSeconds may be set on config.
+The constructor artifact holds config; Write buffers inbound wire on its payload.
 */
 type Gap struct {
 	artifact *datura.Artifact
 }
 
 /*
-NewGap creates a dual-correlation gap stage.
+NewGap creates a dual-correlation gap stage wired from config attributes on the artifact.
 */
-func NewGap() *Gap {
+func NewGap(artifact *datura.Artifact) *Gap {
+	artifact.Inspect("correlation", "gap", "NewGap()")
+
 	return &Gap{
-		artifact: datura.Acquire("correlate-gap", datura.APPJSON),
+		artifact: artifact,
 	}
 }
 
 func (gap *Gap) Write(p []byte) (int, error) {
-	return gap.artifact.Write(p)
+	gap.artifact.WithPayload(p)
+	return len(p), nil
 }
 
 func (gap *Gap) Read(p []byte) (int, error) {
-	batch := gapBatch(gap.artifact)
+	state := datura.Acquire("gap-state", datura.APPJSON)
+	state.Inspect("correlation", "gap", "Read()", "p")
+
+	if _, err := state.Write(gap.artifact.DecryptPayload()); err != nil {
+		return 0, err
+	}
+
+	batch := gapBatch(state)
 	weights := datura.Peek[[]float64](gap.artifact, "config", "weights")
 	pearsonValue := gapPearson(batch, weights)
 	hayashiValue := gapHayashi(batch, gap.maxIntervalFromArtifact())
@@ -44,14 +55,13 @@ func (gap *Gap) Read(p []byte) (int, error) {
 		divergence = 0
 	}
 
-	gap.artifact.Poke(datura.Map[float64]{
-		"value":   divergence,
-		"pearson": pearsonValue,
-		"hayashi": hayashiValue,
-		"gap":     divergence,
-	}, "output")
-
-	return gap.artifact.Read(p)
+	state.MergeOutput("value", divergence)
+	state.MergeOutput("pearson", pearsonValue)
+	state.MergeOutput("hayashi", hayashiValue)
+	state.MergeOutput("gap", divergence)
+	state.Merge("root", "output")
+	state.Merge("inputs", []string{"value", "pearson", "hayashi", "gap"})
+	return state.Read(p)
 }
 
 func (gap *Gap) Close() error {
@@ -68,18 +78,20 @@ func (gap *Gap) maxIntervalFromArtifact() time.Duration {
 	return time.Duration(seconds * float64(time.Second))
 }
 
-func gapBatch(artifact *datura.Artifact) []float64 {
-	values := datura.Peek[[]float64](artifact, "batch")
+func gapBatch(state *datura.Artifact) []float64 {
+	values := datura.Peek[[]float64](state, "batch")
 
 	if len(values) > 0 {
 		return values
 	}
 
-	if !artifact.HasEncryptedPayload() {
-		return nil
+	values = datura.Peek[[]float64](state, "features")
+
+	if len(values) > 0 {
+		return values
 	}
 
-	payload := artifact.DecryptPayload()
+	payload := state.DecryptPayload()
 
 	if len(payload) == 0 || len(payload)%8 != 0 {
 		return nil

@@ -8,52 +8,61 @@ import (
 
 /*
 Regime selects normal or inverted DAG roles from contagion and pair condition.
+The constructor artifact holds config; Write buffers inbound table wire on its payload.
 */
 type Regime struct {
 	artifact *datura.Artifact
 }
 
 /*
-NewRegime returns a regime stage.
+NewRegime returns a regime stage wired from config attributes on the artifact.
 */
-func NewRegime() *Regime {
+func NewRegime(artifact *datura.Artifact) *Regime {
+	artifact.Inspect("causal", "regime", "NewRegime()")
+
 	return &Regime{
-		artifact: datura.Acquire("regime", datura.APPJSON),
+		artifact: artifact,
 	}
 }
 
 func (regime *Regime) Write(p []byte) (int, error) {
-	return regime.artifact.Write(p)
+	regime.artifact.WithPayload(p)
+	return len(p), nil
 }
 
 func (regime *Regime) Read(p []byte) (int, error) {
-	rows, ok := tableRows(regime.artifact)
+	state := datura.Acquire("regime-state", datura.APPJSON)
+	state.Inspect("causal", "regime", "Read()", "p")
+
+	if _, err := state.Write(regime.artifact.DecryptPayload()); err != nil {
+		return 0, err
+	}
+
+	rows, ok := tableRows(state)
 
 	if !ok {
-		regime.artifact.Poke(datura.Map[float64]{"value": 0}, "output")
-
-		return regime.artifact.Read(p)
+		state.MergeOutput("value", 0.0)
+		return state.Read(p)
 	}
 
 	target := int(datura.Peek[float64](regime.artifact, "config", "target"))
 	minHistory := int(datura.Peek[float64](regime.artifact, "config", "minHistory"))
 
 	if minHistory <= 0 {
-		minHistory = 12
+		minHistory = len(rows)
 	}
 
 	table, err := newNodeTable(rows, target, minHistory)
 
 	if err != nil {
-		regime.artifact.Poke(datura.Map[float64]{"value": 0}, "output")
-
-		return regime.artifact.Read(p)
+		state.MergeOutput("value", 0.0)
+		return state.Read(p)
 	}
 
-	contagion := datura.Peek[float64](regime.artifact, "paired")
+	contagion := datura.Peek[float64](state, "paired")
 
 	if contagion == 0 {
-		contagion = datura.Peek[float64](regime.artifact, "output", "value")
+		contagion = datura.Peek[float64](state, "output", "value")
 	}
 
 	contagionBreak := datura.Peek[float64](regime.artifact, "config", "contagionBreak") > 0 &&
@@ -64,12 +73,12 @@ func (regime *Regime) Read(p []byte) (int, error) {
 	conditionSwitch := datura.Peek[float64](regime.artifact, "config", "conditionSwitch")
 
 	if conditionSwitch > 0 {
-		pairCondition, condErr := table.pairConditionNumber(
+		pairCondition, err := table.pairConditionNumber(
 			int(datura.Peek[float64](regime.artifact, "config", "conditionLeft")),
 			int(datura.Peek[float64](regime.artifact, "config", "conditionRight")),
 		)
 
-		if condErr == nil {
+		if err == nil {
 			condition = pairCondition
 			conditionBreak = math.IsInf(pairCondition, 1) || pairCondition >= conditionSwitch
 		}
@@ -81,14 +90,11 @@ func (regime *Regime) Read(p []byte) (int, error) {
 		rawInverted = 1
 	}
 
-	regime.artifact.Poke(rawInverted, "sample")
-	regime.artifact.Poke(datura.Map[float64]{
-		"value":       condition,
-		"condition":   condition,
-		"rawInverted": rawInverted,
-	}, "output")
-
-	return regime.artifact.Read(p)
+	state.Merge("sample", rawInverted)
+	state.MergeOutput("value", condition)
+	state.MergeOutput("condition", condition)
+	state.MergeOutput("rawInverted", rawInverted)
+	return state.Read(p)
 }
 
 func (regime *Regime) Close() error {

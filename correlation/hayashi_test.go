@@ -8,11 +8,15 @@ import (
 	"github.com/theapemachine/datura/transport"
 )
 
+func hayashiConfig() *datura.Artifact {
+	return datura.Acquire("hayashi-config", datura.APPJSON).
+		Poke(1, "config", "maxIntervalSeconds")
+}
+
 func TestHayashiYoshida_Observe(testingTB *testing.T) {
 	Convey("Given proportional async streams", testingTB, func() {
-		hayashi := NewHayashiYoshida()
+		hayashi := NewHayashiYoshida(hayashiConfig())
 		artifact := datura.Acquire("test", datura.APPJSON).
-			Poke(1, "config", "maxIntervalSeconds").
 			Poke([]float64{0, 100, 1, 110, 0, 50, 1, 55}, "batch")
 		err := transport.NewFlipFlop(artifact, hayashi)
 
@@ -26,7 +30,7 @@ func TestHayashiYoshida_Observe(testingTB *testing.T) {
 	})
 
 	Convey("Given empty Observe inputs", testingTB, func() {
-		hayashi := NewHayashiYoshida()
+		hayashi := NewHayashiYoshida(hayashiConfig())
 		artifact := datura.Acquire("test", datura.APPJSON)
 		err := transport.NewFlipFlop(artifact, hayashi)
 
@@ -38,7 +42,7 @@ func TestHayashiYoshida_Observe(testingTB *testing.T) {
 	})
 
 	Convey("Given fewer than two inputs", testingTB, func() {
-		hayashi := NewHayashiYoshida()
+		hayashi := NewHayashiYoshida(hayashiConfig())
 		artifact := datura.Acquire("test", datura.APPJSON).Poke(1, "sample")
 		err := transport.NewFlipFlop(artifact, hayashi)
 
@@ -52,7 +56,7 @@ func TestHayashiYoshida_Observe(testingTB *testing.T) {
 	})
 
 	Convey("Given odd input count", testingTB, func() {
-		hayashi := NewHayashiYoshida()
+		hayashi := NewHayashiYoshida(hayashiConfig())
 		artifact := datura.Acquire("test", datura.APPJSON).Poke([]float64{0, 100, 1}, "batch")
 		err := transport.NewFlipFlop(artifact, hayashi)
 
@@ -66,7 +70,7 @@ func TestHayashiYoshida_Observe(testingTB *testing.T) {
 	})
 
 	Convey("Given a half that is not time-value pairs", testingTB, func() {
-		hayashi := NewHayashiYoshida()
+		hayashi := NewHayashiYoshida(hayashiConfig())
 		artifact := datura.Acquire("test", datura.APPJSON).
 			Poke([]float64{0, 100, 0, 50, 1, 55}, "batch")
 		err := transport.NewFlipFlop(artifact, hayashi)
@@ -83,9 +87,8 @@ func TestHayashiYoshida_Observe(testingTB *testing.T) {
 
 func TestHayashiYoshida_Reset(testingTB *testing.T) {
 	Convey("Given an observed Hayashi stage", testingTB, func() {
-		hayashi := NewHayashiYoshida()
+		hayashi := NewHayashiYoshida(hayashiConfig())
 		artifact := datura.Acquire("test", datura.APPJSON).
-			Poke(1, "config", "maxIntervalSeconds").
 			Poke([]float64{0, 100, 1, 110, 0, 50, 1, 55}, "batch")
 		err := transport.NewFlipFlop(artifact, hayashi)
 
@@ -108,9 +111,8 @@ func TestHayashiYoshida_Reset(testingTB *testing.T) {
 }
 
 func BenchmarkHayashiYoshida_Observe(testingTB *testing.B) {
-	hayashi := NewHayashiYoshida()
-	artifact := datura.Acquire("test", datura.APPJSON).
-		Poke(1, "config", "maxIntervalSeconds")
+	hayashi := NewHayashiYoshida(hayashiConfig())
+	artifact := datura.Acquire("test", datura.APPJSON)
 
 	testingTB.ReportAllocs()
 

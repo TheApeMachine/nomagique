@@ -34,6 +34,25 @@ func TestObservationRingObserve(t *testing.T) {
 		})
 	})
 
+	Convey("Given a long run of similar samples", t, func() {
+		ring := NewObservationRing()
+		artifact := datura.Acquire("test", datura.APPJSON)
+
+		for index := range 100 {
+			sample := 1.0 + float64(index%3)*0.01
+			artifact.Poke(sample, "sample")
+			err := transport.NewFlipFlop(artifact, ring)
+
+			So(err, ShouldBeNil)
+		}
+
+		history := datura.Peek[[]float64](artifact, "history")
+
+		Convey("It should bound retained history", func() {
+			So(len(history), ShouldBeLessThan, 20)
+		})
+	})
+
 	Convey("Given non-positive observations", t, func() {
 		ring := NewObservationRing()
 		artifact := datura.Acquire("test", datura.APPJSON)

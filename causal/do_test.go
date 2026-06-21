@@ -8,7 +8,16 @@ import (
 	"github.com/theapemachine/datura/transport"
 )
 
-func doTableArtifact() *datura.Artifact {
+func doConfig() *datura.Artifact {
+	return datura.Acquire("do-config", datura.APPJSON).
+		Poke(float64(3), "config", "target").
+		Poke(float64(2), "config", "treatment").
+		Poke(20.0, "config", "level").
+		Poke([]float64{0, 1}, "config", "controls").
+		Poke(float64(12), "config", "minHistory")
+}
+
+func doTableInbound() *datura.Artifact {
 	rows := make([][]float64, 16)
 	nodeCount := 4
 	flat := make([]float64, 0, len(rows)*nodeCount)
@@ -23,12 +32,7 @@ func doTableArtifact() *datura.Artifact {
 		flat = append(flat, rows[index]...)
 	}
 
-	return datura.Acquire("test", datura.APPJSON).
-		Poke(float64(3), "config", "target").
-		Poke(float64(2), "config", "treatment").
-		Poke(20.0, "config", "level").
-		Poke([]float64{0, 1}, "config", "controls").
-		Poke(float64(12), "config", "minHistory").
+	return datura.Acquire("do-inbound", datura.APPJSON).
 		Poke(float64(len(rows)), "table", "rowCount").
 		Poke(float64(nodeCount), "table", "nodeCount").
 		Poke(flat, "table", "rows")
@@ -36,8 +40,8 @@ func doTableArtifact() *datura.Artifact {
 
 func TestDo_Read(testingTB *testing.T) {
 	Convey("Given a linear causal table", testingTB, func() {
-		stage := NewDo()
-		artifact := doTableArtifact()
+		stage := NewDo(doConfig())
+		artifact := doTableInbound()
 		err := transport.NewFlipFlop(artifact, stage)
 
 		So(err, ShouldBeNil)
@@ -51,8 +55,8 @@ func TestDo_Read(testingTB *testing.T) {
 }
 
 func BenchmarkDo_Read(testingTB *testing.B) {
-	stage := NewDo()
-	artifact := doTableArtifact()
+	stage := NewDo(doConfig())
+	artifact := doTableInbound()
 
 	testingTB.ReportAllocs()
 

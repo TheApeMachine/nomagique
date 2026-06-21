@@ -94,11 +94,9 @@ func (logReturn *LogReturn) Read(payload []byte) (int, error) {
 		}
 	}
 
-	output := datura.Acquire("log-return-output", datura.APPJSON)
-	output.WithPayload(state.DecryptPayload())
-	output.Merge("sample", logReturnValue)
+	state.Merge("sample", logReturnValue)
 
-	return output.Read(payload)
+	return state.Read(payload)
 }
 
 func (logReturn *LogReturn) Close() error {

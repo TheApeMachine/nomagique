@@ -14,42 +14,49 @@ NodeRing retains aligned per-node sample history for tabular causal stages.
 Write with one scalar per node on batch appends one aligned row. Capacity trims
 the oldest sample per node when history exceeds config.capacity. Compose with
 NewZip so table.* attributes materialize for downstream causal stages.
+The constructor artifact holds config and stream history; Write buffers inbound wire.
 */
 type NodeRing struct {
 	artifact *datura.Artifact
 }
 
 /*
-NewNodeRing returns a bounded multi-node history accumulator.
+NewNodeRing returns a bounded multi-node history accumulator wired from config attributes.
 */
-func NewNodeRing() *NodeRing {
+func NewNodeRing(artifact *datura.Artifact) *NodeRing {
+	artifact.Inspect("causal", "node-ring", "NewNodeRing()")
+
 	return &NodeRing{
-		artifact: datura.Acquire("node-ring", datura.APPJSON),
+		artifact: artifact,
 	}
 }
 
 func (nodeRing *NodeRing) Write(p []byte) (int, error) {
 	preserved := nodeRing.preserveStreams()
-
-	n, err := nodeRing.artifact.Write(p)
-
+	nodeRing.artifact.WithPayload(p)
 	nodeRing.restoreStreams(preserved)
-
-	return n, err
+	return len(p), nil
 }
 
 func (nodeRing *NodeRing) Read(p []byte) (int, error) {
+	state := datura.Acquire("node-ring-state", datura.APPJSON)
+	state.Inspect("causal", "node-ring", "Read()", "p")
+
+	if _, err := state.Write(nodeRing.artifact.DecryptPayload()); err != nil {
+		return 0, err
+	}
+
 	nodeCount := nodeRing.nodeCountFromArtifact()
 	capacity := nodeRing.capacityFromArtifact()
-	row := datura.Peek[[]float64](nodeRing.artifact, "batch")
-	output := datura.Map[float64]{"value": 0}
+	row := datura.Peek[[]float64](state, "batch")
+	output := 0.0
 
 	if len(row) == nodeCount {
 		for nodeIndex, sample := range row {
 			if math.IsNaN(sample) || math.IsInf(sample, 0) {
-				nodeRing.artifact.Poke(output, "output")
-
-				return nodeRing.artifact.Read(p)
+				nodeRing.copyStreamsTo(state)
+				state.MergeOutput("value", 0.0)
+				return state.Read(p)
 			}
 
 			stream := nodeRing.loadStream(nodeIndex, capacity)
@@ -58,12 +65,12 @@ func (nodeRing *NodeRing) Read(p []byte) (int, error) {
 		}
 
 		nodeRing.artifact.Poke(float64(nodeCount), "streams", "nodeCount")
-		output["value"] = row[nodeCount-1]
+		output = row[nodeCount-1]
 	}
 
-	nodeRing.artifact.Poke(output, "output")
-
-	return nodeRing.artifact.Read(p)
+	nodeRing.copyStreamsTo(state)
+	state.MergeOutput("value", output)
+	return state.Read(p)
 }
 
 func (nodeRing *NodeRing) Close() error {
@@ -99,6 +106,21 @@ func (nodeRing *NodeRing) AlignedLength() int {
 	}
 
 	return length
+}
+
+func (nodeRing *NodeRing) copyStreamsTo(state *datura.Artifact) {
+	nodeCount := int(datura.Peek[float64](nodeRing.artifact, "streams", "nodeCount"))
+
+	if nodeCount <= 0 {
+		return
+	}
+
+	state.Poke(float64(nodeCount), "streams", "nodeCount")
+
+	for nodeIndex := range nodeCount {
+		key := strconv.Itoa(nodeIndex)
+		state.Poke(datura.Peek[[]float64](nodeRing.artifact, "streams", key), "streams", key)
+	}
 }
 
 func (nodeRing *NodeRing) loadStream(nodeIndex int, capacity int) *structure.ListRing[float64] {

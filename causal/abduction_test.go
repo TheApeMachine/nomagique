@@ -8,12 +8,22 @@ import (
 	"github.com/theapemachine/datura/transport"
 )
 
-func abductionArtifact(
-	rowCount int,
-	linear bool,
-	treatment int,
-	intervention float64,
-) *datura.Artifact {
+func abductionConfig(linear bool, treatment int, intervention float64) *datura.Artifact {
+	config := datura.Acquire("abduction-config", datura.APPJSON).
+		Poke(float64(3), "config", "target").
+		Poke(float64(treatment), "config", "treatment").
+		Poke(intervention, "config", "intervention").
+		Poke(float64(12), "config", "minHistory").
+		Poke([]float64{0, 1, 2}, "config", "features")
+
+	if linear {
+		config.Poke(float64(1), "config", "linear")
+	}
+
+	return config
+}
+
+func abductionTable(rowCount int, linear bool) *datura.Artifact {
 	nodeCount := 4
 	flat := make([]float64, 0, rowCount*nodeCount)
 
@@ -37,70 +47,62 @@ func abductionArtifact(
 		)
 	}
 
-	artifact := datura.Acquire("test", datura.APPJSON).
-		Poke(float64(3), "config", "target").
-		Poke(float64(treatment), "config", "treatment").
-		Poke(intervention, "config", "intervention").
-		Poke(float64(12), "config", "minHistory").
-		Poke([]float64{0, 1, 2}, "config", "features").
+	return datura.Acquire("abduction-inbound", datura.APPJSON).
 		Poke(float64(rowCount), "table", "rowCount").
 		Poke(float64(nodeCount), "table", "nodeCount").
 		Poke(flat, "table", "rows")
-
-	if linear {
-		artifact.Poke(float64(1), "config", "linear")
-	}
-
-	return artifact
 }
 
-func lastRowTarget(artifact *datura.Artifact) float64 {
-	flat := datura.Peek[[]float64](artifact, "table", "rows")
-	nodeCount := int(datura.Peek[float64](artifact, "table", "nodeCount"))
+func lastRowTarget(config *datura.Artifact, table *datura.Artifact) float64 {
+	flat := datura.Peek[[]float64](table, "table", "rows")
+	nodeCount := int(datura.Peek[float64](table, "table", "nodeCount"))
 
-	return flat[len(flat)-nodeCount+int(datura.Peek[float64](artifact, "config", "target"))]
+	return flat[len(flat)-nodeCount+int(datura.Peek[float64](config, "config", "target"))]
 }
 
-func lastRowTreatment(artifact *datura.Artifact) float64 {
-	flat := datura.Peek[[]float64](artifact, "table", "rows")
-	nodeCount := int(datura.Peek[float64](artifact, "table", "nodeCount"))
-	treatment := int(datura.Peek[float64](artifact, "config", "treatment"))
+func lastRowTreatment(config *datura.Artifact, table *datura.Artifact) float64 {
+	flat := datura.Peek[[]float64](table, "table", "rows")
+	nodeCount := int(datura.Peek[float64](table, "table", "nodeCount"))
+	treatment := int(datura.Peek[float64](config, "config", "treatment"))
 
 	return flat[len(flat)-nodeCount+treatment]
 }
 
 func TestAbduction_Read_Linear(testingTB *testing.T) {
 	Convey("Given a fitted linear structural model through the pipeline", testingTB, func() {
-		stage := NewAbduction()
-		artifact := abductionArtifact(16, true, 2, 20)
-		err := transport.NewFlipFlop(artifact, stage)
+		config := abductionConfig(true, 2, 20)
+		table := abductionTable(16, true)
+		stage := NewAbduction(config)
+		err := transport.NewFlipFlop(table, stage)
 
 		So(err, ShouldBeNil)
 
 		Convey("It should preserve the abducted level at the observed treatment", func() {
-			restoreStage := NewAbduction()
-			restoreArtifact := abductionArtifact(16, true, 2, lastRowTreatment(artifact))
-			err := transport.NewFlipFlop(restoreArtifact, restoreStage)
+			restoreConfig := abductionConfig(true, 2, lastRowTreatment(config, table))
+			restoreTable := abductionTable(16, true)
+			restoreStage := NewAbduction(restoreConfig)
+			err := transport.NewFlipFlop(restoreTable, restoreStage)
 
 			So(err, ShouldBeNil)
 			So(
-				datura.Peek[float64](restoreArtifact, "output", "counterfactual"),
+				datura.Peek[float64](restoreTable, "output", "counterfactual"),
 				ShouldAlmostEqual,
-				lastRowTarget(restoreArtifact),
+				lastRowTarget(restoreConfig, restoreTable),
 				1e-9,
 			)
 		})
 
 		Convey("It should move the counterfactual when treatment changes", func() {
-			movedStage := NewAbduction()
-			movedArtifact := abductionArtifact(16, true, 2, 20)
-			err := transport.NewFlipFlop(movedArtifact, movedStage)
+			movedConfig := abductionConfig(true, 2, 20)
+			movedTable := abductionTable(16, true)
+			movedStage := NewAbduction(movedConfig)
+			err := transport.NewFlipFlop(movedTable, movedStage)
 
 			So(err, ShouldBeNil)
 			So(
-				datura.Peek[float64](movedArtifact, "output", "counterfactual"),
+				datura.Peek[float64](movedTable, "output", "counterfactual"),
 				ShouldNotAlmostEqual,
-				lastRowTarget(movedArtifact),
+				lastRowTarget(movedConfig, movedTable),
 				1e-9,
 			)
 		})
@@ -109,16 +111,17 @@ func TestAbduction_Read_Linear(testingTB *testing.T) {
 
 func TestAbduction_Read_NonLinear(testingTB *testing.T) {
 	Convey("Given a fitted nonlinear model through the pipeline", testingTB, func() {
-		stage := NewAbduction()
-		artifact := abductionArtifact(16, false, 2, 2.0)
-		err := transport.NewFlipFlop(artifact, stage)
+		config := abductionConfig(false, 2, 2.0)
+		table := abductionTable(16, false)
+		stage := NewAbduction(config)
+		err := transport.NewFlipFlop(table, stage)
 
 		So(err, ShouldBeNil)
 
-		observedTarget := lastRowTarget(artifact)
-		uplift := datura.Peek[float64](artifact, "output", "uplift")
-		counterfactual := datura.Peek[float64](artifact, "output", "counterfactual")
-		noise := datura.Peek[float64](artifact, "output", "noise")
+		observedTarget := lastRowTarget(config, table)
+		uplift := datura.Peek[float64](table, "output", "uplift")
+		counterfactual := datura.Peek[float64](table, "output", "counterfactual")
+		noise := datura.Peek[float64](table, "output", "noise")
 
 		Convey("It should return a finite abductive counterfactual read", func() {
 			So(noise, ShouldNotEqual, 0)
@@ -128,12 +131,13 @@ func TestAbduction_Read_NonLinear(testingTB *testing.T) {
 }
 
 func BenchmarkAbduction_Read(testingTB *testing.B) {
-	stage := NewAbduction()
-	artifact := abductionArtifact(16, false, 2, 2.0)
+	config := abductionConfig(false, 2, 2.0)
+	table := abductionTable(16, false)
+	stage := NewAbduction(config)
 
 	testingTB.ReportAllocs()
 
 	for testingTB.Loop() {
-		_ = transport.NewFlipFlop(artifact, stage)
+		_ = transport.NewFlipFlop(table, stage)
 	}
 }

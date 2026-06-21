@@ -4,114 +4,140 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/datura"
+	"github.com/theapemachine/datura/transport"
 )
 
-func TestLinearModel_AbductiveCounterfactual(testingTB *testing.T) {
-	Convey("Given a fitted linear structural model", testingTB, func() {
-		rows := make([][]float64, 16)
+func abductionConfig(linear bool, treatment int, intervention float64) *datura.Artifact {
+	config := datura.Acquire("abduction-config", datura.APPJSON).
+		Poke(float64(3), "config", "target").
+		Poke(float64(treatment), "config", "treatment").
+		Poke(intervention, "config", "intervention").
+		Poke(float64(12), "config", "minHistory").
+		Poke([]float64{0, 1, 2}, "config", "features")
 
-		for index := range rows {
-			rows[index] = []float64{
-				float64(index),
-				float64(index) * 0.5,
-				float64(index) * 2,
-				float64(index) * 0.25,
-			}
+	if linear {
+		config.Poke(float64(1), "config", "linear")
+	}
+
+	return config
+}
+
+func abductionTable(rowCount int, linear bool) *datura.Artifact {
+	nodeCount := 4
+	flat := make([]float64, 0, rowCount*nodeCount)
+
+	for rowIndex := range rowCount {
+		if linear {
+			flat = append(flat,
+				float64(rowIndex),
+				float64(rowIndex)*0.5,
+				float64(rowIndex)*2,
+				float64(rowIndex)*0.25,
+			)
+
+			continue
 		}
 
-		table, err := NewNodeTable(rows, 3, 12)
+		flat = append(flat,
+			float64(rowIndex)*0.1,
+			float64(rowIndex)*0.2,
+			float64(rowIndex)*0.3,
+			float64(rowIndex)*0.05,
+		)
+	}
+
+	return datura.Acquire("abduction-inbound", datura.APPJSON).
+		Poke(float64(rowCount), "table", "rowCount").
+		Poke(float64(nodeCount), "table", "nodeCount").
+		Poke(flat, "table", "rows")
+}
+
+func lastRowTarget(config *datura.Artifact, table *datura.Artifact) float64 {
+	flat := datura.Peek[[]float64](table, "table", "rows")
+	nodeCount := int(datura.Peek[float64](table, "table", "nodeCount"))
+
+	return flat[len(flat)-nodeCount+int(datura.Peek[float64](config, "config", "target"))]
+}
+
+func lastRowTreatment(config *datura.Artifact, table *datura.Artifact) float64 {
+	flat := datura.Peek[[]float64](table, "table", "rows")
+	nodeCount := int(datura.Peek[float64](table, "table", "nodeCount"))
+	treatment := int(datura.Peek[float64](config, "config", "treatment"))
+
+	return flat[len(flat)-nodeCount+treatment]
+}
+
+func TestAbduction_Read_Linear(testingTB *testing.T) {
+	Convey("Given a fitted linear structural model through the pipeline", testingTB, func() {
+		config := abductionConfig(true, 2, 20)
+		table := abductionTable(16, true)
+		stage := NewAbduction(config)
+		err := transport.NewFlipFlop(table, stage)
 
 		So(err, ShouldBeNil)
 
-		model, modelErr := table.LinearModel(0, 1, 2)
-
-		So(modelErr, ShouldBeNil)
-
-		currentRow := rows[len(rows)-1]
-		noise, noiseErr := model.AbductNoise(currentRow, currentRow[3])
-
-		So(noiseErr, ShouldBeNil)
-
-		counterfactual, cfErr := model.StructuralCounterfactual(currentRow, 2, 20, noise)
-
-		So(cfErr, ShouldBeNil)
-
 		Convey("It should preserve the abducted level at the observed treatment", func() {
-			restored, restoreErr := model.StructuralCounterfactual(
-				currentRow, 2, currentRow[2], noise,
-			)
+			restoreConfig := abductionConfig(true, 2, lastRowTreatment(config, table))
+			restoreTable := abductionTable(16, true)
+			restoreStage := NewAbduction(restoreConfig)
+			err := transport.NewFlipFlop(restoreTable, restoreStage)
 
-			So(restoreErr, ShouldBeNil)
-			So(restored, ShouldAlmostEqual, currentRow[3], 1e-9)
+			So(err, ShouldBeNil)
+			So(
+				datura.Peek[float64](restoreTable, "output", "counterfactual"),
+				ShouldAlmostEqual,
+				lastRowTarget(restoreConfig, restoreTable),
+				1e-9,
+			)
 		})
 
 		Convey("It should move the counterfactual when treatment changes", func() {
-			So(counterfactual, ShouldNotAlmostEqual, currentRow[3], 1e-9)
+			movedConfig := abductionConfig(true, 2, 20)
+			movedTable := abductionTable(16, true)
+			movedStage := NewAbduction(movedConfig)
+			err := transport.NewFlipFlop(movedTable, movedStage)
+
+			So(err, ShouldBeNil)
+			So(
+				datura.Peek[float64](movedTable, "output", "counterfactual"),
+				ShouldNotAlmostEqual,
+				lastRowTarget(movedConfig, movedTable),
+				1e-9,
+			)
 		})
 	})
 }
 
-func TestAbductiveCounterfactual(testingTB *testing.T) {
-	Convey("Given a fitted nonlinear model", testingTB, func() {
-		rows := make([][]float64, 16)
-
-		for index := range rows {
-			rows[index] = []float64{
-				float64(index) * 0.1,
-				float64(index) * 0.2,
-				float64(index) * 0.3,
-				float64(index) * 0.05,
-			}
-		}
-
-		table, err := NewNodeTable(rows, 3, 12)
+func TestAbduction_Read_NonLinear(testingTB *testing.T) {
+	Convey("Given a fitted nonlinear model through the pipeline", testingTB, func() {
+		config := abductionConfig(false, 2, 2.0)
+		table := abductionTable(16, false)
+		stage := NewAbduction(config)
+		err := transport.NewFlipFlop(table, stage)
 
 		So(err, ShouldBeNil)
 
-		model, fitOK := FitNonLinearTable(table, []int{0, 1, 2})
-
-		So(fitOK, ShouldBeTrue)
-
-		currentRow := rows[len(rows)-1]
-		uplift, counterfactual, noise, cfErr := AbductiveCounterfactual(
-			model, currentRow, 3, 2, 2.0,
-		)
+		observedTarget := lastRowTarget(config, table)
+		uplift := datura.Peek[float64](table, "output", "uplift")
+		counterfactual := datura.Peek[float64](table, "output", "counterfactual")
+		noise := datura.Peek[float64](table, "output", "noise")
 
 		Convey("It should return a finite abductive counterfactual read", func() {
-			So(cfErr, ShouldBeNil)
 			So(noise, ShouldNotEqual, 0)
-			So(counterfactual, ShouldAlmostEqual, currentRow[3]+uplift, 1e-9)
+			So(counterfactual, ShouldAlmostEqual, observedTarget+uplift, 1e-9)
 		})
 	})
 }
 
-func BenchmarkAbductiveCounterfactual(testingTB *testing.B) {
-	rows := make([][]float64, 16)
+func BenchmarkAbduction_Read(testingTB *testing.B) {
+	config := abductionConfig(false, 2, 2.0)
+	table := abductionTable(16, false)
+	stage := NewAbduction(config)
 
-	for index := range rows {
-		rows[index] = []float64{
-			float64(index) * 0.1,
-			float64(index) * 0.2,
-			float64(index) * 0.3,
-			float64(index) * 0.05,
-		}
-	}
-
-	table, err := NewNodeTable(rows, 3, 12)
-
-	if err != nil {
-		testingTB.Fatal(err)
-	}
-
-	model, fitOK := FitNonLinearTable(table, []int{0, 1, 2})
-
-	if !fitOK {
-		testingTB.Fatal("nonlinear fit failed")
-	}
-
-	currentRow := rows[len(rows)-1]
+	testingTB.ReportAllocs()
 
 	for testingTB.Loop() {
-		_, _, _, _ = AbductiveCounterfactual(model, currentRow, 3, 2, 2.0)
+		_ = transport.NewFlipFlop(table, stage)
 	}
 }

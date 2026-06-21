@@ -1,10 +1,10 @@
 package hawkes
 
 import (
-	"encoding/binary"
 	"math"
 
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/datura/transport"
 	"github.com/theapemachine/nomagique/statistic"
 	"gonum.org/v1/gonum/stat"
 )
@@ -34,14 +34,7 @@ func FitGatesFromHistory(spectralRadii, asymmetries []float64) (FitGates, bool) 
 		return FitGates{}, false
 	}
 
-	saturationArtifact := datura.Acquire("hawkes-saturation", datura.Artifact_Type_json)
-	putFloat64sPayload(saturationArtifact, spectralRadii...)
-	satBuf, _ := saturationArtifact.Message().Marshal()
-	saturationStage := statistic.NewQuantile(0.9, stat.LinInterp, nil)
-	_, _ = saturationStage.Write(satBuf)
-	satOut := make([]byte, len(satBuf))
-	_, _ = saturationStage.Read(satOut)
-	saturationRadius, _ := readPayloadScalar(satOut)
+	saturationRadius := quantileFromHistory(spectralRadii, 0.9)
 
 	absAsymmetries := make([]float64, len(asymmetries))
 
@@ -49,14 +42,7 @@ func FitGatesFromHistory(spectralRadii, asymmetries []float64) (FitGates, bool) 
 		absAsymmetries[index] = math.Abs(asymmetry)
 	}
 
-	frenzyArtifact := datura.Acquire("hawkes-frenzy", datura.Artifact_Type_json)
-	putFloat64sPayload(frenzyArtifact, absAsymmetries...)
-	frenzyBuf, _ := frenzyArtifact.Message().Marshal()
-	frenzyStage := statistic.NewQuantile(0.25, stat.LinInterp, nil)
-	_, _ = frenzyStage.Write(frenzyBuf)
-	frenzyOut := make([]byte, len(frenzyBuf))
-	_, _ = frenzyStage.Read(frenzyOut)
-	frenzyAsymmetry, _ := readPayloadScalar(frenzyOut)
+	frenzyAsymmetry := quantileFromHistory(absAsymmetries, 0.25)
 
 	if saturationRadius <= 0 || frenzyAsymmetry <= 0 {
 		return FitGates{}, false
@@ -68,25 +54,10 @@ func FitGatesFromHistory(spectralRadii, asymmetries []float64) (FitGates, bool) 
 	}, true
 }
 
-func putFloat64sPayload(artifact *datura.Artifact, values ...float64) {
-	payload := make([]byte, 8*len(values))
+func quantileFromHistory(history []float64, percentile float64) float64 {
+	artifact := datura.Acquire("hawkes-quantile", datura.APPJSON).Poke(history, "history")
+	quantile := statistic.NewQuantile(percentile, stat.LinInterp)
+	_ = transport.NewFlipFlop(artifact, quantile)
 
-	for index, value := range values {
-		offset := index * 8
-		binary.BigEndian.PutUint64(payload[offset:offset+8], math.Float64bits(value))
-	}
-
-	_ = artifact.SetPayload(payload)
-}
-
-func readPayloadScalar(artifactBytes []byte) (float64, bool) {
-	outbound := datura.Acquire("hawkes-out", datura.Artifact_Type_json)
-	_, _ = outbound.Write(artifactBytes)
-	payload, err := outbound.Payload()
-
-	if err != nil || len(payload) != 8 {
-		return 0, false
-	}
-
-	return math.Float64frombits(binary.BigEndian.Uint64(payload)), true
+	return datura.Peek[float64](artifact, "output", "value")
 }

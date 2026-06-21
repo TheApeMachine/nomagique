@@ -1,191 +1,108 @@
 package probability
 
 import (
-	"bytes"
-	"errors"
 	"io"
+	"math"
 
 	"github.com/theapemachine/datura"
 )
 
 /*
-Classifier selects a category from competing score stages.
+Classifier selects a category from competing scores declared on inputs.
 
-Wire one io.ReadWriter score source per category in NewClassifier. On Read the
-stage evaluates every source against the carried artifact, normalizes the scores
-with SoftmaxScoresNormalized, and emits a 1-based winning category index.
+The config artifact carries the input score keys; the inbound artifact wire is
+buffered per frame. Read reconstitutes that state, classifies from payload
+output scores, and writes the result back onto the payload.
 */
 type Classifier struct {
-	artifact      *datura.Artifact
-	scoreSources  []io.ReadWriter
-	probabilities []float64
-	categoryIndex int
+	config *datura.Artifact
+	bytes  []byte
 }
 
 /*
-NewClassifier returns a classifier over scoreSources.
-
-Each source is re-read on every Classifier.Read call so upstream stages such as
-algorithm.Pearl can populate ladder readings before classification.
+NewClassifier returns a classifier wired from schema.inputs score keys.
 */
-func NewClassifier(artifact *datura.Artifact) *Classifier {
-	return &Classifier{
-		artifact:     artifact,
+func NewClassifier(config *datura.Artifact) *Classifier {
+	config.Inspect("probability", "classifier", "NewClassifier()")
+
+	return &Classifier{config: config}
+}
+
+func (classifier *Classifier) Write(payload []byte) (int, error) {
+	classifier.bytes = append(classifier.bytes[:0], payload...)
+
+	return len(payload), nil
+}
+
+func (classifier *Classifier) Read(payload []byte) (int, error) {
+	state := datura.Acquire("classifier-state", datura.APPJSON)
+	state.Inspect("probability", "classifier", "Read()", "p")
+
+	if _, err := state.Write(classifier.bytes); err != nil {
+		state.Release()
+
+		return 0, err
 	}
-}
 
-func (classifier *Classifier) Write(p []byte) (int, error) {
-	return classifier.artifact.Write(p)
-}
+	defer state.Release()
 
-func (classifier *Classifier) Read(p []byte) (int, error) {
-	artifact := datura.Acquire("classifier", datura.APPJSON)
-	defer artifact.Release()
+	inputs := datura.Peek[[]string](classifier.config, "inputs")
 
-	scores, ok := classifier.scores()
+	if len(inputs) == 0 {
+		inputs = datura.Peek[[]string](state, "inputs")
+	}
 
-	if ok {
-		probabilities, err := SoftmaxScoresNormalized(scores)
+	if len(inputs) == 0 {
+		return state.Read(payload)
+	}
 
-		if err == nil {
-			classifier.probabilities = probabilities
-			classifier.categoryIndex = ArgmaxIndex(probabilities) + 1
-			out := encodePayload(float64(classifier.categoryIndex))
-			_ = classifier.artifact.SetPayload(out)
+	scores := make([]float64, len(inputs))
 
-			pokeFloatList(classifier.artifact, "classifier.probabilities", classifier.probabilities)
-			pokeInt(classifier.artifact, "classifier.category", classifier.categoryIndex)
-
-			confidence, confidenceErr := classifier.Confidence(classifier.categoryIndex)
-
-			if confidenceErr == nil {
-				pokeFloat(classifier.artifact, "classifier.confidence", confidence)
-			}
+	for index, input := range inputs {
+		if input == "" {
+			return state.Read(payload)
 		}
+
+		score := datura.Peek[float64](state, "output", input)
+
+		if math.IsNaN(score) || math.IsInf(score, 0) {
+			return state.Read(payload)
+		}
+
+		scores[index] = score
 	}
 
-	return classifier.artifact.Read(p)
-}
+	probabilities, err := SoftmaxScoresNormalized(scores)
 
-func (classifier *Classifier) Value() float64 {
-	payload, _ := classifier.artifact.Payload()
-	value, ok := payloadScalar(payload)
-
-	if !ok {
-		return 0
+	if err != nil {
+		return state.Read(payload)
 	}
 
-	return value
+	categoryIndex := ArgmaxIndex(probabilities) + 1
+
+	confidence, confidenceErr := CategoryConfidence(probabilities, categoryIndex)
+
+	if confidenceErr != nil {
+		return state.Read(payload)
+	}
+
+	strength := datura.Peek[float64](state, "output", "strength")
+
+	if strength <= 0 || math.IsNaN(strength) || math.IsInf(strength, 0) {
+		strength = scores[categoryIndex-1]
+	}
+
+	state.MergeOutput("probabilities", probabilities)
+	state.MergeOutput("category", categoryIndex)
+	state.MergeOutput("confidence", confidence)
+	state.MergeOutput("strength", strength)
+	state.MergeOutput("value", categoryIndex)
+
+	return state.Read(payload)
 }
 
 func (classifier *Classifier) Close() error {
 	return nil
 }
 
-/*
-Probabilities returns the normalized category probabilities from the last Read.
-*/
-func (classifier *Classifier) Probabilities() []float64 {
-	return classifier.probabilities
-}
-
-/*
-CategoryIndex returns the 1-based winning category from the last Read.
-*/
-func (classifier *Classifier) CategoryIndex() int {
-	return classifier.categoryIndex
-}
-
-/*
-Confidence returns the normalized probability share for categoryIndex.
-When categoryIndex is zero the winning category is used.
-*/
-func (classifier *Classifier) Confidence(categoryIndex int) (float64, error) {
-	return CategoryConfidence(classifier.probabilities, categoryIndex)
-}
-
-/*
-Reset clears derived state.
-*/
-func (classifier *Classifier) Reset() error {
-	classifier.probabilities = nil
-	classifier.categoryIndex = 0
-
-	return nil
-}
-
-func (classifier *Classifier) scores() ([]float64, bool) {
-	if len(classifier.scoreSources) == 0 {
-		return nil, false
-	}
-
-	buf, err := classifier.inboundBytes()
-
-	if err != nil {
-		return nil, false
-	}
-
-	scores := make([]float64, len(classifier.scoreSources))
-
-	for index, scoreSource := range classifier.scoreSources {
-		score, scoreOK := readScore(scoreSource, buf)
-
-		if !scoreOK {
-			return nil, false
-		}
-
-		scores[index] = score
-	}
-
-	return scores, true
-}
-
-func (classifier *Classifier) inboundBytes() ([]byte, error) {
-	payload, payloadOK := classifier.artifact.PayloadQuiet()
-
-	if !payloadOK {
-		return nil, errors.New("classifier: inbound payload unavailable")
-	}
-
-	inbound := datura.Acquire("classifier-in", datura.Artifact_Type_json)
-	_ = inbound.SetPayload(payload)
-
-	return inbound.Message().Marshal()
-}
-
-func readScore(scoreSource io.ReadWriter, artifactBytes []byte) (float64, bool) {
-	_, writeErr := scoreSource.Write(artifactBytes)
-
-	if writeErr != nil {
-		return 0, false
-	}
-
-	var outBuf bytes.Buffer
-	chunk := make([]byte, 4096)
-
-	for {
-		readCount, readErr := scoreSource.Read(chunk)
-
-		if readCount > 0 {
-			outBuf.Write(chunk[:readCount])
-		}
-
-		if readErr == io.EOF {
-			break
-		}
-
-		if readErr != nil {
-			return 0, false
-		}
-	}
-
-	outbound := datura.Acquire("classifier-score", datura.Artifact_Type_json)
-	_, _ = outbound.Write(outBuf.Bytes())
-	payload, payloadErr := outbound.Payload()
-
-	if payloadErr != nil {
-		return 0, false
-	}
-
-	return payloadScalar(payload)
-}
+var _ io.ReadWriteCloser = (*Classifier)(nil)

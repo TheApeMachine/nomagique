@@ -17,7 +17,7 @@ Forecast returns a scale-learning dynamic ready from its first observation.
 */
 func Forecast() *Forecaster {
 	return &Forecaster{
-		artifact: datura.Acquire("forecast", datura.Artifact_Type_json),
+		artifact: datura.Acquire("forecast", datura.APPJSON),
 	}
 }
 
@@ -26,16 +26,25 @@ func (forecaster *Forecaster) Write(p []byte) (int, error) {
 }
 
 func (forecaster *Forecaster) Read(p []byte) (int, error) {
-	values := float64Batch(forecaster.artifact)
+	predicted := datura.Peek[float64](forecaster.artifact, "sample")
+	actual := datura.Peek[float64](forecaster.artifact, "paired")
 
-	if len(values) >= 2 {
-		predicted, actual, err := parsePredictedActual(values[0], values[1:])
-
-		if err == nil {
-			derived := ObserveForecast(&forecaster.state, predicted, actual)
-			putFloat64Payload(&forecaster.artifact, "forecast", derived)
-		}
+	if predicted == 0 && actual == 0 {
+		return forecaster.artifact.Read(p)
 	}
+
+	if actual == 0 {
+		return forecaster.artifact.Read(p)
+	}
+
+	parsedPredicted, parsedActual, err := parsePredictedActual(predicted, []float64{actual})
+
+	if err != nil {
+		return forecaster.artifact.Read(p)
+	}
+
+	derived := ObserveForecast(&forecaster.state, parsedPredicted, parsedActual)
+	forecaster.artifact.Poke(datura.Map[float64]{"value": derived}, "output")
 
 	return forecaster.artifact.Read(p)
 }
@@ -65,6 +74,7 @@ Reset clears derived state.
 */
 func (forecaster *Forecaster) Reset() error {
 	forecaster.state.Reset()
+	forecaster.artifact.Poke(datura.Map[float64]{"value": 0}, "output")
 
 	return nil
 }

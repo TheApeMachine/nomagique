@@ -8,113 +8,76 @@ import (
 
 /*
 EMA is a volatility-adaptive exponential moving average stage.
+The constructor artifact holds config; Write buffers inbound wire on its payload.
 */
 type EMA struct {
 	artifact *datura.Artifact
-	value    float64
-	prev     float64
-	min      float64
-	max      float64
-	rate     float64
-	ready    bool
 }
 
 /*
-NewEMA returns an EMA stage ready to bootstrap from its first observation.
+NewEMA returns an EMA stage wired from config attributes on the artifact.
 */
-func NewEMA() *EMA {
+func NewEMA(artifact *datura.Artifact) *EMA {
+	artifact.Inspect("adaptive", "ema", "NewEMA()")
+
 	return &EMA{
-		artifact: datura.Acquire("ema", datura.Artifact_Type_json),
+		artifact: artifact,
 	}
 }
 
-func (ema *EMA) Write(p []byte) (int, error) {
-	return ema.artifact.Write(p)
+func (ema *EMA) Write(payload []byte) (int, error) {
+	ema.artifact.WithPayload(payload)
+	return len(payload), nil
 }
 
-func (ema *EMA) Read(p []byte) (int, error) {
-	payload, err := ema.artifact.Payload()
+func (ema *EMA) Read(payload []byte) (int, error) {
+	state := datura.Acquire("ema-state", datura.APPJSON)
+	state.Inspect("adaptive", "ema", "Read()", "p")
 
-	if err == nil {
-		observeScalarPayload(&ema.artifact, "ema", payload, ema.step)
+	if _, err := state.Write(ema.artifact.DecryptPayload()); err != nil {
+		return 0, err
 	}
 
-	return ema.artifact.Read(p)
+	sample := datura.Peek[float64](state, "sample")
+
+	if math.IsNaN(sample) || math.IsInf(sample, 0) {
+		return state.Read(payload)
+	}
+
+	output := datura.Peek[datura.Map[float64]](ema.artifact, "output")
+
+	switch {
+	case output == nil:
+		output = datura.Map[float64]{
+			"min":   sample,
+			"max":   sample,
+			"prev":  sample,
+			"rate":  0,
+			"value": sample,
+		}
+	default:
+		output["min"] = math.Min(output["min"], sample)
+		output["max"] = math.Max(output["max"], sample)
+
+		span := output["max"] - output["min"]
+
+		if span == 0 {
+			output["prev"] = sample
+		} else {
+			delta := math.Abs(sample - output["prev"])
+			output["rate"] = delta / span
+			output["value"] += output["rate"] * (sample - output["value"])
+			output["prev"] = sample
+		}
+	}
+
+	ema.artifact.Merge("output", output)
+	state.MergeOutput("value", output["value"])
+	state.Merge("root", "output")
+	state.Merge("inputs", []string{"value"})
+	return state.Read(payload)
 }
 
 func (ema *EMA) Close() error {
 	return nil
-}
-
-/*
-ObserveSample ingests one raw sample through the EMA kernel.
-*/
-func (ema *EMA) ObserveSample(sample float64) float64 {
-	return observeScalarSample(&ema.artifact, "ema", sample, ema.step)
-}
-
-/*
-ObserveSamples writes one derived value per sample into out.
-*/
-func (ema *EMA) ObserveSamples(samples []float64, out []float64) {
-	limit := len(samples)
-
-	if len(out) < limit {
-		limit = len(out)
-	}
-
-	for index := 0; index < limit; index++ {
-		out[index] = ema.ObserveSample(samples[index])
-	}
-}
-
-/*
-Reset clears derived state so the next observation bootstraps again.
-*/
-func (ema *EMA) Reset() error {
-	ema.value = 0
-	ema.prev = 0
-	ema.min = 0
-	ema.max = 0
-	ema.rate = 0
-	ema.ready = false
-
-	return nil
-}
-
-func (ema *EMA) step(sample float64) float64 {
-	if !ema.ready {
-		ema.value = sample
-		ema.prev = sample
-		ema.min = sample
-		ema.max = sample
-		ema.ready = true
-
-		return sample
-	}
-
-	ema.min = math.Min(ema.min, sample)
-	ema.max = math.Max(ema.max, sample)
-
-	span := ema.max - ema.min
-
-	if span == 0 {
-		ema.prev = sample
-
-		return ema.value
-	}
-
-	delta := math.Abs(sample - ema.prev)
-	ema.rate = delta / span
-	ema.value += ema.rate * (sample - ema.value)
-	ema.prev = sample
-
-	return ema.value
-}
-
-/*
-Value returns the last derived scalar without re-processing the stage.
-*/
-func (ema *EMA) Value() float64 {
-	return valueFromArtifact(ema.artifact)
 }

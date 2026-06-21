@@ -1,149 +1,46 @@
 package algorithm
 
 import (
-	"math"
+	"io"
 
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/nomagique/correlation"
+	"github.com/theapemachine/nomagique/hawkes"
 	"github.com/theapemachine/nomagique/learning"
+	"github.com/theapemachine/nomagique/statistic"
 )
 
 /*
-Calibrate fits an online RLS model from aligned feature and target streams.
+NewCalibrate returns an online RLS calibration stage.
 */
-type Calibrate struct {
-	artifact         *datura.Artifact
-	features         [][]float64
-	target           []float64
-	filter           *learning.RLSFilter
-	initialVariance  float64
-	forgettingFactor float64
-	lastResidual     float64
-	lastCondition    float64
+func NewCalibrate(dimension int, initialVariance float64) (io.ReadWriteCloser, error) {
+	return learning.NewRLS(dimension, initialVariance)
 }
 
 /*
-NewCalibrate creates an RLS calibration stage over feature streams and one target stream.
-initialVariance and forgettingFactor are forwarded to learning.RLSFilter.
+NewCorrelate returns a dual-correlation gap stage.
 */
-func NewCalibrate(
-	features [][]float64,
-	target []float64,
-	initialVariance, forgettingFactor float64,
-) (*Calibrate, error) {
-	if len(features) == 0 {
-		return nil, ErrEmptyInputs
-	}
-
-	if initialVariance <= 0 {
-		initialVariance = 1000
-	}
-
-	if forgettingFactor <= 0 || forgettingFactor > 1 {
-		forgettingFactor = 1
-	}
-
-	filter, err := learning.NewRLSFilter(len(features), initialVariance)
-
-	if err != nil {
-		return nil, err
-	}
-
-	if setErr := filter.SetForgettingFactor(forgettingFactor); setErr != nil {
-		return nil, setErr
-	}
-
-	return &Calibrate{
-		artifact:         datura.Acquire("calibrate", datura.Artifact_Type_json),
-		features:         features,
-		target:           target,
-		filter:           filter,
-		initialVariance:  initialVariance,
-		forgettingFactor: forgettingFactor,
-	}, nil
-}
-
-func (calibrate *Calibrate) Write(p []byte) (int, error) {
-	return calibrate.artifact.Write(p)
-}
-
-func (calibrate *Calibrate) Read(p []byte) (int, error) {
-	rehydrateArtifact(&calibrate.artifact, "calibrate", datura.Artifact_Type_json)
-
-	rows, ok := zipFeatureTargetRows(calibrate.features, calibrate.target)
-
-	if !ok {
-		calibrate.lastResidual = 0
-		calibrate.lastCondition = 0
-
-		return calibrate.artifact.Read(p)
-	}
-
-	calibrate.filter.Reset()
-
-	for rowIndex, row := range rows {
-		observeErr := calibrate.filter.Observe(row.features, row.target)
-
-		if observeErr != nil {
-			calibrate.lastResidual = 0
-			calibrate.lastCondition = 0
-
-			return calibrate.artifact.Read(p)
-		}
-
-		if rowIndex == len(rows)-1 {
-			residual, residualErr := calibrate.filter.Residual(row.features, row.target)
-
-			if residualErr != nil {
-				calibrate.lastResidual = 0
-				calibrate.lastCondition = calibrate.filter.ConditionNumberBound()
-
-				return calibrate.artifact.Read(p)
-			}
-
-			calibrate.lastResidual = math.Abs(residual)
-			calibrate.lastCondition = calibrate.filter.ConditionNumberBound()
-			out := encodePayload(calibrate.lastResidual)
-			_ = calibrate.artifact.SetPayload(out)
-
-			return calibrate.artifact.Read(p)
-		}
-	}
-
-	return calibrate.artifact.Read(p)
-}
-
-func (calibrate *Calibrate) Close() error {
-	return nil
+func NewCorrelate(artifact *datura.Artifact) io.ReadWriteCloser {
+	return correlation.NewGap(artifact)
 }
 
 /*
-Residual returns the absolute residual from the last Read call.
+NewShift returns a distribution-shift KL divergence stage.
 */
-func (calibrate *Calibrate) Residual() float64 {
-	return calibrate.lastResidual
+func NewShift(expectedSum, floor float64) io.ReadWriteCloser {
+	return statistic.NewKLDivergence(expectedSum, floor)
 }
 
 /*
-ConditionNumber returns the covariance condition bound from the last Read call.
+NewHawkes returns a Hawkes moment-confidence stage.
 */
-func (calibrate *Calibrate) ConditionNumber() float64 {
-	return calibrate.lastCondition
+func NewHawkes(params hawkes.BivariateParams, momentR, momentS float64) io.ReadWriteCloser {
+	return hawkes.NewMoment(params, momentR, momentS)
 }
 
 /*
-Coefficients returns a copy of the current RLS coefficients including intercept.
+NewHawkesFit returns a timestamp-stream Hawkes fit stage.
 */
-func (calibrate *Calibrate) Coefficients() []float64 {
-	return calibrate.filter.Coefficients()
-}
-
-/*
-Reset clears derived state and restores the RLS filter.
-*/
-func (calibrate *Calibrate) Reset() error {
-	calibrate.lastResidual = 0
-	calibrate.lastCondition = 0
-	calibrate.filter.Reset()
-
-	return nil
+func NewHawkesFit(horizonUnixNano float64, prior hawkes.BivariateFit) io.ReadWriteCloser {
+	return hawkes.NewFit(int64(horizonUnixNano), prior)
 }

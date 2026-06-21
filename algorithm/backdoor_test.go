@@ -1,56 +1,62 @@
-package algorithm
+package algorithm_test
 
 import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/datura"
+	"github.com/theapemachine/datura/transport"
+	"github.com/theapemachine/nomagique/algorithm"
 )
+
+func backdoorConfig() *datura.Artifact {
+	return datura.Acquire("backdoor-config", datura.APPJSON).
+		Poke(float64(3), "config", "target").
+		Poke(float64(2), "config", "treatment").
+		Poke([]float64{0, 1}, "config", "controls").
+		Poke(float64(12), "config", "minHistory")
+}
+
+func backdoorTable(rowCount int) *datura.Artifact {
+	nodeCount := 4
+	flat := make([]float64, 0, rowCount*nodeCount)
+
+	for rowIndex := range rowCount {
+		flat = append(flat,
+			float64(rowIndex)*0.1,
+			float64(rowIndex)*0.2,
+			float64(rowIndex)*0.5,
+			float64(rowIndex)*0.05,
+		)
+	}
+
+	return datura.Acquire("backdoor-table", datura.APPJSON).
+		Poke(float64(rowCount), "table", "rowCount").
+		Poke(float64(nodeCount), "table", "nodeCount").
+		Poke(flat, "table", "rows")
+}
 
 func TestBackdoor_Observe(testingTB *testing.T) {
 	Convey("Given aligned node streams with causal structure", testingTB, func() {
-		nodeZero := make([]float64, 16)
-		nodeOne := make([]float64, 16)
-		nodeTwo := make([]float64, 16)
-		nodeThree := make([]float64, 16)
+		backdoor := algorithm.NewBackdoor(backdoorConfig())
+		artifact := backdoorTable(16)
+		err := transport.NewFlipFlop(artifact, backdoor)
 
-		for index := range nodeZero {
-			nodeZero[index] = float64(index) * 0.1
-			nodeOne[index] = float64(index) * 0.2
-			nodeTwo[index] = float64(index) * 0.5
-			nodeThree[index] = float64(index) * 0.05
-		}
-
-		streams := [][]float64{nodeZero, nodeOne, nodeTwo, nodeThree}
-		backdoor := NewBackdoor(3, 2, []int{0, 1}, streams, 12)
-		effect := observeInputs(backdoor)
+		So(err, ShouldBeNil)
 
 		Convey("It should return a finite backdoor effect", func() {
-			So(float64(effect), ShouldNotEqual, 0)
-			So(float64(backdoor.Association()), ShouldNotEqual, 0)
-			So(float64(backdoor.ConditionNumber()), ShouldBeGreaterThan, 0)
+			So(datura.Peek[float64](artifact, "output", "value"), ShouldNotEqual, 0)
 		})
 	})
 }
 
 func BenchmarkBackdoor_Observe(testingTB *testing.B) {
-	nodeZero := make([]float64, 16)
-	nodeOne := make([]float64, 16)
-	nodeTwo := make([]float64, 16)
-	nodeThree := make([]float64, 16)
-
-	for index := range nodeZero {
-		nodeZero[index] = float64(index) * 0.1
-		nodeOne[index] = float64(index) * 0.2
-		nodeTwo[index] = float64(index) * 0.5
-		nodeThree[index] = float64(index) * 0.05
-	}
-
-	streams := [][]float64{nodeZero, nodeOne, nodeTwo, nodeThree}
-	backdoor := NewBackdoor(3, 2, []int{0, 1}, streams, 12)
+	backdoor := algorithm.NewBackdoor(backdoorConfig())
+	artifact := backdoorTable(16)
 
 	testingTB.ReportAllocs()
 
 	for testingTB.Loop() {
-		_ = observeInputs(backdoor)
+		_ = transport.NewFlipFlop(artifact, backdoor)
 	}
 }

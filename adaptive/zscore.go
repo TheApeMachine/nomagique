@@ -1,7 +1,6 @@
 package adaptive
 
 import (
-	"encoding/binary"
 	"math"
 
 	"github.com/theapemachine/datura"
@@ -9,155 +8,126 @@ import (
 
 /*
 ZScore tracks adaptive scale for a normalized surprise score.
+The constructor artifact holds config; Write buffers inbound wire on its payload.
 */
 type ZScore struct {
 	artifact *datura.Artifact
-	Mean     float64
-	Var      float64
-	Prev     float64
-	Min      float64
-	Max      float64
-	Rate     float64
-	Ready    bool
 }
 
 /*
-NewZScore returns a z-score stage ready to bootstrap from its first observation.
+NewZScore returns a z-score stage wired from config attributes on the artifact.
 */
-func NewZScore() *ZScore {
+func NewZScore(artifact *datura.Artifact) *ZScore {
+	artifact.Inspect("adaptive", "zscore", "NewZScore()")
+
 	return &ZScore{
-		artifact: datura.Acquire("zscore", datura.Artifact_Type_json),
+		artifact: artifact,
 	}
 }
 
-func (surprise *ZScore) Write(p []byte) (int, error) {
-	return surprise.artifact.Write(p)
+func (surprise *ZScore) Write(payload []byte) (int, error) {
+	output := datura.Peek[datura.Map[float64]](surprise.artifact, "output")
+
+	surprise.artifact.WithPayload(payload)
+
+	if output != nil {
+		surprise.artifact.Merge("output", output)
+	}
+
+	return len(payload), nil
 }
 
-func (surprise *ZScore) Read(p []byte) (int, error) {
-	payload, err := surprise.artifact.Payload()
+func (surprise *ZScore) Read(payload []byte) (int, error) {
+	state := datura.Acquire("zscore-state", datura.APPJSON)
+	state.Inspect("adaptive", "zscore", "Read()", "p")
 
-	if err == nil && len(payload) >= 8 {
-		sample := math.Float64frombits(binary.BigEndian.Uint64(payload[:8]))
-		anchor := 0.0
-		hasAnchor := false
+	if _, err := state.Write(surprise.artifact.DecryptPayload()); err != nil {
+		return 0, err
+	}
 
-		if len(payload) >= 16 {
-			anchor = math.Float64frombits(binary.BigEndian.Uint64(payload[8:16]))
-			hasAnchor = finiteScalar(anchor)
+	sample := datura.Peek[float64](state, "sample")
+
+	if math.IsNaN(sample) || math.IsInf(sample, 0) {
+		return state.Read(payload)
+	}
+
+	anchor := datura.Peek[float64](state, "anchor")
+
+	if anchor == 0 {
+		anchor = datura.Peek[float64](surprise.artifact, "anchor")
+	}
+
+	hasAnchor := anchor != 0 && !math.IsNaN(anchor) && !math.IsInf(anchor, 0)
+
+	output := datura.Peek[datura.Map[float64]](surprise.artifact, "output")
+
+	if output == nil {
+		output = datura.Map[float64]{
+			"mean":  sample,
+			"var":   0,
+			"prev":  sample,
+			"min":   sample,
+			"max":   sample,
+			"rate":  0,
+			"value": 0,
 		}
 
-		if finiteScalar(sample) {
-			derived := surprise.step(sample, anchor, hasAnchor)
-
-			if finiteScalar(derived) {
-				assignScalarPayload(&surprise.artifact, "zscore", derived)
-			}
-		}
+		surprise.artifact.Merge("output", output)
+		state.MergeOutput("value", output["value"])
+		state.Merge("root", "output")
+		state.Merge("inputs", []string{"value"})
+		return state.Read(payload)
 	}
 
-	return surprise.artifact.Read(p)
-}
+	output["min"] = math.Min(output["min"], sample)
+	output["max"] = math.Max(output["max"], sample)
 
-func (surprise *ZScore) Close() error {
-	return nil
-}
-
-/*
-ObserveSample ingests one raw sample through the z-score kernel.
-*/
-func (surprise *ZScore) ObserveSample(sample float64) float64 {
-	return observeScalarSample(&surprise.artifact, "zscore", sample, func(value float64) float64 {
-		return surprise.step(value, 0, false)
-	})
-}
-
-/*
-ObserveSamples writes one derived value per sample into out.
-*/
-func (surprise *ZScore) ObserveSamples(samples []float64, out []float64) {
-	limit := len(samples)
-
-	if len(out) < limit {
-		limit = len(out)
-	}
-
-	for index := 0; index < limit; index++ {
-		out[index] = surprise.ObserveSample(samples[index])
-	}
-}
-
-/*
-Reset clears derived state so the next Read bootstraps again.
-*/
-func (surprise *ZScore) Reset() error {
-	surprise.Mean = 0
-	surprise.Var = 0
-	surprise.Prev = 0
-	surprise.Min = 0
-	surprise.Max = 0
-	surprise.Rate = 0
-	surprise.Ready = false
-
-	return nil
-}
-
-func (surprise *ZScore) step(sample float64, anchorMean float64, hasAnchorMean bool) float64 {
-	if !surprise.Ready {
-		surprise.Mean = sample
-		surprise.Var = 0
-		surprise.Prev = sample
-		surprise.Min = sample
-		surprise.Max = sample
-		surprise.Ready = true
-
-		return 0
-	}
-
-	return surprise.stepReady(sample, anchorMean, hasAnchorMean)
-}
-
-func (surprise *ZScore) stepReady(
-	sample float64, anchorMean float64, hasAnchorMean bool,
-) float64 {
-	surprise.Min = math.Min(surprise.Min, sample)
-	surprise.Max = math.Max(surprise.Max, sample)
-
-	span := surprise.Max - surprise.Min
+	span := output["max"] - output["min"]
 
 	if span == 0 {
-		surprise.Prev = sample
-
-		return 0
+		output["prev"] = sample
+		surprise.artifact.Merge("output", output)
+		state.MergeOutput("value", output["value"])
+		state.Merge("root", "output")
+		state.Merge("inputs", []string{"value"})
+		return state.Read(payload)
 	}
 
-	delta := math.Abs(sample - surprise.Prev)
-	surprise.Rate = delta / span
-	level := surprise.Mean
+	delta := math.Abs(sample - output["prev"])
+	output["rate"] = delta / span
+	level := output["mean"]
 
-	if hasAnchorMean {
-		level = anchorMean
+	if hasAnchor {
+		level = anchor
 	}
 
 	deviation := sample - level
 
-	if !hasAnchorMean {
-		surprise.Mean += surprise.Rate * (sample - surprise.Mean)
+	if !hasAnchor {
+		output["mean"] += output["rate"] * (sample - output["mean"])
 	}
 
-	surprise.Var += surprise.Rate * (deviation*deviation - surprise.Var)
-	surprise.Prev = sample
+	output["var"] += output["rate"] * (deviation*deviation - output["var"])
+	output["prev"] = sample
 
-	if surprise.Var <= 0 {
-		return 0
+	if output["var"] <= 0 {
+		output["value"] = 0
+		surprise.artifact.Merge("output", output)
+		state.MergeOutput("value", output["value"])
+		state.Merge("root", "output")
+		state.Merge("inputs", []string{"value"})
+		return state.Read(payload)
 	}
 
-	return deviation / math.Sqrt(surprise.Var)
+	output["value"] = deviation / math.Sqrt(output["var"])
+
+	surprise.artifact.Merge("output", output)
+	state.MergeOutput("value", output["value"])
+	state.Merge("root", "output")
+	state.Merge("inputs", []string{"value"})
+	return state.Read(payload)
 }
 
-/*
-Value returns the last derived scalar without re-processing the stage.
-*/
-func (surprise *ZScore) Value() float64 {
-	return valueFromArtifact(surprise.artifact)
+func (surprise *ZScore) Close() error {
+	return nil
 }

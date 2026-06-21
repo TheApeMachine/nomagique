@@ -8,110 +8,90 @@ import (
 
 /*
 Delta tracks a unit-normalized change relative to the running sample range.
+The constructor artifact holds config; Write buffers inbound wire on its payload.
 */
 type Delta struct {
 	artifact *datura.Artifact
-	Prev     float64
-	Min      float64
-	Max      float64
-	Ready    bool
 }
 
 /*
-NewDelta returns a delta stage ready to bootstrap from its first observation.
+NewDelta returns a delta stage wired from config attributes on the artifact.
 */
-func NewDelta() *Delta {
+func NewDelta(artifact *datura.Artifact) *Delta {
+	artifact.Inspect("adaptive", "delta", "NewDelta()")
+
 	return &Delta{
-		artifact: datura.Acquire("delta", datura.Artifact_Type_json),
+		artifact: artifact,
 	}
 }
 
-func (delta *Delta) Write(p []byte) (int, error) {
-	return delta.artifact.Write(p)
-}
+func (delta *Delta) Write(payload []byte) (int, error) {
+	output := datura.Peek[datura.Map[float64]](delta.artifact, "output")
 
-func (delta *Delta) Read(p []byte) (int, error) {
-	payload, err := delta.artifact.Payload()
+	delta.artifact.WithPayload(payload)
 
-	if err == nil {
-		observeScalarPayload(&delta.artifact, "delta", payload, delta.step)
+	if output != nil {
+		delta.artifact.Merge("output", output)
 	}
 
-	return delta.artifact.Read(p)
+	return len(payload), nil
+}
+
+func (delta *Delta) Read(payload []byte) (int, error) {
+	state := datura.Acquire("delta-state", datura.APPJSON)
+	state.Inspect("adaptive", "delta", "Read()", "p")
+
+	if _, err := state.Write(delta.artifact.DecryptPayload()); err != nil {
+		return 0, err
+	}
+
+	sample := datura.Peek[float64](state, "sample")
+
+	if math.IsNaN(sample) || math.IsInf(sample, 0) {
+		return state.Read(payload)
+	}
+
+	output := datura.Peek[datura.Map[float64]](delta.artifact, "output")
+
+	if output == nil {
+		output = datura.Map[float64]{
+			"min":   sample,
+			"max":   sample,
+			"prev":  sample,
+			"value": 0,
+		}
+
+		delta.artifact.Merge("output", output)
+		state.MergeOutput("value", output["value"])
+		state.Merge("root", "output")
+		state.Merge("inputs", []string{"value"})
+		return state.Read(payload)
+	}
+
+	output["min"] = math.Min(output["min"], sample)
+	output["max"] = math.Max(output["max"], sample)
+
+	span := output["max"] - output["min"]
+
+	if span == 0 {
+		output["prev"] = sample
+		delta.artifact.Merge("output", output)
+		state.MergeOutput("value", output["value"])
+		state.Merge("root", "output")
+		state.Merge("inputs", []string{"value"})
+		return state.Read(payload)
+	}
+
+	output["value"] = math.Abs(sample-output["prev"]) / span
+	output["prev"] = sample
+
+	delta.artifact.Merge("output", output)
+	state.MergeOutput("value", output["value"])
+	state.Merge("root", "output")
+	state.Merge("inputs", []string{"value"})
+	return state.Read(payload)
 }
 
 func (delta *Delta) Close() error {
 	return nil
-}
-
-/*
-ObserveSample ingests one raw sample through the delta kernel.
-*/
-func (delta *Delta) ObserveSample(sample float64) float64 {
-	return observeScalarSample(&delta.artifact, "delta", sample, delta.step)
-}
-
-/*
-ObserveSamples writes one derived value per sample into out.
-*/
-func (delta *Delta) ObserveSamples(samples []float64, out []float64) {
-	limit := len(samples)
-
-	if len(out) < limit {
-		limit = len(out)
-	}
-
-	for index := 0; index < limit; index++ {
-		out[index] = delta.ObserveSample(samples[index])
-	}
-}
-
-/*
-Reset clears derived state so the next Read bootstraps again.
-*/
-func (delta *Delta) Reset() error {
-	delta.Prev = 0
-	delta.Min = 0
-	delta.Max = 0
-	delta.Ready = false
-
-	return nil
-}
-
-func (delta *Delta) step(sample float64) float64 {
-	if !delta.Ready {
-		delta.Prev = sample
-		delta.Min = sample
-		delta.Max = sample
-		delta.Ready = true
-
-		return 0
-	}
-
-	return delta.stepReady(sample)
-}
-
-func (delta *Delta) stepReady(sample float64) float64 {
-	delta.Min = math.Min(delta.Min, sample)
-	delta.Max = math.Max(delta.Max, sample)
-
-	span := delta.Max - delta.Min
-
-	if span == 0 {
-		delta.Prev = sample
-
-		return 0
-	}
-
-	normalized := math.Abs(sample-delta.Prev) / span
-	delta.Prev = sample
-
-	return normalized
-}
-
-/*
-Value returns the last derived scalar without re-processing the stage.
-*/
-func (delta *Delta) Value() float64 {
-	return valueFromArtifact(delta.artifact)
 }

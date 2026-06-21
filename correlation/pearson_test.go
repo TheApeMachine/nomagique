@@ -4,7 +4,13 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/datura"
+	"github.com/theapemachine/datura/transport"
 )
+
+func pearsonConfig() *datura.Artifact {
+	return datura.Acquire("pearson-config", datura.APPJSON)
+}
 
 func TestPearson_Observe(testingTB *testing.T) {
 	cases := []struct {
@@ -25,64 +31,102 @@ func TestPearson_Observe(testingTB *testing.T) {
 	}
 
 	for _, testCase := range cases {
-		testCase := testCase
-
 		Convey("Given "+testCase.name, testingTB, func() {
-			pearson := NewPearson(nil)
-			got := observeInputs(pearson, testCase.inputs...)
+			pearson := NewPearson(pearsonConfig())
+			artifact := datura.Acquire("test", datura.APPJSON).Poke(testCase.inputs, "batch")
+			err := transport.NewFlipFlop(artifact, pearson)
+
+			So(err, ShouldBeNil)
+
+			got := datura.Peek[float64](artifact, "output", "value")
 
 			Convey("It should return the expected correlation", func() {
-				So(float64(got), ShouldEqual, testCase.expect)
+				So(got, ShouldEqual, testCase.expect)
+			})
+
+			Convey("It should publish root and inputs for downstream navigation", func() {
+				So(datura.Peek[string](artifact, "root"), ShouldEqual, "output")
+				So(datura.Peek[[]string](artifact, "inputs"), ShouldResemble, []string{"value"})
+				So(
+					datura.Peek[float64](artifact, datura.Peek[string](artifact, "root"), "value"),
+					ShouldEqual,
+					testCase.expect,
+				)
 			})
 		})
 	}
 
 	Convey("Given empty Observe inputs", testingTB, func() {
-		pearson := NewPearson(nil)
+		pearson := NewPearson(pearsonConfig())
+		artifact := datura.Acquire("test", datura.APPJSON)
+		err := transport.NewFlipFlop(artifact, pearson)
+
+		So(err, ShouldBeNil)
 
 		Convey("It should return zero output", func() {
-			So(observeInputs(pearson), ShouldEqual, 0)
+			So(datura.Peek[float64](artifact, "output", "value"), ShouldEqual, 0)
 		})
 	})
 
 	Convey("Given fewer than two inputs", testingTB, func() {
-		pearson := NewPearson(nil)
-		got := observeInputs(pearson, 1)
+		pearson := NewPearson(pearsonConfig())
+		artifact := datura.Acquire("test", datura.APPJSON).Poke(1, "sample")
+		err := transport.NewFlipFlop(artifact, pearson)
+
+		So(err, ShouldBeNil)
+
+		got := datura.Peek[float64](artifact, "output", "value")
 
 		Convey("It should return zero", func() {
-			So(float64(got), ShouldEqual, 0)
+			So(got, ShouldEqual, 0)
 		})
 	})
 
 	Convey("Given odd input count", testingTB, func() {
-		pearson := NewPearson(nil)
-		got := observeInputs(pearson, 1, 2, 3)
+		pearson := NewPearson(pearsonConfig())
+		artifact := datura.Acquire("test", datura.APPJSON).Poke([]float64{1, 2, 3}, "batch")
+		err := transport.NewFlipFlop(artifact, pearson)
+
+		So(err, ShouldBeNil)
+
+		got := datura.Peek[float64](artifact, "output", "value")
 
 		Convey("It should return zero", func() {
-			So(float64(got), ShouldEqual, 0)
+			So(got, ShouldEqual, 0)
 		})
 	})
 }
 
 func TestPearson_Reset(testingTB *testing.T) {
 	Convey("Given an observed Pearson stage", testingTB, func() {
-		pearson := NewPearson(nil)
-		_ = observeInputs(pearson, 1, 2, 1, 2)
+		pearson := NewPearson(pearsonConfig())
+		artifact := datura.Acquire("test", datura.APPJSON).Poke([]float64{1, 2, 1, 2}, "batch")
+		err := transport.NewFlipFlop(artifact, pearson)
 
-		So(pearson.Reset(), ShouldBeNil)
+		So(err, ShouldBeNil)
+
+		resetArtifact := datura.Acquire("test", datura.APPJSON).Poke(1, "reset")
+		err = transport.NewFlipFlop(resetArtifact, pearson)
+
+		So(err, ShouldBeNil)
+
+		fresh := datura.Acquire("test", datura.APPJSON)
+		err = transport.NewFlipFlop(fresh, pearson)
+
+		So(err, ShouldBeNil)
 
 		Convey("It should clear output", func() {
-			So(float64(observeInputs(pearson)), ShouldEqual, 0)
+			So(datura.Peek[float64](fresh, "output", "value"), ShouldEqual, 0)
 		})
 	})
 }
 
 func BenchmarkPearson_Observe(testingTB *testing.B) {
-	pearson := NewPearson(nil)
+	pearson := NewPearson(pearsonConfig())
+	artifact := datura.Acquire("test", datura.APPJSON)
+
 	for testingTB.Loop() {
-		_ = observeSplit(pearson,
-			[]float64{1, 2, 3, 4},
-			[]float64{2, 4, 6, 8},
-		)
+		artifact.Poke([]float64{1, 2, 3, 4, 2, 4, 6, 8}, "batch")
+		_ = transport.NewFlipFlop(artifact, pearson)
 	}
 }

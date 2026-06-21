@@ -10,33 +10,48 @@ import (
 
 /*
 HayashiYoshida estimates asynchronous high-frequency correlation with a sliding
-sweep over overlapping return intervals. It does not require both series to
-share the same observation grid.
+sweep over overlapping return intervals. maxIntervalSeconds may be set on config.
+The constructor artifact holds config; Write buffers inbound wire on its payload.
 */
 type HayashiYoshida struct {
-	artifact    *datura.Artifact
-	weights     []float64
-	maxInterval time.Duration
+	artifact *datura.Artifact
 }
 
 /*
-NewHayashiYoshida creates a Hayashi-Yoshida correlation dynamic.
-When maxInterval is zero, consecutive sample spacing is not capped.
+NewHayashiYoshida creates a Hayashi-Yoshida correlation stage wired from config attributes.
 */
-func NewHayashiYoshida(weights []float64, maxInterval time.Duration) *HayashiYoshida {
+func NewHayashiYoshida(artifact *datura.Artifact) *HayashiYoshida {
+	artifact.Inspect("correlation", "hayashi", "NewHayashiYoshida()")
+
 	return &HayashiYoshida{
-		artifact:    datura.Acquire("hayashi", datura.Artifact_Type_json),
-		weights:     weights,
-		maxInterval: maxInterval,
+		artifact: artifact,
 	}
 }
 
 func (hayashi *HayashiYoshida) Write(p []byte) (int, error) {
-	return hayashi.artifact.Write(p)
+	hayashi.artifact.WithPayload(p)
+	return len(p), nil
 }
 
 func (hayashi *HayashiYoshida) Read(p []byte) (int, error) {
-	values := float64Batch(hayashi.artifact)
+	state := datura.Acquire("hayashi-state", datura.APPJSON)
+	state.Inspect("correlation", "hayashi", "Read()", "p")
+
+	if _, err := state.Write(hayashi.artifact.DecryptPayload()); err != nil {
+		return 0, err
+	}
+
+	values := datura.Peek[[]float64](state, "batch")
+
+	if len(values) == 0 {
+		left := datura.Peek[[]float64](state, "left")
+		right := datura.Peek[[]float64](state, "right")
+
+		if len(left) > 0 || len(right) > 0 {
+			values = append(append([]float64(nil), left...), right...)
+		}
+	}
+
 	count := len(values)
 
 	if count >= 4 && count%2 == 0 {
@@ -45,12 +60,13 @@ func (hayashi *HayashiYoshida) Read(p []byte) (int, error) {
 		right, rightOK := samplesFromScalars(values[half:])
 
 		if leftOK && rightOK {
-			correlation, ok := hayashiYoshidaCorrelation(left, right, hayashi.maxInterval)
+			correlation, ok := hayashiYoshidaCorrelation(left, right, hayashi.maxIntervalFromArtifact())
 
 			if ok {
-				putFloat64Payload(&hayashi.artifact, "hayashi", correlation)
-
-				return hayashi.artifact.Read(p)
+				state.MergeOutput("value", correlation)
+				state.Merge("root", "output")
+				state.Merge("inputs", []string{"value"})
+				return state.Read(p)
 			}
 		}
 
@@ -74,19 +90,62 @@ func (hayashi *HayashiYoshida) Read(p []byte) (int, error) {
 		)
 	}
 
-	putFloat64Payload(&hayashi.artifact, "hayashi", 0)
-
-	return hayashi.artifact.Read(p)
+	state.MergeOutput("value", 0.0)
+	state.Merge("root", "output")
+	state.Merge("inputs", []string{"value"})
+	return state.Read(p)
 }
 
 func (hayashi *HayashiYoshida) Close() error {
 	return nil
 }
 
-func (hayashi *HayashiYoshida) Reset() error {
-	hayashi.weights = nil
+func (hayashi *HayashiYoshida) maxIntervalFromArtifact() time.Duration {
+	seconds := datura.Peek[float64](hayashi.artifact, "config", "maxIntervalSeconds")
 
-	return nil
+	if seconds <= 0 {
+		return 0
+	}
+
+	return time.Duration(seconds * float64(time.Second))
+}
+
+/*
+Sample is a time-stamped observation for asynchronous correlation.
+Each input pair encodes Unix seconds at an even index and value at the next index.
+*/
+type Sample struct {
+	At    time.Time
+	Value float64
+}
+
+func samplesFromScalars(values []float64) ([]Sample, bool) {
+	if len(values) < 4 || len(values)%2 != 0 {
+		return nil, false
+	}
+
+	samples := make([]Sample, len(values)/2)
+
+	for index := range samples {
+		pair := index * 2
+		seconds := values[pair]
+		value := values[pair+1]
+
+		if math.IsNaN(seconds) || math.IsInf(seconds, 0) ||
+			math.IsNaN(value) || math.IsInf(value, 0) {
+			return nil, false
+		}
+
+		wholeSeconds := int64(seconds)
+		nanoseconds := int64((seconds - float64(wholeSeconds)) * float64(time.Second))
+
+		samples[index] = Sample{
+			At:    time.Unix(wholeSeconds, nanoseconds),
+			Value: value,
+		}
+	}
+
+	return samples, true
 }
 
 func hayashiYoshidaCorrelation(

@@ -6,12 +6,12 @@ Composable numeric dynamics behind `core.Number[T]`. Every stage implements `Obs
 
 ## Composability contract
 
-| Layer              | Role                                                                  | Example                                                                                                                       |
-|--------------------|-----------------------------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------|
-| Boundary           | `transport.Through` / `transport.From` — push samples in, tap stage outputs out | `nomagique.Number(transport.Through(key), stages..., transport.From(stage))`                                                   |
-| Pipeline stage     | `core.Number[T]` — `Observe(...Number[T]) core.Scalar[T]` + `Reset()` | `adaptive.NewEMA[float64]()`                                                                                                  |
-| Composed number    | `nomagique.Number[T](stages...)` — bootstrap through a stage chain    | `math.Abs(nomagique.Number[float64](transport.Through(sample), ema, delta))`                                                  |
-| Multi-input stages | Stages that need paired scalars                                       | `nomagique.Number[float64](logic.NewCircuit(...)).Observe(source)`                                                             |
+| Layer              | Role                                                                            | Example                                                                      |
+|--------------------|---------------------------------------------------------------------------------|------------------------------------------------------------------------------|
+| Boundary           | `transport.Through` / `transport.From` — push samples in, tap stage outputs out | `nomagique.Number(transport.Through(key), stages..., transport.From(stage))` |
+| Pipeline stage     | `core.Number[T]` — `Observe(...Number[T]) core.Scalar[T]` + `Reset()`           | `adaptive.NewEMA[float64]()`                                                 |
+| Composed number    | `nomagique.Number[T](stages...)` — bootstrap through a stage chain              | `math.Abs(nomagique.Number[float64](transport.Through(sample), ema, delta))` |
+| Multi-input stages | Stages that need paired scalars                                                 | `nomagique.Number[float64](logic.NewCircuit(...)).Observe(source)`           |
 
 Everything composes through the pipeline. Do not call domain math imperatively when a stage exists.
 
@@ -22,17 +22,17 @@ Everything composes through the pipeline. Do not call domain math imperatively w
 | `core`        | `Number[T]`, `Scalar[T]`, `Scalars[T]`                                                                                                                             |
 | `adaptive`    | `EMA`, `Delta`, `Accumulator`, `Compression`, `FracDiff`, `Variance`, `ZScore`, `Momentum`, `Range`, `TimeElastic`                                                 |
 | `learning`    | `Weight`, `SampleRatio`, `Forecast`, `RLS`, `NewClassifierWeights`                                                                                                 |
-| `probability` | `Bernoulli`, `CUSUM`, `Rank`, `TransitionSurprise`, `Classifier`, `SoftmaxScores`                                                                                 |
+| `probability` | `Bernoulli`, `CUSUM`, `Rank`, `TransitionSurprise`, `Classifier`, `SoftmaxScores`                                                                                  |
 | `statistic`   | `Mean`, `Median`, `Panel`, `LeaveOneOutMedian`, `Quantile`, `StdDev`, `Min`, `Max`, `Entropy`, `FastSlow`, `KLDivergence`, `BivariateMoment`, `OLS`, `RidgeSolver` |
 | `vector`      | `FeatureExtractor`, `InputSlot`, `FeatureNode`                                                                                                                     |
-| `correlation` | `Pearson`, `HayashiYoshida`, `Covariance`, `Contagion`, `Multiverse`, `IntervalCoupling`, `IntervalSeries`, `WindowSet`                                            |
-| `causal`      | Tabular SCM: `NodeTable`, backdoor, `Graph`, abduction, `DoExpectation`, Pearl ladder, regime hysteresis                                                           |
+| `correlation` | `Pearson`, `HayashiYoshida`, `Covariance`, `Contagion`, `IntervalCoupling`, `IntervalSeries`, `WindowSet`                                            |
+| `causal`      | Tabular SCM stages: `NodeRing`, `Zip`, `Backdoor`, `Graph`, `Abduction`, `Do`, `Ladder`, `Regime`, `Contagion` |
 | `hawkes`      | Count-stream MoM plus timestamp MLE                                                                                                                                |
 | `decay`       | Exponential kernel and intensity support                                                                                                                           |
 | `timeline`    | Sorted event timestamps, gaps, and span utilities                                                                                                                  |
 | `algorithm`   | `Pearl`, `Hawkes`, `HawkesFit`, `Shift`, `Correlate`, `Backdoor`, `Calibrate`, `Trust`                                                                             |
 | `geometry`    | Phase dials, eigenmodes, PGA, Procrustes; pipeline stages `Velocity`, `Coupling`, `ModePartition`, `Rotor`, `Translator`, `Sandwich`                               |
-| `logic`       | `Circuit`, `Rules`, `Condition`, `True`, `And`, `Or`, `Not`, `Xor`, `GreaterThan`, `LessThan`, `Equal`                                                           |
+| `logic`       | `Circuit`, `Rules`, `Condition`, `True`, `And`, `Or`, `Not`, `Xor`, `GreaterThan`, `LessThan`, `Equal`                                                             |
 | `transport`   | `Through` — boundary sample injection; `From` — boundary output tap                                                                                                |
 | `nomagique`   | `Number[T]`, `Numbers[T]` entry points                                                                                                                             |
 

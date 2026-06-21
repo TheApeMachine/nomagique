@@ -4,72 +4,38 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/datura"
+	"github.com/theapemachine/datura/transport"
 )
 
-func TestNewSum(testingTB *testing.T) {
-	Convey("Given NewSum", testingTB, func() {
+func TestSumSeries(t *testing.T) {
+	Convey("Given a Sum stage", t, func() {
 		sum := NewSum()
+		artifact := datura.Acquire("test", datura.APPJSON)
 
-		Convey("It should return a usable stage", func() {
-			So(sum, ShouldNotBeNil)
+		for _, sample := range []float64{1, 2, 3, 4} {
+			artifact.Poke(sample, "sample")
+			err := transport.NewFlipFlop(artifact, sum)
+
+			So(err, ShouldBeNil)
+		}
+
+		got := datura.Peek[float64](artifact, "output", "value")
+
+		Convey("It should accumulate the series", func() {
+			So(got, ShouldEqual, 10)
 		})
 	})
 }
 
-func TestSum_Observe(testingTB *testing.T) {
-	cases := []struct {
-		name    string
-		samples []float64
-		expect  float64
-	}{
-		{"positive batch", []float64{1.2, 0.8, 3.0}, 5.0},
-		{"negative mix", []float64{-2, 5, -1}, 2},
-		{"single value", []float64{7}, 7},
-		{"empty input", nil, 0},
-	}
-
-	for _, testCase := range cases {
-		testCase := testCase
-
-		Convey("Given "+testCase.name, testingTB, func() {
-			sum := NewSum()
-			got := observeInputs(sum, testCase.samples...)
-
-			Convey("It should return the expected sum", func() {
-				So(float64(got), ShouldEqual, testCase.expect)
-			})
-		})
-	}
-
-	Convey("Given a non-scalar input", testingTB, func() {
-		sum := NewSum()
-		_ = observeInputs(sum, 10)
-
-		Convey("It should ignore non-scalar inputs", func() {
-			So(observeWithoutSample(sum, 0), ShouldEqual, 10)
-		})
-	})
-}
-
-func TestSum_Reset(testingTB *testing.T) {
-	Convey("Given an observed sum", testingTB, func() {
-		sum := NewSum()
-		_ = observeInputs(sum, 1, 2, 3)
-
-		So(sum.Reset(), ShouldBeNil)
-
-		Convey("It should clear output", func() {
-			So(float64(observeInputs(sum)), ShouldEqual, 0)
-		})
-	})
-}
-
-func BenchmarkSum_Observe(b *testing.B) {
+func BenchmarkSumRead(b *testing.B) {
 	sum := NewSum()
+	artifact := datura.Acquire("test", datura.APPJSON)
 
 	b.ReportAllocs()
 
 	for b.Loop() {
-		_ = observeInputs(sum)
+		artifact.Poke(1, "sample")
+		_ = transport.NewFlipFlop(artifact, sum)
 	}
 }

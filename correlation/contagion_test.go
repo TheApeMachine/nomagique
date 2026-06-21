@@ -4,77 +4,108 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/datura"
+	"github.com/theapemachine/datura/transport"
 )
 
-func TestMedianPairwiseAbsCorrelation(testingTB *testing.T) {
-	Convey("Given proportional interval series", testingTB, func() {
-		left := NewIntervalSeries(8)
-		right := NewIntervalSeries(8)
+func contagionConfigArtifact() *datura.Artifact {
+	return datura.Acquire("test", datura.APPJSON).
+		Poke(1, "config", "minSamples").
+		Poke(2, "config", "memberCap").
+		Poke(2, "config", "adaptiveSigma").
+		Poke(8, "config", "tier", "fast").
+		Poke(8, "config", "tier", "medium").
+		Poke(8, "config", "tier", "slow")
+}
 
-		observeEpochLevel(left, 1_000, 100)
-		observeEpochLevel(left, 2_000, 110)
-		observeEpochLevel(right, 1_000, 50)
-		observeEpochLevel(right, 2_000, 55)
+func TestMedianPairwiseAbsCorrelation(testingTB *testing.T) {
+	Convey("Given proportional members in contagion", testingTB, func() {
+		contagion := NewContagion(contagionConfigArtifact())
+		artifact := datura.Acquire("test", datura.APPJSON)
+
+		artifact.Poke(1, "member").Poke(float64(1_000), "sample").Poke(100.0, "paired")
+		err := transport.NewFlipFlop(artifact, contagion)
+
+		So(err, ShouldBeNil)
+
+		artifact.Poke(1, "member").Poke(float64(2_000), "sample").Poke(110.0, "paired")
+		err = transport.NewFlipFlop(artifact, contagion)
+
+		So(err, ShouldBeNil)
+
+		artifact.Poke(2, "member").Poke(float64(1_000), "sample").Poke(50.0, "paired")
+		err = transport.NewFlipFlop(artifact, contagion)
+
+		So(err, ShouldBeNil)
+
+		artifact.Poke(2, "member").Poke(float64(2_000), "sample").Poke(55.0, "paired")
+		err = transport.NewFlipFlop(artifact, contagion)
+
+		So(err, ShouldBeNil)
 
 		Convey("It should return unit median correlation", func() {
-			value := MedianPairwiseAbsCorrelation([]*IntervalSeries{left, right})
+			value := datura.Peek[float64](artifact, "output", "tier.fast")
 			So(value, ShouldAlmostEqual, 1, 1e-9)
 		})
 	})
 }
 
 func TestContagionObserve(testingTB *testing.T) {
-	Convey("Given a contagion stage with fed window sets", testingTB, func() {
-		first := NewWindowSet(8)
-		second := NewWindowSet(8)
+	Convey("Given a contagion stage with fed members", testingTB, func() {
+		contagion := NewContagion(contagionConfigArtifact())
+		artifact := datura.Acquire("test", datura.APPJSON)
 
-		observeEpochLevel(first, 1_000, 100)
-		observeEpochLevel(first, 2_000, 110)
-		observeEpochLevel(second, 1_000, 50)
-		observeEpochLevel(second, 2_000, 55)
+		artifact.Poke(1, "member").Poke(float64(1_000), "sample").Poke(100.0, "paired")
+		err := transport.NewFlipFlop(artifact, contagion)
 
-		contagion := NewContagion(
-			[]*WindowSet{first, second},
-			TierWindows{Fast: 8, Medium: 8, Slow: 8},
-			ContagionConfig{
-				MinSamples:    1,
-				MemberCap:     2,
-				AdaptiveSigma: 2,
-			},
-		)
+		So(err, ShouldBeNil)
+
+		artifact.Poke(1, "member").Poke(float64(2_000), "sample").Poke(110.0, "paired")
+		err = transport.NewFlipFlop(artifact, contagion)
+
+		So(err, ShouldBeNil)
+
+		artifact.Poke(2, "member").Poke(float64(1_000), "sample").Poke(50.0, "paired")
+		err = transport.NewFlipFlop(artifact, contagion)
+
+		So(err, ShouldBeNil)
+
+		artifact.Poke(2, "member").Poke(float64(2_000), "sample").Poke(55.0, "paired")
+		err = transport.NewFlipFlop(artifact, contagion)
+
+		So(err, ShouldBeNil)
+
+		value := datura.Peek[float64](artifact, "output", "value")
 
 		Convey("It should publish positive coupling for correlated tiers", func() {
-			value := float64(observeInputs(contagion))
 			So(value, ShouldBeGreaterThan, 0)
 		})
 	})
 }
 
 func BenchmarkContagionObserve(testingTB *testing.B) {
-	sets := make([]*WindowSet, 16)
-
-	for index := range sets {
-		set := NewWindowSet(32)
-
-		for step := range 32 {
-			observeEpochLevel(set, int64((step+1)*1_000), 100+float64(index)+float64(step)*0.01)
-		}
-
-		sets[index] = set
-	}
-
 	contagion := NewContagion(
-		sets,
-		TierWindows{Fast: 8, Medium: 16, Slow: 32},
-		ContagionConfig{
-			MinSamples: 8,
-			MemberCap:  16,
-		},
+		datura.Acquire("test", datura.APPJSON).
+			Poke(8, "config", "minSamples").
+			Poke(16, "config", "memberCap").
+			Poke(8, "config", "tier", "fast").
+			Poke(16, "config", "tier", "medium").
+			Poke(32, "config", "tier", "slow"),
 	)
+	artifact := datura.Acquire("test", datura.APPJSON)
+
+	for member := range 16 {
+		for step := range 32 {
+			artifact.Poke(float64(member+1), "member").
+				Poke(float64((step+1)*1_000), "sample").
+				Poke(100+float64(member)+float64(step)*0.01, "paired")
+			_ = transport.NewFlipFlop(artifact, contagion)
+		}
+	}
 
 	testingTB.ReportAllocs()
 
 	for testingTB.Loop() {
-		_ = observeInputs(contagion)
+		_ = transport.NewFlipFlop(artifact, contagion)
 	}
 }

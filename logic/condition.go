@@ -11,7 +11,7 @@ Condition evaluates whether a circuit rule should fire.
 */
 type Condition interface {
 	Match(artifact *datura.Artifact) bool
-	Reset() error
+	ResetOperands()
 }
 
 /*
@@ -19,7 +19,7 @@ True always matches when Operand is true, otherwise checks a wired stage.
 */
 type True struct {
 	Operand bool
-	Stage   io.ReadWriter
+	Stage   io.ReadWriteCloser
 }
 
 func (trueCondition True) Match(artifact *datura.Artifact) bool {
@@ -42,8 +42,8 @@ func (trueCondition True) Match(artifact *datura.Artifact) bool {
 	return valueOK && truthy(value)
 }
 
-func (trueCondition True) Reset() error {
-	return resetStage(trueCondition.Stage)
+func (trueCondition True) ResetOperands() {
+	writeResetToStage(trueCondition.Stage)
 }
 
 /*
@@ -61,14 +61,10 @@ func (andCondition And) Match(artifact *datura.Artifact) bool {
 	return len(andCondition) > 0
 }
 
-func (andCondition And) Reset() error {
+func (andCondition And) ResetOperands() {
 	for _, operand := range andCondition {
-		if resetErr := operand.Reset(); resetErr != nil {
-			return resetErr
-		}
+		operand.ResetOperands()
 	}
-
-	return nil
 }
 
 /*
@@ -86,14 +82,10 @@ func (orCondition Or) Match(artifact *datura.Artifact) bool {
 	return false
 }
 
-func (orCondition Or) Reset() error {
+func (orCondition Or) ResetOperands() {
 	for _, operand := range orCondition {
-		if resetErr := operand.Reset(); resetErr != nil {
-			return resetErr
-		}
+		operand.ResetOperands()
 	}
-
-	return nil
 }
 
 /*
@@ -107,48 +99,44 @@ func (notCondition Not) Match(artifact *datura.Artifact) bool {
 	return !notCondition.Operand.Match(artifact)
 }
 
-func (notCondition Not) Reset() error {
-	return notCondition.Operand.Reset()
+func (notCondition Not) ResetOperands() {
+	notCondition.Operand.ResetOperands()
 }
 
 /*
-Xor matches when an odd number of nested conditions match.
+Xor matches when exactly one nested condition matches.
 */
 type Xor []Condition
 
 func (xorCondition Xor) Match(artifact *datura.Artifact) bool {
-	matchCount := 0
+	matches := 0
 
 	for _, operand := range xorCondition {
 		if operand.Match(artifact) {
-			matchCount++
+			matches++
 		}
 	}
 
-	return matchCount%2 == 1
+	return matches == 1
 }
 
-func (xorCondition Xor) Reset() error {
+func (xorCondition Xor) ResetOperands() {
 	for _, operand := range xorCondition {
-		if resetErr := operand.Reset(); resetErr != nil {
-			return resetErr
-		}
+		operand.ResetOperands()
 	}
-
-	return nil
 }
 
 /*
-GreaterThan matches when the carried signal exceeds Right.
+GreaterThan compares a boundary sample against a wired operand stage.
 */
 type GreaterThan struct {
-	Right io.ReadWriter
+	Right io.ReadWriteCloser
 }
 
 func (greaterThan GreaterThan) Match(artifact *datura.Artifact) bool {
-	left, leftOK := boundarySample(artifact)
+	sample, sampleOK := boundarySample(artifact)
 
-	if !leftOK {
+	if !sampleOK {
 		return false
 	}
 
@@ -160,28 +148,24 @@ func (greaterThan GreaterThan) Match(artifact *datura.Artifact) bool {
 
 	right, rightOK := readOperand(greaterThan.Right, inbound)
 
-	if !rightOK {
-		return false
-	}
-
-	return left > right
+	return rightOK && sample > right
 }
 
-func (greaterThan GreaterThan) Reset() error {
-	return resetStage(greaterThan.Right)
+func (greaterThan GreaterThan) ResetOperands() {
+	writeResetToStage(greaterThan.Right)
 }
 
 /*
-LessThan matches when the carried signal is below Right.
+LessThan compares a boundary sample against a wired operand stage.
 */
 type LessThan struct {
-	Right io.ReadWriter
+	Right io.ReadWriteCloser
 }
 
 func (lessThan LessThan) Match(artifact *datura.Artifact) bool {
-	left, leftOK := boundarySample(artifact)
+	sample, sampleOK := boundarySample(artifact)
 
-	if !leftOK {
+	if !sampleOK {
 		return false
 	}
 
@@ -193,28 +177,24 @@ func (lessThan LessThan) Match(artifact *datura.Artifact) bool {
 
 	right, rightOK := readOperand(lessThan.Right, inbound)
 
-	if !rightOK {
-		return false
-	}
-
-	return left < right
+	return rightOK && sample < right
 }
 
-func (lessThan LessThan) Reset() error {
-	return resetStage(lessThan.Right)
+func (lessThan LessThan) ResetOperands() {
+	writeResetToStage(lessThan.Right)
 }
 
 /*
-Equal matches when the carried signal equals Right.
+Equal compares a boundary sample against a wired operand stage.
 */
 type Equal struct {
-	Right io.ReadWriter
+	Right io.ReadWriteCloser
 }
 
 func (equal Equal) Match(artifact *datura.Artifact) bool {
-	left, leftOK := boundarySample(artifact)
+	sample, sampleOK := boundarySample(artifact)
 
-	if !leftOK {
+	if !sampleOK {
 		return false
 	}
 
@@ -226,15 +206,11 @@ func (equal Equal) Match(artifact *datura.Artifact) bool {
 
 	right, rightOK := readOperand(equal.Right, inbound)
 
-	if !rightOK {
-		return false
-	}
-
-	return left == right
+	return rightOK && sample == right
 }
 
-func (equal Equal) Reset() error {
-	return resetStage(equal.Right)
+func (equal Equal) ResetOperands() {
+	writeResetToStage(equal.Right)
 }
 
 func truthy(value float64) bool {

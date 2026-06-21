@@ -1,103 +1,67 @@
 package adaptive
 
-import "github.com/theapemachine/datura"
+import (
+	"math"
+
+	"github.com/theapemachine/datura"
+)
 
 /*
 Compression scores how far below the running baseline the current sample sits.
+The constructor artifact holds config; Write buffers inbound wire on its payload.
 */
 type Compression struct {
 	artifact *datura.Artifact
-	Baseline float64
-	Ready    bool
 }
 
 /*
-NewCompression returns a compression stage ready to bootstrap from its first observation.
+NewCompression returns a compression stage wired from config attributes on the artifact.
 */
-func NewCompression() *Compression {
+func NewCompression(artifact *datura.Artifact) *Compression {
+	artifact.Inspect("adaptive", "compression", "NewCompression()")
+
 	return &Compression{
-		artifact: datura.Acquire("compression", datura.Artifact_Type_json),
+		artifact: artifact,
 	}
 }
 
-func (compression *Compression) Write(p []byte) (int, error) {
-	return compression.artifact.Write(p)
+func (compression *Compression) Write(payload []byte) (int, error) {
+	compression.artifact.WithPayload(payload)
+	return len(payload), nil
 }
 
-func (compression *Compression) Read(p []byte) (int, error) {
-	payload, err := compression.artifact.Payload()
+func (compression *Compression) Read(payload []byte) (int, error) {
+	state := datura.Acquire("compression-state", datura.APPJSON)
+	state.Inspect("adaptive", "compression", "Read()", "p")
 
-	if err == nil {
-		observeScalarPayload(&compression.artifact, "compression", payload, compression.step)
+	if _, err := state.Write(compression.artifact.DecryptPayload()); err != nil {
+		return 0, err
 	}
 
-	return compression.artifact.Read(p)
+	sample := datura.Peek[float64](state, "sample")
+
+	if math.IsNaN(sample) || math.IsInf(sample, 0) {
+		return state.Read(payload)
+	}
+
+	baseline := datura.Peek[float64](compression.artifact, "baseline")
+	value := 0.0
+
+	switch {
+	case baseline == 0 || sample > baseline:
+		baseline = sample
+	default:
+		value = (baseline - sample) / baseline
+	}
+
+	compression.artifact.Merge("baseline", baseline)
+	state.MergeOutput("baseline", baseline)
+	state.MergeOutput("value", value)
+	state.Merge("root", "output")
+	state.Merge("inputs", []string{"baseline", "value"})
+	return state.Read(payload)
 }
 
 func (compression *Compression) Close() error {
 	return nil
-}
-
-/*
-ObserveSample ingests one raw sample through the compression kernel.
-*/
-func (compression *Compression) ObserveSample(sample float64) float64 {
-	return observeScalarSample(&compression.artifact, "compression", sample, compression.step)
-}
-
-/*
-ObserveSamples writes one derived value per sample into out.
-*/
-func (compression *Compression) ObserveSamples(samples []float64, out []float64) {
-	limit := len(samples)
-
-	if len(out) < limit {
-		limit = len(out)
-	}
-
-	for index := 0; index < limit; index++ {
-		out[index] = compression.ObserveSample(samples[index])
-	}
-}
-
-/*
-Reset clears derived state so the next Read bootstraps again.
-*/
-func (compression *Compression) Reset() error {
-	compression.Baseline = 0
-	compression.Ready = false
-
-	return nil
-}
-
-func (compression *Compression) step(sample float64) float64 {
-	if !compression.Ready {
-		compression.Baseline = sample
-		compression.Ready = true
-
-		return 0
-	}
-
-	return compression.stepReady(sample)
-}
-
-func (compression *Compression) stepReady(sample float64) float64 {
-	if sample > compression.Baseline {
-		compression.Baseline = sample
-
-		return 0
-	}
-
-	if compression.Baseline == 0 {
-		return 0
-	}
-
-	return (compression.Baseline - sample) / compression.Baseline
-}
-
-/*
-Value returns the last derived scalar without re-processing the stage.
-*/
-func (compression *Compression) Value() float64 {
-	return valueFromArtifact(compression.artifact)
 }

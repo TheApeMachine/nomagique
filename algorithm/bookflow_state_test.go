@@ -5,8 +5,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/theapemachine/nomagique/statistic"
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/datura"
+	"github.com/theapemachine/datura/transport"
+	"github.com/theapemachine/nomagique/statistic"
 )
 
 func TestToxicCancelEvidence(testingTB *testing.T) {
@@ -165,61 +167,134 @@ func TestCancelFillRatio(testingTB *testing.T) {
 	})
 }
 
-func TestBookGates(testingTB *testing.T) {
+func TestGateQuantile(testingTB *testing.T) {
 	Convey("Given insufficient ring history", testingTB, func() {
-		gates := NewBookGates()
+		gate := NewGateQuantile(
+			datura.Acquire("churn-gate", datura.APPJSON).
+				WithAttribute("percentile", 0.75).
+				WithAttribute("minSamples", 3.0),
+		)
 
-		Convey("It should return default gates", func() {
-			So(gates.ChurnRatioGate(), ShouldEqual, 0)
-			So(gates.FillCoverageGate(), ShouldEqual, 1)
+		Convey("It should return zero before warmup", func() {
+			So(runGateSample(gate, 0, 0), ShouldEqual, 0)
 		})
 	})
 
 	Convey("Given populated observation rings", testingTB, func() {
-		gates := NewBookGates()
+		churnGate := NewGateQuantile(
+			datura.Acquire("churn-gate", datura.APPJSON).
+				WithAttribute("percentile", 0.75).
+				WithAttribute("minSamples", 3.0),
+		)
+		fillMatchGate := NewGateQuantile(
+			datura.Acquire("fill-match-gate", datura.APPJSON).
+				WithAttribute("percentile", 0.5).
+				WithAttribute("minSamples", 3.0),
+		)
+		cancelQtyGate := NewGateQuantile(
+			datura.Acquire("cancel-qty-gate", datura.APPJSON).
+				WithAttribute("percentile", 0.5).
+				WithAttribute("minSamples", 3.0),
+		)
+		levelSizeGate := NewGateQuantile(
+			datura.Acquire("level-size-gate", datura.APPJSON).
+				WithAttribute("percentile", 0.75).
+				WithAttribute("minSamples", 3.0),
+		)
+		vacuumGate := NewGateQuantile(
+			datura.Acquire("vacuum-gate", datura.APPJSON).
+				WithAttribute("percentile", 0.9).
+				WithAttribute("minSamples", 3.0),
+		)
+
 		for _, value := range []float64{1, 2, 3, 4} {
-			gates.ChurnRatios.Observe(value)
-			gates.FillMatchRatios.Observe(value * 0.1)
-			gates.CancelQtys.Observe(value * 10)
-			gates.LevelSizeFracs.Observe(value * 0.05)
-			gates.VacuumRatios.Observe(value * 0.2)
+			runGateSample(churnGate, value, 0)
+			runGateSample(fillMatchGate, value*0.1, 0)
+			runGateSample(cancelQtyGate, value*10, 0)
+			runGateSample(levelSizeGate, value*0.05, 0)
+			runGateSample(vacuumGate, value*0.2, 0)
 		}
 
 		Convey("It should derive quantile gates", func() {
-			So(gates.ChurnRatioGate(), ShouldBeGreaterThan, 0)
-			So(gates.FillCoverageGate(), ShouldBeGreaterThan, 0)
-			So(gates.LargeBlockQtyThreshold(100, 0), ShouldBeGreaterThan, 0)
-			So(gates.VacuumStrengthLimit(0.5, 0), ShouldBeGreaterThan, 0)
-			So(gates.SupportRatioGate(0.5), ShouldBeGreaterThan, 0)
+			So(runGateSample(churnGate, 0, 0), ShouldBeGreaterThan, 0)
+			So(runGateSample(fillMatchGate, 0, 0), ShouldBeGreaterThan, 0)
+			So(largeBlockQtyThreshold(
+				100, 0,
+				runGateSample(cancelQtyGate, 0, 0),
+				runGateSample(levelSizeGate, 0, 0),
+				gateReady(cancelQtyGate.config),
+				gateReady(levelSizeGate.config),
+			), ShouldBeGreaterThan, 0)
+			So(vacuumStrengthLimit(
+				0.5, 0,
+				runGateSample(vacuumGate, 0, 0),
+				gateReady(vacuumGate.config),
+			), ShouldBeGreaterThan, 0)
+			So(supportRatioGate(
+				0.5,
+				runGateSample(vacuumGate, 0, 0.25),
+				gateReady(vacuumGate.config),
+			), ShouldBeGreaterThan, 0)
 		})
 	})
 
 	Convey("Given zero side depth", testingTB, func() {
-		gates := NewBookGates()
-
 		Convey("It should return infinite block threshold", func() {
-			threshold := gates.LargeBlockQtyThreshold(0, 5)
+			threshold := largeBlockQtyThreshold(0, 5, 0, 0, false, false)
 			So(math.IsInf(threshold, 1), ShouldBeTrue)
 		})
 	})
 
 	Convey("Given median level fallback", testingTB, func() {
-		gates := NewBookGates()
-
 		Convey("It should use median level quantity", func() {
-			So(gates.LargeBlockQtyThreshold(100, 7), ShouldEqual, 7)
+			So(largeBlockQtyThreshold(100, 7, 0, 0, false, false), ShouldEqual, 7)
 		})
 	})
+}
+
+func runGateSample(gate *GateQuantile, sample float64, percentile float64) float64 {
+	frame := datura.Acquire("gate-frame", datura.APPJSON)
+
+	if sample > 0 {
+		frame.Merge("sample", sample)
+	}
+
+	if percentile > 0 {
+		frame.Merge("percentile", percentile)
+	}
+
+	packed, err := frame.Message().MarshalPacked()
+
+	frame.Release()
+
+	if err != nil {
+		return 0
+	}
+
+	_, _ = gate.Write(packed)
+
+	buffer := make([]byte, gateReadBufferSize)
+	readCount, _ := gate.Read(buffer)
+	outbound := datura.Acquire("gate-read", datura.APPJSON)
+	_, _ = outbound.Write(buffer[:readCount])
+	value := datura.Peek[float64](outbound, "output", "value")
+	outbound.Release()
+
+	return value
 }
 
 func TestObservationRingAdversarial(testingTB *testing.T) {
 	Convey("Given non-positive observations", testingTB, func() {
 		ring := statistic.NewObservationRing()
-		ring.Observe(0)
-		ring.Observe(-1)
+		artifact := datura.Acquire("test", datura.APPJSON)
+
+		for _, value := range []float64{0, -1} {
+			artifact.Poke(value, "sample")
+			_ = transport.NewFlipFlop(artifact, ring)
+		}
 
 		Convey("It should ignore invalid samples", func() {
-			So(ring.Len(), ShouldEqual, 0)
+			So(len(datura.Peek[[]float64](artifact, "history")), ShouldEqual, 0)
 		})
 	})
 }

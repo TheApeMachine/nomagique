@@ -6,66 +6,55 @@ import (
 	"math"
 	"sort"
 
+	"github.com/theapemachine/datura"
 	"github.com/theapemachine/nomagique/statistic"
 	"gonum.org/v1/gonum/stat"
 )
 
 const minKernelWeight = math.SmallestNonzeroFloat64
 
-/*
-NodeTable is a tabular structural causal model over aligned observation rows.
-*/
-type NodeTable struct {
+type nodeTable struct {
 	rows   [][]float64
 	target int
 }
 
-/*
-LinearModel holds OLS coefficients for a target predicted from selected nodes.
-*/
-type LinearModel struct {
+type linearModel struct {
 	coefficients []float64
 	predictors   []int
 }
 
-/*
-NewNodeTable validates and constructs a node table.
-*/
-func NewNodeTable(rows [][]float64, target, minRows int) (NodeTable, error) {
+func newNodeTable(rows [][]float64, target, minRows int) (nodeTable, error) {
 	if minRows <= 0 {
-		return NodeTable{}, errors.New("causal: minRows must be positive")
+		return nodeTable{}, errors.New("causal: minRows must be positive")
 	}
 
 	if len(rows) < minRows {
-		return NodeTable{}, fmt.Errorf("causal: table needs %d rows, got %d", minRows, len(rows))
+		return nodeTable{}, fmt.Errorf("causal: table needs %d rows, got %d", minRows, len(rows))
 	}
 
 	nodeCount := len(rows[0])
 
 	if nodeCount == 0 {
-		return NodeTable{}, errors.New("causal: rows must contain nodes")
+		return nodeTable{}, errors.New("causal: rows must contain nodes")
 	}
 
 	if target < 0 || target >= nodeCount {
-		return NodeTable{}, fmt.Errorf("causal: target node %d outside row width %d", target, nodeCount)
+		return nodeTable{}, fmt.Errorf("causal: target node %d outside row width %d", target, nodeCount)
 	}
 
 	for rowIndex, row := range rows {
 		if len(row) != nodeCount {
-			return NodeTable{}, fmt.Errorf(
+			return nodeTable{}, fmt.Errorf(
 				"causal: row %d width %d differs from %d",
 				rowIndex, len(row), nodeCount,
 			)
 		}
 	}
 
-	return NodeTable{rows: rows, target: target}, nil
+	return nodeTable{rows: rows, target: target}, nil
 }
 
-/*
-Association returns Pearson correlation between treatment and target.
-*/
-func (nodeTable NodeTable) Association(treatment int) (float64, error) {
+func (nodeTable nodeTable) association(treatment int) (float64, error) {
 	treatmentValues, err := nodeTable.column(treatment)
 
 	if err != nil {
@@ -87,10 +76,7 @@ func (nodeTable NodeTable) Association(treatment int) (float64, error) {
 	return association, nil
 }
 
-/*
-BackdoorEffect estimates a linear backdoor adjustment via residualization.
-*/
-func (nodeTable NodeTable) BackdoorEffect(treatment int, controls ...int) (float64, error) {
+func (nodeTable nodeTable) backdoorEffect(treatment int, controls ...int) (float64, error) {
 	treatmentValues, err := nodeTable.column(treatment)
 
 	if err != nil {
@@ -128,38 +114,32 @@ func (nodeTable NodeTable) BackdoorEffect(treatment int, controls ...int) (float
 	return statistic.Dot(residualTarget, residualTreatment) / denominator, nil
 }
 
-/*
-LinearModel fits target from predictors.
-*/
-func (nodeTable NodeTable) LinearModel(predictors ...int) (LinearModel, error) {
+func (nodeTable nodeTable) fitLinearModel(predictors ...int) (linearModel, error) {
 	targetValues, err := nodeTable.column(nodeTable.target)
 
 	if err != nil {
-		return LinearModel{}, err
+		return linearModel{}, err
 	}
 
 	predictorColumns, err := nodeTable.columns(predictors...)
 
 	if err != nil {
-		return LinearModel{}, err
+		return linearModel{}, err
 	}
 
 	coefficients, ok := statistic.OLS(targetValues, predictorColumns...)
 
 	if !ok {
-		return LinearModel{}, errors.New("causal: linear structural fit failed")
+		return linearModel{}, errors.New("causal: linear structural fit failed")
 	}
 
-	return LinearModel{
+	return linearModel{
 		coefficients: coefficients,
 		predictors:   append([]int(nil), predictors...),
 	}, nil
 }
 
-/*
-PairConditionNumber returns the 2×2 correlation condition number for two nodes.
-*/
-func (nodeTable NodeTable) PairConditionNumber(left, right int) (float64, error) {
+func (nodeTable nodeTable) pairConditionNumber(left, right int) (float64, error) {
 	leftColumn, err := nodeTable.column(left)
 
 	if err != nil {
@@ -181,10 +161,7 @@ func (nodeTable NodeTable) PairConditionNumber(left, right int) (float64, error)
 	return condition, nil
 }
 
-/*
-Percentile returns a percentile of one node's history.
-*/
-func (nodeTable NodeTable) Percentile(node int, percentile float64) (float64, error) {
+func (nodeTable nodeTable) percentile(node int, percentile float64) (float64, error) {
 	values, err := nodeTable.column(node)
 
 	if err != nil {
@@ -201,10 +178,7 @@ func (nodeTable NodeTable) Percentile(node int, percentile float64) (float64, er
 	return stat.Quantile(percentile, stat.LinInterp, sorted, nil), nil
 }
 
-/*
-KernelBackdoorEffect estimates a Gaussian-kernel-weighted backdoor effect.
-*/
-func (nodeTable NodeTable) KernelBackdoorEffect(
+func (nodeTable nodeTable) kernelBackdoorEffect(
 	treatment int, bandwidth float64, controls ...int,
 ) (float64, error) {
 	if bandwidth <= 0 {
@@ -243,10 +217,7 @@ func (nodeTable NodeTable) KernelBackdoorEffect(
 	return numerator / denominator, nil
 }
 
-/*
-Predict returns a linear model prediction with optional treatment override.
-*/
-func (model LinearModel) Predict(
+func (model linearModel) predict(
 	row []float64, overrideNode int, overrideValue float64,
 ) (float64, error) {
 	if len(model.coefficients) != len(model.predictors)+1 {
@@ -276,19 +247,16 @@ func (model LinearModel) Predict(
 	return prediction, nil
 }
 
-/*
-CounterfactualUplift returns predicted change under a treatment intervention.
-*/
-func (model LinearModel) CounterfactualUplift(
+func (model linearModel) counterfactualUplift(
 	row []float64, treatment int, intervention float64,
 ) (float64, error) {
-	observed, err := model.Predict(row, -1, 0)
+	observed, err := model.predict(row, -1, 0)
 
 	if err != nil {
 		return 0, err
 	}
 
-	counterfactual, err := model.Predict(row, treatment, intervention)
+	counterfactual, err := model.predict(row, treatment, intervention)
 
 	if err != nil {
 		return 0, err
@@ -297,7 +265,7 @@ func (model LinearModel) CounterfactualUplift(
 	return counterfactual - observed, nil
 }
 
-func (nodeTable NodeTable) column(node int) ([]float64, error) {
+func (nodeTable nodeTable) column(node int) ([]float64, error) {
 	if err := nodeTable.validateNode(node); err != nil {
 		return nil, err
 	}
@@ -311,7 +279,7 @@ func (nodeTable NodeTable) column(node int) ([]float64, error) {
 	return values, nil
 }
 
-func (nodeTable NodeTable) columns(nodes ...int) ([][]float64, error) {
+func (nodeTable nodeTable) columns(nodes ...int) ([][]float64, error) {
 	if err := nodeTable.validateNodes(nodes...); err != nil {
 		return nil, err
 	}
@@ -331,7 +299,7 @@ func (nodeTable NodeTable) columns(nodes ...int) ([][]float64, error) {
 	return columns, nil
 }
 
-func (nodeTable NodeTable) validateNodes(nodes ...int) error {
+func (nodeTable nodeTable) validateNodes(nodes ...int) error {
 	for _, node := range nodes {
 		if err := nodeTable.validateNode(node); err != nil {
 			return err
@@ -341,7 +309,7 @@ func (nodeTable NodeTable) validateNodes(nodes ...int) error {
 	return nil
 }
 
-func (nodeTable NodeTable) validateNode(node int) error {
+func (nodeTable nodeTable) validateNode(node int) error {
 	if len(nodeTable.rows) == 0 {
 		return errors.New("causal: table is empty")
 	}
@@ -364,4 +332,78 @@ func nodeDistance(left, right []float64, features []int) float64 {
 	}
 
 	return math.Sqrt(sum)
+}
+
+func tableRows(artifact *datura.Artifact) ([][]float64, bool) {
+	rowCount := int(datura.Peek[float64](artifact, "table", "rowCount"))
+	nodeCount := int(datura.Peek[float64](artifact, "table", "nodeCount"))
+	flat := datura.Peek[[]float64](artifact, "table", "rows")
+
+	if rowCount <= 0 || nodeCount <= 0 || len(flat) != rowCount*nodeCount {
+		return nil, false
+	}
+
+	rows := make([][]float64, rowCount)
+
+	for rowIndex := range rows {
+		rows[rowIndex] = make([]float64, nodeCount)
+		offset := rowIndex * nodeCount
+
+		for nodeIndex := range nodeCount {
+			rows[rowIndex][nodeIndex] = flat[offset+nodeIndex]
+		}
+	}
+
+	return rows, true
+}
+
+func deriveBandwidth(rows [][]float64, treatmentNode int) float64 {
+	if treatmentNode < 0 || len(rows) == 0 || treatmentNode >= len(rows[0]) {
+		return 0
+	}
+
+	if len(rows) < 12 {
+		return 0
+	}
+
+	values := make([]float64, len(rows))
+
+	for index := range rows {
+		values[index] = rows[index][treatmentNode]
+	}
+
+	mean := 0.0
+
+	for _, value := range values {
+		mean += value
+	}
+
+	mean /= float64(len(values))
+
+	variance := 0.0
+
+	for _, value := range values {
+		delta := value - mean
+		variance += delta * delta
+	}
+
+	if len(values) > 1 {
+		variance /= float64(len(values) - 1)
+	}
+
+	if variance <= 0 {
+		return 0
+	}
+
+	return 1.06 * math.Sqrt(variance) * math.Pow(float64(len(values)), -0.2)
+}
+
+func intSlice(values []float64) []int {
+	out := make([]int, len(values))
+
+	for index, value := range values {
+		out[index] = int(value)
+	}
+
+	return out
 }

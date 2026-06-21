@@ -1,124 +1,157 @@
 package causal
 
-import "math"
+import (
+	"github.com/theapemachine/datura"
+)
 
 /*
-Outcome is the Pearl-ladder read plus margins that separate categories.
+Ladder evaluates Judea Pearl's ladder of causation over tabular rows on the artifact.
+The constructor artifact holds config; Write buffers inbound table wire on its payload.
 */
-type Outcome struct {
-	Raw          float64
-	Reason       string
-	Intervention float64
-	Association  float64
-	Uplift       float64
-	Inverted     bool
-	Contagion    float64
-	Condition    float64
+type Ladder struct {
+	artifact *datura.Artifact
 }
 
 /*
-Evaluate runs the Pearl ladder on a node table and current observation row.
+NewLadder returns a ladder stage wired from config attributes on the artifact.
 */
-func Evaluate(
-	nodeTable NodeTable,
-	currentRow []float64,
-	contagion float64,
-	config LadderConfig,
-	tracker *RegimeTracker,
-) Outcome {
-	if len(nodeTable.rows) < config.MinHistory {
-		return Outcome{}
+func NewLadder(artifact *datura.Artifact) *Ladder {
+	artifact.Inspect("causal", "ladder", "NewLadder()")
+
+	return &Ladder{
+		artifact: artifact,
+	}
+}
+
+func (ladder *Ladder) Write(p []byte) (int, error) {
+	ladder.artifact.WithPayload(p)
+	return len(p), nil
+}
+
+func (ladder *Ladder) Read(p []byte) (int, error) {
+	state := datura.Acquire("ladder-state", datura.APPJSON)
+	state.Inspect("causal", "ladder", "Read()", "p")
+
+	if _, err := state.Write(ladder.artifact.DecryptPayload()); err != nil {
+		return 0, err
 	}
 
-	roles, inverted, condition := SelectRolesWithTracker(
-		nodeTable, contagion, config, tracker, len(nodeTable.rows),
-	)
-	suffix := ""
+	rows, ok := tableRows(state)
+
+	if !ok {
+		return state.Read(p)
+	}
+
+	target := int(datura.Peek[float64](ladder.artifact, "config", "target"))
+	minHistory := int(datura.Peek[float64](ladder.artifact, "config", "minHistory"))
+
+	if minHistory <= 0 {
+		minHistory = len(rows)
+	}
+
+	if len(rows) < minHistory {
+		return state.Read(p)
+	}
+
+	table, err := newNodeTable(rows, target, minHistory)
+
+	if err != nil {
+		return state.Read(p)
+	}
+
+	inverted := datura.Peek[float64](state, "output", "value") != 0
+	contagion := datura.Peek[float64](state, "paired")
+
+	if contagion == 0 {
+		contagion = datura.Peek[float64](state, "output", "contagion")
+	}
+
+	condition := datura.Peek[float64](state, "output", "condition")
+	treatment := int(datura.Peek[float64](ladder.artifact, "config", "treatmentNormal"))
+	controls := intSlice(datura.Peek[[]float64](ladder.artifact, "config", "controlsNormal"))
 
 	if inverted {
-		suffix = "_regime_inversion"
+		treatment = int(datura.Peek[float64](ladder.artifact, "config", "treatmentInverted"))
+		controls = intSlice(datura.Peek[[]float64](ladder.artifact, "config", "controlsInverted"))
 	}
 
-	bandwidth := config.KernelBandwidth
+	bandwidth := datura.Peek[float64](ladder.artifact, "config", "kernelBandwidth")
 
 	if bandwidth <= 0 {
-		return Outcome{}
+		bandwidth = deriveBandwidth(rows, int(datura.Peek[float64](ladder.artifact, "config", "treatmentNormal")))
 	}
 
-	association, assocErr := nodeTable.Association(roles.Treatment)
+	if bandwidth <= 0 {
+		return state.Read(p)
+	}
 
-	if assocErr != nil {
+	association, err := table.association(treatment)
+
+	if err != nil {
 		association = 0
 	}
 
-	intervention, intervErr := nodeTable.KernelBackdoorEffect(
-		roles.Treatment, bandwidth, roles.Controls...,
-	)
+	intervention, err := table.kernelBackdoorEffect(treatment, bandwidth, controls...)
 
-	if intervErr != nil {
+	if err != nil {
 		intervention = 0
 	}
 
-	outcome := Outcome{
-		Intervention: intervention,
-		Association:  association,
-		Inverted:     inverted,
-		Contagion:    contagion,
-		Condition:    condition,
-	}
+	raw := 0.0
+	uplift := 0.0
 
-	if intervention <= 0 {
-		return outcome
-	}
+	if intervention > 0 {
+		predictors := append(append([]int(nil), controls...), treatment)
+		nonLinear, fitOK := fitNonLinearTable(table, predictors)
+		raw = intervention
+		currentRow := rows[len(rows)-1]
+		interventionLevel := datura.Peek[float64](ladder.artifact, "config", "interventionLevel")
 
-	model, fitOK := FitNonLinearTable(nodeTable, roles.Predictors())
+		if interventionLevel <= 0 {
+			level, err := table.percentile(treatment, 0.75)
 
-	if !fitOK {
-		outcome.Raw = intervention
-		outcome.Reason = "intervention" + suffix
-
-		return outcome
-	}
-
-	interventionLevel := config.InterventionLevel
-
-	if interventionLevel <= 0 {
-		level, levelErr := nodeTable.Percentile(roles.Treatment, 0.75)
-
-		if levelErr != nil {
-			level = 0
+			if err == nil {
+				interventionLevel = level
+			}
 		}
 
-		interventionLevel = level
+		if fitOK {
+			upliftValue, err := nonLinear.counterfactualUplift(currentRow, treatment, interventionLevel)
+
+			if err == nil {
+				uplift = upliftValue
+			}
+		}
+
+		if !fitOK {
+			linear, err := table.fitLinearModel(predictors...)
+
+			if err == nil {
+				upliftValue, err := linear.counterfactualUplift(currentRow, treatment, interventionLevel)
+
+				if err == nil {
+					uplift = upliftValue
+				}
+			}
+		}
 	}
 
-	uplift, upliftErr := model.CounterfactualUplift(
-		currentRow, roles.Treatment, interventionLevel,
-	)
+	invertedValue := 0.0
 
-	if upliftErr != nil {
-		uplift = 0
+	if inverted {
+		invertedValue = 1
 	}
 
-	outcome.Uplift = uplift
+	state.MergeOutput("value", raw)
+	state.MergeOutput("association", association)
+	state.MergeOutput("intervention", intervention)
+	state.MergeOutput("uplift", uplift)
+	state.MergeOutput("contagion", contagion)
+	state.MergeOutput("condition", condition)
+	state.MergeOutput("inverted", invertedValue)
+	return state.Read(p)
+}
 
-	if uplift <= 0 {
-		outcome.Raw = intervention
-		outcome.Reason = "intervention" + suffix
-
-		return outcome
-	}
-
-	confoundFraction := config.ConfoundFraction
-	confounded := confoundFraction > 0 &&
-		math.Abs(intervention-association) > math.Abs(association)*confoundFraction
-	outcome.Reason = "intervention" + suffix
-
-	if confounded {
-		outcome.Reason = "counterfactual_like" + suffix
-	}
-
-	outcome.Raw = intervention
-
-	return outcome
+func (ladder *Ladder) Close() error {
+	return nil
 }

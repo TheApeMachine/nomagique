@@ -4,36 +4,23 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/datura"
+	"github.com/theapemachine/datura/transport"
 )
 
-func TestNodeTable_DoExpectation(testingTB *testing.T) {
-	Convey("Given a linear causal table", testingTB, func() {
-		rows := make([][]float64, 16)
-
-		for index := range rows {
-			rows[index] = []float64{
-				float64(index),
-				float64(index) * 0.5,
-				float64(index) * 2,
-				float64(index) * 0.25,
-			}
-		}
-
-		table, err := NewNodeTable(rows, 3, 12)
-
-		So(err, ShouldBeNil)
-
-		expectation, expectErr := table.DoExpectation(2, 20, 0, 1)
-
-		Convey("It should return a finite interventional expectation", func() {
-			So(expectErr, ShouldBeNil)
-			So(expectation, ShouldNotEqual, 0)
-		})
-	})
+func doConfig() *datura.Artifact {
+	return datura.Acquire("do-config", datura.APPJSON).
+		Poke(float64(3), "config", "target").
+		Poke(float64(2), "config", "treatment").
+		Poke(20.0, "config", "level").
+		Poke([]float64{0, 1}, "config", "controls").
+		Poke(float64(12), "config", "minHistory")
 }
 
-func BenchmarkNodeTable_DoExpectation(testingTB *testing.B) {
+func doTableInbound() *datura.Artifact {
 	rows := make([][]float64, 16)
+	nodeCount := 4
+	flat := make([]float64, 0, len(rows)*nodeCount)
 
 	for index := range rows {
 		rows[index] = []float64{
@@ -42,15 +29,38 @@ func BenchmarkNodeTable_DoExpectation(testingTB *testing.B) {
 			float64(index) * 2,
 			float64(index) * 0.25,
 		}
+		flat = append(flat, rows[index]...)
 	}
 
-	table, err := NewNodeTable(rows, 3, 12)
+	return datura.Acquire("do-inbound", datura.APPJSON).
+		Poke(float64(len(rows)), "table", "rowCount").
+		Poke(float64(nodeCount), "table", "nodeCount").
+		Poke(flat, "table", "rows")
+}
 
-	if err != nil {
-		testingTB.Fatal(err)
-	}
+func TestDo_Read(testingTB *testing.T) {
+	Convey("Given a linear causal table", testingTB, func() {
+		stage := NewDo(doConfig())
+		artifact := doTableInbound()
+		err := transport.NewFlipFlop(artifact, stage)
+
+		So(err, ShouldBeNil)
+
+		expectation := datura.Peek[float64](artifact, "output", "value")
+
+		Convey("It should return a finite interventional expectation", func() {
+			So(expectation, ShouldNotEqual, 0)
+		})
+	})
+}
+
+func BenchmarkDo_Read(testingTB *testing.B) {
+	stage := NewDo(doConfig())
+	artifact := doTableInbound()
+
+	testingTB.ReportAllocs()
 
 	for testingTB.Loop() {
-		_, _ = table.DoExpectation(2, 20, 0, 1)
+		_ = transport.NewFlipFlop(artifact, stage)
 	}
 }

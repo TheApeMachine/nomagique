@@ -4,6 +4,8 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/datura"
+	"github.com/theapemachine/datura/transport"
 )
 
 func TestNewRLS(testingTB *testing.T) {
@@ -22,7 +24,12 @@ func TestRLS_Observe(testingTB *testing.T) {
 		stage, err := NewRLS(1, 1000)
 		So(err, ShouldBeNil)
 
-		got := float64(observeWithWork(stage, 2, 4))
+		artifact := datura.Acquire("test", datura.APPJSON).Poke([]float64{2, 4}, "batch")
+		err = transport.NewFlipFlop(artifact, stage)
+
+		So(err, ShouldBeNil)
+
+		got := datura.Peek[float64](artifact, "output", "value")
 
 		Convey("It should derive a finite prediction", func() {
 			So(got, ShouldBeGreaterThan, 0)
@@ -34,13 +41,17 @@ func TestRLS_Reset(testingTB *testing.T) {
 	Convey("Given a reset RLS stage", testingTB, func() {
 		stage, err := NewRLS(1, 1000)
 		So(err, ShouldBeNil)
-		_ = observeWithWork(stage, 1, 2)
+
+		artifact := datura.Acquire("test", datura.APPJSON).Poke([]float64{1, 2}, "batch")
+		err = transport.NewFlipFlop(artifact, stage)
+
+		So(err, ShouldBeNil)
 
 		resetErr := stage.Reset()
 
 		Convey("It should clear derived output", func() {
 			So(resetErr, ShouldBeNil)
-			So(float64(stage.output), ShouldEqual, 0)
+			So(stage.output, ShouldEqual, 0)
 		})
 	})
 }
@@ -52,9 +63,12 @@ func BenchmarkRLS_Observe(testingTB *testing.B) {
 		testingTB.Fatal(err)
 	}
 
+	artifact := datura.Acquire("test", datura.APPJSON)
+
 	testingTB.ReportAllocs()
 
 	for testingTB.Loop() {
-		_ = observeInputs(stage, 1, 2, 3, 6)
+		artifact.Poke([]float64{1, 2, 3, 6}, "batch")
+		_ = transport.NewFlipFlop(artifact, stage)
 	}
 }

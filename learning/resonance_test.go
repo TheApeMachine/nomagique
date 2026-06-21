@@ -5,7 +5,8 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/nomagique/tests"
+	"github.com/theapemachine/datura"
+	"github.com/theapemachine/datura/transport"
 	"gonum.org/v1/gonum/mat"
 )
 
@@ -111,18 +112,18 @@ func TestResonanceManifold_Read(testingTB *testing.T) {
 		manifold, err := NewResonanceManifold([]int{2, 4, 2}, 1, 0.02)
 		So(err, ShouldBeNil)
 
-		writeErr := tests.WriteSamples(manifold, 0.2, -0.4, 0.8)
-		So(writeErr, ShouldBeNil)
+		artifact := datura.Acquire("test", datura.APPJSON).
+			Poke([]float64{0.2, -0.4, 0.8}, "batch")
+		err = transport.NewFlipFlop(artifact, manifold)
 
-		got, readErr := tests.ReadSample(manifold)
-		So(readErr, ShouldBeNil)
+		So(err, ShouldBeNil)
 
-		payload, payloadErr := manifold.artifact.Payload()
-		So(payloadErr, ShouldBeNil)
+		got := datura.Peek[float64](artifact, "output", "value")
+		latent := datura.Peek[[]float64](artifact, "latent")
 
 		Convey("It should expose reconstruction and latent state on the artifact", func() {
 			So(math.IsNaN(got), ShouldBeFalse)
-			So(len(payload), ShouldEqual, 8*(1+2))
+			So(len(latent), ShouldEqual, 2)
 			So(len(manifold.LatentState()), ShouldEqual, 2)
 		})
 	})

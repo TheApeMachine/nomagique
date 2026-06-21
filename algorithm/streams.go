@@ -4,7 +4,6 @@ import (
 	"encoding/binary"
 	"errors"
 	"math"
-	"strconv"
 	"time"
 
 	"github.com/theapemachine/datura"
@@ -61,8 +60,34 @@ func payloadScalar(payload []byte) (float64, bool) {
 	return value, true
 }
 
-func pokeFloat(artifact *datura.Artifact, key string, value float64) {
-	artifact.Poke(key, strconv.FormatFloat(value, 'g', -1, 64))
+func stageWritableArtifact(
+	artifact *datura.Artifact,
+	origin string,
+	artifactType datura.Artifact_Type,
+) *datura.Artifact {
+	if artifact == nil {
+		return nil
+	}
+
+	fresh := datura.Acquire(origin, artifactType)
+
+	if role, err := artifact.Role(); err == nil && role != "" {
+		fresh.WithRole(role)
+	}
+
+	if scope, err := artifact.Scope(); err == nil && scope != "" {
+		fresh.WithScope(scope)
+	}
+
+	body := artifact.DecryptPayload()
+
+	if len(body) == 0 {
+		body = []byte("{}")
+	}
+
+	fresh.WithPayload(body)
+
+	return fresh
 }
 
 func rehydrateArtifact(artifact **datura.Artifact, origin string, artifactType datura.Artifact_Type) {
@@ -70,34 +95,19 @@ func rehydrateArtifact(artifact **datura.Artifact, origin string, artifactType d
 		return
 	}
 
-	current := *artifact
-	payload, _ := current.PayloadQuiet()
+	wire, err := (*artifact).Message().MarshalPacked()
+
+	if err != nil || len(wire) == 0 {
+		return
+	}
+
 	fresh := datura.Acquire(origin, artifactType)
 
 	if fresh == nil {
 		return
 	}
 
-	if len(payload) > 0 {
-		_ = fresh.SetPayload(payload)
-	}
-
-	attrs, err := current.Attributes()
-
-	if err == nil {
-		for index := 0; index < attrs.Len(); index++ {
-			attr := attrs.At(index)
-			key, keyErr := attr.Key()
-			value := datura.Peek[string](fresh, key)
-
-			if keyErr != nil {
-				continue
-			}
-
-			fresh.Poke(key, value)
-		}
-	}
-
+	_, _ = fresh.Write(wire)
 	*artifact = fresh
 }
 
@@ -267,46 +277,6 @@ func validHayashiInterval(
 	return current.At.Sub(previous.At) <= maxInterval
 }
 
-func zipFeatureTargetRows(
-	features [][]float64, target []float64,
-) ([]featureTargetRow, bool) {
-	if len(features) == 0 {
-		return nil, false
-	}
-
-	rowCount := len(features[0])
-
-	if rowCount == 0 || len(target) != rowCount {
-		return nil, false
-	}
-
-	rows := make([]featureTargetRow, rowCount)
-
-	for rowIndex := range rows {
-		rowFeatures := make([]float64, len(features))
-
-		for featureIndex, featureStream := range features {
-			if len(featureStream) != rowCount {
-				return nil, false
-			}
-
-			rowFeatures[featureIndex] = featureStream[rowIndex]
-		}
-
-		rows[rowIndex] = featureTargetRow{
-			features: rowFeatures,
-			target:   target[rowIndex],
-		}
-	}
-
-	return rows, true
-}
-
-type featureTargetRow struct {
-	features []float64
-	target   float64
-}
-
 func appendRingFloat(values []float64, value float64, capacity int) []float64 {
 	values = append(values, value)
 
@@ -315,36 +285,4 @@ func appendRingFloat(values []float64, value float64, capacity int) []float64 {
 	}
 
 	return values[len(values)-capacity:]
-}
-
-func samplesToTimes(samples []float64) []time.Time {
-	times := make([]time.Time, len(samples))
-
-	for index, sample := range samples {
-		if math.IsNaN(sample) || math.IsInf(sample, 0) {
-			return nil
-		}
-
-		times[index] = time.Unix(0, int64(sample))
-	}
-
-	return times
-}
-
-func weightSamplesFor(weights []float64, count int) ([]float64, bool) {
-	if len(weights) == 0 {
-		return nil, true
-	}
-
-	if len(weights) != count {
-		return nil, false
-	}
-
-	for _, weight := range weights {
-		if math.IsNaN(weight) || math.IsInf(weight, 0) || weight < 0 {
-			return nil, false
-		}
-	}
-
-	return weights, true
 }

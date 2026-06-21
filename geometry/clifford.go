@@ -189,7 +189,7 @@ NewRotor returns a rotor stage for nomagique.Number pipelines.
 */
 func NewRotor() *Rotor {
 	return &Rotor{
-		artifact: datura.Acquire("rotor", datura.Artifact_Type_json),
+		artifact: datura.Acquire("rotor", datura.APPJSON),
 	}
 }
 
@@ -198,12 +198,12 @@ func (rotor *Rotor) Write(p []byte) (int, error) {
 }
 
 func (rotor *Rotor) Read(p []byte) (int, error) {
-	scalars := float64Batch(rotor.artifact)
+	scalars := datura.Peek[[]float64](rotor.artifact, "batch")
 
 	if len(scalars) >= 4 {
 		rotor.multivector.FromRotation(scalars[0], scalars[1], scalars[2], scalars[3])
 		rotor.output = rotor.multivector[MvScalar]
-		putFloat64Payload(&rotor.artifact, "rotor", rotor.output)
+		rotor.artifact.Poke(datura.Map[float64]{"value": rotor.output}, "output")
 	}
 
 	return rotor.artifact.Read(p)
@@ -223,6 +223,7 @@ func (rotor *Rotor) Multivector() Multivector {
 func (rotor *Rotor) Reset() error {
 	rotor.multivector = Multivector{}
 	rotor.output = 0
+	rotor.artifact.Poke(datura.Map[float64]{"value": 0}, "output")
 
 	return nil
 }
@@ -241,7 +242,7 @@ NewTranslator returns a translation stage for nomagique.Number pipelines.
 */
 func NewTranslator() *Translator {
 	return &Translator{
-		artifact: datura.Acquire("translator", datura.Artifact_Type_json),
+		artifact: datura.Acquire("translator", datura.APPJSON),
 	}
 }
 
@@ -250,12 +251,12 @@ func (translator *Translator) Write(p []byte) (int, error) {
 }
 
 func (translator *Translator) Read(p []byte) (int, error) {
-	scalars := float64Batch(translator.artifact)
+	scalars := datura.Peek[[]float64](translator.artifact, "batch")
 
 	if len(scalars) >= 3 {
 		translator.multivector.FromTranslation(scalars[0], scalars[1], scalars[2])
 		translator.output = translator.multivector[MvScalar]
-		putFloat64Payload(&translator.artifact, "translator", translator.output)
+		translator.artifact.Poke(datura.Map[float64]{"value": translator.output}, "output")
 	}
 
 	return translator.artifact.Read(p)
@@ -275,6 +276,7 @@ func (translator *Translator) Multivector() Multivector {
 func (translator *Translator) Reset() error {
 	translator.multivector = Multivector{}
 	translator.output = 0
+	translator.artifact.Poke(datura.Map[float64]{"value": 0}, "output")
 
 	return nil
 }
@@ -293,7 +295,7 @@ NewSandwich returns a sandwich stage bound to motor.
 */
 func NewSandwich(motor Multivector) *Sandwich {
 	return &Sandwich{
-		artifact: datura.Acquire("sandwich", datura.Artifact_Type_json),
+		artifact: datura.Acquire("sandwich", datura.APPJSON),
 		motor:    motor,
 	}
 }
@@ -303,7 +305,7 @@ func (sandwich *Sandwich) Write(p []byte) (int, error) {
 }
 
 func (sandwich *Sandwich) Read(p []byte) (int, error) {
-	scalars := float64Batch(sandwich.artifact)
+	scalars := datura.Peek[[]float64](sandwich.artifact, "batch")
 
 	if len(scalars) >= multivectorComponentCount {
 		var target Multivector
@@ -311,7 +313,7 @@ func (sandwich *Sandwich) Read(p []byte) (int, error) {
 		target.FromComponents(scalars)
 		result := sandwich.motor.Sandwich(target)
 		sandwich.output = result[MvScalar]
-		putFloat64Payload(&sandwich.artifact, "clifford", sandwich.output)
+		sandwich.artifact.Poke(datura.Map[float64]{"value": sandwich.output}, "output")
 	}
 
 	return sandwich.artifact.Read(p)
@@ -323,6 +325,7 @@ func (sandwich *Sandwich) Close() error {
 
 func (sandwich *Sandwich) Reset() error {
 	sandwich.output = 0
+	sandwich.artifact.Poke(datura.Map[float64]{"value": 0}, "output")
 
 	return nil
 }

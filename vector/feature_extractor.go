@@ -1,10 +1,9 @@
 package vector
 
 import (
-	"fmt"
 	"io"
+	"math"
 
-	"github.com/bytedance/sonic"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/transport"
 	"github.com/theapemachine/errnie"
@@ -12,86 +11,114 @@ import (
 )
 
 /*
-FeatureExtractor holds raw input channels and derived feature slots in reusable
-buffers. Write brings an artifact in; Read updates one channel and refreshes features.
+FeatureExtractor is an atomic compute primitive (io.ReadWriteCloser).
+
+The constructor artifact is config (attributes). Write buffers inbound wire.
+Read unpacks the frame, extracts features, and emits a packed artifact.
 */
 type FeatureExtractor struct {
 	artifact   *datura.Artifact
-	transforms map[string]io.ReadWriter
+	bytes      []byte
+	emaConfigs map[string]*datura.Artifact
+	transforms map[string]func(*datura.Artifact) io.ReadWriteCloser
 }
 
 /*
-NewFeatureExtractor builds an extractor with inputCount channels and one formula
-per derived feature, evaluated in registration order.
+NewFeatureExtractor builds an extractor wired from schema attributes.
 */
 func NewFeatureExtractor(artifact *datura.Artifact) *FeatureExtractor {
+	artifact.Inspect("feature-extractor", "NewFeatureExtractor()")
+
 	return &FeatureExtractor{
 		artifact:   artifact,
-		transforms: make(map[string]io.ReadWriter),
+		emaConfigs: map[string]*datura.Artifact{},
+		transforms: map[string]func(*datura.Artifact) io.ReadWriteCloser{
+			"ema": func(config *datura.Artifact) io.ReadWriteCloser {
+				return adaptive.NewEMA(config)
+			},
+		},
 	}
 }
 
-func (extractor *FeatureExtractor) Read(p []byte) (int, error) {
-	inputs := datura.Peek[[]string](extractor.artifact, "inputs")
-	features := datura.Map{
-		"features": make([]float64, len(inputs)),
+func (extractor *FeatureExtractor) Read(payload []byte) (int, error) {
+	state := datura.Acquire("feature-extractor-state", datura.APPJSON)
+	state.Inspect("feature-extractor", "Read()", "p")
+
+	if _, err := state.Write(extractor.bytes); err != nil {
+		state.Release()
+
+		return 0, err
 	}
+
+	defer state.Release()
+
+	role := datura.Peek[string](state, "channel")
+
+	rootKey := datura.Peek[string](extractor.artifact, role, "root")
+	inputs := datura.Peek[[]string](extractor.artifact, role, "inputs")
+
+	if rootKey == "" {
+		rootKey = datura.Peek[string](extractor.artifact, "root")
+	}
+
+	if len(inputs) == 0 {
+		inputs = datura.Peek[[]string](extractor.artifact, "inputs")
+	}
+
+	features := make([]float64, len(inputs))
 
 	for index, input := range inputs {
-		features["features"].([]float64)[index] = extractor.transform(
-			extractor.artifact, input, index,
-		)
+		sample := datura.Peek[float64](state, rootKey, 0, input)
+
+		if math.IsNaN(sample) || math.IsInf(sample, 0) {
+			errnie.Error(errnie.Err(
+				errnie.Validation,
+				"feature-extractor: sample is NaN or Inf",
+				nil,
+			))
+		}
+
+		transform := datura.Peek[string](extractor.artifact, role, "transforms", input)
+
+		if transform == "" {
+			transform = datura.Peek[string](extractor.artifact, "transforms", input)
+		}
+
+		if transformer, ok := extractor.transforms[transform]; ok {
+			scratch := datura.Acquire("feature-extractor-scratch", datura.APPJSON)
+			scratch.WithPayload(datura.Map[any]{"sample": sample}.Marshal())
+
+			config, exists := extractor.emaConfigs[input]
+
+			if !exists {
+				config = datura.Acquire("feature-extractor-ema", datura.APPJSON)
+				extractor.emaConfigs[input] = config
+			}
+
+			scratch.Inspect("feature-extractor", "Read()", "transform", transform, "in")
+			transport.NewFlipFlop(scratch, transformer(config))
+			scratch.Inspect("feature-extractor", "Read()", "transform", transform, "out")
+
+			sample = datura.Peek[float64](scratch, "output", "value")
+			scratch.Release()
+		}
+
+		features[index] = sample
 	}
 
-	payload := errnie.Does(func() ([]byte, error) {
-		return sonic.Marshal(features)
-	}).Or(func(err error) {
-		extractor.artifact.WithError(errnie.Error(errnie.Err(
-			errnie.IO,
-			"feature-extractor",
-			err,
-		)))
-	}).Value()
+	state.Merge("features", features)
+	state.Merge("root", "features")
+	state.Merge("inputs", inputs)
 
-	return datura.Acquire(
-		"feature-extractor", datura.APPJSON,
-	).WithPayload(payload).Read(p)
+	return state.Read(payload)
 }
 
 func (extractor *FeatureExtractor) Write(p []byte) (int, error) {
-	return extractor.artifact.Write(p)
+	extractor.bytes = append(extractor.bytes[:0], p...)
+
+	return len(p), nil
 }
 
 func (extractor *FeatureExtractor) Close() error {
 	return nil
-}
-
-var transformMap = map[string]func() io.ReadWriter{
-	"ema": func() io.ReadWriter { return adaptive.NewEMA() },
-}
-
-func (extractor *FeatureExtractor) transform(
-	artifact *datura.Artifact,
-	input string,
-	index int,
-) float64 {
-	var ok bool
-
-	typedData := datura.PeekPayload[map[string]any](
-		artifact, fmt.Sprintf("data.%s.%d", input, index),
-	)
-
-	label := typedData["label"].(string)
-	value := typedData["value"].(float64)
-	transform := typedData["transform"].(string)
-
-	var transformer io.ReadWriter
-
-	if transformer, ok = extractor.transforms[label]; !ok {
-		extractor.transforms[label] = transformMap[transform]()
-	}
-
-	transport.NewFlipFlop(artifact, transformer)
-
-	return value
 }

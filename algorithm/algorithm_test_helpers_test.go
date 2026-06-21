@@ -5,18 +5,12 @@ import (
 	"io"
 
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/nomagique/equation"
 )
 
 type fixedScore struct {
 	artifact *datura.Artifact
 	value    float64
-}
-
-func newFixedScore(value float64) *fixedScore {
-	return &fixedScore{
-		artifact: datura.Acquire("fixed-score", datura.Artifact_Type_json),
-		value:    value,
-	}
 }
 
 func (fixedScore *fixedScore) Write(p []byte) (int, error) {
@@ -28,7 +22,7 @@ func (fixedScore *fixedScore) Write(p []byte) (int, error) {
 }
 
 func (fixedScore *fixedScore) Read(p []byte) (int, error) {
-	_ = fixedScore.artifact.SetPayload(encodePayload(fixedScore.value))
+	fixedScore.artifact.WithPayload(encodePayload(fixedScore.value))
 
 	return fixedScore.artifact.Read(p)
 }
@@ -39,7 +33,7 @@ func (fixedScore *fixedScore) Close() error {
 
 func readScalar(stage io.ReadWriter, samples ...float64) float64 {
 	inbound := datura.Acquire("test-in", datura.Artifact_Type_json)
-	_ = inbound.SetPayload(encodePayload(samples...))
+	inbound.WithPayload(equation.MarshalFeaturesPayload(samples))
 	buf, _ := inbound.Message().Marshal()
 	_, _ = stage.Write(buf)
 
@@ -64,7 +58,12 @@ func readScalar(stage io.ReadWriter, samples ...float64) float64 {
 
 	outbound := datura.Acquire("test-out", datura.Artifact_Type_json)
 	_, _ = outbound.Write(outBuf.Bytes())
-	payload, _ := outbound.Payload()
+
+	if !outbound.HasEncryptedPayload() {
+		return 0
+	}
+
+	payload := outbound.DecryptPayload()
 	value, ok := payloadScalar(payload)
 
 	if !ok {
@@ -80,24 +79,4 @@ func observeInputs(stage io.ReadWriter, series ...float64) float64 {
 
 func observeWithWork(stage io.ReadWriter, sample float64, work float64) float64 {
 	return readScalar(stage, sample, work)
-}
-
-func observeNodeRow(nodeRing *NodeRing, values ...float64) {
-	readScalar(nodeRing, values...)
-}
-
-func nodeRingFromStreams(streams [][]float64) *NodeRing {
-	nodeRing := NewNodeRing(len(streams), len(streams[0]))
-
-	for rowIndex := range streams[0] {
-		row := make([]float64, len(streams))
-
-		for nodeIndex := range streams {
-			row[nodeIndex] = streams[nodeIndex][rowIndex]
-		}
-
-		observeNodeRow(nodeRing, row...)
-	}
-
-	return nodeRing
 }

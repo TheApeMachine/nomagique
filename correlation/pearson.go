@@ -10,42 +10,72 @@ import (
 
 /*
 Pearson computes the Pearson correlation coefficient between two streams.
-Optionally, weights can be provided which are applied to the inputs before
-computing the correlation. This helps to reduce the impact of outliers.
+Weights may be supplied on config.weights and are applied before correlation.
+The constructor artifact holds config; Write buffers inbound wire on its payload.
 */
 type Pearson struct {
 	artifact *datura.Artifact
-	weights  []float64
 }
 
 /*
-NewPearson creates a new Pearson correlation dynamic.
+NewPearson creates a Pearson correlation stage wired from config attributes on the artifact.
 */
-func NewPearson(weights []float64) *Pearson {
+func NewPearson(artifact *datura.Artifact) *Pearson {
+	artifact.Inspect("correlation", "pearson", "NewPearson()")
+
 	return &Pearson{
-		artifact: datura.Acquire("pearson", datura.Artifact_Type_json),
-		weights:  weights,
+		artifact: artifact,
 	}
 }
 
 func (pearson *Pearson) Write(p []byte) (int, error) {
-	return pearson.artifact.Write(p)
+	pearson.artifact.WithPayload(p)
+	return len(p), nil
 }
 
 func (pearson *Pearson) Read(p []byte) (int, error) {
-	values := float64Batch(pearson.artifact)
+	state := datura.Acquire("pearson-state", datura.APPJSON)
+	state.Inspect("correlation", "pearson", "Read()", "p")
+
+	if _, err := state.Write(pearson.artifact.DecryptPayload()); err != nil {
+		return 0, err
+	}
+
+	values := datura.Peek[[]float64](state, "batch")
+
+	if len(values) == 0 {
+		left := datura.Peek[[]float64](state, "left")
+		right := datura.Peek[[]float64](state, "right")
+
+		if len(left) > 0 || len(right) > 0 {
+			values = append(append([]float64(nil), left...), right...)
+		}
+	}
+
 	count := len(values)
 
 	if count >= 2 && count%2 == 0 {
 		half := count / 2
 		left := values[:half]
 		right := values[half:]
-		weights, weightsOK := weightSamplesFor(pearson.weights, half)
+		weights := datura.Peek[[]float64](pearson.artifact, "config", "weights")
+		weightsOK := len(weights) == 0 || len(weights) == half
+
+		for _, weight := range weights {
+			if math.IsNaN(weight) || math.IsInf(weight, 0) || weight < 0 {
+				weightsOK = false
+			}
+		}
+
+		if len(weights) == 0 {
+			weights = nil
+		}
 
 		if !weightsOK {
-			putFloat64Payload(&pearson.artifact, "pearson", 0)
-
-			return pearson.artifact.Read(p)
+			state.MergeOutput("value", 0.0)
+			state.Merge("root", "output")
+			state.Merge("inputs", []string{"value"})
+			return state.Read(p)
 		}
 
 		correlation := stat.Correlation(left, right, weights)
@@ -54,9 +84,10 @@ func (pearson *Pearson) Read(p []byte) (int, error) {
 			correlation = 0
 		}
 
-		putFloat64Payload(&pearson.artifact, "pearson", correlation)
-
-		return pearson.artifact.Read(p)
+		state.MergeOutput("value", correlation)
+		state.Merge("root", "output")
+		state.Merge("inputs", []string{"value"})
+		return state.Read(p)
 	}
 
 	if count > 0 && count < 2 {
@@ -73,20 +104,13 @@ func (pearson *Pearson) Read(p []byte) (int, error) {
 		)
 	}
 
-	if count == 0 || count < 2 || count%2 != 0 {
-		putFloat64Payload(&pearson.artifact, "pearson", 0)
-	}
-
-	return pearson.artifact.Read(p)
+	state.MergeOutput("value", 0.0)
+	state.Merge("root", "output")
+	state.Merge("inputs", []string{"value"})
+	return state.Read(p)
 }
 
 func (pearson *Pearson) Close() error {
-	return nil
-}
-
-func (pearson *Pearson) Reset() error {
-	pearson.weights = nil
-
 	return nil
 }
 
@@ -101,4 +125,18 @@ type PearsonError string
 
 func (pearsonError PearsonError) Error() string {
 	return string(pearsonError)
+}
+
+func inboundReset(payload []byte) bool {
+	if len(payload) == 0 {
+		return false
+	}
+
+	state := datura.Acquire("inbound-reset", datura.APPJSON)
+
+	if _, err := state.Write(payload); err != nil {
+		return false
+	}
+
+	return datura.Peek[float64](state, "reset") > 0
 }

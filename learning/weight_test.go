@@ -4,6 +4,8 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/datura"
+	"github.com/theapemachine/datura/transport"
 )
 
 func TestWeight(testingTB *testing.T) {
@@ -19,46 +21,87 @@ func TestWeight(testingTB *testing.T) {
 func TestTrustWeight_Observe(testingTB *testing.T) {
 	Convey("Given empty Observe inputs", testingTB, func() {
 		trustWeight := Weight()
+		artifact := datura.Acquire("test", datura.APPJSON)
+		err := transport.NewFlipFlop(artifact, trustWeight)
+
+		So(err, ShouldBeNil)
 
 		Convey("It should return zero output", func() {
-			So(observeInputs(trustWeight), ShouldEqual, 0)
+			So(datura.Peek[float64](artifact, "output", "value"), ShouldEqual, 0)
 		})
 	})
 
 	Convey("Given a fresh trust weight", testingTB, func() {
 		trustWeight := Weight()
-		got := observeInputs(trustWeight, 10, 10)
+		artifact := datura.Acquire("test", datura.APPJSON).
+			Poke(10, "sample").
+			Poke(10, "paired")
+		err := transport.NewFlipFlop(artifact, trustWeight)
+
+		So(err, ShouldBeNil)
+
+		got := datura.Peek[float64](artifact, "output", "value")
 
 		Convey("It should return full trust", func() {
-			So(float64(got), ShouldEqual, 1)
+			So(got, ShouldEqual, 1)
 		})
 	})
 
 	Convey("Given diverging outcomes", testingTB, func() {
 		trustWeight := Weight()
-		_ = observeInputs(trustWeight, 10, 10)
-		got := observeInputs(trustWeight, 20, 30)
+		artifact := datura.Acquire("test", datura.APPJSON)
+
+		artifact.Poke(10, "sample").Poke(10, "paired")
+		err := transport.NewFlipFlop(artifact, trustWeight)
+
+		So(err, ShouldBeNil)
+
+		artifact.Poke(20, "sample").Poke(30, "paired")
+		err = transport.NewFlipFlop(artifact, trustWeight)
+
+		So(err, ShouldBeNil)
+
+		got := datura.Peek[float64](artifact, "output", "value")
 
 		Convey("It should reduce trust", func() {
-			So(float64(got), ShouldBeLessThan, 1)
+			So(got, ShouldBeLessThan, 1)
 		})
 	})
 
 	Convey("Given zero predicted", testingTB, func() {
 		trustWeight := Weight()
-		got := observeInputs(trustWeight, 0, 10)
+		artifact := datura.Acquire("test", datura.APPJSON).
+			Poke(0, "sample").
+			Poke(10, "paired")
+		err := transport.NewFlipFlop(artifact, trustWeight)
+
+		So(err, ShouldBeNil)
+
+		got := datura.Peek[float64](artifact, "output", "value")
 
 		Convey("It should leave output at zero", func() {
-			So(float64(got), ShouldEqual, 0)
+			So(got, ShouldEqual, 0)
 		})
 	})
 
 	Convey("Given a non-scalar first input", testingTB, func() {
 		trustWeight := Weight()
-		before := observeInputs(trustWeight, 10, 10)
+		artifact := datura.Acquire("test", datura.APPJSON)
+
+		artifact.Poke(10, "sample").Poke(10, "paired")
+		err := transport.NewFlipFlop(artifact, trustWeight)
+
+		So(err, ShouldBeNil)
+
+		before := datura.Peek[float64](artifact, "output", "value")
+
+		fresh := datura.Acquire("test", datura.APPJSON)
+		err = transport.NewFlipFlop(fresh, trustWeight)
+
+		So(err, ShouldBeNil)
 
 		Convey("It should leave output unchanged", func() {
-			So(observeWithoutSample(trustWeight, 99), ShouldEqual, before)
+			So(datura.Peek[float64](fresh, "output", "value"), ShouldEqual, before)
 		})
 	})
 }
@@ -66,25 +109,38 @@ func TestTrustWeight_Observe(testingTB *testing.T) {
 func TestTrustWeight_Reset(testingTB *testing.T) {
 	Convey("Given trust weight with state", testingTB, func() {
 		trustWeight := Weight()
-		_ = observeInputs(trustWeight, 10, 10)
+		artifact := datura.Acquire("test", datura.APPJSON).
+			Poke(10, "sample").
+			Poke(10, "paired")
+		err := transport.NewFlipFlop(artifact, trustWeight)
 
+		So(err, ShouldBeNil)
 		So(trustWeight.Reset(), ShouldBeNil)
+
+		fresh := datura.Acquire("test", datura.APPJSON)
+		err = transport.NewFlipFlop(fresh, trustWeight)
+
+		So(err, ShouldBeNil)
 
 		Convey("It should clear derived state", func() {
 			So(trustWeight.state.Ready, ShouldBeFalse)
-			So(float64(observeInputs(trustWeight)), ShouldEqual, 0)
+			So(datura.Peek[float64](fresh, "output", "value"), ShouldEqual, 0)
 		})
 	})
 }
 
 func BenchmarkWeight_Observe(testingTB *testing.B) {
 	trustWeight := Weight()
-	_ = observeInputs(trustWeight, 10, 10)
+	artifact := datura.Acquire("test", datura.APPJSON)
+
+	artifact.Poke(10, "sample").Poke(10, "paired")
+	_ = transport.NewFlipFlop(artifact, trustWeight)
 
 	testingTB.ReportAllocs()
 
 	for testingTB.Loop() {
-		_ = observeInputs(trustWeight, 10, 11)
+		artifact.Poke(10, "sample").Poke(11, "paired")
+		_ = transport.NewFlipFlop(artifact, trustWeight)
 	}
 }
 

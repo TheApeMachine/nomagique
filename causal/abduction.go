@@ -1,74 +1,99 @@
 package causal
 
-import "errors"
+import (
+	"errors"
+
+	"github.com/theapemachine/datura"
+)
 
 /*
-AbductNoise infers exogenous residual U = Y - f(X, Z) for one observed row.
+Abduction runs abductive counterfactual inference from table.* and config on the artifact.
+The constructor artifact holds config; Write buffers inbound table wire on its payload.
 */
-func (model LinearModel) AbductNoise(row []float64, observedTarget float64) (float64, error) {
-	fitted, err := model.Predict(row, -1, 0)
-
-	if err != nil {
-		return 0, err
-	}
-
-	return observedTarget - fitted, nil
+type Abduction struct {
+	artifact *datura.Artifact
 }
 
 /*
-StructuralCounterfactual returns Y_{x'}(u) = f(x', Z) + U after abduction.
+NewAbduction returns an abduction stage wired from config attributes on the artifact.
 */
-func (model LinearModel) StructuralCounterfactual(
-	row []float64,
-	treatment int,
-	intervention float64,
-	noise float64,
-) (float64, error) {
-	structural, err := model.Predict(row, treatment, intervention)
+func NewAbduction(artifact *datura.Artifact) *Abduction {
+	artifact.Inspect("causal", "abduction", "NewAbduction()")
 
-	if err != nil {
+	return &Abduction{
+		artifact: artifact,
+	}
+}
+
+func (abduction *Abduction) Write(p []byte) (int, error) {
+	abduction.artifact.WithPayload(p)
+	return len(p), nil
+}
+
+func (abduction *Abduction) Read(p []byte) (int, error) {
+	state := datura.Acquire("abduction-state", datura.APPJSON)
+	state.Inspect("causal", "abduction", "Read()", "p")
+
+	if _, err := state.Write(abduction.artifact.DecryptPayload()); err != nil {
 		return 0, err
 	}
 
-	return structural + noise, nil
-}
+	rows, ok := tableRows(state)
 
-/*
-AbductNoise infers exogenous residual U = Y - f(X, Z) for one observed row.
-*/
-func (model NonLinearModel) AbductNoise(row []float64, observedTarget float64) (float64, error) {
-	fitted, err := model.Predict(row, -1, 0)
-
-	if err != nil {
-		return 0, err
+	if !ok {
+		state.MergeOutput("value", 0.0)
+		return state.Read(p)
 	}
 
-	return observedTarget - fitted, nil
-}
+	target := int(datura.Peek[float64](abduction.artifact, "config", "target"))
+	treatment := int(datura.Peek[float64](abduction.artifact, "config", "treatment"))
+	intervention := datura.Peek[float64](abduction.artifact, "config", "intervention")
+	minHistory := int(datura.Peek[float64](abduction.artifact, "config", "minHistory"))
+	features := intSlice(datura.Peek[[]float64](abduction.artifact, "config", "features"))
+	linear := datura.Peek[float64](abduction.artifact, "config", "linear") > 0
 
-/*
-StructuralCounterfactual returns Y_{x'}(u) = f(x', Z) + U after abduction.
-*/
-func (model NonLinearModel) StructuralCounterfactual(
-	row []float64,
-	treatment int,
-	intervention float64,
-	noise float64,
-) (float64, error) {
-	structural, err := model.Predict(row, treatment, intervention)
-
-	if err != nil {
-		return 0, err
+	if minHistory <= 0 {
+		minHistory = len(rows)
 	}
 
-	return structural + noise, nil
+	table, err := newNodeTable(rows, target, minHistory)
+
+	if err != nil {
+		state.MergeOutput("value", 0.0)
+		return state.Read(p)
+	}
+
+	currentRow := rows[len(rows)-1]
+	uplift, counterfactual, noise, err := abductiveCounterfactual(
+		table,
+		features,
+		linear,
+		currentRow,
+		target,
+		treatment,
+		intervention,
+	)
+
+	if err != nil {
+		state.MergeOutput("value", 0.0)
+		return state.Read(p)
+	}
+
+	state.MergeOutput("value", uplift)
+	state.MergeOutput("uplift", uplift)
+	state.MergeOutput("counterfactual", counterfactual)
+	state.MergeOutput("noise", noise)
+	return state.Read(p)
 }
 
-/*
-AbductiveCounterfactual runs abduction then counterfactual intervention on one row.
-*/
-func AbductiveCounterfactual(
-	model NonLinearModel,
+func (abduction *Abduction) Close() error {
+	return nil
+}
+
+func abductiveCounterfactual(
+	table nodeTable,
+	features []int,
+	linear bool,
 	row []float64,
 	target int,
 	treatment int,
@@ -79,17 +104,104 @@ func AbductiveCounterfactual(
 	}
 
 	observedTarget := row[target]
-	noise, err = model.AbductNoise(row, observedTarget)
+
+	if linear {
+		model, err := table.fitLinearModel(features...)
+
+		if err != nil {
+			return 0, 0, 0, err
+		}
+
+		noise, err = abductNoiseLinear(model, row, observedTarget)
+
+		if err != nil {
+			return 0, 0, 0, err
+		}
+
+		counterfactual, err = structuralCounterfactualLinear(model, row, treatment, intervention, noise)
+
+		if err != nil {
+			return 0, 0, 0, err
+		}
+
+		uplift, err = model.counterfactualUplift(row, treatment, intervention)
+
+		if err != nil {
+			return 0, 0, 0, err
+		}
+
+		return uplift, counterfactual, noise, nil
+	}
+
+	model, fitOK := fitNonLinearTable(table, features)
+
+	if !fitOK {
+		return 0, 0, 0, errors.New("causal: nonlinear abduction fit failed")
+	}
+
+	noise, err = abductNoiseNonLinear(model, row, observedTarget)
 
 	if err != nil {
 		return 0, 0, 0, err
 	}
 
-	counterfactual, err = model.StructuralCounterfactual(row, treatment, intervention, noise)
+	counterfactual, err = structuralCounterfactualNonLinear(model, row, treatment, intervention, noise)
 
 	if err != nil {
 		return 0, 0, 0, err
 	}
 
 	return counterfactual - observedTarget, counterfactual, noise, nil
+}
+
+func abductNoiseLinear(model linearModel, row []float64, observedTarget float64) (float64, error) {
+	fitted, err := model.predict(row, -1, 0)
+
+	if err != nil {
+		return 0, err
+	}
+
+	return observedTarget - fitted, nil
+}
+
+func structuralCounterfactualLinear(
+	model linearModel,
+	row []float64,
+	treatment int,
+	intervention float64,
+	noise float64,
+) (float64, error) {
+	structural, err := model.predict(row, treatment, intervention)
+
+	if err != nil {
+		return 0, err
+	}
+
+	return structural + noise, nil
+}
+
+func abductNoiseNonLinear(model nonLinearModel, row []float64, observedTarget float64) (float64, error) {
+	fitted, err := model.predict(row, -1, 0)
+
+	if err != nil {
+		return 0, err
+	}
+
+	return observedTarget - fitted, nil
+}
+
+func structuralCounterfactualNonLinear(
+	model nonLinearModel,
+	row []float64,
+	treatment int,
+	intervention float64,
+	noise float64,
+) (float64, error) {
+	structural, err := model.predict(row, treatment, intervention)
+
+	if err != nil {
+		return 0, err
+	}
+
+	return structural + noise, nil
 }

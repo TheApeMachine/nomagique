@@ -13,7 +13,6 @@ type Velocity struct {
 	artifact *datura.Artifact
 	prev     float64
 	ready    bool
-	output   float64
 }
 
 /*
@@ -21,7 +20,7 @@ NewVelocity returns a velocity stage ready from its first observation.
 */
 func NewVelocity() *Velocity {
 	return &Velocity{
-		artifact: datura.Acquire("velocity", datura.Artifact_Type_json),
+		artifact: datura.Acquire("velocity", datura.APPJSON),
 	}
 }
 
@@ -30,12 +29,14 @@ func (velocity *Velocity) Write(p []byte) (int, error) {
 }
 
 func (velocity *Velocity) Read(p []byte) (int, error) {
-	sample, ok := boundaryFloat64(velocity.artifact)
+	sample := datura.Peek[float64](velocity.artifact, "sample")
 
-	if ok {
-		velocity.output = velocity.observe(sample)
-		putFloat64Payload(&velocity.artifact, "phase", velocity.output)
+	if sample == 0 && !velocity.ready {
+		return velocity.artifact.Read(p)
 	}
+
+	derived := velocity.observe(sample)
+	velocity.artifact.Poke(datura.Map[float64]{"value": derived}, "output")
 
 	return velocity.artifact.Read(p)
 }
@@ -56,7 +57,7 @@ func (velocity *Velocity) ObserveSamples(means []float64, out []float64) {
 func (velocity *Velocity) Reset() error {
 	velocity.prev = 0
 	velocity.ready = false
-	velocity.output = 0
+	velocity.artifact.Poke(datura.Map[float64]{"value": 0}, "output")
 
 	return nil
 }
@@ -80,7 +81,6 @@ Coupling measures directional alignment of two growth samples in [-1, +1].
 */
 type Coupling struct {
 	artifact *datura.Artifact
-	output   float64
 }
 
 /*
@@ -88,7 +88,7 @@ NewCoupling returns a coupling stage.
 */
 func NewCoupling() *Coupling {
 	return &Coupling{
-		artifact: datura.Acquire("coupling", datura.Artifact_Type_json),
+		artifact: datura.Acquire("coupling", datura.APPJSON),
 	}
 }
 
@@ -97,16 +97,37 @@ func (coupling *Coupling) Write(p []byte) (int, error) {
 }
 
 func (coupling *Coupling) Read(p []byte) (int, error) {
-	values := float64Batch(coupling.artifact)
+	values := datura.Peek[[]float64](coupling.artifact, "batch")
 
-	if len(values) >= 2 {
-		leftGrowth, rightGrowth, err := parseGrowthPair(values[0], values[1:])
+	if len(values) == 0 {
+		left := datura.Peek[float64](coupling.artifact, "sample")
+		right := datura.Peek[float64](coupling.artifact, "paired")
 
-		if err == nil {
-			coupling.output = coupling.align(leftGrowth, rightGrowth)
-			putFloat64Payload(&coupling.artifact, "phase", coupling.output)
+		if left == 0 && right == 0 {
+			return coupling.artifact.Read(p)
 		}
+
+		if right == 0 {
+			return coupling.artifact.Read(p)
+		}
+
+		values = []float64{left, right}
 	}
+
+	if len(values) < 2 {
+		return coupling.artifact.Read(p)
+	}
+
+	leftGrowth, rightGrowth, err := parseGrowthPair(values[0], values[1:])
+
+	if err != nil {
+		return coupling.artifact.Read(p)
+	}
+
+	coupling.artifact.Poke(
+		datura.Map[float64]{"value": coupling.align(leftGrowth, rightGrowth)},
+		"output",
+	)
 
 	return coupling.artifact.Read(p)
 }
@@ -116,7 +137,7 @@ func (coupling *Coupling) Close() error {
 }
 
 func (coupling *Coupling) Reset() error {
-	coupling.output = 0
+	coupling.artifact.Poke(datura.Map[float64]{"value": 0}, "output")
 
 	return nil
 }

@@ -1,69 +1,81 @@
 package adaptive
 
 import (
-	"encoding/binary"
+	"bytes"
 	"io"
-	"math"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/datura/transport"
 )
 
-func TestEMA_step(testingTB *testing.T) {
-	cases := []struct {
-		name    string
-		samples []float64
-		expect  float64
-	}{
-		{"bootstrap echo", []float64{10}, 10},
-		{"collapsed repeat", []float64{10, 10, 10}, 10},
-		{"unit step up", []float64{0, 10}, 10},
-		{"full retrace", []float64{10, 20, 5}, 5},
-		{"negative bootstrap", []float64{-5}, -5},
-		{"oscillating range", []float64{1, 3, 1, 3}, 3},
-	}
+var emaInput = datura.Acquire("test", datura.APPJSON).Poke(1, "sample")
 
-	for _, testCase := range cases {
-		testCase := testCase
+var emaConfig = datura.Acquire("ema-config", datura.APPJSON)
 
-		Convey("Given "+testCase.name, testingTB, func() {
-			ema := NewEMA()
-			var got float64
+func TestEMARead(t *testing.T) {
+	Convey("Given an EMA", t, func() {
+		ema := NewEMA(emaConfig)
+		io.Copy(ema, emaInput)
 
-			for _, sample := range testCase.samples {
-				got = ema.step(sample)
-			}
-
-			Convey("It should derive the expected value", func() {
-				So(got, ShouldEqual, testCase.expect)
-			})
+		Convey("When Read is called", func() {
+			buffer := bytes.NewBuffer(nil)
+			_, err := io.Copy(buffer, ema)
+			So(err, ShouldBeNil)
+			So(datura.Peek[float64](ema.artifact, "output", "value"), ShouldEqual, 1)
 		})
-	}
+	})
 }
 
-func TestEMA_ReadWrite(testingTB *testing.T) {
-	Convey("Given Write then Read", testingTB, func() {
-		ema := NewEMA()
-		in := datura.Acquire("test", datura.Artifact_Type_json)
-		payload := make([]byte, 8)
-		binary.BigEndian.PutUint64(payload, math.Float64bits(10))
-		_ = in.SetPayload(payload)
-		buf, _ := in.Message().Marshal()
+func TestEMAWrite(t *testing.T) {
+	Convey("Given an EMA", t, func() {
+		ema := NewEMA(emaConfig)
 
-		_, err := ema.Write(buf)
+		Convey("When Write is called", func() {
+			_, err := io.Copy(ema, emaInput)
+			So(err, ShouldBeNil)
+		})
+	})
+}
+
+func TestEMAFlipFlop(t *testing.T) {
+	Convey("Given an EMA fed through FlipFlop", t, func() {
+		ema := NewEMA(emaConfig)
+		artifact := datura.Acquire("test", datura.APPJSON).Poke(2, "sample")
+
+		err := transport.NewFlipFlop(artifact, ema)
 
 		So(err, ShouldBeNil)
+		So(datura.Peek[float64](artifact, "output", "value"), ShouldEqual, 2)
 
-		out := make([]byte, len(buf))
-		_, err = ema.Read(out)
+		rootKey := datura.Peek[string](artifact, "root")
 
-		So(err == nil || err == io.EOF, ShouldBeTrue)
-
-		result := datura.Acquire("out", datura.Artifact_Type_json)
-		_, _ = result.Write(out)
-		readPayload, _ := result.Payload()
-
-		So(math.Float64frombits(binary.BigEndian.Uint64(readPayload)), ShouldEqual, 10)
+		Convey("It should publish root and inputs for downstream navigation", func() {
+			So(rootKey, ShouldEqual, "output")
+			So(datura.Peek[[]string](artifact, "inputs"), ShouldResemble, []string{"value"})
+			So(datura.Peek[float64](artifact, rootKey, "value"), ShouldEqual, 2)
+		})
 	})
+}
+
+func BenchmarkEMARead(b *testing.B) {
+	ema := NewEMA(datura.Acquire("ema-config", datura.APPJSON))
+	buffer := make([]byte, 65536)
+
+	b.ReportAllocs()
+
+	for range b.N {
+		inbound := datura.Acquire("bench-inbound", datura.APPJSON).Poke(1, "sample")
+
+		if _, err := io.Copy(ema, inbound); err != nil {
+			b.Fatal(err)
+		}
+
+		if _, err := ema.Read(buffer); err != nil && err != io.EOF {
+			b.Fatal(err)
+		}
+
+		inbound.Release()
+	}
 }

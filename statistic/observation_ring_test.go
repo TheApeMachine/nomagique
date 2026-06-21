@@ -4,27 +4,68 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/datura"
+	"github.com/theapemachine/datura/transport"
 )
 
-func TestObservationRingObserve(testingTB *testing.T) {
-	Convey("Given an observation ring", testingTB, func() {
+func TestObservationRingObserve(t *testing.T) {
+	Convey("Given an observation ring", t, func() {
 		ring := NewObservationRing()
+		artifact := datura.Acquire("test", datura.APPJSON)
 
-		for _, value := range []float64{0.7, 0.8, 0.9, 0.95} {
-			ring.Observe(value)
+		for _, sample := range []float64{0.7, 0.8, 0.9, 0.95} {
+			artifact.Poke(sample, "sample")
+			err := transport.NewFlipFlop(artifact, ring)
+
+			So(err, ShouldBeNil)
 		}
 
-		Convey("It should derive quantiles from retained samples", func() {
-			So(ring.Quantile(0.75), ShouldAlmostEqual, 0.9, 1e-9)
-			So(ring.Median(), ShouldAlmostEqual, 0.85, 1e-9)
+		got := datura.Peek[float64](artifact, "output", "value")
+
+		Convey("It should retain the latest sample", func() {
+			So(got, ShouldEqual, 0.95)
+		})
+
+		Convey("It should retain observation history", func() {
+			history := datura.Peek[[]float64](artifact, "history")
+
+			So(len(history), ShouldEqual, 4)
+			So(history[len(history)-1], ShouldEqual, 0.95)
 		})
 	})
-}
 
-func BenchmarkObservationRingObserve(b *testing.B) {
-	ring := NewObservationRing()
+	Convey("Given a long run of similar samples", t, func() {
+		ring := NewObservationRing()
+		artifact := datura.Acquire("test", datura.APPJSON)
 
-	for b.Loop() {
-		ring.Observe(0.1)
-	}
+		for index := range 100 {
+			sample := 1.0 + float64(index%3)*0.01
+			artifact.Poke(sample, "sample")
+			err := transport.NewFlipFlop(artifact, ring)
+
+			So(err, ShouldBeNil)
+		}
+
+		history := datura.Peek[[]float64](artifact, "history")
+
+		Convey("It should bound retained history", func() {
+			So(len(history), ShouldBeLessThan, 20)
+		})
+	})
+
+	Convey("Given non-positive observations", t, func() {
+		ring := NewObservationRing()
+		artifact := datura.Acquire("test", datura.APPJSON)
+
+		for _, value := range []float64{0, -1} {
+			artifact.Poke(value, "sample")
+			err := transport.NewFlipFlop(artifact, ring)
+
+			So(err, ShouldBeNil)
+		}
+
+		Convey("It should ignore invalid samples", func() {
+			So(len(datura.Peek[[]float64](artifact, "history")), ShouldEqual, 0)
+		})
+	})
 }

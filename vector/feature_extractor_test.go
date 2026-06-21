@@ -1,221 +1,144 @@
 package vector
 
 import (
+	"bytes"
+	"io"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/datura"
 )
 
-func TestNewFeatureExtractor(testingTB *testing.T) {
-	Convey("Given valid construction arguments", testingTB, func() {
-		extractor, err := newPairExtractor()
+var featureExtractorPayloadFixture = []byte(
+	`{"channel":"ticker","type":"update","data":[{"symbol":"BTC/USD","volume":2500,"vwap":100,"last":101,"bid":100.9,"ask":101.1,"change_pct":1.0}]}`,
+)
 
-		Convey("It should return a usable extractor", func() {
-			So(err, ShouldBeNil)
-			So(extractor, ShouldNotBeNil)
-			So(extractor.InputCount(), ShouldEqual, 2)
-			So(extractor.FeatureCount(), ShouldEqual, 3)
-		})
-	})
+func featureExtractorSchema() *datura.Artifact {
+	return datura.Acquire("feature-extractor-test", datura.APPJSON).
+		Poke("data", "root").
+		Poke([]string{"volume", "vwap", "last", "bid", "ask", "change_pct"}, "inputs")
+}
 
-	errorCases := []struct {
-		name        string
-		inputCount  int
-		formula     FeatureFormula
-		expectError bool
-	}{
-		{"zero input count", 0, func([]float64) float64 { return 0 }, true},
-		{"negative input count", -1, func([]float64) float64 { return 0 }, true},
-		{"no formulas", 2, nil, true},
-	}
+func TestNewFeatureExtractor(t *testing.T) {
+	Convey("Given a schema artifact", t, func() {
+		schema := datura.Acquire("feature-extractor-schema", datura.APPJSON)
 
-	for _, testCase := range errorCases {
-		testCase := testCase
+		Convey("When NewFeatureExtractor is called", func() {
+			extractor := NewFeatureExtractor(schema)
 
-		Convey("Given "+testCase.name, testingTB, func() {
-			var formulas []FeatureFormula
-
-			if testCase.formula != nil {
-				formulas = []FeatureFormula{testCase.formula}
-			}
-
-			_, err := NewFeatureExtractor(testCase.inputCount, formulas...)
-
-			Convey("It should return an error", func() {
-				So(err, ShouldNotBeNil)
+			Convey("It should retain the schema and initialize transform cache", func() {
+				So(extractor, ShouldNotBeNil)
+				So(extractor.artifact, ShouldEqual, schema)
+				So(extractor.transforms, ShouldNotBeNil)
 			})
 		})
-	}
+	})
 }
 
-func TestFeatureExtractor_SetInput(testingTB *testing.T) {
-	cases := []struct {
-		name      string
-		left      float64
-		right     float64
-		expectSum float64
-	}{
-		{"positive pair", 10, 3, 13},
-		{"negative left", -4, 6, 2},
-		{"zero channels", 0, 0, 0},
-		{"large magnitude", 1e9, 1e9, 2e9},
-	}
+func TestFeatureExtractor_Write(t *testing.T) {
+	Convey("Given a feature extractor", t, func() {
+		extractor := NewFeatureExtractor(
+			datura.Acquire("test", datura.APPJSON).
+				Poke("data", "root").
+				Poke([]string{"volume"}, "inputs"),
+		)
 
-	for _, testCase := range cases {
-		testCase := testCase
+		Convey("And an inbound artifact with a payload", func() {
+			inbound := datura.Acquire("test", datura.APPJSON).WithPayload([]byte{1, 2, 3})
 
-		Convey("Given "+testCase.name, testingTB, func() {
-			extractor, err := newPairExtractor()
-			So(err, ShouldBeNil)
+			Convey("When the inbound artifact is copied into the extractor", func() {
+				_, err := io.Copy(extractor, inbound)
 
-			So(extractor.SetInput(testLeftChannel, testCase.left), ShouldBeNil)
-			So(extractor.SetInput(testRightChannel, testCase.right), ShouldBeNil)
-
-			features := extractor.Extract()
-
-			Convey("It should derive the expected sum feature", func() {
-				So(features[testSumFeature], ShouldEqual, testCase.expectSum)
+				Convey("Then the inbound wire should be buffered without mutating schema config", func() {
+					So(err, ShouldBeNil)
+					So(datura.Peek[string](extractor.artifact, "root"), ShouldEqual, "data")
+				})
 			})
 		})
-	}
-
-	Convey("Given an out-of-range channel", testingTB, func() {
-		extractor, err := newPairExtractor()
-		So(err, ShouldBeNil)
-
-		Convey("It should return an error", func() {
-			So(extractor.SetInput(2, 1), ShouldNotBeNil)
-			So(extractor.SetInput(-1, 1), ShouldNotBeNil)
-		})
 	})
 }
 
-func TestFeatureExtractor_Input(testingTB *testing.T) {
-	Convey("Given a populated channel", testingTB, func() {
-		extractor, err := newPairExtractor()
-		So(err, ShouldBeNil)
-		So(extractor.SetInput(testLeftChannel, 7), ShouldBeNil)
+func TestFeatureExtractor_Close(t *testing.T) {
+	Convey("Given a feature extractor", t, func() {
+		extractor := NewFeatureExtractor(datura.Acquire("test", datura.APPJSON))
 
-		left, inputErr := extractor.Input(testLeftChannel)
+		Convey("When Close is called", func() {
+			err := extractor.Close()
 
-		Convey("It should return the stored value", func() {
-			So(inputErr, ShouldBeNil)
-			So(left, ShouldEqual, 7)
-		})
-	})
-
-	Convey("Given an out-of-range channel", testingTB, func() {
-		extractor, err := newPairExtractor()
-		So(err, ShouldBeNil)
-
-		_, inputErr := extractor.Input(9)
-
-		Convey("It should return an error", func() {
-			So(inputErr, ShouldNotBeNil)
-		})
-	})
-}
-
-func TestFeatureExtractor_Extract(testingTB *testing.T) {
-	cases := []struct {
-		name          string
-		left          float64
-		right         float64
-		expectSum     float64
-		expectDiff    float64
-		expectProduct float64
-	}{
-		{"positive pair", 10, 3, 13, 7, 30},
-		{"negative mix", -4, 6, 2, -10, -24},
-		{"equal channels", 5, 5, 10, 0, 25},
-	}
-
-	for _, testCase := range cases {
-		testCase := testCase
-
-		Convey("Given "+testCase.name, testingTB, func() {
-			extractor, err := newPairExtractor()
-			So(err, ShouldBeNil)
-
-			So(extractor.SetInput(testLeftChannel, testCase.left), ShouldBeNil)
-			So(extractor.SetInput(testRightChannel, testCase.right), ShouldBeNil)
-
-			features := extractor.Extract()
-
-			Convey("It should derive all registered features", func() {
-				So(features[testSumFeature], ShouldEqual, testCase.expectSum)
-				So(features[testDiffFeature], ShouldEqual, testCase.expectDiff)
-				So(features[testProductFeature], ShouldEqual, testCase.expectProduct)
+			Convey("It should succeed without error", func() {
+				So(err, ShouldBeNil)
 			})
 		})
-	}
-}
-
-func TestFeatureExtractor_Feature(testingTB *testing.T) {
-	Convey("Given a populated extractor", testingTB, func() {
-		extractor, err := newPairExtractor()
-		So(err, ShouldBeNil)
-
-		_ = extractor.SetInput(testLeftChannel, 8)
-		_ = extractor.SetInput(testRightChannel, 2)
-		extractor.Extract()
-
-		diff, featureErr := extractor.Feature(testDiffFeature)
-
-		Convey("It should read one derived feature", func() {
-			So(featureErr, ShouldBeNil)
-			So(diff, ShouldEqual, 6)
-		})
-	})
-
-	Convey("Given an out-of-range feature index", testingTB, func() {
-		extractor, err := newPairExtractor()
-		So(err, ShouldBeNil)
-
-		_, featureErr := extractor.Feature(9)
-
-		Convey("It should return an error", func() {
-			So(featureErr, ShouldNotBeNil)
-		})
 	})
 }
 
-func TestFeatureExtractor_Reset(testingTB *testing.T) {
-	Convey("Given a populated extractor", testingTB, func() {
-		extractor, err := newPairExtractor()
-		So(err, ShouldBeNil)
+func TestFeatureExtractor_Read(t *testing.T) {
+	Convey("Given a feature extractor with ticker payload", t, func() {
+		extractor := NewFeatureExtractor(featureExtractorSchema())
 
-		_ = extractor.SetInput(testLeftChannel, 100)
-		_ = extractor.SetInput(testRightChannel, 50)
-		extractor.Extract()
+		Convey("When ticker payload is written then read", func() {
+			inbound := datura.Acquire("test", datura.APPJSON).WithPayload(featureExtractorPayloadFixture)
+			_, err := io.Copy(extractor, inbound)
+			So(err, ShouldBeNil)
 
-		So(extractor.Reset(), ShouldBeNil)
+			wire := make([]byte, 65536)
+			n, readErr := extractor.Read(wire)
+			So(readErr, ShouldEqual, io.EOF)
 
-		left, inputErr := extractor.Input(testLeftChannel)
-		sum, featureErr := extractor.Feature(testSumFeature)
+			buffer := bytes.NewBuffer(wire[:n])
 
-		Convey("It should clear inputs and features", func() {
-			So(inputErr, ShouldBeNil)
-			So(featureErr, ShouldBeNil)
-			So(left, ShouldEqual, 0)
-			So(sum, ShouldEqual, 0)
+			Convey("Then the payload should carry root, inputs, and features", func() {
+				decoded := datura.Acquire("feature-extractor", datura.APPJSON)
+				_, err = decoded.Write(buffer.Bytes())
+				So(err, ShouldBeNil)
+
+				So(datura.Peek[string](decoded, "root"), ShouldEqual, "features")
+				So(
+					datura.Peek[[]string](decoded, "inputs"),
+					ShouldResemble,
+					[]string{"volume", "vwap", "last", "bid", "ask", "change_pct"},
+				)
+				So(
+					datura.Peek[[]float64](decoded, "features"),
+					ShouldResemble,
+					[]float64{2500, 100, 101, 100.9, 101.1, 1},
+				)
+
+				replayed := datura.Acquire("feature-extractor-replay", datura.APPJSON)
+				replayed.WithPayload(decoded.DecryptPayload())
+
+				So(datura.Peek[string](replayed, "root"), ShouldEqual, "features")
+				So(
+					datura.Peek[[]string](replayed, "inputs"),
+					ShouldResemble,
+					[]string{"volume", "vwap", "last", "bid", "ask", "change_pct"},
+				)
+
+				decoded.Release()
+				replayed.Release()
+			})
 		})
 	})
 }
 
-func BenchmarkFeatureExtractor_Extract(b *testing.B) {
-	extractor, err := newPairExtractor()
-
-	if err != nil {
-		b.Fatal(err)
-	}
-
-	_ = extractor.SetInput(testLeftChannel, 100)
-	_ = extractor.SetInput(testRightChannel, 3)
+func BenchmarkFeatureExtractor_Read(b *testing.B) {
+	extractor := NewFeatureExtractor(featureExtractorSchema())
+	buffer := make([]byte, 65536)
 
 	b.ReportAllocs()
 
-	for b.Loop() {
-		extractor.Extract()
+	for range b.N {
+		inbound := datura.Acquire("bench-inbound", datura.APPJSON).
+			WithPayload(featureExtractorPayloadFixture)
+
+		if _, err := io.Copy(extractor, inbound); err != nil {
+			b.Fatal(err)
+		}
+
+		if _, err := extractor.Read(buffer); err != nil && err != io.EOF {
+			b.Fatal(err)
+		}
+
+		inbound.Release()
 	}
 }

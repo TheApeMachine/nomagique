@@ -109,6 +109,10 @@ func NewClassifierWeights(
 	}, nil
 }
 
+func (weights *ClassifierWeights) FeatureScales() ClassifierFeatureScales {
+	return weights.scales
+}
+
 func positiveScale(scale float64, name string) (float64, error) {
 	if scale <= 0 || math.IsNaN(scale) || math.IsInf(scale, 0) {
 		return 0, errnie.Error(fmt.Errorf(
@@ -123,15 +127,21 @@ func positiveScale(scale float64, name string) (float64, error) {
 
 /*
 Scores returns four class logits for the given normalized features.
+Each input is divided by its observed scale before the class formulas run so
+(1.0 - feature) terms stay meaningful relative to typical operating points.
 */
 func (weights *ClassifierWeights) Scores(
 	rvol, precursor, compression float64,
 ) []float64 {
+	rvolNorm := normalizeFeature(rvol, weights.scales.RVol)
+	precursorNorm := normalizeFeature(precursor, weights.scales.Precursor)
+	compressionNorm := normalizeFeature(compression, weights.scales.Compression)
+
 	return []float64{
-		rvol*weights.WIgnVol + precursor*weights.WIgnPrec,
-		compression*weights.WCoilComp + (1.0-precursor)*weights.WCoilPrec,
-		precursor*weights.WOrgPrec + (1.0-compression)*weights.WOrgComp + rvol*weights.WOrgVol,
-		(1.0-rvol)*weights.WExVol + (1.0-precursor)*weights.WExPrec,
+		rvolNorm*weights.WIgnVol + precursorNorm*weights.WIgnPrec,
+		compressionNorm*weights.WCoilComp + (1.0-precursorNorm)*weights.WCoilPrec,
+		precursorNorm*weights.WOrgPrec + (1.0-compressionNorm)*weights.WOrgComp + rvolNorm*weights.WOrgVol,
+		(1.0-rvolNorm)*weights.WExVol + (1.0-precursorNorm)*weights.WExPrec,
 	}
 }
 
@@ -139,7 +149,28 @@ func (weights *ClassifierWeights) Scores(
 Strength returns the ignition-class logit without compression.
 */
 func (weights *ClassifierWeights) Strength(rvol, precursor float64) float64 {
-	return rvol*weights.WIgnVol + precursor*weights.WIgnPrec
+	rvolNorm := normalizeFeature(rvol, weights.scales.RVol)
+	precursorNorm := normalizeFeature(precursor, weights.scales.Precursor)
+
+	return rvolNorm*weights.WIgnVol + precursorNorm*weights.WIgnPrec
+}
+
+func normalizeFeature(value, scale float64) float64 {
+	ratio := value
+
+	if scale > 0 && !math.IsNaN(scale) && !math.IsInf(scale, 0) {
+		ratio = value / scale
+	}
+
+	return squashFeature(ratio)
+}
+
+func squashFeature(value float64) float64 {
+	if value <= 0 || math.IsNaN(value) || math.IsInf(value, 0) {
+		return 0
+	}
+
+	return value / (1.0 + value)
 }
 
 func (weights *ClassifierWeights) clamp() {

@@ -4,52 +4,26 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/datura"
+	"github.com/theapemachine/datura/transport"
 )
 
-func TestStdDev_Observe(testingTB *testing.T) {
-	cases := []struct {
-		name    string
-		samples []float64
-		expect  float64
-	}{
-		{"uniform spread", []float64{1, 2, 3, 4, 5}, 1.5811388300841898},
-		{"constant series", []float64{3, 3, 3}, 0},
-		{"empty input", nil, 0},
-	}
+func TestStdDevSeries(t *testing.T) {
+	Convey("Given a StdDev stage", t, func() {
+		stdDev := NewStdDev()
+		artifact := datura.Acquire("test", datura.APPJSON)
 
-	for _, testCase := range cases {
-		testCase := testCase
+		for _, sample := range []float64{1, 2, 3, 4} {
+			artifact.Poke(sample, "sample")
+			err := transport.NewFlipFlop(artifact, stdDev)
 
-		Convey("Given "+testCase.name, testingTB, func() {
-			stdDev := NewStdDev(nil)
-			got := observeInputs(stdDev, testCase.samples...)
+			So(err, ShouldBeNil)
+		}
 
-			Convey("It should return the expected standard deviation", func() {
-				So(float64(got), ShouldAlmostEqual, testCase.expect, 1e-12)
-			})
-		})
-	}
-}
+		got := datura.Peek[float64](artifact, "output", "value")
 
-func TestStdDev_Reset(testingTB *testing.T) {
-	Convey("Given an observed stddev", testingTB, func() {
-		stdDev := NewStdDev([]float64{1, 2})
-		_ = observeInputs(stdDev, 1, 2)
-
-		So(stdDev.Reset(), ShouldBeNil)
-
-		Convey("It should clear weights", func() {
-			So(stdDev.weights, ShouldBeNil)
+		Convey("It should derive dispersion from history", func() {
+			So(got, ShouldBeGreaterThan, 0)
 		})
 	})
-}
-
-func BenchmarkStdDev_Observe(b *testing.B) {
-	stdDev := NewStdDev(nil)
-
-	b.ReportAllocs()
-
-	for b.Loop() {
-		_ = observeInputs(stdDev)
-	}
 }

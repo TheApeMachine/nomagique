@@ -72,12 +72,11 @@ func (excitation *Excitation) Read(p []byte) (int, error) {
 	}
 
 	if scope == "" {
-		scope = excitation.artifact.Peek("scope")
+		scope = datura.Peek[string](excitation.artifact, "scope")
 	}
 
-	payload, payloadOK := excitation.artifact.PayloadQuiet()
-
-	if payloadOK {
+	if excitation.artifact.HasEncryptedPayload() {
+		payload := excitation.artifact.DecryptPayload()
 		excitation.outcome = excitation.evaluate(scope, payloadSamples(payload))
 		excitation.publishReadings()
 	}
@@ -97,24 +96,14 @@ func (excitation *Excitation) Outcome() ExcitationOutcome {
 }
 
 func (excitation *Excitation) evaluate(scope string, batch []float64) ExcitationOutcome {
-	if scope == "" || len(batch) < excitationPayloadHeader {
+	buyCount, _, expectedLen, batchOK := excitationBatchBounds(batch)
+
+	if scope == "" || !batchOK {
 		return ExcitationOutcome{}
 	}
 
 	horizon := time.Unix(0, int64(batch[0]*float64(time.Second)))
 	fitCooldown := time.Duration(batch[1] * float64(time.Second))
-	buyCount := int(batch[2])
-	sellCount := int(batch[3])
-
-	if buyCount < 0 || sellCount < 0 {
-		return ExcitationOutcome{}
-	}
-
-	expectedLen := excitationPayloadHeader + buyCount + sellCount
-
-	if len(batch) < expectedLen {
-		return ExcitationOutcome{}
-	}
 
 	buyTimes := secondsToTimes(batch[excitationPayloadHeader : excitationPayloadHeader+buyCount])
 	sellTimes := secondsToTimes(batch[excitationPayloadHeader+buyCount : expectedLen])
@@ -130,18 +119,18 @@ func (excitation *Excitation) evaluate(scope string, batch []float64) Excitation
 }
 
 func (excitation *Excitation) publishReadings() {
-	pokeFloat(excitation.artifact, "excitation.frenzy", excitation.outcome.Frenzy)
-	pokeFloat(excitation.artifact, "excitation.saturation", excitation.outcome.Saturation)
-	pokeFloat(excitation.artifact, "excitation.organic", excitation.outcome.Organic)
-	pokeFloat(excitation.artifact, "excitation.exhaustion", excitation.outcome.Exhaustion)
-	pokeFloat(excitation.artifact, "excitation.strength", excitation.outcome.Strength)
-	pokeFloat(excitation.artifact, "excitation.branching_ratio", excitation.outcome.BranchingRatio)
-	pokeFloat(excitation.artifact, "excitation.stationarity_margin", excitation.outcome.StationarityMargin)
-	pokeFloat(excitation.artifact, "excitation.poisson_improvement", excitation.outcome.PoissonImprovement)
-	pokeFloat(excitation.artifact, "excitation.event_count", float64(excitation.outcome.EventCount))
+	excitation.artifact = stageWritableArtifact(
+		excitation.artifact,
+		"excitation",
+		datura.Artifact_Type_json,
+	)
+	excitation.artifact.MergeOutput("frenzy", excitation.outcome.Frenzy)
+	excitation.artifact.MergeOutput("saturation", excitation.outcome.Saturation)
+	excitation.artifact.MergeOutput("organic", excitation.outcome.Organic)
+	excitation.artifact.MergeOutput("exhaustion", excitation.outcome.Exhaustion)
 
 	if excitation.outcome.Eligible {
-		pokeFloat(excitation.artifact, "excitation.eligible", 1)
+		excitation.artifact.Merge("excitation.eligible", 1.0)
 	}
 }
 
@@ -210,7 +199,7 @@ func (reading *ExcitationReading) Read(p []byte) (int, error) {
 		value = reading.project(reading.excitation.outcome)
 	}
 
-	_ = reading.artifact.SetPayload(encodePayload(value))
+	reading.artifact.WithPayload(encodePayload(value))
 
 	return reading.artifact.Read(p)
 }
@@ -256,7 +245,7 @@ type fitEventKey struct {
 func newExcitationSymbol() *excitationSymbol {
 	return &excitationSymbol{
 		minFitEvents: bivariateParamCount * 2,
-		rawBase:      adaptive.NewEMA(),
+		rawBase:      adaptive.NewEMA(datura.Acquire("excitation-ema", datura.APPJSON)),
 	}
 }
 
@@ -451,7 +440,7 @@ func (symbol *excitationSymbol) measureFit(fit hawkes.BivariateFit) (excitationR
 
 func (symbol *excitationSymbol) rawBaseStep(sample float64) float64 {
 	inbound := datura.Acquire("excitation-ema-in", datura.Artifact_Type_json)
-	_ = inbound.SetPayload(encodePayload(sample))
+	inbound.WithPayload(encodePayload(sample))
 	frame, err := inbound.Message().Marshal()
 
 	if err != nil {
@@ -463,19 +452,16 @@ func (symbol *excitationSymbol) rawBaseStep(sample float64) float64 {
 	readCount, _ := symbol.rawBase.Read(out)
 	outbound := datura.Acquire("excitation-ema-out", datura.Artifact_Type_json)
 	_, _ = outbound.Write(out[:readCount])
-	payload, payloadErr := outbound.Payload()
+	if outbound.HasEncryptedPayload() {
+		payload := outbound.DecryptPayload()
+		value, ok := payloadScalar(payload)
 
-	if payloadErr != nil {
-		return sample
+		if ok {
+			return value
+		}
 	}
 
-	value, ok := payloadScalar(payload)
-
-	if !ok {
-		return sample
-	}
-
-	return value
+	return sample
 }
 
 func (symbol *excitationSymbol) recordFitGates(spectralRadius, asymmetry float64) {
@@ -680,6 +666,39 @@ func excitationEligible(outcome ExcitationOutcome) bool {
 	}
 
 	return outcome.PoissonImprovement > 0
+}
+
+func excitationBatchBounds(batch []float64) (buyCount, sellCount, expectedLen int, ok bool) {
+	if len(batch) < excitationPayloadHeader {
+		return 0, 0, 0, false
+	}
+
+	buyValue := batch[2]
+	sellValue := batch[3]
+
+	if buyValue < 0 || sellValue < 0 ||
+		buyValue != float64(int(buyValue)) ||
+		sellValue != float64(int(sellValue)) {
+		return 0, 0, 0, false
+	}
+
+	buyCount = int(buyValue)
+	sellCount = int(sellValue)
+	available := len(batch) - excitationPayloadHeader
+
+	if buyCount > available {
+		return 0, 0, 0, false
+	}
+
+	remaining := available - buyCount
+
+	if sellCount > remaining {
+		return 0, 0, 0, false
+	}
+
+	expectedLen = excitationPayloadHeader + buyCount + sellCount
+
+	return buyCount, sellCount, expectedLen, true
 }
 
 func secondsToTimes(seconds []float64) []time.Time {

@@ -1,65 +1,60 @@
 package statistic
 
 import (
-	"encoding/binary"
 	"math"
 
 	"github.com/theapemachine/datura"
-	"gonum.org/v1/gonum/stat"
 )
 
 /*
-Mean computes the arithmetic average of every sample in one Read call.
+Mean computes a running arithmetic mean of streamed samples.
 */
 type Mean struct {
 	artifact *datura.Artifact
-	weights  []float64
 }
 
 /*
 NewMean creates a mean stage.
 */
-func NewMean(weights []float64) *Mean {
+func NewMean() *Mean {
 	return &Mean{
-		artifact: datura.Acquire("mean", datura.Artifact_Type_json),
-		weights:  weights,
+		artifact: datura.Acquire("mean", datura.APPJSON),
 	}
+}
+
+func (mean *Mean) Read(p []byte) (int, error) {
+	sample := datura.Peek[float64](mean.artifact, "sample")
+
+	if math.IsNaN(sample) || math.IsInf(sample, 0) {
+		return mean.artifact.Read(p)
+	}
+
+	output := datura.Peek[datura.Map[float64]](mean.artifact, "output")
+
+	if output == nil {
+		output = datura.Map[float64]{
+			"count": 0,
+			"sum":   0,
+			"value": 0,
+		}
+	}
+
+	output["count"]++
+	output["sum"] += sample
+
+	if output["count"] > 0 {
+		output["value"] = output["sum"] / output["count"]
+	}
+
+	mean.artifact.Poke(output, "output")
+
+	return mean.artifact.Read(p)
 }
 
 func (mean *Mean) Write(p []byte) (int, error) {
 	return mean.artifact.Write(p)
 }
 
-func (mean *Mean) Read(p []byte) (int, error) {
-	payload, err := mean.artifact.Payload()
-
-	if err == nil && len(payload) >= 8 && len(payload)%8 == 0 {
-		count := len(payload) / 8
-		values := make([]float64, count)
-
-		for index := range count {
-			offset := index * 8
-			values[index] = math.Float64frombits(binary.BigEndian.Uint64(payload[offset : offset+8]))
-		}
-
-		weights := mean.weights
-
-		if len(weights) == 0 {
-			weights = nil
-		}
-
-		putFloat64Payload(&mean.artifact, "mean", stat.Mean(values, weights))
-	}
-
-	return mean.artifact.Read(p)
-}
-
 func (mean *Mean) Close() error {
-	return nil
-}
-
-func (mean *Mean) Reset() error {
-	mean.weights = nil
-
 	return nil
 }

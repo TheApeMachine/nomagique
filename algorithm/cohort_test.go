@@ -4,7 +4,12 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/datura"
+	"github.com/theapemachine/nomagique/equation"
+	"github.com/theapemachine/nomagique/tests"
 )
+
+const cohortPayloadHeader = 5
 
 func cohortBatch(
 	window int,
@@ -31,13 +36,11 @@ func cohortBatch(
 }
 
 func TestCohort_evaluate(testingTB *testing.T) {
-	cohortStage := NewCohort()
-
 	cases := []struct {
-		name      string
-		batch     []float64
-		wantCat   int
-		eligible  bool
+		name     string
+		batch    []float64
+		wantCat  int
+		eligible bool
 	}{
 		{
 			name:     "header too short",
@@ -94,20 +97,27 @@ func TestCohort_evaluate(testingTB *testing.T) {
 		testCase := testCase
 
 		Convey("Given cohort payload "+testCase.name, testingTB, func() {
-			outcome := cohortStage.evaluate(testCase.batch)
+			cohortStage := equation.NewCohort()
+			writeErr := tests.WriteSamples(cohortStage, testCase.batch...)
+
+			So(writeErr, ShouldBeNil)
+
+			frame := make([]byte, 4096)
+			_, _ = cohortStage.Read(frame)
+			outbound := datura.Acquire("test-out", datura.APPJSON)
+			_, _ = outbound.Write(frame)
 
 			if !testCase.eligible {
 				Convey("It should reject invalid payload", func() {
-					So(outcome.Eligible, ShouldBeFalse)
+					So(datura.Peek[float64](outbound, "output", "value"), ShouldEqual, 0)
 				})
 
 				return
 			}
 
 			Convey("It should classify the cohort", func() {
-				So(outcome.Eligible, ShouldBeTrue)
-				So(outcome.Category, ShouldEqual, testCase.wantCat)
-				So(outcome.Strength, ShouldBeGreaterThan, 0)
+				So(datura.Peek[float64](outbound, "output", "value"), ShouldBeGreaterThan, 0)
+				So(int(datura.Peek[float64](outbound, "output", "category")), ShouldEqual, testCase.wantCat)
 			})
 		})
 	}

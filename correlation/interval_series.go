@@ -7,287 +7,171 @@ import (
 )
 
 /*
-ReturnInterval is a log return over the half-open time interval (start, end] encoded
-as epoch nanoseconds. Hayashi-Yoshida sums products of returns whose intervals overlap.
-*/
-type ReturnInterval struct {
-	Start int64
-	End   int64
-	Ret   float64
-}
-
-/*
 IntervalSeries accumulates a bounded, time-ordered series of log-return intervals from
-paired epoch and level observations.
+paired epoch and level observations. Retained state lives under interval.* payload keys.
 */
 type IntervalSeries struct {
-	artifact  *datura.Artifact
-	intervals []ReturnInterval
-	capacity  int
+	artifact *datura.Artifact
+}
+
+type intervalBranch struct {
 	lastLevel float64
-	lastEpoch int64
-	output    float64
+	lastEpoch float64
+	starts    []float64
+	ends      []float64
+	rets      []float64
+	root      []any
 }
 
 /*
-NewIntervalSeries creates a bounded interval accumulator.
+NewIntervalSeries creates a bounded interval accumulator wired from config attributes on the artifact.
 */
-func NewIntervalSeries(capacity int) *IntervalSeries {
-	if capacity < 1 {
-		capacity = 1
-	}
+func NewIntervalSeries(artifact *datura.Artifact) *IntervalSeries {
+	artifact.Inspect("correlation", "interval-series", "NewIntervalSeries()")
 
 	return &IntervalSeries{
-		artifact:  datura.Acquire("interval-series", datura.Artifact_Type_json),
-		intervals: make([]ReturnInterval, 0, capacity),
-		capacity:  capacity,
+		artifact: artifact,
 	}
 }
 
 func (series *IntervalSeries) Write(p []byte) (int, error) {
-	return series.artifact.Write(p)
+	reset := inboundReset(p)
+	preserved := series.preserveBranch()
+
+	series.artifact.WithPayload(p)
+
+	if reset {
+		return len(p), nil
+	}
+
+	series.restoreBranch(preserved)
+	return len(p), nil
 }
 
 func (series *IntervalSeries) Read(p []byte) (int, error) {
-	if series != nil {
-		epoch, level, ok := parseEpochLevel(series.artifact)
+	state := datura.Acquire("interval-series-state", datura.APPJSON)
+	state.Inspect("correlation", "interval-series", "Read()", "p")
 
-		if ok {
-			series.ingest(epoch, level)
-			series.output = series.LastReturnMagnitude()
-			putFloat64Payload(&series.artifact, "series", series.output)
-		}
+	if _, err := state.Write(series.artifact.DecryptPayload()); err != nil {
+		return 0, err
 	}
 
-	return series.artifact.Read(p)
+	level := datura.Peek[float64](state, "paired")
+
+	if level <= 0 {
+		return state.Read(p)
+	}
+
+	epoch := int64(datura.Peek[float64](state, "sample"))
+	series.ingest(series.capacityFromArtifact(), epoch, level)
+	state.MergeOutput("value", series.lastReturnMagnitude())
+	state.Merge("root", "output")
+	state.Merge("inputs", []string{"value"})
+	return state.Read(p)
 }
 
 func (series *IntervalSeries) Close() error {
 	return nil
 }
 
-func (series *IntervalSeries) Reset() error {
-	if series == nil {
-		return nil
+func (series *IntervalSeries) capacityFromArtifact() int {
+	capacity := int(datura.Peek[float64](series.artifact, "config", "capacity"))
+
+	if capacity <= 0 {
+		capacity = 8
 	}
 
-	series.intervals = series.intervals[:0]
-	series.lastLevel = 0
-	series.lastEpoch = 0
-	series.output = 0
-
-	return nil
+	return capacity
 }
 
-func (series *IntervalSeries) ingest(epoch int64, level float64) {
+func (series *IntervalSeries) branchPath(root ...any) []any {
+	path := make([]any, 0, len(root)+1)
+	path = append(path, "interval")
+	path = append(path, root...)
+
+	return path
+}
+
+func (series *IntervalSeries) preserveBranch(root ...any) intervalBranch {
+	base := series.branchPath(root...)
+
+	return intervalBranch{
+		lastLevel: datura.Peek[float64](series.artifact, append(base, "lastLevel")...),
+		lastEpoch: datura.Peek[float64](series.artifact, append(base, "lastEpoch")...),
+		starts:    datura.Peek[[]float64](series.artifact, append(base, "starts")...),
+		ends:      datura.Peek[[]float64](series.artifact, append(base, "ends")...),
+		rets:      datura.Peek[[]float64](series.artifact, append(base, "rets")...),
+		root:      append([]any(nil), root...),
+	}
+}
+
+func (series *IntervalSeries) restoreBranch(preserved intervalBranch) {
+	if preserved.lastLevel <= 0 && preserved.lastEpoch <= 0 && len(preserved.rets) == 0 {
+		return
+	}
+
+	base := series.branchPath(preserved.root...)
+	series.artifact.Poke(preserved.lastLevel, append(base, "lastLevel")...)
+	series.artifact.Poke(preserved.lastEpoch, append(base, "lastEpoch")...)
+	series.artifact.Poke(preserved.starts, append(base, "starts")...)
+	series.artifact.Poke(preserved.ends, append(base, "ends")...)
+	series.artifact.Poke(preserved.rets, append(base, "rets")...)
+}
+
+func (series *IntervalSeries) ingest(capacity int, epoch int64, level float64, root ...any) {
+	if capacity <= 0 {
+		capacity = 8
+	}
+
 	if level <= 0 {
 		return
 	}
 
-	if series.lastLevel <= 0 || series.lastEpoch <= 0 {
-		series.lastLevel = level
-		series.lastEpoch = epoch
+	base := series.branchPath(root...)
+	lastLevel := datura.Peek[float64](series.artifact, append(base, "lastLevel")...)
+	lastEpoch := int64(datura.Peek[float64](series.artifact, append(base, "lastEpoch")...))
+
+	if lastLevel <= 0 || lastEpoch <= 0 {
+		series.artifact.Poke(level, append(base, "lastLevel")...)
+		series.artifact.Poke(float64(epoch), append(base, "lastEpoch")...)
 
 		return
 	}
 
-	if epoch <= series.lastEpoch {
-		series.lastLevel = level
+	if epoch <= lastEpoch {
+		series.artifact.Poke(level, append(base, "lastLevel")...)
 
 		return
 	}
 
-	series.intervals = append(series.intervals, ReturnInterval{
-		Start: series.lastEpoch,
-		End:   epoch,
-		Ret:   math.Log(level / series.lastLevel),
-	})
+	starts := datura.Peek[[]float64](series.artifact, append(base, "starts")...)
+	ends := datura.Peek[[]float64](series.artifact, append(base, "ends")...)
+	rets := datura.Peek[[]float64](series.artifact, append(base, "rets")...)
 
-	if len(series.intervals) > series.capacity {
-		series.intervals = series.intervals[len(series.intervals)-series.capacity:]
+	starts = append(starts, float64(lastEpoch))
+	ends = append(ends, float64(epoch))
+	rets = append(rets, math.Log(level/lastLevel))
+
+	if len(starts) > capacity {
+		trim := len(starts) - capacity
+		starts = starts[trim:]
+		ends = ends[trim:]
+		rets = rets[trim:]
 	}
 
-	series.lastLevel = level
-	series.lastEpoch = epoch
+	series.artifact.Poke(starts, append(base, "starts")...)
+	series.artifact.Poke(ends, append(base, "ends")...)
+	series.artifact.Poke(rets, append(base, "rets")...)
+	series.artifact.Poke(level, append(base, "lastLevel")...)
+	series.artifact.Poke(float64(epoch), append(base, "lastEpoch")...)
 }
 
-func (series *IntervalSeries) Len() int {
-	if series == nil {
+func (series *IntervalSeries) lastReturnMagnitude(root ...any) float64 {
+	rets := datura.Peek[[]float64](series.artifact, append(series.branchPath(root...), "rets")...)
+
+	if len(rets) == 0 {
 		return 0
 	}
 
-	return len(series.intervals)
-}
-
-/*
-Trim keeps only the most recent keep intervals.
-*/
-func (series *IntervalSeries) Trim(keep int) {
-	if series == nil {
-		return
-	}
-
-	if keep <= 0 {
-		series.intervals = series.intervals[:0]
-
-		return
-	}
-
-	if len(series.intervals) <= keep {
-		return
-	}
-
-	series.intervals = series.intervals[len(series.intervals)-keep:]
-}
-
-/*
-LastReturnMagnitude is the absolute log return of the most recent interval.
-*/
-func (series *IntervalSeries) LastReturnMagnitude() float64 {
-	if series == nil || len(series.intervals) == 0 {
-		return 0
-	}
-
-	last := series.intervals[len(series.intervals)-1]
-
-	return math.Abs(last.Ret)
-}
-
-/*
-RealizedVolatility is the root mean square of interval log returns.
-*/
-func (series *IntervalSeries) RealizedVolatility() float64 {
-	if series == nil || len(series.intervals) == 0 {
-		return 0
-	}
-
-	total := series.RealizedVariance()
-
-	return math.Sqrt(total / float64(len(series.intervals)))
-}
-
-/*
-RealizedVolatilityExcludingLast estimates vol before the most recent interval.
-*/
-func (series *IntervalSeries) RealizedVolatilityExcludingLast() float64 {
-	if series == nil || len(series.intervals) <= 1 {
-		return series.RealizedVolatility()
-	}
-
-	total := 0.0
-	count := len(series.intervals) - 1
-
-	for index := 0; index < count; index++ {
-		ret := series.intervals[index].Ret
-		total += ret * ret
-	}
-
-	return math.Sqrt(total / float64(count))
-}
-
-/*
-Clone returns an independent snapshot of the interval history.
-*/
-func (series *IntervalSeries) Clone() *IntervalSeries {
-	if series == nil {
-		return nil
-	}
-
-	copied := make([]ReturnInterval, len(series.intervals))
-	copy(copied, series.intervals)
-
-	return &IntervalSeries{
-		intervals: copied,
-		capacity:  series.capacity,
-		lastLevel: series.lastLevel,
-		lastEpoch: series.lastEpoch,
-		output:    series.output,
-	}
-}
-
-/*
-CloneTail returns a snapshot containing at most the last window intervals.
-*/
-func (series *IntervalSeries) CloneTail(window int) *IntervalSeries {
-	cloned := series.Clone()
-
-	if cloned == nil {
-		return nil
-	}
-
-	if window <= 0 {
-		cloned.intervals = cloned.intervals[:0]
-
-		return cloned
-	}
-
-	if len(cloned.intervals) > window {
-		cloned.intervals = cloned.intervals[len(cloned.intervals)-window:]
-	}
-
-	return cloned
-}
-
-/*
-RealizedVariance is the Hayashi-Yoshida variance of the series against itself.
-*/
-func (series *IntervalSeries) RealizedVariance() float64 {
-	if series == nil {
-		return 0
-	}
-
-	total := 0.0
-
-	for _, interval := range series.intervals {
-		total += interval.Ret * interval.Ret
-	}
-
-	return total
-}
-
-/*
-IntervalCorrelation normalises asynchronous interval covariance by realised standard
-deviations. It reports false when either series carries no variance.
-*/
-func IntervalCorrelation(left, right *IntervalSeries) (float64, bool) {
-	if left == nil || right == nil {
-		return 0, false
-	}
-
-	varLeft := left.RealizedVariance()
-	varRight := right.RealizedVariance()
-
-	if varLeft <= 0 || varRight <= 0 {
-		return 0, false
-	}
-
-	covariance := intervalCovariance(left.intervals, right.intervals)
-	correlation := covariance / math.Sqrt(varLeft*varRight)
-
-	if correlation > 1 {
-		return 1, true
-	}
-
-	if correlation < -1 {
-		return -1, true
-	}
-
-	return correlation, true
-}
-
-func intervalCovariance(left, right []ReturnInterval) float64 {
-	covariance := 0.0
-	window := 0
-
-	for _, leftInterval := range left {
-		for window < len(right) && right[window].End <= leftInterval.Start {
-			window++
-		}
-
-		for index := window; index < len(right) && right[index].Start < leftInterval.End; index++ {
-			covariance += leftInterval.Ret * right[index].Ret
-		}
-	}
-
-	return covariance
+	return math.Abs(rets[len(rets)-1])
 }

@@ -1,8 +1,6 @@
 package statistic
 
 import (
-	"encoding/binary"
-	"fmt"
 	"math"
 
 	"github.com/theapemachine/datura"
@@ -10,55 +8,75 @@ import (
 )
 
 /*
-FastSlowRatio compares the mean rate in the trailing fast window to the mean
-rate in the preceding slow window.
+FastSlow compares trailing fast-window mean rate to the preceding slow window.
 */
-type FastSlowRatio struct {
+type FastSlow struct {
+	artifact   *datura.Artifact
 	fastWindow int
 	epsilon    float64
 	invert     bool
 }
 
-func NewFastSlowRatio(fastWindow int, epsilon float64) *FastSlowRatio {
+/*
+NewFastSlow creates a breakout-ratio stage.
+*/
+func NewFastSlow(fastWindow int, epsilon float64) *FastSlow {
 	if fastWindow <= 0 {
 		fastWindow = 3
 	}
 
-	return &FastSlowRatio{
+	return &FastSlow{
+		artifact:   datura.Acquire("fast_slow", datura.APPJSON),
 		fastWindow: fastWindow,
 		epsilon:    epsilon,
 	}
 }
 
 /*
-NewInvertedFastSlowRatio returns older/recent for compression-style metrics.
+NewInvertedFastSlow creates a compression-ratio stage.
 */
-func NewInvertedFastSlowRatio(fastWindow int, epsilon float64) *FastSlowRatio {
-	ratio := NewFastSlowRatio(fastWindow, epsilon)
-	ratio.invert = true
+func NewInvertedFastSlow(fastWindow int, epsilon float64) *FastSlow {
+	fastSlow := NewFastSlow(fastWindow, epsilon)
+	fastSlow.invert = true
 
-	return ratio
+	return fastSlow
 }
 
-func (ratio *FastSlowRatio) Next(
-	out float64, values ...float64,
-) (float64, error) {
-	_ = out
-
-	for _, sample := range values {
-		if sample < 0 {
-			return 0, fmt.Errorf("statistic: FastSlowRatio negative sample")
-		}
-	}
-
-	if ratio.invert {
-		return InvertedFastSlowRate(values, ratio.fastWindow, ratio.epsilon), nil
-	}
-
-	return FastSlowRate(values, ratio.fastWindow, ratio.epsilon), nil
+func (fastSlow *FastSlow) Write(p []byte) (int, error) {
+	return fastSlow.artifact.Write(p)
 }
 
-func FastSlowRate(samples []float64, fastWindow int, epsilon float64) float64 {
+func (fastSlow *FastSlow) Read(p []byte) (int, error) {
+	sample := datura.Peek[float64](fastSlow.artifact, "sample")
+
+	if math.IsNaN(sample) || math.IsInf(sample, 0) || sample < 0 {
+		return fastSlow.artifact.Read(p)
+	}
+
+	history := datura.Peek[[]float64](fastSlow.artifact, "history")
+	history = append(history, sample)
+	fastSlow.artifact.Poke(history, "history")
+
+	value := 1.0
+
+	if fastSlow.invert {
+		value = invertedFastSlowRate(history, fastSlow.fastWindow, fastSlow.epsilon)
+	}
+
+	if !fastSlow.invert {
+		value = fastSlowRate(history, fastSlow.fastWindow, fastSlow.epsilon)
+	}
+
+	fastSlow.artifact.Poke(datura.Map[float64]{"value": value}, "output")
+
+	return fastSlow.artifact.Read(p)
+}
+
+func (fastSlow *FastSlow) Close() error {
+	return nil
+}
+
+func fastSlowRate(samples []float64, fastWindow int, epsilon float64) float64 {
 	sampleCount := len(samples)
 
 	if fastWindow <= 0 {
@@ -89,7 +107,7 @@ func FastSlowRate(samples []float64, fastWindow int, epsilon float64) float64 {
 	return recentRate / olderRate
 }
 
-func InvertedFastSlowRate(samples []float64, fastWindow int, epsilon float64) float64 {
+func invertedFastSlowRate(samples []float64, fastWindow int, epsilon float64) float64 {
 	sampleCount := len(samples)
 
 	if fastWindow <= 0 {
@@ -120,64 +138,10 @@ func InvertedFastSlowRate(samples []float64, fastWindow int, epsilon float64) fl
 	return olderRate / recentRate
 }
 
-/*
-FastSlow compares trailing fast-window mean rate to the preceding slow window.
-*/
-type FastSlow struct {
-	artifact *datura.Artifact
-	ratio    *FastSlowRatio
+func FastSlowRate(samples []float64, fastWindow int, epsilon float64) float64 {
+	return fastSlowRate(samples, fastWindow, epsilon)
 }
 
-/*
-NewFastSlow creates a breakout-ratio stage.
-*/
-func NewFastSlow(fastWindow int, epsilon float64) *FastSlow {
-	return &FastSlow{
-		artifact: datura.Acquire("fast_slow", datura.Artifact_Type_json),
-		ratio:    NewFastSlowRatio(fastWindow, epsilon),
-	}
-}
-
-/*
-NewInvertedFastSlow creates a compression-ratio stage.
-*/
-func NewInvertedFastSlow(fastWindow int, epsilon float64) *FastSlow {
-	return &FastSlow{
-		artifact: datura.Acquire("fast_slow", datura.Artifact_Type_json),
-		ratio:    NewInvertedFastSlowRatio(fastWindow, epsilon),
-	}
-}
-
-func (fastSlow *FastSlow) Write(p []byte) (int, error) {
-	return fastSlow.artifact.Write(p)
-}
-
-func (fastSlow *FastSlow) Read(p []byte) (int, error) {
-	payload, err := fastSlow.artifact.Payload()
-
-	if err == nil && len(payload) >= 8 && len(payload)%8 == 0 {
-		count := len(payload) / 8
-		stream := make([]float64, count)
-
-		for index := range count {
-			offset := index * 8
-			stream[index] = math.Float64frombits(binary.BigEndian.Uint64(payload[offset : offset+8]))
-		}
-
-		value, computeErr := fastSlow.ratio.Next(0, stream...)
-
-		if computeErr == nil {
-			putFloat64Payload(&fastSlow.artifact, "fast_slow", value)
-		}
-	}
-
-	return fastSlow.artifact.Read(p)
-}
-
-func (fastSlow *FastSlow) Close() error {
-	return nil
-}
-
-func (fastSlow *FastSlow) Reset() error {
-	return nil
+func InvertedFastSlowRate(samples []float64, fastWindow int, epsilon float64) float64 {
+	return invertedFastSlowRate(samples, fastWindow, epsilon)
 }

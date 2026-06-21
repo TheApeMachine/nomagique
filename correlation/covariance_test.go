@@ -4,52 +4,74 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/datura"
+	"github.com/theapemachine/datura/transport"
 )
+
+func covarianceConfig() *datura.Artifact {
+	return datura.Acquire("covariance-config", datura.APPJSON)
+}
 
 func TestCovariance_Observe(testingTB *testing.T) {
 	Convey("Given positively coupled streams", testingTB, func() {
-		covariance := NewCovariance(nil)
-		got := observeSplit(covariance,
-			[]float64{1, 2, 3, 4},
-			[]float64{2, 4, 6, 8},
-		)
+		covariance := NewCovariance(covarianceConfig())
+		artifact := datura.Acquire("test", datura.APPJSON).
+			Poke([]float64{1, 2, 3, 4, 2, 4, 6, 8}, "batch")
+		err := transport.NewFlipFlop(artifact, covariance)
+
+		So(err, ShouldBeNil)
+
+		got := datura.Peek[float64](artifact, "output", "value")
 
 		Convey("It should return positive covariance", func() {
-			So(float64(got), ShouldBeGreaterThan, 0)
+			So(got, ShouldBeGreaterThan, 0)
 		})
 	})
 
 	Convey("Given empty Observe inputs", testingTB, func() {
-		covariance := NewCovariance(nil)
+		covariance := NewCovariance(covarianceConfig())
+		artifact := datura.Acquire("test", datura.APPJSON)
+		err := transport.NewFlipFlop(artifact, covariance)
+
+		So(err, ShouldBeNil)
 
 		Convey("It should return zero output", func() {
-			So(observeInputs(covariance), ShouldEqual, 0)
+			So(datura.Peek[float64](artifact, "output", "value"), ShouldEqual, 0)
 		})
 	})
 }
 
 func TestCovariance_Reset(testingTB *testing.T) {
 	Convey("Given an observed covariance stage", testingTB, func() {
-		covariance := NewCovariance(nil)
-		_ = observeSplit(covariance,
-			[]float64{1, 2, 3, 4},
-			[]float64{2, 4, 6, 8},
-		)
+		covariance := NewCovariance(covarianceConfig())
+		artifact := datura.Acquire("test", datura.APPJSON).
+			Poke([]float64{1, 2, 3, 4, 2, 4, 6, 8}, "batch")
+		err := transport.NewFlipFlop(artifact, covariance)
 
-		So(covariance.Reset(), ShouldBeNil)
+		So(err, ShouldBeNil)
+
+		resetArtifact := datura.Acquire("test", datura.APPJSON).Poke(1, "reset")
+		err = transport.NewFlipFlop(resetArtifact, covariance)
+
+		So(err, ShouldBeNil)
+
+		fresh := datura.Acquire("test", datura.APPJSON)
+		err = transport.NewFlipFlop(fresh, covariance)
+
+		So(err, ShouldBeNil)
 
 		Convey("It should clear output", func() {
-			So(float64(observeInputs(covariance)), ShouldEqual, 0)
+			So(datura.Peek[float64](fresh, "output", "value"), ShouldEqual, 0)
 		})
 	})
 }
 
 func BenchmarkCovariance_Observe(testingTB *testing.B) {
-	covariance := NewCovariance(nil)
+	covariance := NewCovariance(covarianceConfig())
+	artifact := datura.Acquire("test", datura.APPJSON)
+
 	for testingTB.Loop() {
-		_ = observeSplit(covariance,
-			[]float64{1, 2, 3, 4, 5, 6, 7, 8},
-			[]float64{2, 4, 6, 8, 10, 12, 14, 16},
-		)
+		artifact.Poke([]float64{1, 2, 3, 4, 5, 6, 7, 8, 2, 4, 6, 8, 10, 12, 14, 16}, "batch")
+		_ = transport.NewFlipFlop(artifact, covariance)
 	}
 }

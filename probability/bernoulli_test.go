@@ -4,6 +4,8 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/datura"
+	"github.com/theapemachine/datura/transport"
 )
 
 func TestBernoulli(testingTB *testing.T) {
@@ -44,7 +46,16 @@ func TestPosterior_Observe(testingTB *testing.T) {
 
 		Convey("Given "+testCase.name, testingTB, func() {
 			posterior := NewBernoulli()
-			got := observeInputs(posterior, testCase.inputs...)
+			artifact := datura.Acquire("test", datura.APPJSON)
+
+			for _, sample := range testCase.inputs {
+				artifact.Poke(sample, "sample")
+				err := transport.NewFlipFlop(artifact, posterior)
+
+				So(err, ShouldBeNil)
+			}
+
+			got := datura.Peek[float64](artifact, "output", "value")
 
 			Convey("It should return the expected posterior mean", func() {
 				So(testCase.expect(got), ShouldBeTrue)
@@ -54,24 +65,31 @@ func TestPosterior_Observe(testingTB *testing.T) {
 
 	Convey("Given empty Observe inputs", testingTB, func() {
 		posterior := NewBernoulli()
+		artifact := datura.Acquire("test", datura.APPJSON)
+		err := transport.NewFlipFlop(artifact, posterior)
+
+		So(err, ShouldBeNil)
 
 		Convey("It should return zero output", func() {
-			So(observeInputs(posterior), ShouldEqual, 0)
-		})
-	})
-
-	Convey("Given a non-scalar first input", testingTB, func() {
-		posterior := NewBernoulli()
-		before := observeInputs(posterior, 1)
-		Convey("It should leave output unchanged", func() {
-			So(observeWithoutSample(posterior, 99), ShouldEqual, before)
+			So(datura.Peek[float64](artifact, "output", "value"), ShouldEqual, 0)
 		})
 	})
 
 	Convey("Given a predicted and actual pair", testingTB, func() {
 		posterior := NewBernoulli()
-		_ = observeInputs(posterior, 10, 10)
-		got := observeInputs(posterior, 10, 15)
+		artifact := datura.Acquire("test", datura.APPJSON)
+
+		artifact.Poke(10, "sample")
+		err := transport.NewFlipFlop(artifact, posterior)
+
+		So(err, ShouldBeNil)
+
+		artifact.Poke(10, "sample").Poke(15, "paired")
+		err = transport.NewFlipFlop(artifact, posterior)
+
+		So(err, ShouldBeNil)
+
+		got := datura.Peek[float64](artifact, "output", "value")
 
 		Convey("It should raise hit probability", func() {
 			So(got, ShouldBeGreaterThan, 0.5)
@@ -80,10 +98,14 @@ func TestPosterior_Observe(testingTB *testing.T) {
 
 	Convey("Given an invalid outcome", testingTB, func() {
 		posterior := NewBernoulli()
-		got := observeInputs(posterior, 2)
+		artifact := datura.Acquire("test", datura.APPJSON).
+			Poke(2, "sample")
+		err := transport.NewFlipFlop(artifact, posterior)
+
+		So(err, ShouldBeNil)
 
 		Convey("It should leave output at zero", func() {
-			So(got, ShouldEqual, 0)
+			So(datura.Peek[float64](artifact, "output", "value"), ShouldEqual, 0)
 		})
 	})
 }
@@ -91,24 +113,36 @@ func TestPosterior_Observe(testingTB *testing.T) {
 func TestPosterior_Reset(testingTB *testing.T) {
 	Convey("Given an observed posterior", testingTB, func() {
 		posterior := NewBernoulli()
-		_ = observeInputs(posterior, 1)
+		artifact := datura.Acquire("test", datura.APPJSON).
+			Poke(1, "sample")
 
-		So(posterior.Reset(), ShouldBeNil)
+		err := transport.NewFlipFlop(artifact, posterior)
+
+		So(err, ShouldBeNil)
+
+		resetArtifact := datura.Acquire("test", datura.APPJSON).Poke(1, "reset")
+		err = transport.NewFlipFlop(resetArtifact, posterior)
+
+		So(err, ShouldBeNil)
 
 		Convey("It should clear derived state", func() {
-			So(posterior.state.Ready, ShouldBeFalse)
-			So(observeInputs(posterior), ShouldEqual, 0)
+			So(datura.Peek[float64](resetArtifact, "output", "ready"), ShouldEqual, 0)
+			So(datura.Peek[float64](resetArtifact, "output", "value"), ShouldEqual, 0)
 		})
 	})
 }
 
 func BenchmarkBernoulli_Observe(testingTB *testing.B) {
 	posterior := NewBernoulli()
-	_ = observeInputs(posterior, 1)
+	artifact := datura.Acquire("test", datura.APPJSON)
+
+	artifact.Poke(1, "sample")
+	_ = transport.NewFlipFlop(artifact, posterior)
 
 	testingTB.ReportAllocs()
 
 	for testingTB.Loop() {
-		_ = observeInputs(posterior, 10, 11)
+		artifact.Poke(10, "sample").Poke(11, "paired")
+		_ = transport.NewFlipFlop(artifact, posterior)
 	}
 }

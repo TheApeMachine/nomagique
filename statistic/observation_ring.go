@@ -1,54 +1,54 @@
 package statistic
 
+import (
+	"math"
+
+	"github.com/theapemachine/datura"
+)
+
 /*
 ObservationRing retains recent scalar observations with capacity derived from
 sample span rather than a fixed magic bound.
 */
 type ObservationRing struct {
-	samples []float64
+	artifact *datura.Artifact
 }
 
 func NewObservationRing() *ObservationRing {
-	return &ObservationRing{}
+	return &ObservationRing{
+		artifact: datura.Acquire("observation_ring", datura.APPJSON),
+	}
 }
 
-func (ring *ObservationRing) Observe(value float64) {
-	if value <= 0 {
-		return
+func (ring *ObservationRing) Write(p []byte) (int, error) {
+	return ring.artifact.Write(p)
+}
+
+func (ring *ObservationRing) Read(p []byte) (int, error) {
+	sample := datura.Peek[float64](ring.artifact, "sample")
+
+	if sample <= 0 || math.IsNaN(sample) || math.IsInf(sample, 0) {
+		return ring.artifact.Read(p)
 	}
 
-	ring.samples = append(ring.samples, value)
-	capacity := ring.capacityFor(ring.samples)
+	history := datura.Peek[[]float64](ring.artifact, "history")
+	history = append(history, sample)
 
-	if capacity <= 0 || len(ring.samples) <= capacity {
-		return
+	capacity := ring.capacityFor(history)
+
+	if capacity > 0 && len(history) > capacity {
+		history = history[len(history)-capacity:]
 	}
 
-	ring.samples = ring.samples[len(ring.samples)-capacity:]
+	ring.artifact.Poke(history, "history")
+
+	ring.artifact.Poke(datura.Map[float64]{"value": sample}, "output")
+
+	return ring.artifact.Read(p)
 }
 
-func (ring *ObservationRing) Len() int {
-	return len(ring.samples)
-}
-
-func (ring *ObservationRing) Samples() []float64 {
-	return ring.samples
-}
-
-func (ring *ObservationRing) Median() float64 {
-	return MedianOf(ring.samples)
-}
-
-func (ring *ObservationRing) Quantile(percentile float64) float64 {
-	return QuantileOf(percentile, ring.samples)
-}
-
-func (ring *ObservationRing) MedianAbsolute() float64 {
-	return MedianAbsoluteOf(ring.samples)
-}
-
-func (ring *ObservationRing) Span() float64 {
-	return SpanOf(ring.samples)
+func (ring *ObservationRing) Close() error {
+	return nil
 }
 
 func (ring *ObservationRing) capacityFor(values []float64) int {
@@ -63,14 +63,8 @@ func (ring *ObservationRing) capacityFor(values []float64) int {
 	span := SpanOf(values)
 
 	if span <= 0 {
-		return len(values) + 1
+		return 3
 	}
 
-	capacity := int(span) + 1
-
-	if capacity < len(values) {
-		return len(values)
-	}
-
-	return capacity
+	return int(span) + 1
 }

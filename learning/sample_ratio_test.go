@@ -4,6 +4,8 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/datura"
+	"github.com/theapemachine/datura/transport"
 )
 
 func TestSampleRatio(testingTB *testing.T) {
@@ -19,38 +21,67 @@ func TestSampleRatio(testingTB *testing.T) {
 func TestCalibrator_Observe(testingTB *testing.T) {
 	Convey("Given empty Observe inputs", testingTB, func() {
 		calibrator := SampleRatio()
+		artifact := datura.Acquire("test", datura.APPJSON)
+		err := transport.NewFlipFlop(artifact, calibrator)
+
+		So(err, ShouldBeNil)
 
 		Convey("It should return zero output", func() {
-			So(observeInputs(calibrator), ShouldEqual, 0)
+			So(datura.Peek[float64](artifact, "output", "value"), ShouldEqual, 0)
 		})
 	})
 
 	Convey("Given a fresh calibrator", testingTB, func() {
 		calibrator := SampleRatio()
-		got := observeInputs(calibrator, 10, 10)
+		artifact := datura.Acquire("test", datura.APPJSON).
+			Poke(10, "sample").
+			Poke(10, "paired")
+		err := transport.NewFlipFlop(artifact, calibrator)
+
+		So(err, ShouldBeNil)
+
+		got := datura.Peek[float64](artifact, "output", "value")
 
 		Convey("It should return unit calibration", func() {
-			So(float64(got), ShouldEqual, 1)
+			So(got, ShouldEqual, 1)
 		})
 	})
 
 	Convey("Given a winning outcome", testingTB, func() {
 		calibrator := SampleRatio()
-		_ = observeInputs(calibrator, 10, 10)
-		got := observeInputs(calibrator, 10, 15)
+		artifact := datura.Acquire("test", datura.APPJSON)
+
+		artifact.Poke(10, "sample").Poke(10, "paired")
+		err := transport.NewFlipFlop(artifact, calibrator)
+
+		So(err, ShouldBeNil)
+
+		artifact.Poke(10, "sample").Poke(15, "paired")
+		err = transport.NewFlipFlop(artifact, calibrator)
+
+		So(err, ShouldBeNil)
+
+		got := datura.Peek[float64](artifact, "output", "value")
 
 		Convey("It should scale by actual over predicted within the adaptive ceiling", func() {
-			So(float64(got), ShouldBeGreaterThan, 1)
-			So(float64(got), ShouldBeLessThanOrEqualTo, 1.5)
+			So(got, ShouldBeGreaterThan, 1)
+			So(got, ShouldBeLessThanOrEqualTo, 1.5)
 		})
 	})
 
 	Convey("Given zero predicted", testingTB, func() {
 		calibrator := SampleRatio()
-		got := observeInputs(calibrator, 0, 10)
+		artifact := datura.Acquire("test", datura.APPJSON).
+			Poke(0, "sample").
+			Poke(10, "paired")
+		err := transport.NewFlipFlop(artifact, calibrator)
+
+		So(err, ShouldBeNil)
+
+		got := datura.Peek[float64](artifact, "output", "value")
 
 		Convey("It should leave output at zero", func() {
-			So(float64(got), ShouldEqual, 0)
+			So(got, ShouldEqual, 0)
 		})
 	})
 }
@@ -75,25 +106,38 @@ func TestCalibrator_ObserveSamples(testingTB *testing.T) {
 func TestCalibrator_Reset(testingTB *testing.T) {
 	Convey("Given a calibrator with state", testingTB, func() {
 		calibrator := SampleRatio()
-		_ = observeInputs(calibrator, 10, 10)
+		artifact := datura.Acquire("test", datura.APPJSON).
+			Poke(10, "sample").
+			Poke(10, "paired")
+		err := transport.NewFlipFlop(artifact, calibrator)
 
+		So(err, ShouldBeNil)
 		So(calibrator.Reset(), ShouldBeNil)
+
+		fresh := datura.Acquire("test", datura.APPJSON)
+		err = transport.NewFlipFlop(fresh, calibrator)
+
+		So(err, ShouldBeNil)
 
 		Convey("It should clear derived state", func() {
 			So(calibrator.state.Ready, ShouldBeFalse)
-			So(float64(observeInputs(calibrator)), ShouldEqual, 0)
+			So(datura.Peek[float64](fresh, "output", "value"), ShouldEqual, 0)
 		})
 	})
 }
 
 func BenchmarkSampleRatio_Observe(testingTB *testing.B) {
 	calibrator := SampleRatio()
-	_ = observeInputs(calibrator, 10, 10)
+	artifact := datura.Acquire("test", datura.APPJSON)
+
+	artifact.Poke(10, "sample").Poke(10, "paired")
+	_ = transport.NewFlipFlop(artifact, calibrator)
 
 	testingTB.ReportAllocs()
 
 	for testingTB.Loop() {
-		_ = observeInputs(calibrator, 10, 11)
+		artifact.Poke(10, "sample").Poke(11, "paired")
+		_ = transport.NewFlipFlop(artifact, calibrator)
 	}
 }
 

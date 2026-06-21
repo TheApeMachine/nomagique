@@ -27,7 +27,7 @@ func NewRLS(dimension int, initialVariance float64) (*RLS, error) {
 	}
 
 	return &RLS{
-		artifact: datura.Acquire("rls", datura.Artifact_Type_json),
+		artifact: datura.Acquire("rls", datura.APPJSON),
 		filter:   filter,
 	}, nil
 }
@@ -38,10 +38,10 @@ func (rls *RLS) Write(p []byte) (int, error) {
 
 func (rls *RLS) Read(p []byte) (int, error) {
 	if rls == nil || rls.filter == nil {
-		return rls.artifact.Read(p)
+		return 0, nil
 	}
 
-	values := float64Batch(rls.artifact)
+	values := datura.Peek[[]float64](rls.artifact, "batch")
 
 	if len(values) >= rls.filter.dimension+1 {
 		features := values[:rls.filter.dimension]
@@ -53,7 +53,7 @@ func (rls *RLS) Read(p []byte) (int, error) {
 
 			if predictErr == nil {
 				rls.output = prediction
-				putFloat64Payload(&rls.artifact, "rls-dynamic", rls.output)
+				rls.artifact.Poke(datura.Map[float64]{"value": rls.output}, "output")
 			}
 		}
 	}
@@ -75,6 +75,7 @@ func (rls *RLS) Reset() error {
 
 	rls.filter.Reset()
 	rls.output = 0
+	rls.artifact.Poke(datura.Map[float64]{"value": 0}, "output")
 
 	return nil
 }

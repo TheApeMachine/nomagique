@@ -1,43 +1,22 @@
 package logic
 
 import (
-	"encoding/binary"
+	"bytes"
 	"io"
 	"math"
 
+	"github.com/bytedance/sonic"
 	"github.com/theapemachine/datura"
 )
 
-func float64Batch(artifact *datura.Artifact) []float64 {
-	if artifact == nil {
-		return nil
-	}
-
-	payload, err := artifact.Payload()
-
-	if err != nil || len(payload) < 8 || len(payload)%8 != 0 {
-		return nil
-	}
-
-	count := len(payload) / 8
-	values := make([]float64, count)
-
-	for index := range count {
-		offset := index * 8
-		values[index] = math.Float64frombits(binary.BigEndian.Uint64(payload[offset : offset+8]))
-	}
-
-	return values
-}
-
 func boundarySample(artifact *datura.Artifact) (float64, bool) {
-	values := float64Batch(artifact)
+	sample := datura.Peek[float64](artifact, "sample")
 
-	if len(values) == 0 {
+	if math.IsNaN(sample) || math.IsInf(sample, 0) {
 		return 0, false
 	}
 
-	return values[0], true
+	return sample, true
 }
 
 func artifactBytes(artifact *datura.Artifact) ([]byte, bool) {
@@ -50,7 +29,7 @@ func artifactBytes(artifact *datura.Artifact) ([]byte, bool) {
 	return buf, true
 }
 
-func readOperand(stage io.ReadWriter, artifactBytes []byte) (float64, bool) {
+func readOperand(stage io.ReadWriteCloser, artifactBytes []byte) (float64, bool) {
 	if stage == nil {
 		return 0, false
 	}
@@ -65,29 +44,35 @@ func readOperand(stage io.ReadWriter, artifactBytes []byte) (float64, bool) {
 		return 0, false
 	}
 
-	outBuf := make([]byte, 4096)
-	readCount, readErr := stage.Read(outBuf)
+	var outBuf bytes.Buffer
+	chunk := make([]byte, 4096)
 
-	if readErr != nil && readErr != io.EOF && readErr != io.ErrShortBuffer {
+	for {
+		readCount, readErr := stage.Read(chunk)
+
+		if readCount > 0 {
+			outBuf.Write(chunk[:readCount])
+		}
+
+		if readErr == io.EOF {
+			break
+		}
+
+		if readErr != nil {
+			return 0, false
+		}
+	}
+
+	outbound := datura.Acquire("logic-operand", datura.APPJSON)
+	_, _ = outbound.Write(outBuf.Bytes())
+
+	value := datura.Peek[float64](outbound, "output", "value")
+
+	if math.IsNaN(value) || math.IsInf(value, 0) {
 		return 0, false
 	}
 
-	outbound := datura.Acquire("logic-operand", datura.Artifact_Type_json)
-	_, _ = outbound.Write(outBuf[:readCount])
-	payload, payloadErr := outbound.Payload()
-
-	if payloadErr != nil || len(payload) != 8 {
-		return 0, false
-	}
-
-	return math.Float64frombits(binary.BigEndian.Uint64(payload)), true
-}
-
-func putFloat64Payload(artifact **datura.Artifact, name string, value float64) {
-	*artifact = datura.Acquire(name, datura.Artifact_Type_json)
-	payload := make([]byte, 8)
-	binary.BigEndian.PutUint64(payload, math.Float64bits(value))
-	_ = (*artifact).SetPayload(payload)
+	return value, true
 }
 
 /*
@@ -100,7 +85,7 @@ type Constant struct {
 
 func NewConstant(value float64) *Constant {
 	return &Constant{
-		artifact: datura.Acquire("constant", datura.Artifact_Type_json),
+		artifact: datura.Acquire("constant", datura.APPJSON),
 		value:    value,
 	}
 }
@@ -110,7 +95,7 @@ func (constant *Constant) Write(p []byte) (int, error) {
 }
 
 func (constant *Constant) Read(p []byte) (int, error) {
-	putFloat64Payload(&constant.artifact, "constant", constant.value)
+	constant.artifact.Poke(datura.Map[float64]{"value": constant.value}, "output")
 
 	return constant.artifact.Read(p)
 }
@@ -119,24 +104,45 @@ func (constant *Constant) Close() error {
 	return nil
 }
 
-func (constant *Constant) Reset() error {
-	return nil
+func attributeKeyPresent(artifact *datura.Artifact, key string) bool {
+	raw, err := artifact.Attributes()
+
+	if err != nil || len(raw) == 0 {
+		return false
+	}
+
+	_, getErr := sonic.Get(raw, key)
+
+	return getErr == nil
 }
 
-type resetter interface {
-	Reset() error
+func inboundReset(p []byte) bool {
+	inbound := datura.Acquire("inbound", datura.APPJSON)
+	_, _ = inbound.Write(p)
+
+	return attributeKeyPresent(inbound, "reset")
 }
 
-func resetStage(stage io.ReadWriter) error {
+func writeResetToStage(stage io.ReadWriteCloser) {
 	if stage == nil {
-		return nil
+		return
 	}
 
-	stageResetter, ok := stage.(resetter)
+	resetArtifact, resetOK := artifactBytes(
+		datura.Acquire("logic-reset", datura.APPJSON).Poke(1, "reset"),
+	)
 
-	if !ok {
-		return nil
+	if !resetOK {
+		return
 	}
 
-	return stageResetter.Reset()
+	_, _ = stage.Write(resetArtifact)
+}
+
+func resetCondition(condition Condition) {
+	if condition == nil {
+		return
+	}
+
+	condition.ResetOperands()
 }

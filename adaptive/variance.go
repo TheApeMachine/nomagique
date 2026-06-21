@@ -8,122 +8,98 @@ import (
 
 /*
 Variance tracks an adaptive mean and variance from the observed sample stream.
+The constructor artifact holds config; Write buffers inbound wire on its payload.
 */
 type Variance struct {
 	artifact *datura.Artifact
-	Mean     float64
-	Var      float64
-	Prev     float64
-	Min      float64
-	Max      float64
-	Rate     float64
-	Ready    bool
 }
 
 /*
-NewVariance returns a variance stage ready to bootstrap from its first observation.
+NewVariance returns a variance stage wired from config attributes on the artifact.
 */
-func NewVariance() *Variance {
+func NewVariance(artifact *datura.Artifact) *Variance {
+	artifact.Inspect("adaptive", "variance", "NewVariance()")
+
 	return &Variance{
-		artifact: datura.Acquire("variance", datura.Artifact_Type_json),
+		artifact: artifact,
 	}
 }
 
-func (variance *Variance) Write(p []byte) (int, error) {
-	return variance.artifact.Write(p)
-}
+func (variance *Variance) Write(payload []byte) (int, error) {
+	output := datura.Peek[datura.Map[float64]](variance.artifact, "output")
 
-func (variance *Variance) Read(p []byte) (int, error) {
-	payload, err := variance.artifact.Payload()
+	variance.artifact.WithPayload(payload)
 
-	if err == nil {
-		observeScalarPayload(&variance.artifact, "variance", payload, variance.step)
+	if output != nil {
+		variance.artifact.Merge("output", output)
 	}
 
-	return variance.artifact.Read(p)
+	return len(payload), nil
+}
+
+func (variance *Variance) Read(payload []byte) (int, error) {
+	state := datura.Acquire("variance-state", datura.APPJSON)
+	state.Inspect("adaptive", "variance", "Read()", "p")
+
+	if _, err := state.Write(variance.artifact.DecryptPayload()); err != nil {
+		return 0, err
+	}
+
+	sample := datura.Peek[float64](state, "sample")
+
+	if math.IsNaN(sample) || math.IsInf(sample, 0) {
+		return state.Read(payload)
+	}
+
+	output := datura.Peek[datura.Map[float64]](variance.artifact, "output")
+
+	if output == nil {
+		output = datura.Map[float64]{
+			"mean":  sample,
+			"var":   0,
+			"prev":  sample,
+			"min":   sample,
+			"max":   sample,
+			"rate":  0,
+			"value": 0,
+		}
+
+		variance.artifact.Merge("output", output)
+		state.MergeOutput("value", output["value"])
+		state.Merge("root", "output")
+		state.Merge("inputs", []string{"value"})
+		return state.Read(payload)
+	}
+
+	output["min"] = math.Min(output["min"], sample)
+	output["max"] = math.Max(output["max"], sample)
+
+	span := output["max"] - output["min"]
+
+	if span == 0 {
+		output["prev"] = sample
+		variance.artifact.Merge("output", output)
+		state.MergeOutput("value", output["value"])
+		state.Merge("root", "output")
+		state.Merge("inputs", []string{"value"})
+		return state.Read(payload)
+	}
+
+	delta := math.Abs(sample - output["prev"])
+	output["rate"] = delta / span
+	deviation := sample - output["mean"]
+	output["mean"] += output["rate"] * (sample - output["mean"])
+	output["var"] += output["rate"] * (deviation*deviation - output["var"])
+	output["prev"] = sample
+	output["value"] = output["var"]
+
+	variance.artifact.Merge("output", output)
+	state.MergeOutput("value", output["value"])
+	state.Merge("root", "output")
+	state.Merge("inputs", []string{"value"})
+	return state.Read(payload)
 }
 
 func (variance *Variance) Close() error {
 	return nil
-}
-
-/*
-ObserveSample ingests one raw sample through the variance kernel.
-*/
-func (variance *Variance) ObserveSample(sample float64) float64 {
-	return observeScalarSample(&variance.artifact, "variance", sample, variance.step)
-}
-
-/*
-ObserveSamples writes one derived value per sample into out.
-*/
-func (variance *Variance) ObserveSamples(samples []float64, out []float64) {
-	limit := len(samples)
-
-	if len(out) < limit {
-		limit = len(out)
-	}
-
-	for index := 0; index < limit; index++ {
-		out[index] = variance.ObserveSample(samples[index])
-	}
-}
-
-/*
-Reset clears derived state so the next Read bootstraps again.
-*/
-func (variance *Variance) Reset() error {
-	variance.Mean = 0
-	variance.Var = 0
-	variance.Prev = 0
-	variance.Min = 0
-	variance.Max = 0
-	variance.Rate = 0
-	variance.Ready = false
-
-	return nil
-}
-
-func (variance *Variance) step(sample float64) float64 {
-	if !variance.Ready {
-		variance.Mean = sample
-		variance.Var = 0
-		variance.Prev = sample
-		variance.Min = sample
-		variance.Max = sample
-		variance.Ready = true
-
-		return 0
-	}
-
-	return variance.stepReady(sample)
-}
-
-func (variance *Variance) stepReady(sample float64) float64 {
-	variance.Min = math.Min(variance.Min, sample)
-	variance.Max = math.Max(variance.Max, sample)
-
-	span := variance.Max - variance.Min
-
-	if span == 0 {
-		variance.Prev = sample
-
-		return variance.Var
-	}
-
-	delta := math.Abs(sample - variance.Prev)
-	variance.Rate = delta / span
-	deviation := sample - variance.Mean
-	variance.Mean += variance.Rate * (sample - variance.Mean)
-	variance.Var += variance.Rate * (deviation*deviation - variance.Var)
-	variance.Prev = sample
-
-	return variance.Var
-}
-
-/*
-Value returns the last derived scalar without re-processing the stage.
-*/
-func (variance *Variance) Value() float64 {
-	return valueFromArtifact(variance.artifact)
 }

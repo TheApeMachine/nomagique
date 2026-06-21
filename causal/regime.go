@@ -1,122 +1,102 @@
 package causal
 
-import "math"
+import (
+	"math"
+
+	"github.com/theapemachine/datura"
+)
 
 /*
-Roles assigns DAG node roles for one structural regime.
+Regime selects normal or inverted DAG roles from contagion and pair condition.
+The constructor artifact holds config; Write buffers inbound table wire on its payload.
 */
-type Roles struct {
-	Treatment int
-	Controls  []int
-	Label     string
+type Regime struct {
+	artifact *datura.Artifact
 }
 
 /*
-LadderConfig holds thresholds and node indices for Pearl ladder role selection.
+NewRegime returns a regime stage wired from config attributes on the artifact.
 */
-type LadderConfig struct {
-	TreatmentNormal   int
-	ControlsNormal    []int
-	TreatmentInverted int
-	ControlsInverted  []int
-	ConditionLeft     int
-	ConditionRight    int
-	ContagionBreak    float64
-	ConditionSwitch   float64
-	KernelBandwidth   float64
-	ConfoundFraction  float64
-	InterventionLevel float64
-	MinHistory        int
+func NewRegime(artifact *datura.Artifact) *Regime {
+	artifact.Inspect("causal", "regime", "NewRegime()")
+
+	return &Regime{
+		artifact: artifact,
+	}
 }
 
-/*
-Predictors returns treatment plus controls for model fitting.
-*/
-func (roles Roles) Predictors() []int {
-	return append(append([]int(nil), roles.Controls...), roles.Treatment)
+func (regime *Regime) Write(p []byte) (int, error) {
+	regime.artifact.WithPayload(p)
+	return len(p), nil
 }
 
-/*
-SelectRoles chooses normal or inverted roles from contagion and pair condition.
-*/
-func SelectRoles(
-	nodeTable NodeTable,
-	contagion float64,
-	config LadderConfig,
-) (roles Roles, inverted bool, condition float64) {
-	normal := Roles{
-		Treatment: config.TreatmentNormal,
-		Controls:  append([]int(nil), config.ControlsNormal...),
-		Label:     "normal",
+func (regime *Regime) Read(p []byte) (int, error) {
+	state := datura.Acquire("regime-state", datura.APPJSON)
+	state.Inspect("causal", "regime", "Read()", "p")
+
+	if _, err := state.Write(regime.artifact.DecryptPayload()); err != nil {
+		return 0, err
 	}
 
-	contagionBreak := config.ContagionBreak > 0 && contagion >= config.ContagionBreak
-	conditionBreak := false
+	rows, ok := tableRows(state)
 
-	if config.ConditionSwitch > 0 {
-		pairCondition, condErr := nodeTable.PairConditionNumber(
-			config.ConditionLeft, config.ConditionRight,
+	if !ok {
+		state.MergeOutput("value", 0.0)
+		return state.Read(p)
+	}
+
+	target := int(datura.Peek[float64](regime.artifact, "config", "target"))
+	minHistory := int(datura.Peek[float64](regime.artifact, "config", "minHistory"))
+
+	if minHistory <= 0 {
+		minHistory = len(rows)
+	}
+
+	table, err := newNodeTable(rows, target, minHistory)
+
+	if err != nil {
+		state.MergeOutput("value", 0.0)
+		return state.Read(p)
+	}
+
+	contagion := datura.Peek[float64](state, "paired")
+
+	if contagion == 0 {
+		contagion = datura.Peek[float64](state, "output", "value")
+	}
+
+	contagionBreak := datura.Peek[float64](regime.artifact, "config", "contagionBreak") > 0 &&
+		contagion >= datura.Peek[float64](regime.artifact, "config", "contagionBreak")
+
+	condition := 0.0
+	conditionBreak := false
+	conditionSwitch := datura.Peek[float64](regime.artifact, "config", "conditionSwitch")
+
+	if conditionSwitch > 0 {
+		pairCondition, err := table.pairConditionNumber(
+			int(datura.Peek[float64](regime.artifact, "config", "conditionLeft")),
+			int(datura.Peek[float64](regime.artifact, "config", "conditionRight")),
 		)
 
-		if condErr == nil {
+		if err == nil {
 			condition = pairCondition
-			conditionBreak = math.IsInf(pairCondition, 1) ||
-				pairCondition >= config.ConditionSwitch
+			conditionBreak = math.IsInf(pairCondition, 1) || pairCondition >= conditionSwitch
 		}
 	}
+
+	rawInverted := 0.0
 
 	if conditionBreak || contagionBreak {
-		return Roles{
-			Treatment: config.TreatmentInverted,
-			Controls:  append([]int(nil), config.ControlsInverted...),
-			Label:     "inverted",
-		}, true, condition
+		rawInverted = 1
 	}
 
-	return normal, false, condition
+	state.Merge("sample", rawInverted)
+	state.MergeOutput("value", condition)
+	state.MergeOutput("condition", condition)
+	state.MergeOutput("rawInverted", rawInverted)
+	return state.Read(p)
 }
 
-/*
-SelectRolesWithTracker applies hysteresis before returning roles.
-*/
-func SelectRolesWithTracker(
-	nodeTable NodeTable,
-	contagion float64,
-	config LadderConfig,
-	tracker *RegimeTracker,
-	historyLen int,
-) (roles Roles, inverted bool, condition float64) {
-	_, rawInverted, condition := SelectRoles(nodeTable, contagion, config)
-
-	if tracker == nil {
-		if rawInverted {
-			return Roles{
-				Treatment: config.TreatmentInverted,
-				Controls:  append([]int(nil), config.ControlsInverted...),
-				Label:     "inverted",
-			}, true, condition
-		}
-
-		return Roles{
-			Treatment: config.TreatmentNormal,
-			Controls:  append([]int(nil), config.ControlsNormal...),
-			Label:     "normal",
-		}, false, condition
-	}
-
-	inverted = tracker.Apply(rawInverted, DeriveRegimeHysteresisSamples(historyLen))
-
-	if inverted {
-		return Roles{
-			Treatment: config.TreatmentInverted,
-			Controls:  append([]int(nil), config.ControlsInverted...),
-			Label:     "inverted",
-		}, true, condition
-	}
-
-	return Roles{
-		Treatment: config.TreatmentNormal,
-		Controls:  append([]int(nil), config.ControlsNormal...),
-		Label:     "normal",
-	}, false, condition
+func (regime *Regime) Close() error {
+	return nil
 }

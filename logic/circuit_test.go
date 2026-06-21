@@ -1,26 +1,43 @@
-package logic
+package logic_test
 
 import (
-	"io"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/datura"
+	"github.com/theapemachine/datura/transport"
 	"github.com/theapemachine/nomagique/adaptive"
-	"github.com/theapemachine/nomagique/tests"
+	"github.com/theapemachine/nomagique/logic"
 )
 
-func pipelineValue(stage io.ReadWriter, sample float64) float64 {
-	value, _ := tests.PipelineSample([]io.ReadWriter{stage}, sample)
+func flipFlopCircuit(circuit *logic.Circuit, sample float64) float64 {
+	artifact := datura.Acquire("test", datura.APPJSON).Poke(sample, "sample")
+	err := transport.NewFlipFlop(artifact, circuit)
 
-	return value
+	So(err, ShouldBeNil)
+
+	return datura.Peek[float64](artifact, "output", "value")
+}
+
+func flipFlopStage(stage interface {
+	Read([]byte) (int, error)
+	Write([]byte) (int, error)
+	Close() error
+}, sample float64) float64 {
+	artifact := datura.Acquire("test", datura.APPJSON).Poke(sample, "sample")
+	err := transport.NewFlipFlop(artifact, stage)
+
+	So(err, ShouldBeNil)
+
+	return datura.Peek[float64](artifact, "output", "value")
 }
 
 func TestNewCircuit(testingTB *testing.T) {
 	Convey("Given NewCircuit", testingTB, func() {
-		circuit := NewCircuit(Rules{
+		circuit := logic.NewCircuit(logic.Rules{
 			{
-				Condition: True{Operand: true},
-				Then:      NewConstant(1),
+				Condition: logic.True{Operand: true},
+				Then:      logic.NewConstant(1),
 			},
 		})
 
@@ -32,95 +49,98 @@ func TestNewCircuit(testingTB *testing.T) {
 
 func TestCircuit_Observe(testingTB *testing.T) {
 	Convey("Given a carried signal above its threshold", testingTB, func() {
-		consequence := adaptive.NewEMA()
-		alternative := adaptive.NewEMA()
+		consequence := adaptive.NewEMA(datura.Acquire("ema-config", datura.APPJSON))
+		alternative := adaptive.NewEMA(datura.Acquire("ema-config-alt", datura.APPJSON))
 
-		circuit := NewCircuit(Rules{
+		circuit := logic.NewCircuit(logic.Rules{
 			{
-				Condition: GreaterThan{
-					Right: NewConstant(2),
+				Condition: logic.GreaterThan{
+					Right: logic.NewConstant(2),
 				},
 				Then: consequence,
 			},
 			{
-				Condition: True{Operand: true},
+				Condition: logic.True{Operand: true},
 				Then:      alternative,
 			},
 		})
 
-		above := pipelineCircuit(circuit, 3)
+		above := flipFlopCircuit(circuit, 3)
 
-		_ = circuit.Reset()
+		resetArtifact := datura.Acquire("test", datura.APPJSON).Poke(1, "reset")
+		_ = transport.NewFlipFlop(resetArtifact, circuit)
 
-		below := pipelineCircuit(circuit, 1)
+		below := flipFlopCircuit(circuit, 1)
 
 		Convey("It should route through the matching branch", func() {
-			So(above, ShouldEqual, pipelineValue(consequence, 3))
-			So(below, ShouldEqual, pipelineValue(alternative, 1))
+			So(above, ShouldEqual, flipFlopStage(consequence, 3))
+			So(below, ShouldEqual, flipFlopStage(alternative, 1))
 		})
 	})
 }
 
 func TestCircuit_ObserveAnd(testingTB *testing.T) {
 	Convey("Given a compound And condition", testingTB, func() {
-		circuit := NewCircuit(Rules{
+		circuit := logic.NewCircuit(logic.Rules{
 			{
-				Condition: And{
-					GreaterThan{
-						Right: NewConstant(2),
+				Condition: logic.And{
+					logic.GreaterThan{
+						Right: logic.NewConstant(2),
 					},
-					True{
-						Stage: NewConstant(1),
+					logic.True{
+						Stage: logic.NewConstant(1),
 					},
 				},
-				Then: NewConstant(10),
+				Then: logic.NewConstant(10),
 			},
 			{
-				Condition: True{Operand: true},
-				Then:      NewConstant(20),
+				Condition: logic.True{Operand: true},
+				Then:      logic.NewConstant(20),
 			},
 		})
 
 		Convey("It should require every nested condition", func() {
-			So(pipelineCircuit(circuit, 3), ShouldEqual, 10)
+			So(flipFlopCircuit(circuit, 3), ShouldEqual, 10)
 		})
 	})
 }
 
 func TestCircuit_Reset(testingTB *testing.T) {
 	Convey("Given an observed circuit", testingTB, func() {
-		circuit := NewCircuit(Rules{
+		circuit := logic.NewCircuit(logic.Rules{
 			{
-				Condition: True{Operand: true},
-				Then:      NewConstant(7),
+				Condition: logic.True{Operand: true},
+				Then:      logic.NewConstant(7),
 			},
 		})
-		_ = pipelineCircuit(circuit, 0)
+		_ = flipFlopCircuit(circuit, 0)
 
-		Convey("It should reset without error", func() {
-			So(circuit.Reset(), ShouldBeNil)
-			So(pipelineCircuit(circuit, 0), ShouldEqual, 7)
+		Convey("It should reset through the artifact", func() {
+			resetArtifact := datura.Acquire("test", datura.APPJSON).Poke(1, "reset")
+			So(transport.NewFlipFlop(resetArtifact, circuit), ShouldBeNil)
+			So(flipFlopCircuit(circuit, 0), ShouldEqual, 7)
 		})
 	})
 }
 
 func BenchmarkCircuit_Observe(benchmark *testing.B) {
-	circuit := NewCircuit(Rules{
+	circuit := logic.NewCircuit(logic.Rules{
 		{
-			Condition: GreaterThan{
-				Right: NewConstant(2),
+			Condition: logic.GreaterThan{
+				Right: logic.NewConstant(2),
 			},
-			Then: adaptive.NewEMA(),
+			Then: adaptive.NewEMA(datura.Acquire("ema-config", datura.APPJSON)),
 		},
 		{
-			Condition: True{Operand: true},
-			Then:      NewConstant(0),
+			Condition: logic.True{Operand: true},
+			Then:      logic.NewConstant(0),
 		},
 	})
 
 	benchmark.ReportAllocs()
 
 	for benchmark.Loop() {
-		_ = pipelineCircuit(circuit, 3)
+		artifact := datura.Acquire("test", datura.APPJSON).Poke(3.0, "sample")
+		_ = transport.NewFlipFlop(artifact, circuit)
 	}
 }

@@ -1,7 +1,6 @@
 package statistic
 
 import (
-	"encoding/binary"
 	"math"
 
 	"github.com/theapemachine/datura"
@@ -11,7 +10,7 @@ import (
 )
 
 /*
-Entropy computes Shannon entropy of a normalized mass distribution.
+Entropy computes Shannon entropy of a normalized mass distribution over history.
 */
 type Entropy struct {
 	artifact *datura.Artifact
@@ -24,7 +23,7 @@ floor may be zero to derive a per-sample floor from each observation.
 */
 func NewEntropy(floor float64) *Entropy {
 	return &Entropy{
-		artifact: datura.Acquire("entropy", datura.Artifact_Type_json),
+		artifact: datura.Acquire("entropy", datura.APPJSON),
 		floor:    floor,
 	}
 }
@@ -34,36 +33,33 @@ func (entropy *Entropy) Write(p []byte) (int, error) {
 }
 
 func (entropy *Entropy) Read(p []byte) (int, error) {
-	payload, err := entropy.artifact.Payload()
+	sample := datura.Peek[float64](entropy.artifact, "sample")
 
-	if err != nil || len(payload) < 8 || len(payload)%8 != 0 {
+	if math.IsNaN(sample) || math.IsInf(sample, 0) {
 		return entropy.artifact.Read(p)
 	}
 
-	count := len(payload) / 8
-	values := make([]float64, count)
+	history := datura.Peek[[]float64](entropy.artifact, "history")
+	history = append(history, sample)
+	entropy.artifact.Poke(history, "history")
 
-	for index := range count {
-		offset := index * 8
-		values[index] = math.Float64frombits(binary.BigEndian.Uint64(payload[offset : offset+8]))
-	}
-
-	if len(values) == 0 {
+	if len(history) == 0 {
 		return entropy.artifact.Read(p)
 	}
 
-	probabilities, ok := entropy.normalizedProbabilities(values)
+	probabilities, ok := entropy.normalizedProbabilities(history)
 
 	if !ok {
-		errnie.Err(
+		errnie.Error(errnie.Err(
 			errnie.Validation, "unable to compute entropy",
 			EntropyError(EntropyErrorNonFiniteMass),
-		)
+		))
 
 		return entropy.artifact.Read(p)
 	}
 
-	putFloat64Payload(&entropy.artifact, "entropy", stat.Entropy(probabilities))
+	value := stat.Entropy(probabilities)
+	entropy.artifact.Poke(datura.Map[float64]{"value": value}, "output")
 
 	return entropy.artifact.Read(p)
 }
@@ -72,26 +68,23 @@ func (entropy *Entropy) Close() error {
 	return nil
 }
 
-func (entropy *Entropy) Reset() error {
-	return nil
-}
-
 func (entropy *Entropy) normalizedProbabilities(values []float64) ([]float64, bool) {
 	floor := entropy.probabilityFloor(values)
 	total := 0.0
+	masses := make([]float64, len(values))
 
-	for index := range values {
-		if math.IsNaN(values[index]) || math.IsInf(values[index], 0) {
+	for index, value := range values {
+		if math.IsNaN(value) || math.IsInf(value, 0) {
 			return nil, false
 		}
 
-		mass := values[index]
+		mass := value
 
 		if mass < floor {
 			mass = floor
 		}
 
-		values[index] = mass
+		masses[index] = mass
 		total += mass
 	}
 
@@ -99,10 +92,10 @@ func (entropy *Entropy) normalizedProbabilities(values []float64) ([]float64, bo
 		return nil, false
 	}
 
-	probabilities := make([]float64, len(values))
+	probabilities := make([]float64, len(masses))
 
-	for index := range values {
-		probabilities[index] = values[index] / total
+	for index := range masses {
+		probabilities[index] = masses[index] / total
 	}
 
 	return probabilities, true

@@ -16,35 +16,29 @@ type stumpSplit struct {
 	rightMean    float64
 }
 
-/*
-NonLinearModel is a gradient-boosted stump ensemble for target prediction.
-*/
-type NonLinearModel struct {
+type nonLinearModel struct {
 	intercept float64
 	stumps    []stumpSplit
 }
 
-/*
-FitNonLinearTable fits a stump ensemble on the configured node table.
-*/
-func FitNonLinearTable(nodeTable NodeTable, features []int) (NonLinearModel, bool) {
+func fitNonLinearTable(nodeTable nodeTable, features []int) (nonLinearModel, bool) {
 	if len(features) == 0 {
-		return NonLinearModel{}, false
+		return nonLinearModel{}, false
 	}
 
 	if err := nodeTable.validateNodes(features...); err != nil {
-		return NonLinearModel{}, false
+		return nonLinearModel{}, false
 	}
 
 	targets, err := nodeTable.column(nodeTable.target)
 
 	if err != nil {
-		return NonLinearModel{}, false
+		return nonLinearModel{}, false
 	}
 
 	residuals := append([]float64(nil), targets...)
 	thresholds := featureThresholds(nodeTable, features)
-	model := NonLinearModel{
+	model := nonLinearModel{
 		intercept: stat.Mean(targets, nil),
 		stumps:    make([]stumpSplit, 0, nonLinearStumps),
 	}
@@ -66,10 +60,7 @@ func FitNonLinearTable(nodeTable NodeTable, features []int) (NonLinearModel, boo
 	return model, len(model.stumps) > 0
 }
 
-/*
-Predict returns the ensemble prediction with optional treatment override.
-*/
-func (model NonLinearModel) Predict(
+func (model nonLinearModel) predict(
 	row []float64, overrideNode int, overrideValue float64,
 ) (float64, error) {
 	prediction := model.intercept
@@ -85,19 +76,16 @@ func (model NonLinearModel) Predict(
 	return prediction, nil
 }
 
-/*
-CounterfactualUplift returns predicted change under a treatment intervention.
-*/
-func (model NonLinearModel) CounterfactualUplift(
+func (model nonLinearModel) counterfactualUplift(
 	row []float64, treatment int, intervention float64,
 ) (float64, error) {
-	observed, err := model.Predict(row, -1, 0)
+	observed, err := model.predict(row, -1, 0)
 
 	if err != nil {
 		return 0, err
 	}
 
-	counterfactual, err := model.Predict(row, treatment, intervention)
+	counterfactual, err := model.predict(row, treatment, intervention)
 
 	if err != nil {
 		return 0, err
@@ -107,7 +95,7 @@ func (model NonLinearModel) CounterfactualUplift(
 }
 
 func bestStump(
-	nodeTable NodeTable,
+	nodeTable nodeTable,
 	residuals []float64,
 	features []int,
 	thresholds map[int][]float64,
@@ -148,7 +136,7 @@ func bestStump(
 	return best, bestGain
 }
 
-func featureThresholds(nodeTable NodeTable, features []int) map[int][]float64 {
+func featureThresholds(nodeTable nodeTable, features []int) map[int][]float64 {
 	thresholds := make(map[int][]float64, len(features))
 
 	for _, featureIndex := range features {

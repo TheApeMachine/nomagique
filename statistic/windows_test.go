@@ -34,6 +34,14 @@ func TestRollingWindows(t *testing.T) {
 			So(longWindow, ShouldEqual, 3)
 		})
 	})
+
+	Convey("Given a single sample without hints", t, func() {
+		required := TargetLongWindow([]float64{10}, 0, 0)
+
+		Convey("It should require more than one sample before calibration", func() {
+			So(required, ShouldBeGreaterThan, 1)
+		})
+	})
 }
 
 func BenchmarkRollingWindows(b *testing.B) {

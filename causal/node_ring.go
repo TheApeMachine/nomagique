@@ -78,6 +78,13 @@ func (nodeRing *NodeRing) Close() error {
 }
 
 /*
+CopyStreamsTo copies retained node streams onto state for downstream zip stages.
+*/
+func (nodeRing *NodeRing) CopyStreamsTo(state *datura.Artifact) {
+	nodeRing.copyStreamsTo(state)
+}
+
+/*
 AlignedLength returns the shortest non-empty node history length.
 */
 func (nodeRing *NodeRing) AlignedLength() int {

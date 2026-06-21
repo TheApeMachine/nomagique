@@ -24,6 +24,7 @@ type BookQualitySample struct {
 	bids          map[float64]float64
 	asks          map[float64]float64
 	frameCount    int
+	pendingFrame  bool
 }
 
 /*
@@ -64,10 +65,18 @@ func NewBookQualitySample(artifact *datura.Artifact) *BookQualitySample {
 
 func (bookQualitySample *BookQualitySample) Write(payload []byte) (int, error) {
 	bookQualitySample.artifact.WithPayload(payload)
+	bookQualitySample.pendingFrame = true
+
 	return len(payload), nil
 }
 
 func (bookQualitySample *BookQualitySample) Read(payload []byte) (int, error) {
+	if !bookQualitySample.pendingFrame {
+		return 0, io.EOF
+	}
+
+	bookQualitySample.pendingFrame = false
+
 	state := datura.Acquire("book-quality-sample-state", datura.APPJSON)
 
 	if _, err := state.Write(bookQualitySample.artifact.DecryptPayload()); err != nil {
@@ -268,7 +277,7 @@ func (bookQualitySample *BookQualitySample) applyLevels(
 		if delta > 0 {
 			*frameAdd += delta
 
-			if bookQualitySample.isTouchPrice(side, price) {
+			if previousQty > 0 && bookQualitySample.isTouchPrice(side, price) {
 				*frameFill += delta
 			}
 		}

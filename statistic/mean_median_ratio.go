@@ -77,6 +77,7 @@ func (meanMedianRatio *MeanMedianRatio) Read(payload []byte) (int, error) {
 	history = append(history, sample)
 
 	shortWindow, longWindow := RollingWindows(history, shortHint, longHint)
+	requiredSamples := TargetLongWindow(history, shortHint, longHint)
 
 	if longWindow > 0 && len(history) > longWindow {
 		history = history[len(history)-longWindow:]
@@ -85,6 +86,23 @@ func (meanMedianRatio *MeanMedianRatio) Read(payload []byte) (int, error) {
 	meanMedianRatio.histories[stageKey] = history
 
 	ratio := 0.0
+
+	if shortHint <= 0 && longHint <= 0 && len(history) < requiredSamples {
+		state.MergeOutput(outputKey, ratio)
+
+		declineOutput := datura.Peek[string](meanMedianRatio.artifact, "inputs", stageKey, "decline", "output")
+
+		if declineOutput != "" {
+			if decline, ok := meanMedianRatio.declines[declineOutput]; ok {
+				state.MergeOutput(declineOutput, decline)
+			}
+		}
+
+		features.Restore(state)
+		state.Merge("root", "output")
+
+		return state.Read(payload)
+	}
 
 	if longWindow > 0 && len(history) >= longWindow {
 		shortCount := min(shortWindow, len(history))

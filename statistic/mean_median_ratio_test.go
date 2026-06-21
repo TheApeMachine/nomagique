@@ -104,6 +104,31 @@ func TestMeanMedianRatioRead(testingTB *testing.T) {
 		So(err, ShouldBeNil)
 		So(datura.Peek[float64](artifact, "output", "rvol"), ShouldEqual, 0)
 	})
+
+	Convey("Given dynamic windows on the first sample", testingTB, func() {
+		config := datura.Acquire("mean-median-ratio-dynamic-config", datura.APPJSON).
+			Poke(0.0, "stageIndex").
+			Poke([]string{"rvol"}, "order").
+			Poke(map[string]any{
+				"rvol": map[string]any{
+					"input":       "volume",
+					"shortWindow": 0.0,
+					"longWindow":  0.0,
+					"outputKey":   "rvol",
+				},
+			}, "inputs")
+
+		stage := NewMeanMedianRatio(config)
+		artifact := datura.Acquire("mean-median-ratio-dynamic-test", datura.APPJSON)
+		artifact.Merge("root", "features")
+		artifact.Merge("inputs", []string{"volume"})
+		artifact.Merge("features", []float64{10})
+
+		err := transport.NewFlipFlop(artifact, stage)
+
+		So(err, ShouldBeNil)
+		So(datura.Peek[float64](artifact, "output", "rvol"), ShouldEqual, 0)
+	})
 }
 
 func BenchmarkMeanMedianRatioRead(b *testing.B) {

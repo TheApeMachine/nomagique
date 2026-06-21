@@ -10,33 +10,38 @@ import (
 
 /*
 Quantile computes a sample quantile over retained history.
+The constructor artifact holds config; Write buffers inbound wire on its payload.
 */
 type Quantile struct {
-	artifact   *datura.Artifact
-	percentile float64
-	kind       stat.CumulantKind
+	artifact *datura.Artifact
 }
 
 /*
-NewQuantile creates a quantile stage at percentile in [0, 1].
+NewQuantile returns a quantile stage wired from config attributes on the artifact.
+Percentile and cumulant kind live under config.percentile and config.kind.
 */
-func NewQuantile(
-	percentile float64,
-	kind stat.CumulantKind,
-) *Quantile {
+func NewQuantile(artifact *datura.Artifact) *Quantile {
+	artifact.Inspect("statistic", "quantile", "NewQuantile()")
+
 	return &Quantile{
-		artifact:   datura.Acquire("quantile", datura.APPJSON),
-		percentile: percentile,
-		kind:       kind,
+		artifact: artifact,
 	}
 }
 
-func (quantile *Quantile) Write(p []byte) (int, error) {
-	return quantile.artifact.Write(p)
+func (quantile *Quantile) Write(payload []byte) (int, error) {
+	quantile.artifact.WithPayload(payload)
+	return len(payload), nil
 }
 
-func (quantile *Quantile) Read(p []byte) (int, error) {
-	sample := datura.Peek[float64](quantile.artifact, "sample")
+func (quantile *Quantile) Read(payload []byte) (int, error) {
+	state := datura.Acquire("quantile-state", datura.APPJSON)
+	state.Inspect("statistic", "quantile", "Read()", "p")
+
+	if _, err := state.Write(quantile.artifact.DecryptPayload()); err != nil {
+		return 0, err
+	}
+
+	sample := datura.Peek[float64](state, "sample")
 	history := datura.Peek[[]float64](quantile.artifact, "history")
 
 	if !math.IsNaN(sample) && !math.IsInf(sample, 0) {
@@ -45,30 +50,35 @@ func (quantile *Quantile) Read(p []byte) (int, error) {
 	}
 
 	if len(history) == 0 {
-		return quantile.artifact.Read(p)
+		return state.Read(payload)
 	}
 
 	sorted := append([]float64(nil), history...)
 	sort.Float64s(sorted)
 
-	value := quantile.quantileOf(sorted, nil)
-	quantile.artifact.Poke(datura.Map[float64]{"value": value}, "output")
+	percentile := datura.Peek[float64](quantile.artifact, "config", "percentile")
+	kind := stat.CumulantKind(int(datura.Peek[float64](quantile.artifact, "config", "kind")))
+	value := quantileValue(sorted, nil, percentile, kind)
 
-	return quantile.artifact.Read(p)
+	state.MergeOutput("value", value)
+	state.Merge("root", "output")
+	state.Merge("inputs", []string{"value"})
+	return state.Read(payload)
 }
 
 func (quantile *Quantile) Close() error {
 	return nil
 }
 
-func (quantile *Quantile) quantileOf(
+func quantileValue(
 	sorted []float64, weights []float64,
+	percentile float64, kind stat.CumulantKind,
 ) float64 {
-	if quantile.percentile <= 0 {
+	if percentile <= 0 {
 		return sorted[0]
 	}
 
-	if quantile.percentile >= 1 {
+	if percentile >= 1 {
 		return sorted[len(sorted)-1]
 	}
 
@@ -79,10 +89,10 @@ func (quantile *Quantile) quantileOf(
 			}
 		}
 
-		return stat.Quantile(quantile.percentile, quantile.kind, sorted, nil)
+		return stat.Quantile(percentile, kind, sorted, nil)
 	}
 
-	return stat.Quantile(quantile.percentile, quantile.kind, sorted, weights)
+	return stat.Quantile(percentile, kind, sorted, weights)
 }
 
 /*

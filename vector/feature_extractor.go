@@ -13,12 +13,12 @@ import (
 /*
 FeatureExtractor is an atomic compute primitive (io.ReadWriteCloser).
 
-The constructor artifact is config (attributes). Write buffers inbound wire.
-Read unpacks the frame, extracts features, and emits a packed artifact.
+The constructor artifact is config (attributes); its payload buses inbound wire
+from Write to Read. Read unpacks the frame, extracts features, and emits output.
 */
 type FeatureExtractor struct {
 	artifact   *datura.Artifact
-	bytes      []byte
+	wire       []byte
 	emaConfigs map[string]*datura.Artifact
 	transforms map[string]func(*datura.Artifact) io.ReadWriteCloser
 }
@@ -44,11 +44,15 @@ func (extractor *FeatureExtractor) Read(payload []byte) (int, error) {
 	state := datura.Acquire("feature-extractor-state", datura.APPJSON)
 	state.Inspect("feature-extractor", "Read()", "p")
 
-	if _, err := state.Write(extractor.bytes); err != nil {
+	if _, err := state.Write(extractor.wire); err != nil {
 		return 0, err
 	}
 
 	role := datura.Peek[string](state, "channel")
+
+	if role == "" {
+		role, _ = state.Role()
+	}
 
 	rootKey := datura.Peek[string](extractor.artifact, role, "root")
 	inputs := datura.Peek[[]string](extractor.artifact, role, "inputs")
@@ -115,7 +119,7 @@ func (extractor *FeatureExtractor) Read(payload []byte) (int, error) {
 }
 
 func (extractor *FeatureExtractor) Write(p []byte) (int, error) {
-	extractor.bytes = append(extractor.bytes[:0], p...)
+	extractor.wire = append(extractor.wire[:0], p...)
 
 	return len(p), nil
 }

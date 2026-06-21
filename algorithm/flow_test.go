@@ -19,10 +19,7 @@ func TestFlowEvaluate(testingTB *testing.T) {
 
 		So(writeErr, ShouldBeNil)
 
-		frame := make([]byte, 4096)
-		_, _ = flow.Read(frame)
-		outbound := datura.Acquire("test-out", datura.APPJSON)
-		_, _ = outbound.Write(frame)
+		outbound := readOutbound(flow)
 
 		Convey("It should favor aggressive drive", func() {
 			drive := datura.Peek[float64](outbound, "output", "drive")
@@ -42,10 +39,7 @@ func TestFlowEvaluate(testingTB *testing.T) {
 
 		So(writeErr, ShouldBeNil)
 
-		frame := make([]byte, 4096)
-		_, _ = flow.Read(frame)
-		outbound := datura.Acquire("test-out", datura.APPJSON)
-		_, _ = outbound.Write(frame)
+		outbound := readOutbound(flow)
 
 		Convey("It should favor hidden absorption", func() {
 			So(datura.Peek[float64](outbound, "output", "absorption"), ShouldBeGreaterThan, 0)

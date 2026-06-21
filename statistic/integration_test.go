@@ -14,7 +14,9 @@ func TestIntegration(t *testing.T) {
 	Convey("Given statistic stages composed through nomagique.Number", t, func() {
 		Convey("When Panel registers peers before Median excludes the caller", func() {
 			artifact := datura.Acquire("test", datura.APPJSON)
-			crossSection := nomagique.Number(statistic.NewPanel(), statistic.NewMedian())
+			panelConfig := datura.Acquire("panel-config", datura.APPJSON)
+			medianConfig := datura.Acquire("median-config", datura.APPJSON)
+			crossSection := nomagique.Number(statistic.NewPanel(panelConfig), statistic.NewMedian(medianConfig))
 
 			for _, member := range []struct {
 				key   float64
@@ -39,7 +41,7 @@ func TestIntegration(t *testing.T) {
 
 		Convey("When Mean streams a uniform series", func() {
 			artifact := datura.Acquire("test", datura.APPJSON)
-			mean := statistic.NewMean()
+			mean := statistic.NewMean(datura.Acquire("mean-config", datura.APPJSON))
 
 			for _, sample := range []float64{1, 2, 3, 4} {
 				artifact.Poke(sample, "sample")

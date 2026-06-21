@@ -5,13 +5,14 @@ import (
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/datura"
 	"github.com/theapemachine/nomagique/correlation"
 	"github.com/theapemachine/nomagique/tests"
 )
 
 func TestLagEvaluateFollowerSync(testingTB *testing.T) {
 	Convey("Given aligned follower correlation before anchor move gate warms", testingTB, func() {
-		lag := NewLag()
+		lag := NewLag(datura.Acquire("lag-config", datura.APPJSON))
 		writeErr := tests.WriteSamples(lag,
 			0, 100,
 			0, 0, 0,
@@ -31,7 +32,7 @@ func TestLagEvaluateFollowerSync(testingTB *testing.T) {
 
 func TestLagEvaluateAnchorStall(testingTB *testing.T) {
 	Convey("Given a warmed flat anchor path", testingTB, func() {
-		lag := NewLag()
+		lag := NewLag(datura.Acquire("lag-config", datura.APPJSON))
 		writeErr := tests.WriteSamples(lag,
 			1, 50000,
 			1, 0, 0.6,
@@ -108,7 +109,7 @@ const (
 var barInterval = 5 * time.Minute
 
 func BenchmarkLagRead(b *testing.B) {
-	lag := NewLag()
+	lag := NewLag(datura.Acquire("lag-config-bench", datura.APPJSON))
 	samples := []float64{
 		0, 100,
 		1, 1, 0,

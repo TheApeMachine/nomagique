@@ -102,10 +102,7 @@ func TestCohort_evaluate(testingTB *testing.T) {
 
 			So(writeErr, ShouldBeNil)
 
-			frame := make([]byte, 4096)
-			_, _ = cohortStage.Read(frame)
-			outbound := datura.Acquire("test-out", datura.APPJSON)
-			_, _ = outbound.Write(frame)
+			outbound := readOutbound(cohortStage)
 
 			if !testCase.eligible {
 				Convey("It should reject invalid payload", func() {

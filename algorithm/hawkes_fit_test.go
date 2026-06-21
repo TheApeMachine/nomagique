@@ -30,7 +30,7 @@ func TestHawkesFit_Observe(testingTB *testing.T) {
 			Poke(float64(len(xTimes)), "config", "xCount").
 			Poke(float64(len(yTimes)), "config", "yCount").
 			WithPayload(encodePayload(append(xTimes, yTimes...)...))
-		frame, frameErr := inbound.Message().Marshal()
+		frame, frameErr := inbound.MarshalPacked()
 
 		So(frameErr, ShouldBeNil)
 
@@ -38,10 +38,7 @@ func TestHawkesFit_Observe(testingTB *testing.T) {
 
 		So(writeErr, ShouldBeNil)
 
-		readFrame := make([]byte, 4096)
-		_, _ = fitProcess.Read(readFrame)
-		outbound := datura.Acquire("test-out", datura.APPJSON)
-		_, _ = outbound.Write(readFrame)
+		outbound := readOutbound(fitProcess)
 
 		Convey("It should fit and return a positive excitation ratio", func() {
 			So(datura.Peek[float64](outbound, "output", "value"), ShouldBeGreaterThan, 0)
@@ -65,7 +62,7 @@ func BenchmarkHawkesFit_Observe(testingTB *testing.B) {
 		Poke(float64(len(xTimes)), "config", "xCount").
 		Poke(float64(len(yTimes)), "config", "yCount").
 		WithPayload(encodePayload(append(xTimes, yTimes...)...))
-	frame, _ := inbound.Message().Marshal()
+	frame, _ := inbound.MarshalPacked()
 	readFrame := make([]byte, 4096)
 
 	testingTB.ReportAllocs()

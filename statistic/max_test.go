@@ -10,7 +10,7 @@ import (
 
 func TestMaxSeries(t *testing.T) {
 	Convey("Given a Max stage", t, func() {
-		maxStage := NewMax()
+		maxStage := NewMax(datura.Acquire("max-config", datura.APPJSON))
 		artifact := datura.Acquire("test", datura.APPJSON)
 
 		for _, sample := range []float64{3, 1, 2} {

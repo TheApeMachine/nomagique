@@ -222,18 +222,18 @@ func TestGateQuantile(testingTB *testing.T) {
 				100, 0,
 				runGateSample(cancelQtyGate, 0, 0),
 				runGateSample(levelSizeGate, 0, 0),
-				gateReady(cancelQtyGate.config),
-				gateReady(levelSizeGate.config),
+				gateReady(cancelQtyGate.artifact),
+				gateReady(levelSizeGate.artifact),
 			), ShouldBeGreaterThan, 0)
 			So(vacuumStrengthLimit(
 				0.5, 0,
 				runGateSample(vacuumGate, 0, 0),
-				gateReady(vacuumGate.config),
+				gateReady(vacuumGate.artifact),
 			), ShouldBeGreaterThan, 0)
 			So(supportRatioGate(
 				0.5,
 				runGateSample(vacuumGate, 0, 0.25),
-				gateReady(vacuumGate.config),
+				gateReady(vacuumGate.artifact),
 			), ShouldBeGreaterThan, 0)
 		})
 	})
@@ -285,7 +285,8 @@ func runGateSample(gate *GateQuantile, sample float64, percentile float64) float
 
 func TestObservationRingAdversarial(testingTB *testing.T) {
 	Convey("Given non-positive observations", testingTB, func() {
-		ring := statistic.NewObservationRing()
+		ringConfig := datura.Acquire("observation-ring-config", datura.APPJSON)
+		ring := statistic.NewObservationRing(ringConfig)
 		artifact := datura.Acquire("test", datura.APPJSON)
 
 		for _, value := range []float64{0, -1} {
@@ -294,7 +295,7 @@ func TestObservationRingAdversarial(testingTB *testing.T) {
 		}
 
 		Convey("It should ignore invalid samples", func() {
-			So(len(datura.Peek[[]float64](artifact, "history")), ShouldEqual, 0)
+			So(len(datura.Peek[[]float64](ringConfig, "history")), ShouldEqual, 0)
 		})
 	})
 }

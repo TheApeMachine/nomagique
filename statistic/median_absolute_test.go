@@ -10,7 +10,7 @@ import (
 
 func TestMedianAbsoluteSeries(t *testing.T) {
 	Convey("Given a MedianAbsolute stage", t, func() {
-		medianAbsolute := NewMedianAbsolute()
+		medianAbsolute := NewMedianAbsolute(datura.Acquire("median-absolute-config", datura.APPJSON))
 		artifact := datura.Acquire("test", datura.APPJSON)
 
 		for _, sample := range []float64{-1, 2, -3} {

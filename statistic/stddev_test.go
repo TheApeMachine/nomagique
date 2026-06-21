@@ -10,7 +10,7 @@ import (
 
 func TestStdDevSeries(t *testing.T) {
 	Convey("Given a StdDev stage", t, func() {
-		stdDev := NewStdDev()
+		stdDev := NewStdDev(datura.Acquire("stddev-config", datura.APPJSON))
 		artifact := datura.Acquire("test", datura.APPJSON)
 
 		for _, sample := range []float64{1, 2, 3, 4} {

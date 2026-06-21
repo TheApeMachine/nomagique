@@ -11,7 +11,7 @@ import (
 
 func TestForecast(testingTB *testing.T) {
 	Convey("Given Forecast constructor", testingTB, func() {
-		forecaster := Forecast()
+		forecaster := Forecast(datura.Acquire("forecast-config", datura.APPJSON))
 
 		Convey("It should return a usable dynamic", func() {
 			So(forecaster, ShouldNotBeNil)
@@ -21,7 +21,7 @@ func TestForecast(testingTB *testing.T) {
 
 func TestForecaster_Observe(testingTB *testing.T) {
 	Convey("Given empty Observe inputs", testingTB, func() {
-		forecaster := Forecast()
+		forecaster := Forecast(datura.Acquire("forecast-config", datura.APPJSON))
 		artifact := datura.Acquire("test", datura.APPJSON)
 		err := transport.NewFlipFlop(artifact, forecaster)
 
@@ -33,7 +33,7 @@ func TestForecaster_Observe(testingTB *testing.T) {
 	})
 
 	Convey("Given a fresh forecaster", testingTB, func() {
-		forecaster := Forecast()
+		forecaster := Forecast(datura.Acquire("forecast-config", datura.APPJSON))
 		artifact := datura.Acquire("test", datura.APPJSON).
 			Poke(10, "sample").
 			Poke(10, "paired")
@@ -50,7 +50,7 @@ func TestForecaster_Observe(testingTB *testing.T) {
 	})
 
 	Convey("Given forecast history", testingTB, func() {
-		forecaster := Forecast()
+		forecaster := Forecast(datura.Acquire("forecast-config", datura.APPJSON))
 		artifact := datura.Acquire("test", datura.APPJSON)
 
 		artifact.Poke(10, "sample").Poke(10, "paired")
@@ -71,7 +71,7 @@ func TestForecaster_Observe(testingTB *testing.T) {
 
 func TestForecaster_ObserveSamples(testingTB *testing.T) {
 	Convey("Given a forecaster", testingTB, func() {
-		forecaster := Forecast()
+		forecaster := Forecast(datura.Acquire("forecast-config", datura.APPJSON))
 		predicted := []float64{10, 10}
 		actual := []float64{10, 15}
 		out := make([]float64, len(predicted))
@@ -88,7 +88,7 @@ func TestForecaster_ObserveSamples(testingTB *testing.T) {
 
 func TestForecaster_Reset(testingTB *testing.T) {
 	Convey("Given a forecaster with state", testingTB, func() {
-		forecaster := Forecast()
+		forecaster := Forecast(datura.Acquire("forecast-config", datura.APPJSON))
 		artifact := datura.Acquire("test", datura.APPJSON).
 			Poke(10, "sample").
 			Poke(10, "paired")
@@ -111,9 +111,9 @@ func TestForecaster_Reset(testingTB *testing.T) {
 
 func TestForecaster_learningComposition(testingTB *testing.T) {
 	Convey("Given composed learning dynamics", testingTB, func() {
-		trustWeight := Weight()
-		calibrator := SampleRatio()
-		forecaster := Forecast()
+		trustWeight := Weight(datura.Acquire("trust-weight-config", datura.APPJSON))
+		calibrator := SampleRatio(datura.Acquire("sample-ratio-config", datura.APPJSON))
+		forecaster := Forecast(datura.Acquire("forecast-config", datura.APPJSON))
 		artifact := datura.Acquire("test", datura.APPJSON)
 
 		artifact.Poke(10, "sample").Poke(10, "paired")
@@ -150,7 +150,7 @@ func TestForecaster_learningComposition(testingTB *testing.T) {
 func TestForecaster_withAdaptiveSignal(testingTB *testing.T) {
 	Convey("Given EMA and forecast feedback", testingTB, func() {
 		exponential := adaptive.NewEMA(datura.Acquire("ema-config", datura.APPJSON))
-		forecaster := Forecast()
+		forecaster := Forecast(datura.Acquire("forecast-config", datura.APPJSON))
 		signal := datura.Acquire("test", datura.APPJSON).Poke(10, "sample")
 		err := transport.NewFlipFlop(signal, exponential)
 
@@ -171,7 +171,7 @@ func TestForecaster_withAdaptiveSignal(testingTB *testing.T) {
 }
 
 func BenchmarkForecast_Observe(testingTB *testing.B) {
-	forecaster := Forecast()
+	forecaster := Forecast(datura.Acquire("forecast-config-bench", datura.APPJSON))
 	artifact := datura.Acquire("test", datura.APPJSON)
 
 	artifact.Poke(10, "sample").Poke(10, "paired")
@@ -186,7 +186,7 @@ func BenchmarkForecast_Observe(testingTB *testing.B) {
 }
 
 func BenchmarkForecast_ObserveSamples(testingTB *testing.B) {
-	forecaster := Forecast()
+	forecaster := Forecast(datura.Acquire("forecast-config-bench", datura.APPJSON))
 	predicted := make([]float64, 1024)
 	actual := make([]float64, len(predicted))
 	out := make([]float64, len(predicted))

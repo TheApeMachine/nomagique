@@ -20,10 +20,7 @@ func TestDepthEvaluate(testingTB *testing.T) {
 
 		So(writeErr, ShouldBeNil)
 
-		frame := make([]byte, 4096)
-		_, _ = depth.Read(frame)
-		outbound := datura.Acquire("test-out", datura.APPJSON)
-		_, _ = outbound.Write(frame)
+		outbound := readOutbound(depth)
 
 		Convey("It should classify robust liquidity", func() {
 			So(datura.Peek[float64](outbound, "output", "value"), ShouldBeGreaterThan, 0)
@@ -41,10 +38,7 @@ func TestDepthEvaluate(testingTB *testing.T) {
 
 		So(writeErr, ShouldBeNil)
 
-		frame := make([]byte, 4096)
-		_, _ = depth.Read(frame)
-		outbound := datura.Acquire("test-out", datura.APPJSON)
-		_, _ = outbound.Write(frame)
+		outbound := readOutbound(depth)
 
 		Convey("It should classify extreme scarcity", func() {
 			So(int(datura.Peek[float64](outbound, "output", "category")), ShouldEqual, 1)

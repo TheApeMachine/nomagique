@@ -8,108 +8,109 @@ import (
 )
 
 /*
-PriceRing retains a bounded price history for return-based stages.
+PriceRing retains a bounded sample history and publishes the current observation on the wire.
+The constructor artifact holds config; runtime history lives on the stage instance.
 */
 type PriceRing struct {
-	config *datura.Artifact
-	bytes  []byte
+	artifact *datura.Artifact
+	samples  []float64
 }
 
 /*
-NewPriceRing returns a price ring stage configured on the artifact.
+NewPriceRing returns a sample ring stage wired from config attributes on the artifact.
 */
-func NewPriceRing(config *datura.Artifact) *PriceRing {
+func NewPriceRing(artifact *datura.Artifact) *PriceRing {
+	artifact.Inspect("statistic", "price-ring", "NewPriceRing()")
+
 	return &PriceRing{
-		config: config,
+		artifact: artifact,
+		samples:  []float64{},
 	}
 }
 
 func (priceRing *PriceRing) Write(payload []byte) (int, error) {
-	priceRing.bytes = append(priceRing.bytes[:0], payload...)
+	priceRing.artifact.WithPayload(payload)
 
 	return len(payload), nil
 }
 
 func (priceRing *PriceRing) Read(payload []byte) (int, error) {
 	state := datura.Acquire("price-ring-state", datura.APPJSON)
+	state.Inspect("statistic", "price-ring", "Read()", "p")
 
-	if _, err := state.Write(priceRing.bytes); err != nil {
-		state.Release()
-
+	if _, err := state.Write(priceRing.artifact.DecryptPayload()); err != nil {
 		return 0, err
 	}
 
-	defer state.Release()
-
-	stageKey := datura.Peek[string](priceRing.config, "stage")
-
-	if stageKey == "" {
-		order := datura.Peek[[]string](priceRing.config, "order")
-		stageIndex := int(datura.Peek[float64](priceRing.config, "inputs", "precursor", "stageIndex"))
-
-		if stageIndex <= 0 {
-			stageIndex = int(datura.Peek[float64](priceRing.config, "stageIndex"))
-		}
-
-		if stageIndex >= 0 && len(order) > stageIndex {
-			stageKey = order[stageIndex]
-		}
-	}
+	features := SnapshotFeatures(state)
+	stageKey := priceRing.stageKey()
 
 	if stageKey == "" {
+		features.Restore(state)
+
 		return state.Read(payload)
 	}
 
-	rootKey := datura.Peek[string](state, "root")
-	channelKeys := datura.Peek[[]string](state, "inputs")
-	sourceKey := datura.Peek[string](priceRing.config, "inputs", stageKey, "input")
-	sample := 0.0
+	sourceKey := datura.Peek[string](priceRing.artifact, "inputs", stageKey, "input")
+	sample := FeatureColumn(state, sourceKey)
 
-	if rootKey != "" && sourceKey != "" && len(channelKeys) > 0 {
-		for index, channelKey := range channelKeys {
-			if channelKey != sourceKey {
-				continue
-			}
-
-			sample = datura.Peek[float64](state, rootKey, index)
-
-			if math.IsNaN(sample) || math.IsInf(sample, 0) {
-				errnie.Error(errnie.Err(
-					errnie.Validation,
-					"price-ring: sample is NaN or Inf",
-					nil,
-				))
-			}
-
-			break
-		}
+	if math.IsNaN(sample) || math.IsInf(sample, 0) {
+		errnie.Error(errnie.Err(
+			errnie.Validation,
+			"price-ring: sample is NaN or Inf",
+			nil,
+		))
 	}
 
 	if sample <= 0 || math.IsNaN(sample) || math.IsInf(sample, 0) {
+		features.Restore(state)
+
 		return state.Read(payload)
 	}
 
-	returnLag := int(datura.Peek[float64](priceRing.config, "inputs", stageKey, "returnLag"))
-	longHint := int(datura.Peek[float64](priceRing.config, "inputs", stageKey, "longWindow"))
+	returnLag := int(datura.Peek[float64](priceRing.artifact, "inputs", stageKey, "returnLag"))
+	longHint := int(datura.Peek[float64](priceRing.artifact, "inputs", stageKey, "longWindow"))
 
 	if returnLag <= 0 {
 		returnLag = 1
 	}
 
-	prices := datura.Peek[[]float64](priceRing.config, "prices")
-	prices = append(prices, sample)
+	samples := priceRing.samples
+	samples = append(samples, sample)
 
-	_, longWindow := RollingWindows(prices, 0, longHint)
+	_, longWindow := RollingWindows(samples, 0, longHint)
 
-	if longWindow > 0 && len(prices) > longWindow+returnLag {
-		prices = prices[len(prices)-longWindow-returnLag:]
+	if longWindow > 0 && len(samples) > longWindow+returnLag {
+		samples = samples[len(samples)-longWindow-returnLag:]
 	}
 
-	priceRing.config.Merge("prices", prices)
-
+	priceRing.samples = samples
+	features.Restore(state)
 	state.Merge("sample", sample)
+	state.Merge("root", "sample")
 
 	return state.Read(payload)
+}
+
+func (priceRing *PriceRing) stageKey() string {
+	stageKey := datura.Peek[string](priceRing.artifact, "stage")
+
+	if stageKey != "" {
+		return stageKey
+	}
+
+	order := datura.Peek[[]string](priceRing.artifact, "order")
+	stageIndex := int(datura.Peek[float64](priceRing.artifact, "inputs", "precursor", "stageIndex"))
+
+	if stageIndex <= 0 {
+		stageIndex = int(datura.Peek[float64](priceRing.artifact, "stageIndex"))
+	}
+
+	if stageIndex >= 0 && len(order) > stageIndex {
+		return order[stageIndex]
+	}
+
+	return ""
 }
 
 func (priceRing *PriceRing) Close() error {

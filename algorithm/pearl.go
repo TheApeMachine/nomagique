@@ -15,8 +15,8 @@ NewPearl returns the Judea Pearl ladder-of-causation pipeline.
 */
 func NewPearl(config *datura.Artifact) io.ReadWriteCloser {
 	return nomagique.Number(
-		statistic.NewPanel(),
-		statistic.NewMedian(),
+		statistic.NewPanel(datura.Acquire("panel-config", datura.APPJSON)),
+		statistic.NewMedian(datura.Acquire("median-config", datura.APPJSON)),
 		causal.NewContagion(config),
 		equation.NewRegimeLadder(config),
 	)

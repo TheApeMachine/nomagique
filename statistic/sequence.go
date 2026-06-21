@@ -69,3 +69,32 @@ func Quartiles(values []float64) (lower float64, upper float64) {
 
 	return lower, upper
 }
+
+/*
+SpanOf returns the count of distinct sample levels in values.
+Identical samples yield zero so callers can apply a minimal retention floor.
+*/
+func SpanOf(values []float64) float64 {
+	if len(values) == 0 {
+		return 0
+	}
+
+	sorted := append([]float64(nil), values...)
+	sort.Float64s(sorted)
+
+	distinct := 1
+
+	for index := 1; index < len(sorted); index++ {
+		if sorted[index] == sorted[index-1] {
+			continue
+		}
+
+		distinct++
+	}
+
+	if distinct <= 1 {
+		return 0
+	}
+
+	return float64(distinct)
+}

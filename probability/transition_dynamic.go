@@ -7,6 +7,7 @@ import (
 /*
 Transition scores transition surprisal from classifier probabilities and records
 the selected category into retained transition state.
+The constructor artifact holds config; Write buffers inbound wire on its payload.
 */
 type Transition struct {
 	artifact *datura.Artifact
@@ -17,87 +18,75 @@ NewTransitionSurprise returns a transition surprisal stage wired from schema
 attributes numStates and alpha.
 */
 func NewTransitionSurprise(artifact *datura.Artifact) *Transition {
+	artifact.Inspect("probability", "transition", "NewTransitionSurprise()")
+
 	return &Transition{artifact: artifact}
 }
 
-func (transition *Transition) Write(p []byte) (int, error) {
-	inbound := datura.Acquire("transition-inbound", datura.APPJSON)
-	_, _ = inbound.Write(p)
-
-	probabilities := datura.Peek[[]float64](inbound, "output", "probabilities")
-	category := datura.Peek[float64](inbound, "output", "category")
-	reset := attributeKeyPresent(inbound, "reset")
-	inboundAlpha := datura.Peek[float64](inbound, "alpha")
-
-	transitionCounts := datura.Peek[[]float64](transition.artifact, "transition", "counts")
-	lastCategory := datura.Peek[float64](transition.artifact, "transition", "lastCategory")
-
-	n, err := transition.artifact.Write(p)
-
-	if err != nil {
-		return n, err
-	}
-
-	if inboundAlpha > 0 {
-		transition.artifact.Poke(inboundAlpha, "alpha")
-	}
-
-	if reset {
-		return n, nil
-	}
-
-	if len(probabilities) > 0 {
-		transition.artifact.Poke(probabilities, "output", "probabilities")
-	}
-
-	if category > 0 {
-		transition.artifact.Poke(category, "output", "category")
-	}
-
-	if transitionCounts != nil {
-		transition.artifact.Poke(transitionCounts, "transition", "counts")
-	}
-
-	if lastCategory > 0 || transitionCounts != nil {
-		transition.artifact.Poke(lastCategory, "transition", "lastCategory")
-	}
-
-	return n, nil
+func (transition *Transition) Write(payload []byte) (int, error) {
+	transition.artifact.WithPayload(payload)
+	return len(payload), nil
 }
 
-func (transition *Transition) Read(p []byte) (int, error) {
+func (transition *Transition) Read(payload []byte) (int, error) {
+	state := datura.Acquire("transition-state", datura.APPJSON)
+	state.Inspect("probability", "transition", "Read()", "p")
+
+	if _, err := state.Write(transition.artifact.DecryptPayload()); err != nil {
+		return 0, err
+	}
+
 	numStates := int(datura.Peek[float64](transition.artifact, "numStates"))
 	alpha := datura.Peek[float64](transition.artifact, "alpha")
+	inboundAlpha := datura.Peek[float64](state, "alpha")
+
+	if inboundAlpha > 0 {
+		alpha = inboundAlpha
+		transition.artifact.Poke(alpha, "alpha")
+	}
+
+	if datura.Peek[float64](state, "reset") != 0 {
+		transition.artifact.WithAttributes(datura.Map[any]{
+			"numStates": float64(numStates),
+			"alpha":     alpha,
+		})
+		state.MergeOutput("value", 0)
+		state.Merge("root", "output")
+		state.Merge("inputs", []string{"value"})
+		return state.Read(payload)
+	}
 
 	if numStates <= 0 || alpha <= 0 {
-		return transition.artifact.Read(p)
+		return state.Read(payload)
+	}
+
+	probabilities := datura.Peek[[]float64](state, "output", "probabilities")
+
+	if len(probabilities) == 0 {
+		return state.Read(payload)
 	}
 
 	matrix := transitionMatrixFromPayload(transition.artifact, numStates, alpha)
-	probabilities := datura.Peek[[]float64](transition.artifact, "output", "probabilities")
-
-	if len(probabilities) == 0 {
-		return transition.artifact.Read(p)
-	}
-
 	observed := matrix.PadObserved(probabilities, 0)
 	surprise, surpriseErr := matrix.Surprise(observed)
 
 	if surpriseErr != nil {
-		return transition.artifact.Read(p)
+		return state.Read(payload)
 	}
 
-	transition.artifact.Poke(surprise, "output", "value")
-
-	categoryIndex := int(datura.Peek[float64](transition.artifact, "output", "category"))
+	categoryIndex := int(datura.Peek[float64](state, "output", "category"))
 
 	if categoryIndex >= 1 && categoryIndex <= numStates {
 		matrix.Update(categoryIndex - 1)
 	}
 
 	pokeTransitionMatrix(transition.artifact, matrix)
-
-	return transition.artifact.Read(p)
+	state.MergeOutput("value", surprise)
+	state.MergeOutput("category", categoryIndex)
+	state.MergeOutput("probabilities", probabilities)
+	state.Merge("root", "output")
+	state.Merge("inputs", []string{"value"})
+	return state.Read(payload)
 }
 
 func (transition *Transition) Close() error {

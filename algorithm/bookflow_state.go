@@ -155,16 +155,18 @@ GateQuantile retains observations on the config artifact and emits a quantile
 gate under output.value. Config attributes: percentile, minSamples.
 */
 type GateQuantile struct {
-	config *datura.Artifact
-	bytes  []byte
+	artifact *datura.Artifact
+	bytes    []byte
 }
 
 /*
 NewGateQuantile wires a gate stage from a config artifact.
 */
-func NewGateQuantile(config *datura.Artifact) *GateQuantile {
+func NewGateQuantile(artifact *datura.Artifact) *GateQuantile {
+	artifact.Inspect("algorithm", "gate-quantile", "NewGateQuantile()")
+
 	return &GateQuantile{
-		config: config,
+		artifact: artifact,
 	}
 }
 
@@ -189,17 +191,17 @@ func (gate *GateQuantile) Read(payload []byte) (int, error) {
 	percentile := datura.Peek[float64](state, "percentile")
 
 	if percentile <= 0 {
-		percentile = datura.Peek[float64](gate.config, "percentile")
+		percentile = datura.Peek[float64](gate.artifact, "percentile")
 	}
 
-	minSamples := int(datura.Peek[float64](gate.config, "minSamples"))
+	minSamples := int(datura.Peek[float64](gate.artifact, "minSamples"))
 
 	if minSamples < 1 {
 		minSamples = 3
 	}
 
 	if sample > 0 && !math.IsNaN(sample) && !math.IsInf(sample, 0) {
-		history := datura.Peek[[]float64](gate.config, "history")
+		history := datura.Peek[[]float64](gate.artifact, "history")
 		history = append(history, sample)
 
 		capacity := gateHistoryCapacity(history, minSamples)
@@ -208,19 +210,22 @@ func (gate *GateQuantile) Read(payload []byte) (int, error) {
 			history = history[len(history)-capacity:]
 		}
 
-		gate.config.Merge("history", history)
+		gate.artifact.Poke(history, "history")
 	}
 
-	history := datura.Peek[[]float64](gate.config, "history")
+	history := datura.Peek[[]float64](gate.artifact, "history")
 	gateValue := 0.0
 
 	if len(history) >= minSamples {
 		gateValue = statistic.QuantileOf(percentile, history)
 	}
 
-	state.MergeOutput("value", gateValue)
+	outState := datura.Acquire("gate-quantile-out", datura.APPJSON)
+	outState.MergeOutput("value", gateValue)
+	outState.Merge("root", "output")
+	outState.Merge("inputs", []string{"value"})
 
-	return state.Read(payload)
+	return outState.Read(payload)
 }
 
 func (gate *GateQuantile) Close() error {

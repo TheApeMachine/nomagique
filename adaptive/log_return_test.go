@@ -9,7 +9,7 @@ import (
 )
 
 func TestLogReturnRead(t *testing.T) {
-	Convey("Given a log-return stage with retained prices", t, func() {
+	Convey("Given a log-return stage fed sequential samples", t, func() {
 		config := datura.Acquire("log-return-config", datura.APPJSON).
 			Poke([]string{"rvol", "precursor"}, "order").
 			Poke(1.0, "stageIndex").
@@ -22,18 +22,29 @@ func TestLogReturnRead(t *testing.T) {
 				},
 			}, "inputs")
 
-		config.Merge("prices", []float64{100, 101})
-
 		stage := NewLogReturn(config)
-		artifact := datura.Acquire("log-return-test", datura.APPJSON).Poke(102.0, "sample")
+		var lastArtifact *datura.Artifact
 
-		err := transport.NewFlipFlop(artifact, stage)
+		for _, sample := range []float64{100, 101, 102} {
+			artifact := datura.Acquire("log-return-test", datura.APPJSON)
+			artifact.Merge("sample", sample)
 
-		Convey("It should append a log return to the rolling series", func() {
+			err := transport.NewFlipFlop(artifact, stage)
+
 			So(err, ShouldBeNil)
-			So(len(datura.Peek[[]float64](config, "returns")), ShouldEqual, 1)
-			So(datura.Peek[string](artifact, "root"), ShouldEqual, "sample")
-			So(datura.Peek[float64](artifact, "sample"), ShouldBeGreaterThan, 0)
+
+			if lastArtifact != nil {
+				lastArtifact.Release()
+			}
+
+			lastArtifact = artifact
+		}
+
+		defer lastArtifact.Release()
+
+		Convey("It should publish a positive log return on the wire sample", func() {
+			So(datura.Peek[string](lastArtifact, "root"), ShouldEqual, "sample")
+			So(datura.Peek[float64](lastArtifact, "sample"), ShouldBeGreaterThan, 0)
 		})
 	})
 }
@@ -46,15 +57,16 @@ func BenchmarkLogReturnRead(b *testing.B) {
 				"returnLag":  1.0,
 				"longWindow": 5.0,
 			},
-		}, "inputs").
-		Poke([]float64{100, 101, 102}, "state", "prices")
+		}, "inputs")
 
 	stage := NewLogReturn(config)
-	artifact := datura.Acquire("log-return-bench-test", datura.APPJSON).Poke(103.0, "sample")
 
 	b.ReportAllocs()
 
 	for b.Loop() {
+		artifact := datura.Acquire("log-return-bench-test", datura.APPJSON)
+		artifact.Merge("sample", 103.0)
 		_ = transport.NewFlipFlop(artifact, stage)
+		artifact.Release()
 	}
 }

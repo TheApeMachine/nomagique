@@ -36,17 +36,18 @@ func TestPriceRingRead(t *testing.T) {
 	Convey("Given a price ring stage", t, func() {
 		config := precursorConfig()
 		stage := NewPriceRing(config)
+		var lastArtifact *datura.Artifact
 
 		for _, last := range []float64{100, 101, 102} {
 			artifact := precursorState(last)
 			err := transport.NewFlipFlop(artifact, stage)
 			So(err, ShouldBeNil)
+			lastArtifact = artifact
 		}
 
-		Convey("It should retain trimmed prices on the config artifact", func() {
-			prices := datura.Peek[[]float64](config, "prices")
-			So(len(prices), ShouldEqual, 3)
-			So(prices[len(prices)-1], ShouldEqual, 102)
+		Convey("It should publish the current sample on the outbound wire", func() {
+			So(datura.Peek[string](lastArtifact, "root"), ShouldEqual, "sample")
+			So(datura.Peek[float64](lastArtifact, "sample"), ShouldEqual, 102)
 		})
 	})
 }

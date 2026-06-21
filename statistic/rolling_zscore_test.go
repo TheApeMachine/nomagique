@@ -9,32 +9,44 @@ import (
 )
 
 func TestRollingZScoreRead(t *testing.T) {
-	Convey("Given a rolling z-score stage", t, func() {
-		config := datura.Acquire("rolling-zscore-config", datura.APPJSON).
-			Poke([]float64{-0.01, 0.0, 0.01, 0.02}, "state", "returns")
-
+	Convey("Given a rolling z-score stage fed sequential samples", t, func() {
+		config := datura.Acquire("rolling-zscore-config", datura.APPJSON)
 		stage := NewRollingZScore(config)
-		artifact := datura.Acquire("rolling-zscore-test", datura.APPJSON).Poke(0.03, "sample")
+		var lastArtifact *datura.Artifact
 
-		err := transport.NewFlipFlop(artifact, stage)
+		for _, sample := range []float64{-0.01, 0.0, 0.01, 0.02, 0.03} {
+			artifact := datura.Acquire("rolling-zscore-test", datura.APPJSON)
+			artifact.Merge("sample", sample)
 
-		Convey("It should normalize the current sample", func() {
+			err := transport.NewFlipFlop(artifact, stage)
+
 			So(err, ShouldBeNil)
-			So(datura.Peek[float64](artifact, "sample"), ShouldBeGreaterThan, 0)
+
+			if lastArtifact != nil {
+				lastArtifact.Release()
+			}
+
+			lastArtifact = artifact
+		}
+
+		defer lastArtifact.Release()
+
+		Convey("It should normalize the current sample into output", func() {
+			So(datura.Peek[float64](lastArtifact, "output", "value"), ShouldBeGreaterThan, 0)
 		})
 	})
 }
 
 func BenchmarkRollingZScoreRead(b *testing.B) {
-	config := datura.Acquire("rolling-zscore-bench", datura.APPJSON).
-		Poke([]float64{-0.01, 0.0, 0.01, 0.02}, "state", "returns")
-
+	config := datura.Acquire("rolling-zscore-bench", datura.APPJSON)
 	stage := NewRollingZScore(config)
-	artifact := datura.Acquire("rolling-zscore-bench-test", datura.APPJSON).Poke(0.03, "sample")
 
 	b.ReportAllocs()
 
 	for b.Loop() {
+		artifact := datura.Acquire("rolling-zscore-bench-test", datura.APPJSON)
+		artifact.Merge("sample", 0.03)
 		_ = transport.NewFlipFlop(artifact, stage)
+		artifact.Release()
 	}
 }

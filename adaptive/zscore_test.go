@@ -16,8 +16,10 @@ func TestZScoreRead(t *testing.T) {
 		io.Copy(surprise, zscoreInput)
 
 		Convey("When Read is called", func() {
-			_, err := surprise.Read([]byte{1, 2, 3})
-			So(err, ShouldBeNil)
+			frame := make([]byte, 65536)
+			readCount, err := surprise.Read(frame)
+			So(err, ShouldEqual, io.EOF)
+			So(readCount, ShouldBeGreaterThan, 0)
 			So(datura.Peek[float64](surprise.artifact, "output", "value"), ShouldEqual, 0)
 		})
 	})

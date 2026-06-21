@@ -4,6 +4,7 @@ import (
 	"math"
 
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/nomagique/statistic"
 )
 
 /*
@@ -11,7 +12,6 @@ SpreadSample derives a relative spread sample from two feature slots.
 */
 type SpreadSample struct {
 	config *datura.Artifact
-	bytes  []byte
 }
 
 /*
@@ -26,8 +26,7 @@ func NewSpreadSample(config *datura.Artifact) *SpreadSample {
 }
 
 func (spreadSample *SpreadSample) Write(p []byte) (int, error) {
-	spreadSample.bytes = append(spreadSample.bytes[:0], p...)
-
+	spreadSample.config.WithPayload(p)
 	return len(p), nil
 }
 
@@ -35,24 +34,22 @@ func (spreadSample *SpreadSample) Read(p []byte) (int, error) {
 	state := datura.Acquire("spread-sample-state", datura.APPJSON)
 	state.Inspect("vector", "spread-sample", "Read()", "p")
 
-	if _, err := state.Write(spreadSample.bytes); err != nil {
+	if _, err := state.Write(spreadSample.config.DecryptPayload()); err != nil {
 		state.Release()
-
 		return 0, err
 	}
 
 	defer state.Release()
 
-	rootKey := datura.Peek[string](state, "root")
-	channelKeys := datura.Peek[[]string](state, "inputs")
+	features := statistic.SnapshotFeatures(state)
 	sourceKeys := datura.Peek[[]string](spreadSample.config, "inputs", "spread", "inputs")
 
-	if rootKey == "" || len(channelKeys) == 0 || len(sourceKeys) < 2 {
+	if len(sourceKeys) < 2 {
 		return state.Read(p)
 	}
 
-	left := spreadSample.sample(state, rootKey, channelKeys, sourceKeys[0])
-	right := spreadSample.sample(state, rootKey, channelKeys, sourceKeys[1])
+	left := statistic.FeatureColumn(state, sourceKeys[0])
+	right := statistic.FeatureColumn(state, sourceKeys[1])
 	mid := (left + right) / 2
 	spread := 0.0
 
@@ -60,30 +57,11 @@ func (spreadSample *SpreadSample) Read(p []byte) (int, error) {
 		spread = math.Abs(right-left) / mid
 	}
 
+	features.Restore(state)
+	state.MergeOutput("spread", spread)
 	state.Merge("sample", spread)
 
 	return state.Read(p)
-}
-
-func (spreadSample *SpreadSample) sample(
-	artifact *datura.Artifact,
-	rootKey string,
-	channelKeys []string,
-	sourceKey string,
-) float64 {
-	if rootKey == "" || sourceKey == "" || len(channelKeys) == 0 {
-		return 0
-	}
-
-	for index, channelKey := range channelKeys {
-		if channelKey != sourceKey {
-			continue
-		}
-
-		return datura.Peek[float64](artifact, rootKey, index)
-	}
-
-	return 0
 }
 
 func (spreadSample *SpreadSample) Close() error {

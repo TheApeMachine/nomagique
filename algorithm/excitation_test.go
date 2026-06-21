@@ -11,7 +11,7 @@ import (
 
 func TestExcitationMeasure(testingTB *testing.T) {
 	Convey("Given a clustered buy/sell burst", testingTB, func() {
-		excitation := NewExcitation()
+		excitation := NewExcitation(datura.Acquire("excitation-config", datura.APPJSON))
 		base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
 		samples := excitationBurstSamples(base, 128)
 		inbound := daturaBurstArtifact("ALT/EUR", samples)
@@ -115,7 +115,7 @@ func daturaBurstArtifact(scope string, samples []float64) *datura.Artifact {
 }
 
 func BenchmarkExcitationRead(b *testing.B) {
-	excitation := NewExcitation()
+	excitation := NewExcitation(datura.Acquire("excitation-config-bench", datura.APPJSON))
 	base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
 	samples := excitationBurstSamples(base, 128)
 	inbound := daturaBurstArtifact("ALT/EUR", samples)

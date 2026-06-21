@@ -13,15 +13,17 @@ func TestCalibrate_Observe(testingTB *testing.T) {
 		So(err, ShouldBeNil)
 
 		var prediction float64
+		lastTarget := 0.0
 
 		for index := range 32 {
 			feature := float64(index) / 32
 			target := 2*feature + 1
+			lastTarget = target
 			prediction = observeInputs(calibrate, feature, target)
 		}
 
 		Convey("It should converge to a small residual", func() {
-			So(prediction, ShouldAlmostEqual, 2, 0.25)
+			So(prediction, ShouldAlmostEqual, lastTarget, 0.25)
 		})
 	})
 }

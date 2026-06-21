@@ -16,8 +16,10 @@ func TestAccumulatorRead(t *testing.T) {
 		io.Copy(accumulator, accumulatorInput)
 
 		Convey("When Read is called", func() {
-			_, err := accumulator.Read([]byte{1, 2, 3})
-			So(err, ShouldBeNil)
+			frame := make([]byte, 65536)
+			readCount, err := accumulator.Read(frame)
+			So(err, ShouldEqual, io.EOF)
+			So(readCount, ShouldBeGreaterThan, 0)
 			So(datura.Peek[float64](accumulator.artifact, "output", "value"), ShouldEqual, 1)
 		})
 	})

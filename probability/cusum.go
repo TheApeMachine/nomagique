@@ -8,68 +8,86 @@ import (
 
 /*
 CUSUM accumulates sequential change evidence from a sample stream.
+The constructor artifact holds config; Write buffers inbound wire on its payload.
 */
 type CUSUM struct {
 	artifact *datura.Artifact
 }
 
 /*
-NewCUSUM returns a change-detection stage ready from its first observation.
+NewCUSUM returns a change-detection stage wired from config attributes on the artifact.
 */
-func NewCUSUM() *CUSUM {
+func NewCUSUM(artifact *datura.Artifact) *CUSUM {
+	artifact.Inspect("probability", "cusum", "NewCUSUM()")
+
 	return &CUSUM{
-		artifact: datura.Acquire("cusum", datura.APPJSON),
+		artifact: artifact,
 	}
 }
 
-func (cusum *CUSUM) Write(p []byte) (int, error) {
-	return cusum.artifact.Write(p)
+func (cusum *CUSUM) Write(payload []byte) (int, error) {
+	cusum.artifact.WithPayload(payload)
+	return len(payload), nil
 }
 
-func (cusum *CUSUM) Read(p []byte) (int, error) {
-	if !attributeKeyPresent(cusum.artifact, "sample") {
-		return cusum.artifact.Read(p)
+func (cusum *CUSUM) Read(payload []byte) (int, error) {
+	state := datura.Acquire("cusum-state", datura.APPJSON)
+	state.Inspect("probability", "cusum", "Read()", "p")
+
+	if _, err := state.Write(cusum.artifact.DecryptPayload()); err != nil {
+		return 0, err
 	}
 
-	sample := datura.Peek[float64](cusum.artifact, "sample")
+	if datura.Peek[float64](state, "reset") != 0 {
+		cusum.artifact.WithAttributes(datura.Map[any]{})
+		state.MergeOutput("ready", 0)
+		state.MergeOutput("value", 0)
+		state.Merge("root", "output")
+		state.Merge("inputs", []string{"value"})
+		return state.Read(payload)
+	}
+
+	if !attributeKeyPresent(state, "sample") {
+		return state.Read(payload)
+	}
+
+	sample := datura.Peek[float64](state, "sample")
 
 	if math.IsNaN(sample) || math.IsInf(sample, 0) {
-		return cusum.artifact.Read(p)
+		return state.Read(payload)
 	}
 
-	output := datura.Peek[datura.Map[float64]](cusum.artifact, "output")
-	state := CUSUMState{}
-
-	if output != nil {
-		state.Target = output["target"]
-		state.Positive = output["positive"]
-		state.Prev = output["prev"]
-		state.Min = output["min"]
-		state.Max = output["max"]
-		state.Rate = output["rate"]
-		state.Ready = output["ready"] != 0
+	cusumState := CUSUMState{
+		Target:   datura.Peek[float64](cusum.artifact, "output", "target"),
+		Positive: datura.Peek[float64](cusum.artifact, "output", "positive"),
+		Prev:     datura.Peek[float64](cusum.artifact, "output", "prev"),
+		Min:      datura.Peek[float64](cusum.artifact, "output", "min"),
+		Max:      datura.Peek[float64](cusum.artifact, "output", "max"),
+		Rate:     datura.Peek[float64](cusum.artifact, "output", "rate"),
+		Ready:    datura.Peek[float64](cusum.artifact, "output", "ready") != 0,
 	}
 
-	value := ObserveCUSUM(&state, sample)
+	value := ObserveCUSUM(&cusumState, sample)
 
 	ready := 0.0
 
-	if state.Ready {
+	if cusumState.Ready {
 		ready = 1
 	}
 
-	cusum.artifact.Poke(datura.Map[float64]{
-		"target":   state.Target,
-		"positive": state.Positive,
-		"prev":     state.Prev,
-		"min":      state.Min,
-		"max":      state.Max,
-		"rate":     state.Rate,
-		"ready":    ready,
-		"value":    value,
-	}, "output")
-
-	return cusum.artifact.Read(p)
+	cusum.artifact.Poke(cusumState.Target, "output", "target")
+	cusum.artifact.Poke(cusumState.Positive, "output", "positive")
+	cusum.artifact.Poke(cusumState.Prev, "output", "prev")
+	cusum.artifact.Poke(cusumState.Min, "output", "min")
+	cusum.artifact.Poke(cusumState.Max, "output", "max")
+	cusum.artifact.Poke(cusumState.Rate, "output", "rate")
+	cusum.artifact.Poke(ready, "output", "ready")
+	cusum.artifact.Poke(value, "output", "value")
+	state.MergeOutput("value", value)
+	state.MergeOutput("ready", ready)
+	state.Merge("root", "output")
+	state.Merge("inputs", []string{"value"})
+	return state.Read(payload)
 }
 
 func (cusum *CUSUM) Close() error {

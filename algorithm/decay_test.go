@@ -50,10 +50,7 @@ func TestDecayEvaluate(testingTB *testing.T) {
 		)...)
 		So(writeErr, ShouldBeNil)
 
-		frame := make([]byte, 4096)
-		_, _ = decay.Read(frame)
-		outbound := datura.Acquire("test-out", datura.APPJSON)
-		_, _ = outbound.Write(frame)
+		outbound := readOutbound(decay)
 
 		Convey("It should publish an eligible exhaustion outcome", func() {
 			So(datura.Peek[float64](outbound, "output", "value"), ShouldBeGreaterThan, 0)
@@ -76,10 +73,7 @@ func TestDecayEvaluate(testingTB *testing.T) {
 		)...)
 		So(writeErr, ShouldBeNil)
 
-		frame := make([]byte, 4096)
-		_, _ = decay.Read(frame)
-		outbound := datura.Acquire("test-out", datura.APPJSON)
-		_, _ = outbound.Write(frame)
+		outbound := readOutbound(decay)
 
 		Convey("It should classify thermal exhaustion", func() {
 			So(int(datura.Peek[float64](outbound, "output", "category")), ShouldEqual, 3)
@@ -100,10 +94,7 @@ func TestDecayEvaluate(testingTB *testing.T) {
 		)...)
 		So(writeErr, ShouldBeNil)
 
-		frame := make([]byte, 4096)
-		_, _ = decay.Read(frame)
-		outbound := datura.Acquire("test-out", datura.APPJSON)
-		_, _ = outbound.Write(frame)
+		outbound := readOutbound(decay)
 
 		Convey("It should let the stronger short-side score win", func() {
 			So(datura.Peek[float64](outbound, "output", "value"), ShouldBeGreaterThan, 0)

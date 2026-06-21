@@ -10,7 +10,7 @@ import (
 
 func TestCUSUM(testingTB *testing.T) {
 	Convey("Given CUSUM constructor", testingTB, func() {
-		changeSum := NewCUSUM()
+		changeSum := NewCUSUM(datura.Acquire("cusum-config", datura.APPJSON))
 
 		Convey("It should return a usable dynamic", func() {
 			So(changeSum, ShouldNotBeNil)
@@ -20,7 +20,7 @@ func TestCUSUM(testingTB *testing.T) {
 
 func TestChangeSum_Observe(testingTB *testing.T) {
 	Convey("Given empty Observe inputs", testingTB, func() {
-		changeSum := NewCUSUM()
+		changeSum := NewCUSUM(datura.Acquire("cusum-config", datura.APPJSON))
 		artifact := datura.Acquire("test", datura.APPJSON)
 		err := transport.NewFlipFlop(artifact, changeSum)
 
@@ -32,7 +32,7 @@ func TestChangeSum_Observe(testingTB *testing.T) {
 	})
 
 	Convey("Given a change sum", testingTB, func() {
-		changeSum := NewCUSUM()
+		changeSum := NewCUSUM(datura.Acquire("cusum-config", datura.APPJSON))
 		artifact := datura.Acquire("test", datura.APPJSON)
 
 		artifact.Poke(10, "sample")
@@ -53,7 +53,7 @@ func TestChangeSum_Observe(testingTB *testing.T) {
 	})
 
 	Convey("Given a combined scalar sample", testingTB, func() {
-		changeSum := NewCUSUM()
+		changeSum := NewCUSUM(datura.Acquire("cusum-config", datura.APPJSON))
 		artifact := datura.Acquire("test", datura.APPJSON)
 
 		artifact.Poke(10, "sample")
@@ -68,7 +68,7 @@ func TestChangeSum_Observe(testingTB *testing.T) {
 
 		withWork := datura.Peek[float64](artifact, "output", "value")
 
-		combined := NewCUSUM()
+		combined := NewCUSUM(datura.Acquire("cusum-config-combined", datura.APPJSON))
 		reference := datura.Acquire("test", datura.APPJSON)
 
 		reference.Poke(10, "sample")
@@ -91,7 +91,7 @@ func TestChangeSum_Observe(testingTB *testing.T) {
 
 func TestChangeSum_Reset(testingTB *testing.T) {
 	Convey("Given an observed change sum", testingTB, func() {
-		changeSum := NewCUSUM()
+		changeSum := NewCUSUM(datura.Acquire("cusum-config", datura.APPJSON))
 		artifact := datura.Acquire("test", datura.APPJSON).
 			Poke(10, "sample")
 
@@ -112,7 +112,7 @@ func TestChangeSum_Reset(testingTB *testing.T) {
 }
 
 func BenchmarkCUSUM_Observe(testingTB *testing.B) {
-	changeSum := NewCUSUM()
+	changeSum := NewCUSUM(datura.Acquire("cusum-config-bench", datura.APPJSON))
 	artifact := datura.Acquire("test", datura.APPJSON)
 
 	artifact.Poke(10, "sample")

@@ -2,72 +2,90 @@ package statistic
 
 import (
 	"math"
+	"slices"
 	"strconv"
 
-	"github.com/bytedance/sonic"
 	"github.com/theapemachine/datura"
 )
 
 /*
 Panel registers keyed samples for cross-section pipelines.
+The constructor artifact holds config; Write buffers inbound wire on its payload.
 */
 type Panel struct {
 	artifact *datura.Artifact
 }
 
 /*
-NewPanel returns a keyed sample registry for cross-section pipelines.
+NewPanel returns a keyed sample registry wired from config attributes on the artifact.
 */
-func NewPanel() *Panel {
+func NewPanel(artifact *datura.Artifact) *Panel {
+	artifact.Inspect("statistic", "panel", "NewPanel()")
+
 	return &Panel{
-		artifact: datura.Acquire("panel", datura.APPJSON),
+		artifact: artifact,
 	}
 }
 
-func (panel *Panel) Write(p []byte) (int, error) {
-	return panel.artifact.Write(p)
+func (panel *Panel) Write(payload []byte) (int, error) {
+	panel.artifact.WithPayload(payload)
+	return len(payload), nil
 }
 
-func (panel *Panel) Read(p []byte) (int, error) {
-	member := datura.Peek[float64](panel.artifact, "member")
-	sample := datura.Peek[float64](panel.artifact, "sample")
+func (panel *Panel) Read(payload []byte) (int, error) {
+	state := datura.Acquire("panel-state", datura.APPJSON)
+	state.Inspect("statistic", "panel", "Read()", "p")
+
+	if _, err := state.Write(panel.artifact.DecryptPayload()); err != nil {
+		return 0, err
+	}
+
+	member := datura.Peek[float64](state, "member")
+	sample := datura.Peek[float64](state, "sample")
 
 	if math.IsNaN(sample) || math.IsInf(sample, 0) {
-		return panel.artifact.Read(p)
+		return state.Read(payload)
 	}
 
-	if attributePresent(panel.artifact, "member") {
-		peers := datura.Peek[map[string]float64](panel.artifact, "peers")
+	key := memberKey(member)
+	peerKeys := datura.Peek[[]string](panel.artifact, "peerKeys")
 
-		if peers == nil {
-			peers = map[string]float64{}
-		}
-
-		peers[memberKey(member)] = sample
-		panel.artifact.Poke(peers, "peers")
+	if !slices.Contains(peerKeys, key) {
+		peerKeys = append(peerKeys, key)
+		panel.artifact.Poke(peerKeys, "peerKeys")
 	}
 
-	panel.artifact.Poke(datura.Map[float64]{"value": sample}, "output")
+	panel.artifact.Poke(sample, "peers", key)
 
-	return panel.artifact.Read(p)
+	peers := map[string]float64{}
+
+	for _, peerKey := range peerKeys {
+		peers[peerKey] = datura.Peek[float64](panel.artifact, "peers", peerKey)
+	}
+
+	state.Merge("peerKeys", peerKeys)
+	state.Merge("peers", peers)
+	state.MergeOutput("value", sample)
+	state.Merge("root", "output")
+	state.Merge("inputs", []string{"value"})
+	return state.Read(payload)
 }
 
 func (panel *Panel) Close() error {
 	return nil
 }
 
-func attributePresent(artifact *datura.Artifact, key string) bool {
-	raw, err := artifact.Attributes()
-
-	if err != nil || len(raw) == 0 {
-		return false
-	}
-
-	_, getErr := sonic.Get(raw, key)
-
-	return getErr == nil
-}
-
 func memberKey(member float64) string {
 	return strconv.FormatFloat(member, 'g', -1, 64)
+}
+
+func panelPeers(artifact *datura.Artifact) map[string]float64 {
+	peerKeys := datura.Peek[[]string](artifact, "peerKeys")
+	peers := map[string]float64{}
+
+	for _, peerKey := range peerKeys {
+		peers[peerKey] = datura.Peek[float64](artifact, "peers", peerKey)
+	}
+
+	return peers
 }

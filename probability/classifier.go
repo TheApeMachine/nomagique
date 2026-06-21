@@ -10,13 +10,11 @@ import (
 /*
 Classifier selects a category from competing scores declared on inputs.
 
-The config artifact carries the input score keys; the inbound artifact wire is
-buffered per frame. Read reconstitutes that state, classifies from payload
-output scores, and writes the result back onto the payload.
+The config artifact carries input score keys in attributes; its payload buses
+inbound wire from Write to Read. Read classifies from reconstituted output scores.
 */
 type Classifier struct {
 	config *datura.Artifact
-	bytes  []byte
 }
 
 /*
@@ -24,21 +22,19 @@ NewClassifier returns a classifier wired from schema.inputs score keys.
 */
 func NewClassifier(config *datura.Artifact) *Classifier {
 	config.Inspect("probability", "classifier", "NewClassifier()")
-
 	return &Classifier{config: config}
 }
 
-func (classifier *Classifier) Write(payload []byte) (int, error) {
-	classifier.bytes = append(classifier.bytes[:0], payload...)
-
-	return len(payload), nil
+func (classifier *Classifier) Write(p []byte) (int, error) {
+	classifier.config.WithPayload(p)
+	return len(p), nil
 }
 
 func (classifier *Classifier) Read(payload []byte) (int, error) {
 	state := datura.Acquire("classifier-state", datura.APPJSON)
 	state.Inspect("probability", "classifier", "Read()", "p")
 
-	if _, err := state.Write(classifier.bytes); err != nil {
+	if _, err := state.Write(classifier.config.DecryptPayload()); err != nil {
 		state.Release()
 
 		return 0, err
@@ -97,6 +93,8 @@ func (classifier *Classifier) Read(payload []byte) (int, error) {
 	state.MergeOutput("confidence", confidence)
 	state.MergeOutput("strength", strength)
 	state.MergeOutput("value", categoryIndex)
+	state.Merge("root", "output")
+	state.Merge("inputs", []string{"value"})
 
 	return state.Read(payload)
 }

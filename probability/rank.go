@@ -8,69 +8,86 @@ import (
 
 /*
 Rank tracks P(history <= current sample) over a span-derived window.
+The constructor artifact holds config; Write buffers inbound wire on its payload.
 */
 type Rank struct {
 	artifact *datura.Artifact
 }
 
 /*
-NewRank returns an empirical rank probability stage ready from its first observation.
+NewRank returns an empirical rank probability stage wired from config attributes on the artifact.
 */
-func NewRank() *Rank {
+func NewRank(artifact *datura.Artifact) *Rank {
+	artifact.Inspect("probability", "rank", "NewRank()")
+
 	return &Rank{
-		artifact: datura.Acquire("rank", datura.APPJSON),
+		artifact: artifact,
 	}
 }
 
-func (rank *Rank) Write(p []byte) (int, error) {
-	return rank.artifact.Write(p)
+func (rank *Rank) Write(payload []byte) (int, error) {
+	rank.artifact.WithPayload(payload)
+	return len(payload), nil
 }
 
-func (rank *Rank) Read(p []byte) (int, error) {
-	if !attributeKeyPresent(rank.artifact, "sample") {
-		return rank.artifact.Read(p)
+func (rank *Rank) Read(payload []byte) (int, error) {
+	state := datura.Acquire("rank-state", datura.APPJSON)
+	state.Inspect("probability", "rank", "Read()", "p")
+
+	if _, err := state.Write(rank.artifact.DecryptPayload()); err != nil {
+		return 0, err
 	}
 
-	sample := datura.Peek[float64](rank.artifact, "sample")
+	if datura.Peek[float64](state, "reset") != 0 {
+		rank.artifact.WithAttributes(datura.Map[any]{})
+		state.MergeOutput("ready", 0)
+		state.MergeOutput("value", 0)
+		state.Merge("root", "output")
+		state.Merge("inputs", []string{"value"})
+		return state.Read(payload)
+	}
+
+	if !attributeKeyPresent(state, "sample") {
+		return state.Read(payload)
+	}
+
+	sample := datura.Peek[float64](state, "sample")
 
 	if math.IsNaN(sample) || math.IsInf(sample, 0) {
-		return rank.artifact.Read(p)
+		return state.Read(payload)
 	}
 
-	output := datura.Peek[datura.Map[float64]](rank.artifact, "output")
-	state := RankState{
+	rankState := RankState{
 		History: datura.Peek[[]float64](rank.artifact, "history"),
+		Prev:    datura.Peek[float64](rank.artifact, "output", "prev"),
+		Min:     datura.Peek[float64](rank.artifact, "output", "min"),
+		Max:     datura.Peek[float64](rank.artifact, "output", "max"),
+		Head:    int(datura.Peek[float64](rank.artifact, "output", "head")),
+		Count:   int(datura.Peek[float64](rank.artifact, "output", "count")),
+		Ready:   datura.Peek[float64](rank.artifact, "output", "ready") != 0,
 	}
 
-	if output != nil {
-		state.Prev = output["prev"]
-		state.Min = output["min"]
-		state.Max = output["max"]
-		state.Head = int(output["head"])
-		state.Count = int(output["count"])
-		state.Ready = output["ready"] != 0
-	}
-
-	value := ObserveRank(&state, sample)
+	value := ObserveRank(&rankState, sample)
 
 	ready := 0.0
 
-	if state.Ready {
+	if rankState.Ready {
 		ready = 1
 	}
 
-	rank.artifact.Poke(state.History, "history")
-	rank.artifact.Poke(datura.Map[float64]{
-		"prev":  state.Prev,
-		"min":   state.Min,
-		"max":   state.Max,
-		"head":  float64(state.Head),
-		"count": float64(state.Count),
-		"ready": ready,
-		"value": value,
-	}, "output")
-
-	return rank.artifact.Read(p)
+	rank.artifact.Poke(rankState.History, "history")
+	rank.artifact.Poke(rankState.Prev, "output", "prev")
+	rank.artifact.Poke(rankState.Min, "output", "min")
+	rank.artifact.Poke(rankState.Max, "output", "max")
+	rank.artifact.Poke(float64(rankState.Head), "output", "head")
+	rank.artifact.Poke(float64(rankState.Count), "output", "count")
+	rank.artifact.Poke(ready, "output", "ready")
+	rank.artifact.Poke(value, "output", "value")
+	state.MergeOutput("value", value)
+	state.MergeOutput("ready", ready)
+	state.Merge("root", "output")
+	state.Merge("inputs", []string{"value"})
+	return state.Read(payload)
 }
 
 func (rank *Rank) Close() error {

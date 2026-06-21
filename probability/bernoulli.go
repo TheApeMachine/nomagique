@@ -8,88 +8,105 @@ import (
 
 /*
 Bernoulli tracks a Beta posterior mean from Bernoulli outcomes.
+The constructor artifact holds config; Write buffers inbound wire on its payload.
 */
 type Bernoulli struct {
 	artifact *datura.Artifact
 }
 
 /*
-NewBernoulli returns a Beta-Bernoulli stage ready from its first observation.
+NewBernoulli returns a Beta-Bernoulli stage wired from config attributes on the artifact.
 */
-func NewBernoulli() *Bernoulli {
+func NewBernoulli(artifact *datura.Artifact) *Bernoulli {
+	artifact.Inspect("probability", "bernoulli", "NewBernoulli()")
+
 	return &Bernoulli{
-		artifact: datura.Acquire("bernoulli", datura.APPJSON),
+		artifact: artifact,
 	}
 }
 
-func (bernoulli *Bernoulli) Write(p []byte) (int, error) {
-	return bernoulli.artifact.Write(p)
+func (bernoulli *Bernoulli) Write(payload []byte) (int, error) {
+	bernoulli.artifact.WithPayload(payload)
+	return len(payload), nil
 }
 
-func (bernoulli *Bernoulli) Read(p []byte) (int, error) {
-	pairedPresent := attributeKeyPresent(bernoulli.artifact, "paired")
-	samplePresent := attributeKeyPresent(bernoulli.artifact, "sample")
+func (bernoulli *Bernoulli) Read(payload []byte) (int, error) {
+	state := datura.Acquire("bernoulli-state", datura.APPJSON)
+	state.Inspect("probability", "bernoulli", "Read()", "p")
+
+	if _, err := state.Write(bernoulli.artifact.DecryptPayload()); err != nil {
+		return 0, err
+	}
+
+	if datura.Peek[float64](state, "reset") != 0 {
+		bernoulli.artifact.WithAttributes(datura.Map[any]{})
+		state.MergeOutput("ready", 0)
+		state.MergeOutput("value", 0)
+		state.Merge("root", "output")
+		state.Merge("inputs", []string{"value"})
+		return state.Read(payload)
+	}
+
+	samplePresent := attributeKeyPresent(state, "sample")
+	pairedPresent := attributeKeyPresent(state, "paired")
 
 	if !samplePresent && !pairedPresent {
-		return bernoulli.artifact.Read(p)
+		return state.Read(payload)
 	}
 
-	sample := datura.Peek[float64](bernoulli.artifact, "sample")
-
-	output := datura.Peek[datura.Map[float64]](bernoulli.artifact, "output")
-	state := BetaState{}
-
-	if output != nil {
-		state.Alpha = output["alpha"]
-		state.Beta = output["beta"]
-		state.Prev = output["prev"]
-		state.Min = output["min"]
-		state.Max = output["max"]
-		state.Rate = output["rate"]
-		state.Ready = output["ready"] != 0
+	betaState := BetaState{
+		Alpha: datura.Peek[float64](bernoulli.artifact, "output", "alpha"),
+		Beta:  datura.Peek[float64](bernoulli.artifact, "output", "beta"),
+		Prev:  datura.Peek[float64](bernoulli.artifact, "output", "prev"),
+		Min:   datura.Peek[float64](bernoulli.artifact, "output", "min"),
+		Max:   datura.Peek[float64](bernoulli.artifact, "output", "max"),
+		Rate:  datura.Peek[float64](bernoulli.artifact, "output", "rate"),
+		Ready: datura.Peek[float64](bernoulli.artifact, "output", "ready") != 0,
 	}
 
+	sample := datura.Peek[float64](state, "sample")
 	value := 0.0
 
 	if pairedPresent {
-		paired := datura.Peek[float64](bernoulli.artifact, "paired")
+		paired := datura.Peek[float64](state, "paired")
 		predicted, actual, parseErr := parsePredictedActual(sample, []float64{paired})
 
 		if parseErr == nil {
-			value = ObserveBetaPair(&state, predicted, actual)
+			value = ObserveBetaPair(&betaState, predicted, actual)
 		}
 	}
 
 	if !pairedPresent {
 		if math.IsNaN(sample) || math.IsInf(sample, 0) {
-			return bernoulli.artifact.Read(p)
+			return state.Read(payload)
 		}
 
 		outcome, parseErr := parseBernoulliOutcome(sample, nil)
 
 		if parseErr == nil {
-			value = ObserveBeta(&state, outcome)
+			value = ObserveBeta(&betaState, outcome)
 		}
 	}
 
 	ready := 0.0
 
-	if state.Ready {
+	if betaState.Ready {
 		ready = 1
 	}
 
-	bernoulli.artifact.Poke(datura.Map[float64]{
-		"alpha": state.Alpha,
-		"beta":  state.Beta,
-		"prev":  state.Prev,
-		"min":   state.Min,
-		"max":   state.Max,
-		"rate":  state.Rate,
-		"ready": ready,
-		"value": value,
-	}, "output")
-
-	return bernoulli.artifact.Read(p)
+	bernoulli.artifact.Poke(betaState.Alpha, "output", "alpha")
+	bernoulli.artifact.Poke(betaState.Beta, "output", "beta")
+	bernoulli.artifact.Poke(betaState.Prev, "output", "prev")
+	bernoulli.artifact.Poke(betaState.Min, "output", "min")
+	bernoulli.artifact.Poke(betaState.Max, "output", "max")
+	bernoulli.artifact.Poke(betaState.Rate, "output", "rate")
+	bernoulli.artifact.Poke(ready, "output", "ready")
+	bernoulli.artifact.Poke(value, "output", "value")
+	state.MergeOutput("value", value)
+	state.MergeOutput("ready", ready)
+	state.Merge("root", "output")
+	state.Merge("inputs", []string{"value"})
+	return state.Read(payload)
 }
 
 func (bernoulli *Bernoulli) Close() error {

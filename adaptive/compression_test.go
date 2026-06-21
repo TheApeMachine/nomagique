@@ -18,7 +18,7 @@ func TestCompressionRead(t *testing.T) {
 		io.Copy(compression, compressionInput)
 
 		Convey("When Read is called", func() {
-			frame := make([]byte, 4096)
+			frame := make([]byte, 65536)
 			readCount, err := compression.Read(frame)
 			So(err, ShouldEqual, io.EOF)
 

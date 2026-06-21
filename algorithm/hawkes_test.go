@@ -23,10 +23,7 @@ func TestHawkes_Observe(testingTB *testing.T) {
 
 		So(tests.WriteSamples(process, batch...), ShouldBeNil)
 
-		frame := make([]byte, 4096)
-		_, _ = process.Read(frame)
-		outbound := datura.Acquire("test-out", datura.APPJSON)
-		_, _ = outbound.Write(frame)
+		outbound := readOutbound(process)
 
 		Convey("It should report high moment-fit confidence", func() {
 			So(datura.Peek[float64](outbound, "output", "confidence"), ShouldBeGreaterThan, 0.5)

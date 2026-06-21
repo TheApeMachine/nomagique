@@ -6,9 +6,7 @@ import (
 
 /*
 RLS is an online recursive-least-squares stage composable in nomagique.Number pipelines.
-
-Read ingests feature scalars followed by one target scalar. When fewer than
-dimension+1 scalars are supplied, the prior output is returned.
+The constructor artifact holds config; Write buffers inbound wire on its payload.
 */
 type RLS struct {
 	artifact *datura.Artifact
@@ -27,21 +25,33 @@ func NewRLS(dimension int, initialVariance float64) (*RLS, error) {
 	}
 
 	return &RLS{
-		artifact: datura.Acquire("rls", datura.APPJSON),
+		artifact: datura.Acquire("rls-config", datura.APPJSON),
 		filter:   filter,
 	}, nil
 }
 
-func (rls *RLS) Write(p []byte) (int, error) {
-	return rls.artifact.Write(p)
+func (rls *RLS) Write(payload []byte) (int, error) {
+	rls.artifact.WithPayload(payload)
+	return len(payload), nil
 }
 
-func (rls *RLS) Read(p []byte) (int, error) {
+func (rls *RLS) Read(payload []byte) (int, error) {
 	if rls == nil || rls.filter == nil {
 		return 0, nil
 	}
 
-	values := datura.Peek[[]float64](rls.artifact, "batch")
+	state := datura.Acquire("rls-state", datura.APPJSON)
+	state.Inspect("learning", "rls", "Read()", "p")
+
+	if _, err := state.Write(rls.artifact.DecryptPayload()); err != nil {
+		return 0, err
+	}
+
+	values := datura.Peek[[]float64](state, "batch")
+
+	if len(values) == 0 {
+		values = datura.Peek[[]float64](state, "features")
+	}
 
 	if len(values) >= rls.filter.dimension+1 {
 		features := values[:rls.filter.dimension]
@@ -53,12 +63,21 @@ func (rls *RLS) Read(p []byte) (int, error) {
 
 			if predictErr == nil {
 				rls.output = prediction
-				rls.artifact.Poke(datura.Map[float64]{"value": rls.output}, "output")
+				rls.artifact.Poke(rls.output, "output", "value")
 			}
 		}
 	}
 
-	return rls.artifact.Read(p)
+	value := rls.output
+
+	if len(values) >= rls.filter.dimension+1 {
+		value = datura.Peek[float64](rls.artifact, "output", "value")
+	}
+
+	state.MergeOutput("value", value)
+	state.Merge("root", "output")
+	state.Merge("inputs", []string{"value"})
+	return state.Read(payload)
 }
 
 func (rls *RLS) Close() error {
@@ -75,7 +94,7 @@ func (rls *RLS) Reset() error {
 
 	rls.filter.Reset()
 	rls.output = 0
-	rls.artifact.Poke(datura.Map[float64]{"value": 0}, "output")
+	rls.artifact.WithAttributes(datura.Map[any]{})
 
 	return nil
 }

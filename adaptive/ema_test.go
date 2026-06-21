@@ -1,7 +1,6 @@
 package adaptive
 
 import (
-	"bytes"
 	"io"
 	"testing"
 
@@ -20,9 +19,10 @@ func TestEMARead(t *testing.T) {
 		io.Copy(ema, emaInput)
 
 		Convey("When Read is called", func() {
-			buffer := bytes.NewBuffer(nil)
-			_, err := io.Copy(buffer, ema)
-			So(err, ShouldBeNil)
+			frame := make([]byte, 65536)
+			readCount, err := ema.Read(frame)
+			So(err, ShouldEqual, io.EOF)
+			So(readCount, ShouldBeGreaterThan, 0)
 			So(datura.Peek[float64](ema.artifact, "output", "value"), ShouldEqual, 1)
 		})
 	})

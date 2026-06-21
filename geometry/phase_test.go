@@ -24,7 +24,7 @@ func TestCoupling_Observe(testingTB *testing.T) {
 		testCase := testCase
 
 		Convey("Given "+testCase.name, testingTB, func() {
-			stage := NewCoupling()
+			stage := NewCoupling(datura.Acquire("coupling-config", datura.APPJSON))
 			artifact := datura.Acquire("test", datura.APPJSON).
 				Poke(testCase.left, "sample").
 				Poke(testCase.right, "paired")
@@ -41,7 +41,7 @@ func TestCoupling_Observe(testingTB *testing.T) {
 	}
 
 	Convey("Given empty Observe inputs", testingTB, func() {
-		stage := NewCoupling()
+		stage := NewCoupling(datura.Acquire("coupling-config", datura.APPJSON))
 		artifact := datura.Acquire("test", datura.APPJSON)
 		err := transport.NewFlipFlop(artifact, stage)
 
@@ -53,7 +53,7 @@ func TestCoupling_Observe(testingTB *testing.T) {
 	})
 
 	Convey("Given a non-scalar first input", testingTB, func() {
-		stage := NewCoupling()
+		stage := NewCoupling(datura.Acquire("coupling-config", datura.APPJSON))
 		artifact := datura.Acquire("test", datura.APPJSON)
 
 		artifact.Poke(2, "sample").Poke(2, "paired")
@@ -76,7 +76,7 @@ func TestCoupling_Observe(testingTB *testing.T) {
 
 func TestCoupling_Reset(testingTB *testing.T) {
 	Convey("Given an observed coupling stage", testingTB, func() {
-		stage := NewCoupling()
+		stage := NewCoupling(datura.Acquire("coupling-config", datura.APPJSON))
 		artifact := datura.Acquire("test", datura.APPJSON).
 			Poke(2, "sample").
 			Poke(2, "paired")
@@ -98,7 +98,7 @@ func TestCoupling_Reset(testingTB *testing.T) {
 
 func TestVelocity_Observe(testingTB *testing.T) {
 	Convey("Given empty Observe inputs", testingTB, func() {
-		stage := NewVelocity()
+		stage := NewVelocity(datura.Acquire("velocity-config", datura.APPJSON))
 		artifact := datura.Acquire("test", datura.APPJSON)
 		err := transport.NewFlipFlop(artifact, stage)
 
@@ -110,7 +110,7 @@ func TestVelocity_Observe(testingTB *testing.T) {
 	})
 
 	Convey("Given velocity history", testingTB, func() {
-		stage := NewVelocity()
+		stage := NewVelocity(datura.Acquire("velocity-config", datura.APPJSON))
 		artifact := datura.Acquire("test", datura.APPJSON)
 
 		artifact.Poke(1, "sample")
@@ -131,7 +131,7 @@ func TestVelocity_Observe(testingTB *testing.T) {
 	})
 
 	Convey("Given a scalar plus work sample", testingTB, func() {
-		stage := NewVelocity()
+		stage := NewVelocity(datura.Acquire("velocity-config", datura.APPJSON))
 		artifact := datura.Acquire("test", datura.APPJSON)
 
 		artifact.Poke(1, "sample")
@@ -147,7 +147,7 @@ func TestVelocity_Observe(testingTB *testing.T) {
 
 			withWork := datura.Peek[float64](artifact, "output", "value")
 
-			expect := NewVelocity()
+			expect := NewVelocity(datura.Acquire("velocity-config-expect", datura.APPJSON))
 			expectArtifact := datura.Acquire("test", datura.APPJSON)
 
 			expectArtifact.Poke(1, "sample")
@@ -169,14 +169,14 @@ func TestVelocity_Observe(testingTB *testing.T) {
 
 func TestVelocity_ObserveSamples(testingTB *testing.T) {
 	Convey("Given mean samples", testingTB, func() {
-		stage := NewVelocity()
+		stage := NewVelocity(datura.Acquire("velocity-config", datura.APPJSON))
 		means := []float64{1, 1.5, 1.25}
 		out := make([]float64, len(means))
 
 		stage.ObserveSamples(means, out)
 
 		Convey("It should match sequential Observe", func() {
-			expect := NewVelocity()
+			expect := NewVelocity(datura.Acquire("velocity-config-expect", datura.APPJSON))
 			expectOut := make([]float64, len(means))
 			expect.ObserveSamples(means, expectOut)
 
@@ -187,7 +187,7 @@ func TestVelocity_ObserveSamples(testingTB *testing.T) {
 
 func TestVelocity_Reset(testingTB *testing.T) {
 	Convey("Given an observed velocity stage", testingTB, func() {
-		stage := NewVelocity()
+		stage := NewVelocity(datura.Acquire("velocity-config", datura.APPJSON))
 		artifact := datura.Acquire("test", datura.APPJSON).Poke(1, "sample")
 		err := transport.NewFlipFlop(artifact, stage)
 
@@ -207,7 +207,7 @@ func TestVelocity_Reset(testingTB *testing.T) {
 }
 
 func BenchmarkCoupling_Observe(testingTB *testing.B) {
-	stage := NewCoupling()
+	stage := NewCoupling(datura.Acquire("coupling-config-bench", datura.APPJSON))
 	artifact := datura.Acquire("test", datura.APPJSON)
 
 	testingTB.ReportAllocs()
@@ -219,7 +219,7 @@ func BenchmarkCoupling_Observe(testingTB *testing.B) {
 }
 
 func BenchmarkVelocity_Observe(testingTB *testing.B) {
-	stage := NewVelocity()
+	stage := NewVelocity(datura.Acquire("velocity-config-bench", datura.APPJSON))
 	artifact := datura.Acquire("test", datura.APPJSON)
 
 	artifact.Poke(1, "sample")

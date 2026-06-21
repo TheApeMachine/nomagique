@@ -8,50 +8,60 @@ import (
 
 /*
 Max tracks the largest streamed sample.
+The constructor artifact holds config; Write buffers inbound wire on its payload.
 */
 type Max struct {
 	artifact *datura.Artifact
 }
 
 /*
-NewMax creates a max stage.
+NewMax returns a max stage wired from config attributes on the artifact.
 */
-func NewMax() *Max {
+func NewMax(artifact *datura.Artifact) *Max {
+	artifact.Inspect("statistic", "max", "NewMax()")
+
 	return &Max{
-		artifact: datura.Acquire("max", datura.APPJSON),
+		artifact: artifact,
 	}
 }
 
-func (max *Max) Read(p []byte) (int, error) {
-	sample := datura.Peek[float64](max.artifact, "sample")
+func (max *Max) Write(payload []byte) (int, error) {
+	max.artifact.WithPayload(payload)
+	return len(payload), nil
+}
+
+func (max *Max) Read(payload []byte) (int, error) {
+	state := datura.Acquire("max-state", datura.APPJSON)
+	state.Inspect("statistic", "max", "Read()", "p")
+
+	if _, err := state.Write(max.artifact.DecryptPayload()); err != nil {
+		return 0, err
+	}
+
+	sample := datura.Peek[float64](state, "sample")
 
 	if math.IsNaN(sample) || math.IsInf(sample, 0) {
-		return max.artifact.Read(p)
+		return state.Read(payload)
 	}
 
-	output := datura.Peek[datura.Map[float64]](max.artifact, "output")
+	count := datura.Peek[float64](max.artifact, "output", "count")
+	value := datura.Peek[float64](max.artifact, "output", "value")
 
-	if output == nil {
-		output = datura.Map[float64]{
-			"value": sample,
-		}
-
-		max.artifact.Poke(output, "output")
-
-		return max.artifact.Read(p)
+	if count == 0 {
+		value = sample
 	}
 
-	if sample > output["value"] {
-		output["value"] = sample
+	if count > 0 && sample > value {
+		value = sample
 	}
 
-	max.artifact.Poke(output, "output")
-
-	return max.artifact.Read(p)
-}
-
-func (max *Max) Write(p []byte) (int, error) {
-	return max.artifact.Write(p)
+	count++
+	max.artifact.Poke(count, "output", "count")
+	max.artifact.Poke(value, "output", "value")
+	state.MergeOutput("value", value)
+	state.Merge("root", "output")
+	state.Merge("inputs", []string{"value"})
+	return state.Read(payload)
 }
 
 func (max *Max) Close() error {

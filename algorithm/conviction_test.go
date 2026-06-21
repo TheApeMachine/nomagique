@@ -16,10 +16,7 @@ func TestConvictionEvaluate(testingTB *testing.T) {
 
 		So(writeErr, ShouldBeNil)
 
-		frame := make([]byte, 4096)
-		_, _ = conviction.Read(frame)
-		outbound := datura.Acquire("test-out", datura.APPJSON)
-		_, _ = outbound.Write(frame)
+		outbound := readOutbound(conviction)
 
 		Convey("It should classify risk-on surge", func() {
 			So(datura.Peek[float64](outbound, "output", "value"), ShouldBeGreaterThan, 0)
@@ -33,10 +30,7 @@ func TestConvictionEvaluate(testingTB *testing.T) {
 
 		So(writeErr, ShouldBeNil)
 
-		frame := make([]byte, 4096)
-		_, _ = conviction.Read(frame)
-		outbound := datura.Acquire("test-out", datura.APPJSON)
-		_, _ = outbound.Write(frame)
+		outbound := readOutbound(conviction)
 
 		Convey("It should classify divergent move", func() {
 			So(int(datura.Peek[float64](outbound, "output", "category")), ShouldEqual, 2)
@@ -49,10 +43,7 @@ func TestConvictionEvaluate(testingTB *testing.T) {
 
 		So(writeErr, ShouldBeNil)
 
-		frame := make([]byte, 4096)
-		_, _ = conviction.Read(frame)
-		outbound := datura.Acquire("test-out", datura.APPJSON)
-		_, _ = outbound.Write(frame)
+		outbound := readOutbound(conviction)
 
 		Convey("It should classify systemic slump", func() {
 			So(int(datura.Peek[float64](outbound, "output", "category")), ShouldEqual, 3)

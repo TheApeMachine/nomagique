@@ -24,10 +24,7 @@ func TestBookflowEvaluate(testingTB *testing.T) {
 
 		So(writeErr, ShouldBeNil)
 
-		frame := make([]byte, 4096)
-		_, _ = bookflow.Read(frame)
-		outbound := datura.Acquire("test-out", datura.APPJSON)
-		_, _ = outbound.Write(frame)
+		outbound := readOutbound(bookflow)
 
 		Convey("It should classify loaded imbalance", func() {
 			So(datura.Peek[float64](outbound, "output", "value"), ShouldBeGreaterThan, 0)
@@ -49,10 +46,7 @@ func TestBookflowEvaluate(testingTB *testing.T) {
 
 		So(writeErr, ShouldBeNil)
 
-		frame := make([]byte, 4096)
-		_, _ = bookflow.Read(frame)
-		outbound := datura.Acquire("test-out", datura.APPJSON)
-		_, _ = outbound.Write(frame)
+		outbound := readOutbound(bookflow)
 
 		Convey("It should classify spoof trap", func() {
 			So(int(datura.Peek[float64](outbound, "output", "category")), ShouldEqual, 2)

@@ -9,7 +9,7 @@ import (
 func testFeedbackWeights(testingTB *testing.T) ClassifierWeights {
 	testingTB.Helper()
 
-	weights, err := NewClassifierWeights(2.0, testClassifierScales())
+	weights, err := NewClassifierWeights(testClassifierConfig(), 2.0, testClassifierScales())
 
 	if err != nil {
 		testingTB.Fatal(err)
@@ -22,7 +22,7 @@ func TestFeedbackTunerApply(testingTB *testing.T) {
 	Convey("Given matching feedback with rising samples", testingTB, func() {
 		tuner := NewFeedbackTuner()
 		weights := testFeedbackWeights(testingTB)
-		baseline := weights.WIgnVol
+		baseline := weights.termWeights["ignition"]["rvol"]
 
 		applied, err := tuner.Apply("member-a", "member-a", 4, 0.5, 1.0, 0.2, &weights)
 
@@ -30,7 +30,7 @@ func TestFeedbackTunerApply(testingTB *testing.T) {
 			So(err, ShouldBeNil)
 			So(applied, ShouldBeTrue)
 			So(weights.Threshold, ShouldBeGreaterThan, 2.0)
-			So(weights.WIgnVol, ShouldNotEqual, baseline)
+			So(weights.termWeights["ignition"]["rvol"], ShouldNotEqual, baseline)
 		})
 	})
 
@@ -69,7 +69,7 @@ func BenchmarkFeedbackTunerApply(b *testing.B) {
 	samples := 0
 
 	for b.Loop() {
-		weights, err := NewClassifierWeights(2.0, testClassifierScales())
+		weights, err := NewClassifierWeights(testClassifierConfig(), 2.0, testClassifierScales())
 
 		if err != nil {
 			b.Fatal(err)

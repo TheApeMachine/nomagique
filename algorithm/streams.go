@@ -6,7 +6,6 @@ import (
 	"math"
 	"time"
 
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/nomagique/correlation"
 )
 
@@ -58,57 +57,6 @@ func payloadScalar(payload []byte) (float64, bool) {
 	}
 
 	return value, true
-}
-
-func stageWritableArtifact(
-	artifact *datura.Artifact,
-	origin string,
-	artifactType datura.Artifact_Type,
-) *datura.Artifact {
-	if artifact == nil {
-		return nil
-	}
-
-	fresh := datura.Acquire(origin, artifactType)
-
-	if role, err := artifact.Role(); err == nil && role != "" {
-		fresh.WithRole(role)
-	}
-
-	if scope, err := artifact.Scope(); err == nil && scope != "" {
-		fresh.WithScope(scope)
-	}
-
-	body := artifact.DecryptPayload()
-
-	if len(body) == 0 {
-		body = []byte("{}")
-	}
-
-	fresh.WithPayload(body)
-
-	return fresh
-}
-
-func rehydrateArtifact(artifact **datura.Artifact, origin string, artifactType datura.Artifact_Type) {
-	if artifact == nil || *artifact == nil {
-		return
-	}
-
-	wire, err := (*artifact).Message().MarshalPacked()
-
-	if err != nil || len(wire) == 0 {
-		return
-	}
-
-	fresh := datura.Acquire(origin, artifactType)
-
-	if fresh == nil {
-		return
-	}
-
-	_, _ = fresh.Write(wire)
-	*artifact = fresh
 }
 
 func zipNodeRows(streams [][]float64) ([][]float64, bool) {

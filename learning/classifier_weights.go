@@ -4,53 +4,41 @@ import (
 	"fmt"
 	"math"
 
+	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 )
 
 /*
-ClassifierFeatureScales holds typical magnitudes for classifier inputs.
-
-Pass observed medians or means from live history so logits are balanced by
-inverse scale — larger-magnitude features receive smaller weights so each term
-contributes comparably at typical operating points.
+LogitSpec describes one classifier output as a weighted combination of
+normalized order features declared on the config artifact.
 */
-type ClassifierFeatureScales struct {
-	RVol        float64
-	Precursor   float64
-	Compression float64
+type LogitSpec struct {
+	Terms   []string
+	Inverts map[string]bool
 }
 
 /*
-ClassifierWeights holds softmax logits coefficients for a four-way classifier.
+ClassifierWeights holds dynamically derived coefficients for configured outputs.
 
-Each class score is a weighted sum of normalized features. Weights are derived
-from ClassifierFeatureScales at construction and clamped relative to those scales
-during feedback tuning.
+Output recipes and feature order come from the config artifact attributes;
+weights are inverse-scale balances normalized within each output's terms.
 */
 type ClassifierWeights struct {
-	Threshold float64
-	scales    ClassifierFeatureScales
-	WIgnVol   float64
-	WIgnPrec  float64
-	WCoilComp float64
-	WCoilPrec float64
-	WOrgPrec  float64
-	WOrgComp  float64
-	WOrgVol   float64
-	WExVol    float64
-	WExPrec   float64
+	Threshold   float64
+	scales      map[string]float64
+	outputs     []string
+	specs       map[string]LogitSpec
+	termWeights map[string]map[string]float64
 }
 
 /*
-NewClassifierWeights builds balanced logits from a surprise threshold and
-observed feature scales.
-
-Each weight is the reciprocal of its feature scale, normalized within its class
-so terms sum to one. Non-positive scales return an error.
+NewClassifierWeights builds balanced logits from config attributes, a surprise
+threshold, and observed per-feature scales keyed by order entries.
 */
 func NewClassifierWeights(
+	config *datura.Artifact,
 	threshold float64,
-	scales ClassifierFeatureScales,
+	scales map[string]float64,
 ) (ClassifierWeights, error) {
 	if threshold <= 0 {
 		return ClassifierWeights{}, errnie.Error(fmt.Errorf(
@@ -59,64 +47,107 @@ func NewClassifierWeights(
 		))
 	}
 
-	rvolScale, err := positiveScale(scales.RVol, "rvol")
+	outputs := datura.Peek[[]string](config, "outputs")
 
-	if err != nil {
-		return ClassifierWeights{}, err
+	if len(outputs) == 0 {
+		return ClassifierWeights{}, errnie.Error(fmt.Errorf(
+			"learning: NewClassifierWeights requires outputs on config",
+		))
 	}
 
-	precursorScale, err := positiveScale(scales.Precursor, "precursor")
+	specs := make(map[string]LogitSpec, len(outputs))
+	termWeights := make(map[string]map[string]float64, len(outputs))
 
-	if err != nil {
-		return ClassifierWeights{}, err
+	for _, outputKey := range outputs {
+		spec, err := logitSpec(config, outputKey)
+
+		if err != nil {
+			return ClassifierWeights{}, err
+		}
+
+		if len(spec.Terms) == 0 {
+			continue
+		}
+
+		weights, err := balancedTermWeights(spec.Terms, scales)
+
+		if err != nil {
+			return ClassifierWeights{}, err
+		}
+
+		specs[outputKey] = spec
+		termWeights[outputKey] = weights
 	}
-
-	compressionScale, err := positiveScale(scales.Compression, "compression")
-
-	if err != nil {
-		return ClassifierWeights{}, err
-	}
-
-	ignVol := 1.0 / rvolScale
-	ignPrec := 1.0 / precursorScale
-	ignSum := ignVol + ignPrec
-
-	coilComp := 1.0 / compressionScale
-	coilPrec := 1.0 / precursorScale
-	coilSum := coilComp + coilPrec
-
-	orgPrec := 1.0 / precursorScale
-	orgComp := 1.0 / compressionScale
-	orgVol := 1.0 / rvolScale
-	orgSum := orgPrec + orgComp + orgVol
-
-	exVol := 1.0 / rvolScale
-	exPrec := 1.0 / precursorScale
-	exSum := exVol + exPrec
 
 	return ClassifierWeights{
-		Threshold: threshold,
-		scales:    scales,
-		WIgnVol:   ignVol / ignSum,
-		WIgnPrec:  ignPrec / ignSum,
-		WCoilComp: coilComp / coilSum,
-		WCoilPrec: coilPrec / coilSum,
-		WOrgPrec:  orgPrec / orgSum,
-		WOrgComp:  orgComp / orgSum,
-		WOrgVol:   orgVol / orgSum,
-		WExVol:    exVol / exSum,
-		WExPrec:   exPrec / exSum,
+		Threshold:   threshold,
+		scales:      scales,
+		outputs:     outputs,
+		specs:       specs,
+		termWeights: termWeights,
 	}, nil
 }
 
-func (weights *ClassifierWeights) FeatureScales() ClassifierFeatureScales {
+func logitSpec(config *datura.Artifact, outputKey string) (LogitSpec, error) {
+	terms := datura.Peek[[]string](config, "inputs", outputKey, "terms")
+
+	if len(terms) == 0 {
+		return LogitSpec{}, nil
+	}
+
+	inverts := map[string]bool{}
+
+	for _, featureKey := range datura.Peek[[]string](config, "inputs", outputKey, "inverts") {
+		inverts[featureKey] = true
+	}
+
+	return LogitSpec{
+		Terms:   terms,
+		Inverts: inverts,
+	}, nil
+}
+
+func balancedTermWeights(
+	terms []string,
+	scales map[string]float64,
+) (map[string]float64, error) {
+	rawWeights := make(map[string]float64, len(terms))
+	total := 0.0
+
+	for _, featureKey := range terms {
+		scale, err := positiveScale(scales[featureKey], featureKey)
+
+		if err != nil {
+			return nil, err
+		}
+
+		rawWeights[featureKey] = 1.0 / scale
+		total += rawWeights[featureKey]
+	}
+
+	if total <= 0 {
+		return nil, errnie.Error(fmt.Errorf(
+			"learning: balancedTermWeights total weight must be positive",
+		))
+	}
+
+	weights := make(map[string]float64, len(terms))
+
+	for featureKey, weight := range rawWeights {
+		weights[featureKey] = weight / total
+	}
+
+	return weights, nil
+}
+
+func (weights *ClassifierWeights) FeatureScales() map[string]float64 {
 	return weights.scales
 }
 
 func positiveScale(scale float64, name string) (float64, error) {
 	if scale <= 0 || math.IsNaN(scale) || math.IsInf(scale, 0) {
 		return 0, errnie.Error(fmt.Errorf(
-			"learning: NewClassifierWeights %s scale must be finite and positive, got %v",
+			"learning: feature scale for %s must be finite and positive, got %v",
 			name,
 			scale,
 		))
@@ -126,33 +157,54 @@ func positiveScale(scale float64, name string) (float64, error) {
 }
 
 /*
-Scores returns four class logits for the given normalized features.
-Each input is divided by its observed scale before the class formulas run so
-(1.0 - feature) terms stay meaningful relative to typical operating points.
+Scores returns one logit per configured output by evaluating its term recipe
+against the supplied feature values keyed by order entries.
 */
-func (weights *ClassifierWeights) Scores(
-	rvol, precursor, compression float64,
-) []float64 {
-	rvolNorm := normalizeFeature(rvol, weights.scales.RVol)
-	precursorNorm := normalizeFeature(precursor, weights.scales.Precursor)
-	compressionNorm := normalizeFeature(compression, weights.scales.Compression)
+func (weights *ClassifierWeights) Scores(features map[string]float64) []float64 {
+	scores := make([]float64, len(weights.outputs))
 
-	return []float64{
-		rvolNorm*weights.WIgnVol + precursorNorm*weights.WIgnPrec,
-		compressionNorm*weights.WCoilComp + (1.0-precursorNorm)*weights.WCoilPrec,
-		precursorNorm*weights.WOrgPrec + (1.0-compressionNorm)*weights.WOrgComp + rvolNorm*weights.WOrgVol,
-		(1.0-rvolNorm)*weights.WExVol + (1.0-precursorNorm)*weights.WExPrec,
+	for index, outputKey := range weights.outputs {
+		scores[index] = weights.outputScore(outputKey, features)
 	}
+
+	return scores
+}
+
+func (weights *ClassifierWeights) outputScore(
+	outputKey string,
+	features map[string]float64,
+) float64 {
+	spec, ok := weights.specs[outputKey]
+
+	if !ok {
+		return 0
+	}
+
+	termWeights := weights.termWeights[outputKey]
+	score := 0.0
+
+	for _, featureKey := range spec.Terms {
+		normalized := normalizeFeature(features[featureKey], weights.scales[featureKey])
+
+		if spec.Inverts[featureKey] {
+			normalized = 1.0 - normalized
+		}
+
+		score += normalized * termWeights[featureKey]
+	}
+
+	return score
 }
 
 /*
-Strength returns the ignition-class logit without compression.
+Strength returns the first configured output logit from feature values.
 */
-func (weights *ClassifierWeights) Strength(rvol, precursor float64) float64 {
-	rvolNorm := normalizeFeature(rvol, weights.scales.RVol)
-	precursorNorm := normalizeFeature(precursor, weights.scales.Precursor)
+func (weights *ClassifierWeights) Strength(features map[string]float64) float64 {
+	if len(weights.outputs) == 0 {
+		return 0
+	}
 
-	return rvolNorm*weights.WIgnVol + precursorNorm*weights.WIgnPrec
+	return weights.outputScore(weights.outputs[0], features)
 }
 
 func normalizeFeature(value, scale float64) float64 {
@@ -175,20 +227,30 @@ func squashFeature(value float64) float64 {
 
 func (weights *ClassifierWeights) clamp() {
 	floor, ceiling := weightBounds(weights.scales)
-	weights.WIgnVol = clamp(weights.WIgnVol, floor, ceiling)
-	weights.WIgnPrec = clamp(weights.WIgnPrec, floor, ceiling)
-	weights.WCoilComp = clamp(weights.WCoilComp, floor, ceiling)
-	weights.WCoilPrec = clamp(weights.WCoilPrec, floor, ceiling)
-	weights.WOrgPrec = clamp(weights.WOrgPrec, floor, ceiling)
-	weights.WOrgComp = clamp(weights.WOrgComp, floor, ceiling)
-	weights.WOrgVol = clamp(weights.WOrgVol, floor, ceiling)
-	weights.WExVol = clamp(weights.WExVol, floor, ceiling)
-	weights.WExPrec = clamp(weights.WExPrec, floor, ceiling)
+
+	for outputKey, featureWeights := range weights.termWeights {
+		for featureKey, weight := range featureWeights {
+			weights.termWeights[outputKey][featureKey] = clamp(weight, floor, ceiling)
+		}
+	}
 }
 
-func weightBounds(scales ClassifierFeatureScales) (float64, float64) {
-	minScale := math.Min(scales.RVol, math.Min(scales.Precursor, scales.Compression))
-	maxScale := math.Max(scales.RVol, math.Max(scales.Precursor, scales.Compression))
+func weightBounds(scales map[string]float64) (float64, float64) {
+	minScale := math.MaxFloat64
+	maxScale := 0.0
+
+	for _, scale := range scales {
+		if scale <= 0 || math.IsNaN(scale) || math.IsInf(scale, 0) {
+			continue
+		}
+
+		minScale = math.Min(minScale, scale)
+		maxScale = math.Max(maxScale, scale)
+	}
+
+	if minScale == math.MaxFloat64 || maxScale <= 0 {
+		return math.SmallestNonzeroFloat64, 1.0
+	}
 
 	floor := 1.0 / (maxScale * 10.0)
 	ceiling := 10.0 / minScale

@@ -28,7 +28,11 @@ func NewCorrelate(artifact *datura.Artifact) io.ReadWriteCloser {
 NewShift returns a distribution-shift KL divergence stage.
 */
 func NewShift(expectedSum, floor float64) io.ReadWriteCloser {
-	return statistic.NewKLDivergence(expectedSum, floor)
+	config := datura.Acquire("shift-config", datura.APPJSON).
+		Poke(expectedSum, "config", "expectedSum").
+		Poke(floor, "config", "floor")
+
+	return statistic.NewKLDivergence(config)
 }
 
 /*

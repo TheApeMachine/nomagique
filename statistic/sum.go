@@ -8,43 +8,49 @@ import (
 
 /*
 Sum integrates streamed samples into a running total.
+The constructor artifact holds config; Write buffers inbound wire on its payload.
 */
 type Sum struct {
 	artifact *datura.Artifact
 }
 
 /*
-NewSum creates a sum stage.
+NewSum returns a sum stage wired from config attributes on the artifact.
 */
-func NewSum() *Sum {
+func NewSum(artifact *datura.Artifact) *Sum {
+	artifact.Inspect("statistic", "sum", "NewSum()")
+
 	return &Sum{
-		artifact: datura.Acquire("sum", datura.APPJSON),
+		artifact: artifact,
 	}
 }
 
-func (sum *Sum) Read(p []byte) (int, error) {
-	sample := datura.Peek[float64](sum.artifact, "sample")
+func (sum *Sum) Write(payload []byte) (int, error) {
+	sum.artifact.WithPayload(payload)
+	return len(payload), nil
+}
+
+func (sum *Sum) Read(payload []byte) (int, error) {
+	state := datura.Acquire("sum-state", datura.APPJSON)
+	state.Inspect("statistic", "sum", "Read()", "p")
+
+	if _, err := state.Write(sum.artifact.DecryptPayload()); err != nil {
+		return 0, err
+	}
+
+	sample := datura.Peek[float64](state, "sample")
 
 	if math.IsNaN(sample) || math.IsInf(sample, 0) {
-		return sum.artifact.Read(p)
+		return state.Read(payload)
 	}
 
-	output := datura.Peek[datura.Map[float64]](sum.artifact, "output")
+	value := datura.Peek[float64](sum.artifact, "output", "value") + sample
 
-	if output == nil {
-		output = datura.Map[float64]{
-			"value": 0,
-		}
-	}
-
-	output["value"] += sample
-	sum.artifact.Poke(output, "output")
-
-	return sum.artifact.Read(p)
-}
-
-func (sum *Sum) Write(p []byte) (int, error) {
-	return sum.artifact.Write(p)
+	sum.artifact.Poke(value, "output", "value")
+	state.MergeOutput("value", value)
+	state.Merge("root", "output")
+	state.Merge("inputs", []string{"value"})
+	return state.Read(payload)
 }
 
 func (sum *Sum) Close() error {

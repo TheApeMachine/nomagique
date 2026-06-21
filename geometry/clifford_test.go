@@ -285,7 +285,7 @@ func TestCompose(t *testing.T) {
 
 func TestRotorFromAxis_Observe(testingTB *testing.T) {
 	gc.Convey("Given axis-angle scalars", testingTB, func() {
-		stage := NewRotor()
+		stage := NewRotor(datura.Acquire("rotor-config", datura.APPJSON))
 		artifact := datura.Acquire("test", datura.APPJSON).
 			Poke([]float64{0, 1, 0, 0}, "batch")
 		err := transport.NewFlipFlop(artifact, stage)
@@ -303,7 +303,7 @@ func TestRotorFromAxis_Observe(testingTB *testing.T) {
 
 func TestTranslatorFromDisplacement_Observe(testingTB *testing.T) {
 	gc.Convey("Given displacement scalars", testingTB, func() {
-		stage := NewTranslator()
+		stage := NewTranslator(datura.Acquire("translator-config", datura.APPJSON))
 		artifact := datura.Acquire("test", datura.APPJSON).
 			Poke([]float64{2, 4, 6}, "batch")
 		err := transport.NewFlipFlop(artifact, stage)
@@ -322,7 +322,7 @@ func TestTranslatorFromDisplacement_Observe(testingTB *testing.T) {
 func TestSandwichTransform_Observe(testingTB *testing.T) {
 	gc.Convey("Given a configured motor and target components", testingTB, func() {
 		motor := rotationMV(0, 1, 0, 0)
-		stage := NewSandwich(motor)
+		stage := NewSandwich(datura.Acquire("sandwich-config", datura.APPJSON), motor)
 		artifact := datura.Acquire("test", datura.APPJSON).
 			Poke([]float64{1, 0, 0, 0, 0, 0, 0, 0}, "batch")
 		err := transport.NewFlipFlop(artifact, stage)
@@ -338,7 +338,7 @@ func TestSandwichTransform_Observe(testingTB *testing.T) {
 }
 
 func BenchmarkRotorFromAxis_Observe(testingTB *testing.B) {
-	stage := NewRotor()
+	stage := NewRotor(datura.Acquire("rotor-config-bench", datura.APPJSON))
 	artifact := datura.Acquire("test", datura.APPJSON)
 
 	testingTB.ReportAllocs()
@@ -351,7 +351,7 @@ func BenchmarkRotorFromAxis_Observe(testingTB *testing.B) {
 
 func BenchmarkSandwichTransform_Observe(testingTB *testing.B) {
 	motor := rotationMV(0, 1, 0, 0)
-	stage := NewSandwich(motor)
+	stage := NewSandwich(datura.Acquire("sandwich-config-bench", datura.APPJSON), motor)
 	artifact := datura.Acquire("test", datura.APPJSON)
 
 	testingTB.ReportAllocs()

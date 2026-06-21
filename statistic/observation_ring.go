@@ -9,26 +9,40 @@ import (
 /*
 ObservationRing retains recent scalar observations with capacity derived from
 sample span rather than a fixed magic bound.
+The constructor artifact holds config; Write buffers inbound wire on its payload.
 */
 type ObservationRing struct {
 	artifact *datura.Artifact
 }
 
-func NewObservationRing() *ObservationRing {
+/*
+NewObservationRing returns an observation ring stage wired from config attributes on the artifact.
+*/
+func NewObservationRing(artifact *datura.Artifact) *ObservationRing {
+	artifact.Inspect("statistic", "observation-ring", "NewObservationRing()")
+
 	return &ObservationRing{
-		artifact: datura.Acquire("observation_ring", datura.APPJSON),
+		artifact: artifact,
 	}
 }
 
-func (ring *ObservationRing) Write(p []byte) (int, error) {
-	return ring.artifact.Write(p)
+func (ring *ObservationRing) Write(payload []byte) (int, error) {
+	ring.artifact.WithPayload(payload)
+	return len(payload), nil
 }
 
-func (ring *ObservationRing) Read(p []byte) (int, error) {
-	sample := datura.Peek[float64](ring.artifact, "sample")
+func (ring *ObservationRing) Read(payload []byte) (int, error) {
+	state := datura.Acquire("observation-ring-state", datura.APPJSON)
+	state.Inspect("statistic", "observation-ring", "Read()", "p")
+
+	if _, err := state.Write(ring.artifact.DecryptPayload()); err != nil {
+		return 0, err
+	}
+
+	sample := datura.Peek[float64](state, "sample")
 
 	if sample <= 0 || math.IsNaN(sample) || math.IsInf(sample, 0) {
-		return ring.artifact.Read(p)
+		return state.Read(payload)
 	}
 
 	history := datura.Peek[[]float64](ring.artifact, "history")
@@ -41,10 +55,10 @@ func (ring *ObservationRing) Read(p []byte) (int, error) {
 	}
 
 	ring.artifact.Poke(history, "history")
-
-	ring.artifact.Poke(datura.Map[float64]{"value": sample}, "output")
-
-	return ring.artifact.Read(p)
+	state.MergeOutput("value", sample)
+	state.Merge("root", "output")
+	state.Merge("inputs", []string{"value"})
+	return state.Read(payload)
 }
 
 func (ring *ObservationRing) Close() error {

@@ -10,39 +10,46 @@ import (
 
 /*
 KLDivergence computes sum(q_i * log(q_i / p_i)) for aligned distributions.
+The constructor artifact holds config; Write buffers inbound wire on its payload.
 */
 type KLDivergence struct {
-	artifact    *datura.Artifact
-	expectedSum float64
-	floor       float64
+	artifact *datura.Artifact
 }
 
 /*
-NewKLDivergence creates a KL divergence stage.
-expectedSum and floor may be zero to derive them from each observation.
+NewKLDivergence returns a KL divergence stage wired from config attributes on the artifact.
+config.expectedSum and config.floor may be zero to derive them from each observation.
 */
-func NewKLDivergence(expectedSum, floor float64) *KLDivergence {
+func NewKLDivergence(artifact *datura.Artifact) *KLDivergence {
+	artifact.Inspect("statistic", "kl", "NewKLDivergence()")
+
 	return &KLDivergence{
-		artifact:    datura.Acquire("kl", datura.APPJSON),
-		expectedSum: expectedSum,
-		floor:       floor,
+		artifact: artifact,
 	}
 }
 
-func (kl *KLDivergence) Write(p []byte) (int, error) {
-	return kl.artifact.Write(p)
+func (kl *KLDivergence) Write(payload []byte) (int, error) {
+	kl.artifact.WithPayload(payload)
+	return len(payload), nil
 }
 
-func (kl *KLDivergence) Read(p []byte) (int, error) {
-	observedSample := datura.Peek[float64](kl.artifact, "sample")
-	expectedSample := datura.Peek[float64](kl.artifact, "paired")
+func (kl *KLDivergence) Read(payload []byte) (int, error) {
+	state := datura.Acquire("kl-state", datura.APPJSON)
+	state.Inspect("statistic", "kl", "Read()", "p")
+
+	if _, err := state.Write(kl.artifact.DecryptPayload()); err != nil {
+		return 0, err
+	}
+
+	observedSample := datura.Peek[float64](state, "sample")
+	expectedSample := datura.Peek[float64](state, "paired")
 
 	if math.IsNaN(observedSample) || math.IsInf(observedSample, 0) {
-		return kl.artifact.Read(p)
+		return state.Read(payload)
 	}
 
 	if math.IsNaN(expectedSample) || math.IsInf(expectedSample, 0) {
-		return kl.artifact.Read(p)
+		return state.Read(payload)
 	}
 
 	observed := datura.Peek[[]float64](kl.artifact, "history")
@@ -59,9 +66,10 @@ func (kl *KLDivergence) Read(p []byte) (int, error) {
 			KLError(KLErrorRequireAtLeastTwoInputs),
 		))
 
-		kl.artifact.Poke(datura.Map[float64]{"value": 0}, "output")
-
-		return kl.artifact.Read(p)
+		state.MergeOutput("value", 0.0)
+		state.Merge("root", "output")
+		state.Merge("inputs", []string{"value"})
+		return state.Read(payload)
 	}
 
 	if len(observed) != len(expected) {
@@ -70,22 +78,25 @@ func (kl *KLDivergence) Read(p []byte) (int, error) {
 			KLError(KLErrorRequireEqualLength),
 		))
 
-		kl.artifact.Poke(datura.Map[float64]{"value": 0}, "output")
-
-		return kl.artifact.Read(p)
+		state.MergeOutput("value", 0.0)
+		state.Merge("root", "output")
+		state.Merge("inputs", []string{"value"})
+		return state.Read(payload)
 	}
 
 	divergence, ok := kl.divergence(observed, expected)
 
 	if !ok {
-		kl.artifact.Poke(datura.Map[float64]{"value": 0}, "output")
-
-		return kl.artifact.Read(p)
+		state.MergeOutput("value", 0.0)
+		state.Merge("root", "output")
+		state.Merge("inputs", []string{"value"})
+		return state.Read(payload)
 	}
 
-	kl.artifact.Poke(datura.Map[float64]{"value": divergence}, "output")
-
-	return kl.artifact.Read(p)
+	state.MergeOutput("value", divergence)
+	state.Merge("root", "output")
+	state.Merge("inputs", []string{"value"})
+	return state.Read(payload)
 }
 
 func (kl *KLDivergence) Close() error {
@@ -115,7 +126,7 @@ func (kl *KLDivergence) divergence(observed, expected []float64) (float64, bool)
 		}
 	}
 
-	expectedSum := kl.expectedSum
+	expectedSum := datura.Peek[float64](kl.artifact, "config", "expectedSum")
 
 	if expectedSum <= 0 || math.IsNaN(expectedSum) || math.IsInf(expectedSum, 0) {
 		for index := range expected {
@@ -197,8 +208,10 @@ func (kl *KLDivergence) divergence(observed, expected []float64) (float64, bool)
 func (kl *KLDivergence) probabilityFloor(
 	observed, expected []float64, width int,
 ) float64 {
-	if kl.floor > 0 {
-		return kl.floor
+	floor := datura.Peek[float64](kl.artifact, "config", "floor")
+
+	if floor > 0 {
+		return floor
 	}
 
 	observedSum := 0.0

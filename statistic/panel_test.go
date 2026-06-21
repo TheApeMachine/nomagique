@@ -11,7 +11,7 @@ import (
 
 func TestPanelObserve(t *testing.T) {
 	Convey("Given a Panel stage", t, func() {
-		panel := NewPanel()
+		panel := NewPanel(datura.Acquire("panel-config", datura.APPJSON))
 
 		Convey("It should echo the registered sample", func() {
 			artifact := datura.Acquire("test", datura.APPJSON).
@@ -28,7 +28,9 @@ func TestPanelObserve(t *testing.T) {
 
 func TestMedianPanelPeers(t *testing.T) {
 	Convey("Given Panel then Median in a pipeline", t, func() {
-		crossSection := nomagique.Number(NewPanel(), NewMedian())
+		panelConfig := datura.Acquire("panel-config", datura.APPJSON)
+		medianConfig := datura.Acquire("median-config", datura.APPJSON)
+		crossSection := nomagique.Number(NewPanel(panelConfig), NewMedian(medianConfig))
 		artifact := datura.Acquire("test", datura.APPJSON)
 
 		for _, member := range []struct {

@@ -10,7 +10,10 @@ import (
 
 func TestBivariateMomentSeries(t *testing.T) {
 	Convey("Given a BivariateMoment stage", t, func() {
-		bivariateMoment := NewBivariateMoment(1.0, 1.0)
+		bivariateConfig := datura.Acquire("bm-config", datura.APPJSON).
+			Poke(1.0, "config", "r").
+			Poke(1.0, "config", "s")
+		bivariateMoment := NewBivariateMoment(bivariateConfig)
 		artifact := datura.Acquire("test", datura.APPJSON)
 		xValues := []float64{1, 2, 3, 4}
 		yValues := []float64{2, 5, 7, 10}

@@ -40,7 +40,10 @@ func TestModePartition_Observe(t *testing.T) {
 	t.Parallel()
 
 	Convey("Given no participants", t, func() {
-		partition := NewModePartition(0.5, nil, nil, nil)
+		partition := NewModePartition(
+			datura.Acquire("mode-partition-config", datura.APPJSON),
+			0.5, nil, nil, nil,
+		)
 		artifact := datura.Acquire("test", datura.APPJSON)
 		err := transport.NewFlipFlop(artifact, partition)
 
@@ -51,6 +54,7 @@ func TestModePartition_Observe(t *testing.T) {
 
 	Convey("Given participants with pairwise coupling at threshold", t, func() {
 		partition := NewModePartition(
+			datura.Acquire("mode-partition-config", datura.APPJSON),
 			1.0,
 			[]float64{10, 20, 30},
 			[]float64{1, 2, 4},
@@ -74,6 +78,7 @@ func TestModePartition_Observe(t *testing.T) {
 
 	Convey("Given coupled participants", t, func() {
 		partition := NewModePartition(
+			datura.Acquire("mode-partition-config", datura.APPJSON),
 			1,
 			[]float64{10, 20, 30},
 			[]float64{1, 2, 4},
@@ -98,6 +103,7 @@ func TestModePartition_Observe(t *testing.T) {
 
 	Convey("Given mismatched stream lengths", t, func() {
 		partition := NewModePartition(
+			datura.Acquire("mode-partition-config", datura.APPJSON),
 			1,
 			[]float64{10, 20},
 			[]float64{1},
@@ -117,6 +123,7 @@ func TestModePartition_Observe(t *testing.T) {
 func TestModePartition_Reset(t *testing.T) {
 	Convey("Given an observed mode partition", t, func() {
 		partition := NewModePartition(
+			datura.Acquire("mode-partition-config", datura.APPJSON),
 			1,
 			[]float64{10, 20, 30},
 			[]float64{1, 2, 4},
@@ -159,7 +166,10 @@ func BenchmarkModePartition_Observe(testingTB *testing.B) {
 		}
 	}
 
-	partition := NewModePartition(0.9, origins, energies, matrix)
+	partition := NewModePartition(
+		datura.Acquire("mode-partition-config-bench", datura.APPJSON),
+		0.9, origins, energies, matrix,
+	)
 	artifact := datura.Acquire("test", datura.APPJSON)
 
 	testingTB.ReportAllocs()

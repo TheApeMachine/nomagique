@@ -16,8 +16,10 @@ func TestFracDiffRead(t *testing.T) {
 		io.Copy(fractional, fracDiffInput)
 
 		Convey("When Read is called", func() {
-			_, err := fractional.Read([]byte{1, 2, 3})
-			So(err, ShouldBeNil)
+			frame := make([]byte, 65536)
+			readCount, err := fractional.Read(frame)
+			So(err, ShouldEqual, io.EOF)
+			So(readCount, ShouldBeGreaterThan, 0)
 			So(datura.Peek[float64](fractional.artifact, "output", "value"), ShouldEqual, 10)
 		})
 	})

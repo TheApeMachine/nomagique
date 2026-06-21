@@ -258,26 +258,39 @@ func (rm *ResonanceManifold) SetStreamAdvanceTemporal(enabled bool) {
 }
 
 func (rm *ResonanceManifold) Write(payload []byte) (int, error) {
-	return rm.artifact.Write(payload)
+	rm.artifact.WithPayload(payload)
+	return len(payload), nil
 }
 
 func (rm *ResonanceManifold) Read(payload []byte) (int, error) {
-	values := datura.Peek[[]float64](rm.artifact, "batch")
+	state := datura.Acquire("resonance-state", datura.APPJSON)
+	state.Inspect("learning", "resonance", "Read()", "p")
 
-	if len(values) >= rm.arch[0] {
-		input := values[:rm.arch[0]]
-		var target []float64
-
-		if rm.targetDim > 0 && len(values) >= rm.arch[0]+rm.targetDim {
-			target = values[rm.arch[0] : rm.arch[0]+rm.targetDim]
-		}
-
-		reconstruction := rm.SettleFromBatch(input, target)
-		rm.artifact.Poke(datura.Map[float64]{"value": reconstruction}, "output")
-		rm.artifact.Poke(rm.LatentState(), "output", "latent")
+	if _, err := state.Write(rm.artifact.DecryptPayload()); err != nil {
+		return 0, err
 	}
 
-	return rm.artifact.Read(payload)
+	values := datura.Peek[[]float64](state, "batch")
+
+	if len(values) < rm.arch[0] {
+		return state.Read(payload)
+	}
+
+	input := values[:rm.arch[0]]
+	target := []float64(nil)
+
+	if rm.targetDim > 0 && len(values) >= rm.arch[0]+rm.targetDim {
+		target = values[rm.arch[0] : rm.arch[0]+rm.targetDim]
+	}
+
+	reconstruction := rm.SettleFromBatch(input, target)
+	latent := rm.LatentState()
+
+	state.MergeOutput("value", reconstruction)
+	state.MergeOutput("latent", latent)
+	state.Merge("root", "output")
+	state.Merge("inputs", []string{"value", "latent"})
+	return state.Read(payload)
 }
 
 func (rm *ResonanceManifold) Close() error {

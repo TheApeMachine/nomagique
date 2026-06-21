@@ -4,6 +4,7 @@ import (
 	"math"
 
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/nomagique/statistic"
 )
 
 /*
@@ -12,6 +13,7 @@ The constructor artifact holds config; Write buffers inbound wire on its payload
 */
 type Compression struct {
 	artifact *datura.Artifact
+	baseline float64
 }
 
 /*
@@ -38,30 +40,54 @@ func (compression *Compression) Read(payload []byte) (int, error) {
 		return 0, err
 	}
 
-	sample := datura.Peek[float64](state, "sample")
+	features := statistic.SnapshotFeatures(state)
+	sample := compression.sample(state)
 
 	if math.IsNaN(sample) || math.IsInf(sample, 0) {
 		return state.Read(payload)
 	}
 
-	baseline := datura.Peek[float64](compression.artifact, "baseline")
+	baseline := compression.baseline
 	value := 0.0
 
 	switch {
-	case baseline == 0 || sample > baseline:
+	case baseline <= 0 || sample > baseline:
 		baseline = sample
 	default:
 		value = (baseline - sample) / baseline
 	}
 
-	compression.artifact.Merge("baseline", baseline)
-	state.MergeOutput("baseline", baseline)
-	state.MergeOutput("value", value)
+	compression.baseline = baseline
+	outputKey := datura.Peek[string](compression.artifact, "inputs", "compression", "outputKey")
+
+	if outputKey == "" {
+		outputKey = "value"
+	}
+
+	state.MergeOutput(outputKey, value)
+	features.Restore(state)
 	state.Merge("root", "output")
-	state.Merge("inputs", []string{"baseline", "value"})
+	state.Merge("inputs", []string{"baseline", outputKey})
+
 	return state.Read(payload)
 }
 
 func (compression *Compression) Close() error {
 	return nil
+}
+
+func (compression *Compression) sample(state *datura.Artifact) float64 {
+	inputKey := datura.Peek[string](compression.artifact, "inputs", "compression", "input")
+
+	if inputKey == "" {
+		inputKey = "sample"
+	}
+
+	sample := datura.Peek[float64](state, "output", inputKey)
+
+	if sample != 0 {
+		return sample
+	}
+
+	return datura.Peek[float64](state, inputKey)
 }

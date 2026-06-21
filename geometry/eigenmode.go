@@ -127,6 +127,10 @@ type PhaseMode struct {
 ModePartition partitions participants into eigenmodes from origin, energy, and coupling streams.
 The coupling stream is a row-major N×N affinity matrix aligned to participant order.
 */
+/*
+ModePartition is an eigenmode partition stage over configured streams.
+The constructor artifact holds config; Write buffers inbound wire on its payload.
+*/
 type ModePartition struct {
 	artifact  *datura.Artifact
 	threshold float64
@@ -141,11 +145,14 @@ type ModePartition struct {
 NewModePartition creates an eigenmode partition stage over configured streams.
 */
 func NewModePartition(
+	artifact *datura.Artifact,
 	threshold float64,
 	origins, energies, coupling []float64,
 ) *ModePartition {
+	artifact.Inspect("geometry", "mode-partition", "NewModePartition()")
+
 	return &ModePartition{
-		artifact:  datura.Acquire("mode-partition", datura.APPJSON),
+		artifact:  artifact,
 		threshold: threshold,
 		origins:   origins,
 		energies:  energies,
@@ -153,19 +160,28 @@ func NewModePartition(
 	}
 }
 
-func (partition *ModePartition) Write(p []byte) (int, error) {
-	return partition.artifact.Write(p)
+func (partition *ModePartition) Write(payload []byte) (int, error) {
+	partition.artifact.WithPayload(payload)
+	return len(payload), nil
 }
 
-func (partition *ModePartition) Read(p []byte) (int, error) {
+func (partition *ModePartition) Read(payload []byte) (int, error) {
+	state := datura.Acquire("mode-partition-state", datura.APPJSON)
+	state.Inspect("geometry", "mode-partition", "Read()", "p")
+
+	if _, err := state.Write(partition.artifact.DecryptPayload()); err != nil {
+		return 0, err
+	}
+
 	participants, couplingFn, ok := partition.participantsAndCoupling()
 
 	if !ok {
 		partition.snap = nil
 		partition.output = 0
-		partition.artifact.Poke(datura.Map[float64]{"value": 0}, "output")
-
-		return partition.artifact.Read(p)
+		state.MergeOutput("value", 0)
+		state.Merge("root", "output")
+		state.Merge("inputs", []string{"value"})
+		return state.Read(payload)
 	}
 
 	modes, dominant := partition.partition(participants, couplingFn)
@@ -173,15 +189,19 @@ func (partition *ModePartition) Read(p []byte) (int, error) {
 
 	if dominant < 0 {
 		partition.output = 0
-		partition.artifact.Poke(datura.Map[float64]{"value": 0}, "output")
-
-		return partition.artifact.Read(p)
+		partition.artifact.Poke(0, "output", "value")
+		state.MergeOutput("value", 0)
+		state.Merge("root", "output")
+		state.Merge("inputs", []string{"value"})
+		return state.Read(payload)
 	}
 
 	partition.output = modes[dominant].Energy()
-	partition.artifact.Poke(datura.Map[float64]{"value": partition.output}, "output")
-
-	return partition.artifact.Read(p)
+	partition.artifact.Poke(partition.output, "output", "value")
+	state.MergeOutput("value", partition.output)
+	state.Merge("root", "output")
+	state.Merge("inputs", []string{"value"})
+	return state.Read(payload)
 }
 
 func (partition *ModePartition) Close() error {
@@ -198,7 +218,7 @@ func (partition *ModePartition) Snap() *EigenSnap {
 func (partition *ModePartition) Reset() error {
 	partition.snap = nil
 	partition.output = 0
-	partition.artifact.Poke(datura.Map[float64]{"value": 0}, "output")
+	partition.artifact.WithAttributes(datura.Map[any]{})
 
 	return nil
 }

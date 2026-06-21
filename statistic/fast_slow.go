@@ -9,67 +9,77 @@ import (
 
 /*
 FastSlow compares trailing fast-window mean rate to the preceding slow window.
+The constructor artifact holds config; Write buffers inbound wire on its payload.
 */
 type FastSlow struct {
-	artifact   *datura.Artifact
-	fastWindow int
-	epsilon    float64
-	invert     bool
+	artifact *datura.Artifact
 }
 
 /*
-NewFastSlow creates a breakout-ratio stage.
+NewFastSlow returns a breakout-ratio stage wired from config attributes on the artifact.
 */
-func NewFastSlow(fastWindow int, epsilon float64) *FastSlow {
-	if fastWindow <= 0 {
-		fastWindow = 3
-	}
+func NewFastSlow(artifact *datura.Artifact) *FastSlow {
+	artifact.Inspect("statistic", "fast-slow", "NewFastSlow()")
 
 	return &FastSlow{
-		artifact:   datura.Acquire("fast_slow", datura.APPJSON),
-		fastWindow: fastWindow,
-		epsilon:    epsilon,
+		artifact: artifact,
 	}
 }
 
 /*
-NewInvertedFastSlow creates a compression-ratio stage.
+NewInvertedFastSlow returns a compression-ratio stage wired from config attributes on the artifact.
 */
-func NewInvertedFastSlow(fastWindow int, epsilon float64) *FastSlow {
-	fastSlow := NewFastSlow(fastWindow, epsilon)
-	fastSlow.invert = true
+func NewInvertedFastSlow(artifact *datura.Artifact) *FastSlow {
+	artifact.Poke(float64(1), "config", "invert")
 
-	return fastSlow
+	return NewFastSlow(artifact)
 }
 
-func (fastSlow *FastSlow) Write(p []byte) (int, error) {
-	return fastSlow.artifact.Write(p)
+func (fastSlow *FastSlow) Write(payload []byte) (int, error) {
+	fastSlow.artifact.WithPayload(payload)
+	return len(payload), nil
 }
 
-func (fastSlow *FastSlow) Read(p []byte) (int, error) {
-	sample := datura.Peek[float64](fastSlow.artifact, "sample")
+func (fastSlow *FastSlow) Read(payload []byte) (int, error) {
+	state := datura.Acquire("fast-slow-state", datura.APPJSON)
+	state.Inspect("statistic", "fast-slow", "Read()", "p")
+
+	if _, err := state.Write(fastSlow.artifact.DecryptPayload()); err != nil {
+		return 0, err
+	}
+
+	sample := datura.Peek[float64](state, "sample")
 
 	if math.IsNaN(sample) || math.IsInf(sample, 0) || sample < 0 {
-		return fastSlow.artifact.Read(p)
+		return state.Read(payload)
 	}
 
 	history := datura.Peek[[]float64](fastSlow.artifact, "history")
 	history = append(history, sample)
 	fastSlow.artifact.Poke(history, "history")
 
+	fastWindow := int(datura.Peek[float64](fastSlow.artifact, "config", "fastWindow"))
+	epsilon := datura.Peek[float64](fastSlow.artifact, "config", "epsilon")
+	invert := datura.Peek[float64](fastSlow.artifact, "config", "invert") > 0
+
+	if fastWindow <= 0 {
+		fastWindow = 3
+	}
+
 	value := 1.0
 
-	if fastSlow.invert {
-		value = invertedFastSlowRate(history, fastSlow.fastWindow, fastSlow.epsilon)
+	if invert {
+		value = invertedFastSlowRate(history, fastWindow, epsilon)
 	}
 
-	if !fastSlow.invert {
-		value = fastSlowRate(history, fastSlow.fastWindow, fastSlow.epsilon)
+	if !invert {
+		value = fastSlowRate(history, fastWindow, epsilon)
 	}
 
-	fastSlow.artifact.Poke(datura.Map[float64]{"value": value}, "output")
-
-	return fastSlow.artifact.Read(p)
+	state.MergeOutput("value", value)
+	state.Merge("root", "output")
+	state.Merge("inputs", []string{"value"})
+	return state.Read(payload)
 }
 
 func (fastSlow *FastSlow) Close() error {

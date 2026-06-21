@@ -14,7 +14,7 @@ BookQualitySample turns Kraken book frames into the feature vector BookQuality e
 Ledger and gate state live on the stage instance across Measure calls.
 */
 type BookQualitySample struct {
-	config        *datura.Artifact
+	artifact      *datura.Artifact
 	bytes         []byte
 	ledger        SideFlowLedger
 	vacuumGate    *GateQuantile
@@ -30,9 +30,11 @@ type BookQualitySample struct {
 /*
 NewBookQualitySample returns a book encoder wired from a config artifact.
 */
-func NewBookQualitySample(config *datura.Artifact) *BookQualitySample {
+func NewBookQualitySample(artifact *datura.Artifact) *BookQualitySample {
+	artifact.Inspect("algorithm", "book-quality-sample", "NewBookQualitySample()")
+
 	return &BookQualitySample{
-		config: config,
+		artifact: artifact,
 		vacuumGate: NewGateQuantile(
 			datura.Acquire("vacuum-gate", datura.APPJSON).
 				WithAttribute("percentile", 0.9).
@@ -86,13 +88,15 @@ func (bookQualitySample *BookQualitySample) Read(payload []byte) (int, error) {
 		bookQualitySample.ingestBook(state)
 	}
 
-	features := datura.Peek[[]float64](bookQualitySample.config, "lastFeatures")
+	features := datura.Peek[[]float64](bookQualitySample.artifact, "lastFeatures")
 
 	if len(features) < bookQualityFeatureCount {
 		features = make([]float64, bookQualityFeatureCount)
 	}
 
 	state.Merge("features", features)
+	state.Merge("root", "features")
+	state.Merge("inputs", []string{"features"})
 
 	return state.Read(payload)
 }
@@ -156,13 +160,13 @@ func (bookQualitySample *BookQualitySample) ingestBook(state *datura.Artifact) {
 	supportGate := supportRatioGate(
 		threshold,
 		vacuumLow,
-		gateReady(bookQualitySample.vacuumGate.config),
+		gateReady(bookQualitySample.vacuumGate.artifact),
 	)
 	vacuumCap := vacuumStrengthLimit(
 		threshold,
 		maxRatio,
 		vacuumPeak,
-		gateReady(bookQualitySample.vacuumGate.config),
+		gateReady(bookQualitySample.vacuumGate.artifact),
 	)
 
 	if maxRatio > 0 {
@@ -182,8 +186,8 @@ func (bookQualitySample *BookQualitySample) ingestBook(state *datura.Artifact) {
 			bookQualitySample.medianLevelQty(state, "bids"),
 			bookQualitySample.runGate(bookQualitySample.cancelQtyGate, 0, 0),
 			bookQualitySample.runGate(bookQualitySample.levelSizeGate, 0, 0),
-			gateReady(bookQualitySample.cancelQtyGate.config),
-			gateReady(bookQualitySample.levelSizeGate.config),
+			gateReady(bookQualitySample.cancelQtyGate.artifact),
+			gateReady(bookQualitySample.levelSizeGate.artifact),
 		)
 		bestBid := bookQualitySample.bestBid()
 		bestAsk := bookQualitySample.bestAsk()
@@ -229,7 +233,7 @@ func (bookQualitySample *BookQualitySample) ingestBook(state *datura.Artifact) {
 		lastPrice,
 	}
 
-	bookQualitySample.config.Merge("lastFeatures", features)
+	bookQualitySample.artifact.Poke(features, "lastFeatures")
 }
 
 func (bookQualitySample *BookQualitySample) applyLevels(

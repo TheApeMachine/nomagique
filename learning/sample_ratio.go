@@ -6,6 +6,7 @@ import (
 
 /*
 Calibrator tracks calibration sample ratio from predicted-vs-actual pairs.
+The constructor artifact holds config; Write buffers inbound wire on its payload.
 */
 type Calibrator struct {
 	artifact *datura.Artifact
@@ -13,40 +14,69 @@ type Calibrator struct {
 }
 
 /*
-SampleRatio returns a calibration dynamic ready from its first observation.
+SampleRatio returns a calibration stage wired from config attributes on the artifact.
 */
-func SampleRatio() *Calibrator {
+func SampleRatio(artifact *datura.Artifact) *Calibrator {
+	artifact.Inspect("learning", "sample-ratio", "SampleRatio()")
+
 	return &Calibrator{
-		artifact: datura.Acquire("sample-ratio", datura.APPJSON),
+		artifact: artifact,
 	}
 }
 
-func (calibrator *Calibrator) Write(p []byte) (int, error) {
-	return calibrator.artifact.Write(p)
+func (calibrator *Calibrator) Write(payload []byte) (int, error) {
+	calibrator.artifact.WithPayload(payload)
+	return len(payload), nil
 }
 
-func (calibrator *Calibrator) Read(p []byte) (int, error) {
-	predicted := datura.Peek[float64](calibrator.artifact, "sample")
-	actual := datura.Peek[float64](calibrator.artifact, "paired")
+func (calibrator *Calibrator) Read(payload []byte) (int, error) {
+	state := datura.Acquire("sample-ratio-state", datura.APPJSON)
+	state.Inspect("learning", "sample-ratio", "Read()", "p")
+
+	if _, err := state.Write(calibrator.artifact.DecryptPayload()); err != nil {
+		return 0, err
+	}
+
+	predicted := datura.Peek[float64](state, "sample")
+	actual := datura.Peek[float64](state, "paired")
 
 	if predicted == 0 && actual == 0 {
-		return calibrator.artifact.Read(p)
+		features := datura.Peek[[]float64](state, "features")
+
+		if len(features) >= 2 {
+			predicted = features[0]
+			actual = features[1]
+		}
+	}
+
+	if predicted == 0 && actual == 0 {
+		value := datura.Peek[float64](calibrator.artifact, "output", "value")
+
+		if calibrator.state.Ready {
+			state.MergeOutput("value", value)
+			state.Merge("root", "output")
+			state.Merge("inputs", []string{"value"})
+		}
+
+		return state.Read(payload)
 	}
 
 	if actual == 0 {
-		return calibrator.artifact.Read(p)
+		return state.Read(payload)
 	}
 
 	parsedPredicted, parsedActual, err := parsePredictedActual(predicted, []float64{actual})
 
 	if err != nil {
-		return calibrator.artifact.Read(p)
+		return state.Read(payload)
 	}
 
 	derived := ObserveSampleRatio(&calibrator.state, parsedPredicted, parsedActual)
-	calibrator.artifact.Poke(datura.Map[float64]{"value": derived}, "output")
-
-	return calibrator.artifact.Read(p)
+	calibrator.artifact.Poke(derived, "output", "value")
+	state.MergeOutput("value", derived)
+	state.Merge("root", "output")
+	state.Merge("inputs", []string{"value"})
+	return state.Read(payload)
 }
 
 func (calibrator *Calibrator) Close() error {
@@ -67,7 +97,7 @@ Reset clears derived state.
 */
 func (calibrator *Calibrator) Reset() error {
 	calibrator.state.Reset()
-	calibrator.artifact.Poke(datura.Map[float64]{"value": 0}, "output")
+	calibrator.artifact.WithAttributes(datura.Map[any]{})
 
 	return nil
 }

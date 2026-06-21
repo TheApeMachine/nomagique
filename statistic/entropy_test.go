@@ -11,7 +11,7 @@ import (
 func TestEntropySeries(t *testing.T) {
 	Convey("Given an Entropy stage", t, func() {
 		uniformArtifact := datura.Acquire("test", datura.APPJSON)
-		uniformStage := NewEntropy(0)
+		uniformStage := NewEntropy(datura.Acquire("entropy-config-uniform", datura.APPJSON))
 
 		for _, sample := range []float64{1, 1, 1, 1} {
 			uniformArtifact.Poke(sample, "sample")
@@ -23,7 +23,7 @@ func TestEntropySeries(t *testing.T) {
 		uniform := datura.Peek[float64](uniformArtifact, "output", "value")
 
 		peakedArtifact := datura.Acquire("test", datura.APPJSON)
-		peakedStage := NewEntropy(0)
+		peakedStage := NewEntropy(datura.Acquire("entropy-config-peaked", datura.APPJSON))
 
 		for _, sample := range []float64{100, 1, 1, 1} {
 			peakedArtifact.Poke(sample, "sample")

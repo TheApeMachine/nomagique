@@ -8,11 +8,12 @@ import (
 )
 
 /*
-LogReturn computes a lagged log return from the retained price ring.
+LogReturn computes a lagged log return from a retained sample series on the stage instance.
 The constructor artifact holds config; Write buffers inbound wire on its payload.
 */
 type LogReturn struct {
 	artifact *datura.Artifact
+	samples  []float64
 }
 
 /*
@@ -23,11 +24,13 @@ func NewLogReturn(artifact *datura.Artifact) *LogReturn {
 
 	return &LogReturn{
 		artifact: artifact,
+		samples:  []float64{},
 	}
 }
 
 func (logReturn *LogReturn) Write(payload []byte) (int, error) {
 	logReturn.artifact.WithPayload(payload)
+
 	return len(payload), nil
 }
 
@@ -39,28 +42,20 @@ func (logReturn *LogReturn) Read(payload []byte) (int, error) {
 		return 0, err
 	}
 
-	stageKey := datura.Peek[string](logReturn.artifact, "stage")
+	features := statistic.SnapshotFeatures(state)
+	stageKey := logReturn.stageKey()
 
 	if stageKey == "" {
-		order := datura.Peek[[]string](logReturn.artifact, "order")
-		stageIndex := int(datura.Peek[float64](logReturn.artifact, "inputs", "precursor", "stageIndex"))
+		features.Restore(state)
 
-		if stageIndex <= 0 {
-			stageIndex = int(datura.Peek[float64](logReturn.artifact, "stageIndex"))
-		}
-
-		if stageIndex >= 0 && len(order) > stageIndex {
-			stageKey = order[stageIndex]
-		}
-	}
-
-	if stageKey == "" {
 		return state.Read(payload)
 	}
 
 	sample := datura.Peek[float64](state, "sample")
 
 	if sample <= 0 || math.IsNaN(sample) || math.IsInf(sample, 0) {
+		features.Restore(state)
+
 		return state.Read(payload)
 	}
 
@@ -71,31 +66,52 @@ func (logReturn *LogReturn) Read(payload []byte) (int, error) {
 		returnLag = 1
 	}
 
-	prices := datura.Peek[[]float64](logReturn.artifact, "prices")
-	_, longWindow := statistic.RollingWindows(prices, 0, longHint)
+	samples := logReturn.samples
+	samples = append(samples, sample)
 
+	_, longWindow := statistic.RollingWindows(samples, 0, longHint)
+
+	if longWindow > 0 && len(samples) > longWindow+returnLag {
+		samples = samples[len(samples)-longWindow-returnLag:]
+	}
+
+	logReturn.samples = samples
 	logReturnValue := 0.0
 
-	if longWindow > 0 && len(prices) > returnLag {
-		anchorPrice := prices[len(prices)-returnLag-1]
+	if longWindow > 0 && len(samples) > returnLag {
+		anchorSample := samples[len(samples)-returnLag-1]
 
-		if anchorPrice > 0 {
-			logReturnValue = math.Log(sample / anchorPrice)
-			returns := datura.Peek[[]float64](logReturn.artifact, "returns")
-			returns = append(returns, logReturnValue)
-
-			if longWindow > 0 && len(returns) > longWindow {
-				returns = returns[len(returns)-longWindow:]
-			}
-
-			logReturn.artifact.Merge("returns", returns)
+		if anchorSample > 0 {
+			logReturnValue = math.Log(sample / anchorSample)
 		}
 	}
 
 	state.Merge("sample", logReturnValue)
+	features.Restore(state)
 	state.Merge("root", "sample")
-	state.Merge("inputs", []string{"sample"})
+
 	return state.Read(payload)
+}
+
+func (logReturn *LogReturn) stageKey() string {
+	stageKey := datura.Peek[string](logReturn.artifact, "stage")
+
+	if stageKey != "" {
+		return stageKey
+	}
+
+	order := datura.Peek[[]string](logReturn.artifact, "order")
+	stageIndex := int(datura.Peek[float64](logReturn.artifact, "inputs", "precursor", "stageIndex"))
+
+	if stageIndex <= 0 {
+		stageIndex = int(datura.Peek[float64](logReturn.artifact, "stageIndex"))
+	}
+
+	if stageIndex >= 0 && len(order) > stageIndex {
+		return order[stageIndex]
+	}
+
+	return ""
 }
 
 func (logReturn *LogReturn) Close() error {

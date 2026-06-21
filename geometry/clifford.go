@@ -177,6 +177,7 @@ func (multivector Multivector) Compose(other Multivector) Multivector {
 
 /*
 Rotor builds a rotation motor from angle and axis bivector scalars.
+The constructor artifact holds config; Write buffers inbound wire on its payload.
 */
 type Rotor struct {
 	artifact    *datura.Artifact
@@ -185,28 +186,41 @@ type Rotor struct {
 }
 
 /*
-NewRotor returns a rotor stage for nomagique.Number pipelines.
+NewRotor returns a rotor stage wired from config attributes on the artifact.
 */
-func NewRotor() *Rotor {
+func NewRotor(artifact *datura.Artifact) *Rotor {
+	artifact.Inspect("geometry", "rotor", "NewRotor()")
+
 	return &Rotor{
-		artifact: datura.Acquire("rotor", datura.APPJSON),
+		artifact: artifact,
 	}
 }
 
-func (rotor *Rotor) Write(p []byte) (int, error) {
-	return rotor.artifact.Write(p)
+func (rotor *Rotor) Write(payload []byte) (int, error) {
+	rotor.artifact.WithPayload(payload)
+	return len(payload), nil
 }
 
-func (rotor *Rotor) Read(p []byte) (int, error) {
-	scalars := datura.Peek[[]float64](rotor.artifact, "batch")
+func (rotor *Rotor) Read(payload []byte) (int, error) {
+	state := datura.Acquire("rotor-state", datura.APPJSON)
+	state.Inspect("geometry", "rotor", "Read()", "p")
+
+	if _, err := state.Write(rotor.artifact.DecryptPayload()); err != nil {
+		return 0, err
+	}
+
+	scalars := datura.Peek[[]float64](state, "batch")
 
 	if len(scalars) >= 4 {
 		rotor.multivector.FromRotation(scalars[0], scalars[1], scalars[2], scalars[3])
 		rotor.output = rotor.multivector[MvScalar]
-		rotor.artifact.Poke(datura.Map[float64]{"value": rotor.output}, "output")
+		rotor.artifact.Poke(rotor.output, "output", "value")
+		state.MergeOutput("value", rotor.output)
+		state.Merge("root", "output")
+		state.Merge("inputs", []string{"value"})
 	}
 
-	return rotor.artifact.Read(p)
+	return state.Read(payload)
 }
 
 func (rotor *Rotor) Close() error {
@@ -223,13 +237,14 @@ func (rotor *Rotor) Multivector() Multivector {
 func (rotor *Rotor) Reset() error {
 	rotor.multivector = Multivector{}
 	rotor.output = 0
-	rotor.artifact.Poke(datura.Map[float64]{"value": 0}, "output")
+	rotor.artifact.WithAttributes(datura.Map[any]{})
 
 	return nil
 }
 
 /*
 Translator builds a translation motor from displacement scalars.
+The constructor artifact holds config; Write buffers inbound wire on its payload.
 */
 type Translator struct {
 	artifact    *datura.Artifact
@@ -238,28 +253,41 @@ type Translator struct {
 }
 
 /*
-NewTranslator returns a translation stage for nomagique.Number pipelines.
+NewTranslator returns a translation stage wired from config attributes on the artifact.
 */
-func NewTranslator() *Translator {
+func NewTranslator(artifact *datura.Artifact) *Translator {
+	artifact.Inspect("geometry", "translator", "NewTranslator()")
+
 	return &Translator{
-		artifact: datura.Acquire("translator", datura.APPJSON),
+		artifact: artifact,
 	}
 }
 
-func (translator *Translator) Write(p []byte) (int, error) {
-	return translator.artifact.Write(p)
+func (translator *Translator) Write(payload []byte) (int, error) {
+	translator.artifact.WithPayload(payload)
+	return len(payload), nil
 }
 
-func (translator *Translator) Read(p []byte) (int, error) {
-	scalars := datura.Peek[[]float64](translator.artifact, "batch")
+func (translator *Translator) Read(payload []byte) (int, error) {
+	state := datura.Acquire("translator-state", datura.APPJSON)
+	state.Inspect("geometry", "translator", "Read()", "p")
+
+	if _, err := state.Write(translator.artifact.DecryptPayload()); err != nil {
+		return 0, err
+	}
+
+	scalars := datura.Peek[[]float64](state, "batch")
 
 	if len(scalars) >= 3 {
 		translator.multivector.FromTranslation(scalars[0], scalars[1], scalars[2])
 		translator.output = translator.multivector[MvScalar]
-		translator.artifact.Poke(datura.Map[float64]{"value": translator.output}, "output")
+		translator.artifact.Poke(translator.output, "output", "value")
+		state.MergeOutput("value", translator.output)
+		state.Merge("root", "output")
+		state.Merge("inputs", []string{"value"})
 	}
 
-	return translator.artifact.Read(p)
+	return state.Read(payload)
 }
 
 func (translator *Translator) Close() error {
@@ -276,13 +304,14 @@ func (translator *Translator) Multivector() Multivector {
 func (translator *Translator) Reset() error {
 	translator.multivector = Multivector{}
 	translator.output = 0
-	translator.artifact.Poke(datura.Map[float64]{"value": 0}, "output")
+	translator.artifact.WithAttributes(datura.Map[any]{})
 
 	return nil
 }
 
 /*
 Sandwich applies a configured motor sandwich to an observed multivector.
+The constructor artifact holds config; Write buffers inbound wire on its payload.
 */
 type Sandwich struct {
 	artifact *datura.Artifact
@@ -291,21 +320,31 @@ type Sandwich struct {
 }
 
 /*
-NewSandwich returns a sandwich stage bound to motor.
+NewSandwich returns a sandwich stage bound to motor and wired from config on the artifact.
 */
-func NewSandwich(motor Multivector) *Sandwich {
+func NewSandwich(artifact *datura.Artifact, motor Multivector) *Sandwich {
+	artifact.Inspect("geometry", "sandwich", "NewSandwich()")
+
 	return &Sandwich{
-		artifact: datura.Acquire("sandwich", datura.APPJSON),
+		artifact: artifact,
 		motor:    motor,
 	}
 }
 
-func (sandwich *Sandwich) Write(p []byte) (int, error) {
-	return sandwich.artifact.Write(p)
+func (sandwich *Sandwich) Write(payload []byte) (int, error) {
+	sandwich.artifact.WithPayload(payload)
+	return len(payload), nil
 }
 
-func (sandwich *Sandwich) Read(p []byte) (int, error) {
-	scalars := datura.Peek[[]float64](sandwich.artifact, "batch")
+func (sandwich *Sandwich) Read(payload []byte) (int, error) {
+	state := datura.Acquire("sandwich-state", datura.APPJSON)
+	state.Inspect("geometry", "sandwich", "Read()", "p")
+
+	if _, err := state.Write(sandwich.artifact.DecryptPayload()); err != nil {
+		return 0, err
+	}
+
+	scalars := datura.Peek[[]float64](state, "batch")
 
 	if len(scalars) >= multivectorComponentCount {
 		var target Multivector
@@ -313,10 +352,13 @@ func (sandwich *Sandwich) Read(p []byte) (int, error) {
 		target.FromComponents(scalars)
 		result := sandwich.motor.Sandwich(target)
 		sandwich.output = result[MvScalar]
-		sandwich.artifact.Poke(datura.Map[float64]{"value": sandwich.output}, "output")
+		sandwich.artifact.Poke(sandwich.output, "output", "value")
+		state.MergeOutput("value", sandwich.output)
+		state.Merge("root", "output")
+		state.Merge("inputs", []string{"value"})
 	}
 
-	return sandwich.artifact.Read(p)
+	return state.Read(payload)
 }
 
 func (sandwich *Sandwich) Close() error {
@@ -325,7 +367,7 @@ func (sandwich *Sandwich) Close() error {
 
 func (sandwich *Sandwich) Reset() error {
 	sandwich.output = 0
-	sandwich.artifact.Poke(datura.Map[float64]{"value": 0}, "output")
+	sandwich.artifact.WithAttributes(datura.Map[any]{})
 
 	return nil
 }

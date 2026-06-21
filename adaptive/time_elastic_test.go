@@ -22,7 +22,7 @@ func TestTimeElasticRead(t *testing.T) {
 		io.Copy(timeElastic, input)
 
 		Convey("When Read is called", func() {
-			frame := make([]byte, 4096)
+			frame := make([]byte, 65536)
 			readCount, err := timeElastic.Read(frame)
 			So(err, ShouldEqual, io.EOF)
 

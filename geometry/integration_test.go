@@ -16,7 +16,7 @@ func TestIntegration(t *testing.T) {
 			artifact := datura.Acquire("test", datura.APPJSON).
 				Poke(2, "sample").
 				Poke(2, "paired")
-			pipeline := nomagique.Number(geometry.NewCoupling())
+			pipeline := nomagique.Number(geometry.NewCoupling(datura.Acquire("coupling-config", datura.APPJSON)))
 			err := transport.NewFlipFlop(artifact, pipeline)
 
 			So(err, ShouldBeNil)
@@ -25,7 +25,7 @@ func TestIntegration(t *testing.T) {
 
 		Convey("When Velocity streams consecutive means", func() {
 			artifact := datura.Acquire("test", datura.APPJSON)
-			pipeline := nomagique.Number(geometry.NewVelocity())
+			pipeline := nomagique.Number(geometry.NewVelocity(datura.Acquire("velocity-config", datura.APPJSON)))
 
 			artifact.Poke(1, "sample")
 			err := transport.NewFlipFlop(artifact, pipeline)
@@ -42,14 +42,17 @@ func TestIntegration(t *testing.T) {
 
 		Convey("When Rotor and Sandwich run in sequence", func() {
 			artifact := datura.Acquire("test", datura.APPJSON)
-			rotor := geometry.NewRotor()
+			rotor := geometry.NewRotor(datura.Acquire("rotor-config", datura.APPJSON))
 
 			artifact.Poke([]float64{0, 1, 0, 0}, "batch")
 			err := transport.NewFlipFlop(artifact, rotor)
 
 			So(err, ShouldBeNil)
 
-			sandwich := geometry.NewSandwich(rotor.Multivector())
+			sandwich := geometry.NewSandwich(
+				datura.Acquire("sandwich-config", datura.APPJSON),
+				rotor.Multivector(),
+			)
 			err = transport.NewFlipFlop(artifact, nomagique.Number(sandwich))
 
 			So(err, ShouldBeNil)

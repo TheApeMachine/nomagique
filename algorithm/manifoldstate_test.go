@@ -16,10 +16,7 @@ func TestManifoldstateEvaluateHerd(testingTB *testing.T) {
 
 		So(writeErr, ShouldBeNil)
 
-		frame := make([]byte, 4096)
-		_, _ = stage.Read(frame)
-		outbound := datura.Acquire("test-out", datura.APPJSON)
-		_, _ = outbound.Write(frame)
+		outbound := readOutbound(stage)
 
 		Convey("It should classify systemic herd", func() {
 			So(datura.Peek[float64](outbound, "output", "value"), ShouldBeGreaterThan, 0)
@@ -36,10 +33,7 @@ func TestManifoldstateEvaluateShock(testingTB *testing.T) {
 
 		So(writeErr, ShouldBeNil)
 
-		frame := make([]byte, 4096)
-		_, _ = stage.Read(frame)
-		outbound := datura.Acquire("test-out", datura.APPJSON)
-		_, _ = outbound.Write(frame)
+		outbound := readOutbound(stage)
 
 		Convey("It should classify liquidity shock", func() {
 			So(datura.Peek[float64](outbound, "output", "value"), ShouldBeGreaterThan, 0)
@@ -56,10 +50,7 @@ func TestManifoldstateEvaluateDrift(testingTB *testing.T) {
 
 		So(writeErr, ShouldBeNil)
 
-		frame := make([]byte, 4096)
-		_, _ = stage.Read(frame)
-		outbound := datura.Acquire("test-out", datura.APPJSON)
-		_, _ = outbound.Write(frame)
+		outbound := readOutbound(stage)
 
 		Convey("It should classify synchronized drift", func() {
 			So(datura.Peek[float64](outbound, "output", "value"), ShouldBeGreaterThan, 0)
@@ -76,10 +67,7 @@ func TestManifoldstateEvaluateNoise(testingTB *testing.T) {
 
 		So(writeErr, ShouldBeNil)
 
-		frame := make([]byte, 4096)
-		_, _ = stage.Read(frame)
-		outbound := datura.Acquire("test-out", datura.APPJSON)
-		_, _ = outbound.Write(frame)
+		outbound := readOutbound(stage)
 
 		Convey("It should classify stochastic noise", func() {
 			So(datura.Peek[float64](outbound, "output", "value"), ShouldBeGreaterThan, 0)
@@ -96,10 +84,7 @@ func TestManifoldstateEvaluateIneligible(testingTB *testing.T) {
 
 		So(writeErr, ShouldBeNil)
 
-		frame := make([]byte, 4096)
-		_, _ = stage.Read(frame)
-		outbound := datura.Acquire("test-out", datura.APPJSON)
-		_, _ = outbound.Write(frame)
+		outbound := readOutbound(stage)
 
 		Convey("It should reject the reading", func() {
 			So(datura.Peek[float64](outbound, "output", "value"), ShouldEqual, 0)

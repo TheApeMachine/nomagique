@@ -22,10 +22,7 @@ func TestBookQualityToxicBluff(testingTB *testing.T) {
 
 		So(writeErr, ShouldBeNil)
 
-		frame := make([]byte, 4096)
-		_, _ = bookQuality.Read(frame)
-		outbound := datura.Acquire("test-out", datura.APPJSON)
-		_, _ = outbound.Write(frame)
+		outbound := readOutbound(bookQuality)
 
 		Convey("It should classify toxic bluff", func() {
 			So(int(datura.Peek[float64](outbound, "output", "category")), ShouldEqual, 1)
@@ -47,10 +44,7 @@ func TestBookQualityLiquidityVacuum(testingTB *testing.T) {
 
 		So(writeErr, ShouldBeNil)
 
-		frame := make([]byte, 4096)
-		_, _ = bookQuality.Read(frame)
-		outbound := datura.Acquire("test-out", datura.APPJSON)
-		_, _ = outbound.Write(frame)
+		outbound := readOutbound(bookQuality)
 
 		Convey("It should classify liquidity vacuum", func() {
 			So(int(datura.Peek[float64](outbound, "output", "category")), ShouldEqual, 2)
@@ -72,10 +66,7 @@ func TestBookQualityHardSupport(testingTB *testing.T) {
 
 		So(writeErr, ShouldBeNil)
 
-		frame := make([]byte, 4096)
-		_, _ = bookQuality.Read(frame)
-		outbound := datura.Acquire("test-out", datura.APPJSON)
-		_, _ = outbound.Write(frame)
+		outbound := readOutbound(bookQuality)
 
 		Convey("It should classify hard support", func() {
 			So(int(datura.Peek[float64](outbound, "output", "category")), ShouldEqual, 3)

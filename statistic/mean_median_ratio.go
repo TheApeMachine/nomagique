@@ -10,78 +10,70 @@ import (
 
 /*
 MeanMedianRatio compares a short-window mean to a long-window median on streamed samples.
+The constructor artifact holds config; runtime history lives on the stage instance.
 */
 type MeanMedianRatio struct {
-	config *datura.Artifact
-	bytes  []byte
+	artifact        *datura.Artifact
+	histories       map[string][]float64
+	previousSamples map[string]float64
+	previousDeltas  map[string]float64
+	declines        map[string]float64
 }
 
 /*
-NewMeanMedianRatio returns a mean-over-median ratio stage configured on the artifact.
-The config artifact also retains the rolling history across frames; the inbound
-artifact (buffered on the config payload) is the per-frame compute state.
+NewMeanMedianRatio returns a mean-over-median ratio stage wired from config attributes on the artifact.
 */
-func NewMeanMedianRatio(config *datura.Artifact) *MeanMedianRatio {
-	config.Inspect("statistic", "mean-median-ratio", "NewMeanMedianRatio()")
+func NewMeanMedianRatio(artifact *datura.Artifact) *MeanMedianRatio {
+	artifact.Inspect("statistic", "mean-median-ratio", "NewMeanMedianRatio()")
 
 	return &MeanMedianRatio{
-		config: config,
+		artifact:        artifact,
+		histories:       map[string][]float64{},
+		previousSamples: map[string]float64{},
+		previousDeltas:  map[string]float64{},
+		declines:        map[string]float64{},
 	}
+}
+
+func (meanMedianRatio *MeanMedianRatio) Write(payload []byte) (int, error) {
+	meanMedianRatio.artifact.WithPayload(payload)
+	return len(payload), nil
 }
 
 func (meanMedianRatio *MeanMedianRatio) Read(payload []byte) (int, error) {
 	state := datura.Acquire("mean-median-ratio-state", datura.APPJSON)
 	state.Inspect("statistic", "mean-median-ratio", "Read()", "p")
 
-	if _, err := state.Write(meanMedianRatio.bytes); err != nil {
-		state.Release()
-
+	if _, err := state.Write(meanMedianRatio.artifact.DecryptPayload()); err != nil {
 		return 0, err
 	}
 
-	defer state.Release()
-
+	features := SnapshotFeatures(state)
 	stageKey := meanMedianRatio.stageKey()
 
 	if stageKey == "" {
 		return state.Read(payload)
 	}
 
-	rootKey := datura.Peek[string](state, "root")
-	channelKeys := datura.Peek[[]string](state, "inputs")
-	sourceKey := datura.Peek[string](meanMedianRatio.config, "inputs", stageKey, "input")
-
-	sample := meanMedianRatio.sample(state, rootKey, channelKeys, sourceKey)
+	sourceKey := datura.Peek[string](meanMedianRatio.artifact, "inputs", stageKey, "input")
+	sample := meanMedianRatio.sample(state, sourceKey)
 
 	if math.IsNaN(sample) || math.IsInf(sample, 0) {
 		return state.Read(payload)
 	}
 
-	if datura.Peek[float64](meanMedianRatio.config, "inputs", stageKey, "useDelta") > 0 {
-		sample = meanMedianRatio.deltaSample(sample)
+	sample = meanMedianRatio.applyTransform(stageKey, sample)
+	meanMedianRatio.trackDecline(stageKey, sample)
 
-		previousDelta := datura.Peek[float64](meanMedianRatio.config, "previousDelta")
-		liftDecline := 0.0
-
-		if previousDelta > 0 && sample < previousDelta {
-			liftDecline = (previousDelta - sample) / previousDelta
-		}
-
-		meanMedianRatio.config.Merge("previousDelta", sample)
-		meanMedianRatio.config.Merge("rvolDecline", liftDecline)
-	}
-
-	shortHint := int(datura.Peek[float64](meanMedianRatio.config, "inputs", stageKey, "shortWindow"))
-	longHint := int(datura.Peek[float64](meanMedianRatio.config, "inputs", stageKey, "longWindow"))
-	outputKey := datura.Peek[string](meanMedianRatio.config, "inputs", stageKey, "outputKey")
+	shortHint := int(datura.Peek[float64](meanMedianRatio.artifact, "inputs", stageKey, "shortWindow"))
+	longHint := int(datura.Peek[float64](meanMedianRatio.artifact, "inputs", stageKey, "longWindow"))
+	outputKey := datura.Peek[string](meanMedianRatio.artifact, "inputs", stageKey, "outputKey")
 
 	if outputKey == "" {
 		return state.Read(payload)
 	}
 
-	// Rolling history lives on the config artifact so it survives across frames;
-	// the per-frame state buffer is replaced every Write.
-	history := datura.Peek[[]float64](meanMedianRatio.config, "history")
+	history := meanMedianRatio.histories[stageKey]
 	history = append(history, sample)
 
 	shortWindow, longWindow := RollingWindows(history, shortHint, longHint)
@@ -90,7 +82,7 @@ func (meanMedianRatio *MeanMedianRatio) Read(payload []byte) (int, error) {
 		history = history[len(history)-longWindow:]
 	}
 
-	meanMedianRatio.config.Merge("history", history)
+	meanMedianRatio.histories[stageKey] = history
 
 	ratio := 0.0
 
@@ -101,13 +93,6 @@ func (meanMedianRatio *MeanMedianRatio) Read(payload []byte) (int, error) {
 		shortMean := stat.Mean(shortSlice, nil)
 		longMedian := MedianOf(history)
 
-		// A non-positive baseline makes the relative ratio undefined; dividing by
-		// an epsilon floor would explode RVOL to ~1e8+. Treat it as no measurable
-		// lift (neutral) rather than a spurious spike.
-		// Use the median as the baseline when it is a meaningful fraction of the
-		// short-window mean; otherwise fall back to the mean magnitude so a
-		// near-zero median cannot explode the ratio (epsilon division) nor zero
-		// it out. This keeps RVOL ~1 at baseline and proportional under spikes.
 		baseline := longMedian
 
 		if baseline <= 0 || baseline < math.Abs(shortMean)/1e6 {
@@ -119,36 +104,67 @@ func (meanMedianRatio *MeanMedianRatio) Read(payload []byte) (int, error) {
 		}
 	}
 
-	meanMedianRatio.config.Merge("previousRatio", ratio)
-
 	state.MergeOutput(outputKey, ratio)
+
+	declineOutput := datura.Peek[string](meanMedianRatio.artifact, "inputs", stageKey, "decline", "output")
+
+	if declineOutput != "" {
+		if decline, ok := meanMedianRatio.declines[declineOutput]; ok {
+			state.MergeOutput(declineOutput, decline)
+		}
+	}
+
+	features.Restore(state)
+	state.Merge("root", "output")
 
 	return state.Read(payload)
 }
 
-func (meanMedianRatio *MeanMedianRatio) Write(payload []byte) (int, error) {
-	meanMedianRatio.bytes = append(meanMedianRatio.bytes[:0], payload...)
-
-	return len(payload), nil
-}
-
 func (meanMedianRatio *MeanMedianRatio) stageKey() string {
-	order := datura.Peek[[]string](meanMedianRatio.config, "order")
+	order := datura.Peek[[]string](meanMedianRatio.artifact, "order")
+	stageIndex := int(datura.Peek[float64](meanMedianRatio.artifact, "inputs", "meanMedianRatio", "stageIndex"))
 
-	if len(order) == 0 {
-		return ""
+	if stageIndex < 0 {
+		stageIndex = int(datura.Peek[float64](meanMedianRatio.artifact, "stageIndex"))
 	}
 
-	return order[0]
+	if stageIndex < 0 {
+		stageIndex = 0
+	}
+
+	if len(order) > stageIndex {
+		return order[stageIndex]
+	}
+
+	return ""
 }
 
 func (meanMedianRatio *MeanMedianRatio) sample(
 	artifact *datura.Artifact,
-	rootKey string,
-	channelKeys []string,
 	sourceKey string,
 ) float64 {
-	if rootKey == "" || sourceKey == "" || len(channelKeys) == 0 {
+	if sourceKey == "" {
+		return 0
+	}
+
+	sample := FeatureColumn(artifact, sourceKey)
+
+	if sample != 0 || len(datura.Peek[[]float64](artifact, "features")) > 0 {
+		if math.IsNaN(sample) || math.IsInf(sample, 0) {
+			errnie.Error(errnie.Err(
+				errnie.Validation,
+				"mean-median-ratio: sample is NaN or Inf",
+				nil,
+			))
+		}
+
+		return sample
+	}
+
+	rootKey := datura.Peek[string](artifact, "root")
+	channelKeys := datura.Peek[[]string](artifact, "inputs")
+
+	if rootKey == "" || len(channelKeys) == 0 {
 		return 0
 	}
 
@@ -157,9 +173,7 @@ func (meanMedianRatio *MeanMedianRatio) sample(
 			continue
 		}
 
-		// Features flow as a positional []float64 under rootKey, aligned with the
-		// inputs order; resolve the channel name to its index to read the value.
-		sample := datura.Peek[float64](artifact, rootKey, index)
+		sample = datura.Peek[float64](artifact, rootKey, index)
 
 		if math.IsNaN(sample) || math.IsInf(sample, 0) {
 			errnie.Error(errnie.Err(
@@ -167,8 +181,6 @@ func (meanMedianRatio *MeanMedianRatio) sample(
 				"mean-median-ratio: sample is NaN or Inf",
 				nil,
 			))
-
-			return sample
 		}
 
 		return sample
@@ -177,21 +189,57 @@ func (meanMedianRatio *MeanMedianRatio) sample(
 	return 0
 }
 
-func (meanMedianRatio *MeanMedianRatio) deltaSample(sample float64) float64 {
-	previous := datura.Peek[float64](meanMedianRatio.config, "previousSample")
-	delta := sample
+func (meanMedianRatio *MeanMedianRatio) applyTransform(stageKey string, sample float64) float64 {
+	transform := datura.Peek[string](meanMedianRatio.artifact, "inputs", stageKey, "transform")
 
-	if previous > 0 {
-		delta = sample - previous
-
-		if delta < 0 {
-			delta = 0
-		}
+	if transform == "" {
+		return sample
 	}
 
-	meanMedianRatio.config.Merge("previousSample", sample)
+	previousSample := meanMedianRatio.previousSamples[stageKey]
 
-	return delta
+	meanMedianRatio.previousSamples[stageKey] = sample
+
+	switch transform {
+	case "delta":
+		if previousSample <= 0 {
+			return sample
+		}
+
+		return sample - previousSample
+	case "deltaPositive":
+		if previousSample <= 0 {
+			return sample
+		}
+
+		delta := sample - previousSample
+
+		if delta < 0 {
+			return 0
+		}
+
+		return delta
+	default:
+		return sample
+	}
+}
+
+func (meanMedianRatio *MeanMedianRatio) trackDecline(stageKey string, sample float64) {
+	declineOutput := datura.Peek[string](meanMedianRatio.artifact, "inputs", stageKey, "decline", "output")
+
+	if declineOutput == "" {
+		return
+	}
+
+	previousDelta := meanMedianRatio.previousDeltas[stageKey]
+	decline := 0.0
+
+	if previousDelta > 0 && sample < previousDelta {
+		decline = (previousDelta - sample) / previousDelta
+	}
+
+	meanMedianRatio.previousDeltas[stageKey] = sample
+	meanMedianRatio.declines[declineOutput] = decline
 }
 
 func (meanMedianRatio *MeanMedianRatio) Close() error {

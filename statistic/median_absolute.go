@@ -2,36 +2,46 @@ package statistic
 
 import (
 	"math"
-	"sort"
 
 	"github.com/theapemachine/datura"
 )
 
 /*
 MedianAbsolute measures typical magnitude while ignoring sign.
+The constructor artifact holds config; Write buffers inbound wire on its payload.
 */
 type MedianAbsolute struct {
 	artifact *datura.Artifact
 }
 
 /*
-NewMedianAbsolute creates a median-absolute stage.
+NewMedianAbsolute returns a median-absolute stage wired from config attributes on the artifact.
 */
-func NewMedianAbsolute() *MedianAbsolute {
+func NewMedianAbsolute(artifact *datura.Artifact) *MedianAbsolute {
+	artifact.Inspect("statistic", "median-absolute", "NewMedianAbsolute()")
+
 	return &MedianAbsolute{
-		artifact: datura.Acquire("median_absolute", datura.APPJSON),
+		artifact: artifact,
 	}
 }
 
-func (medianAbsolute *MedianAbsolute) Write(p []byte) (int, error) {
-	return medianAbsolute.artifact.Write(p)
+func (medianAbsolute *MedianAbsolute) Write(payload []byte) (int, error) {
+	medianAbsolute.artifact.WithPayload(payload)
+	return len(payload), nil
 }
 
-func (medianAbsolute *MedianAbsolute) Read(p []byte) (int, error) {
-	sample := datura.Peek[float64](medianAbsolute.artifact, "sample")
+func (medianAbsolute *MedianAbsolute) Read(payload []byte) (int, error) {
+	state := datura.Acquire("median-absolute-state", datura.APPJSON)
+	state.Inspect("statistic", "median-absolute", "Read()", "p")
+
+	if _, err := state.Write(medianAbsolute.artifact.DecryptPayload()); err != nil {
+		return 0, err
+	}
+
+	sample := datura.Peek[float64](state, "sample")
 
 	if math.IsNaN(sample) || math.IsInf(sample, 0) {
-		return medianAbsolute.artifact.Read(p)
+		return state.Read(payload)
 	}
 
 	history := datura.Peek[[]float64](medianAbsolute.artifact, "history")
@@ -39,9 +49,10 @@ func (medianAbsolute *MedianAbsolute) Read(p []byte) (int, error) {
 	medianAbsolute.artifact.Poke(history, "history")
 
 	value := MedianAbsoluteOf(history)
-	medianAbsolute.artifact.Poke(datura.Map[float64]{"value": value}, "output")
-
-	return medianAbsolute.artifact.Read(p)
+	state.MergeOutput("value", value)
+	state.Merge("root", "output")
+	state.Merge("inputs", []string{"value"})
+	return state.Read(payload)
 }
 
 func (medianAbsolute *MedianAbsolute) Close() error {
@@ -63,18 +74,4 @@ func MedianAbsoluteOf(values []float64) float64 {
 	}
 
 	return MedianOf(absoluteValues)
-}
-
-/*
-SpanOf returns the range between smallest and largest sample values.
-*/
-func SpanOf(values []float64) float64 {
-	if len(values) == 0 {
-		return 0
-	}
-
-	sorted := append([]float64(nil), values...)
-	sort.Float64s(sorted)
-
-	return sorted[len(sorted)-1] - sorted[0]
 }

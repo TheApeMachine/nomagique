@@ -4,29 +4,30 @@ import (
 	"math"
 
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/nomagique/statistic"
 )
 
 /*
 GeometricMean combines two configured output fields with a geometric mean.
+The constructor artifact holds config; Write buffers inbound wire bytes.
 */
 type GeometricMean struct {
-	config *datura.Artifact
-	bytes  []byte
+	artifact *datura.Artifact
 }
 
 /*
 NewGeometricMean returns a geometric-mean stage configured on the artifact.
 */
-func NewGeometricMean(config *datura.Artifact) *GeometricMean {
-	config.Inspect("geometry", "geometric-mean", "NewGeometricMean()")
+func NewGeometricMean(artifact *datura.Artifact) *GeometricMean {
+	artifact.Inspect("geometry", "geometric-mean", "NewGeometricMean()")
 
 	return &GeometricMean{
-		config: config,
+		artifact: artifact,
 	}
 }
 
 func (geometricMean *GeometricMean) Write(p []byte) (int, error) {
-	geometricMean.bytes = append(geometricMean.bytes[:0], p...)
+	geometricMean.artifact.WithPayload(p)
 
 	return len(p), nil
 }
@@ -35,7 +36,7 @@ func (geometricMean *GeometricMean) Read(p []byte) (int, error) {
 	state := datura.Acquire("geometric-mean-state", datura.APPJSON)
 	state.Inspect("geometry", "geometric-mean", "Read()", "p")
 
-	if _, err := state.Write(geometricMean.bytes); err != nil {
+	if _, err := state.Write(geometricMean.artifact.DecryptPayload()); err != nil {
 		state.Release()
 
 		return 0, err
@@ -43,9 +44,10 @@ func (geometricMean *GeometricMean) Read(p []byte) (int, error) {
 
 	defer state.Release()
 
-	leftKey := datura.Peek[string](geometricMean.config, "inputs", "joint", "leftKey")
-	rightKey := datura.Peek[string](geometricMean.config, "inputs", "joint", "rightKey")
-	destinationKey := datura.Peek[string](geometricMean.config, "inputs", "joint", "destinationKey")
+	features := statistic.SnapshotFeatures(state)
+	leftKey := datura.Peek[string](geometricMean.artifact, "inputs", "joint", "leftKey")
+	rightKey := datura.Peek[string](geometricMean.artifact, "inputs", "joint", "rightKey")
+	destinationKey := datura.Peek[string](geometricMean.artifact, "inputs", "joint", "destinationKey")
 
 	if leftKey == "" || rightKey == "" || destinationKey == "" {
 		return state.Read(p)
@@ -60,6 +62,9 @@ func (geometricMean *GeometricMean) Read(p []byte) (int, error) {
 	}
 
 	state.MergeOutput(destinationKey, mean)
+	features.Restore(state)
+	state.Merge("root", "output")
+	state.Merge("inputs", []string{destinationKey})
 
 	return state.Read(p)
 }

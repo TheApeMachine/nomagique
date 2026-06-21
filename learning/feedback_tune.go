@@ -72,18 +72,13 @@ func (tuner *FeedbackTuner) Apply(
 
 	learningRate := scale / float64(samples)
 	adjustment := bias * learningRate
-	orgShare := 1.0 / 3.0
-	exShare := 0.5
 
-	weights.WIgnVol += adjustment
-	weights.WIgnPrec += adjustment
-	weights.WCoilComp += adjustment
-	weights.WCoilPrec += adjustment
-	weights.WOrgPrec += adjustment
-	weights.WOrgComp += adjustment * orgShare
-	weights.WOrgVol += adjustment * orgShare
-	weights.WExVol -= adjustment * exShare
-	weights.WExPrec -= adjustment * exShare
+	for outputKey, featureWeights := range weights.termWeights {
+		for featureKey, weight := range featureWeights {
+			weights.termWeights[outputKey][featureKey] = weight + adjustment
+		}
+	}
+
 	weights.clamp()
 
 	return true, nil

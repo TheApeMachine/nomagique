@@ -38,32 +38,58 @@ lagCorr, contempOK, contempCorr, sampleCount.
 */
 type Lag struct {
 	artifact *datura.Artifact
+	bytes    []byte
 	outcome  LagOutcome
 }
 
 /*
-NewLag returns a lead-lag classification stage.
+NewLag returns a lead-lag classification stage wired from config on the artifact.
 */
-func NewLag() *Lag {
+func NewLag(artifact *datura.Artifact) *Lag {
+	artifact.Inspect("algorithm", "lag", "NewLag()")
+
 	return &Lag{
-		artifact: datura.Acquire("lag", datura.Artifact_Type_json),
+		artifact: artifact,
 	}
 }
 
-func (lag *Lag) Write(p []byte) (int, error) {
-	return lag.artifact.Write(p)
+func (lag *Lag) Write(payload []byte) (int, error) {
+	lag.bytes = append(lag.bytes[:0], payload...)
+
+	return len(payload), nil
 }
 
-func (lag *Lag) Read(p []byte) (int, error) {
-	rehydrateArtifact(&lag.artifact, "lag", datura.Artifact_Type_json)
+func (lag *Lag) Read(payload []byte) (int, error) {
+	state := datura.Acquire("lag-state", datura.APPJSON)
+	state.Inspect("algorithm", "lag", "Read()", "p")
 
-	if lag.artifact.HasEncryptedPayload() {
-		payload := lag.artifact.DecryptPayload()
-		lag.outcome = lag.evaluate(payloadSamples(payload))
-		lag.publishReadings()
+	if _, err := state.Write(lag.bytes); err != nil {
+		return 0, err
 	}
 
-	return lag.artifact.Read(p)
+	batch := payloadSamples(state.DecryptPayload())
+
+	if len(batch) < lagPayloadFields {
+		features := datura.Peek[[]float64](state, "features")
+
+		if len(features) >= lagPayloadFields {
+			batch = features
+		}
+	}
+
+	if len(batch) >= lagPayloadFields {
+		lag.outcome = lag.evaluate(batch)
+	}
+
+	outState := datura.Acquire("lag-out", datura.APPJSON)
+	outState.MergeOutput("inefficient", lag.outcome.InefficientScore)
+	outState.MergeOutput("sync", lag.outcome.SyncScore)
+	outState.MergeOutput("decoupled", lag.outcome.DecoupledScore)
+	outState.MergeOutput("stall", lag.outcome.StallScore)
+	outState.Merge("root", "output")
+	outState.Merge("inputs", []string{"inefficient", "sync", "decoupled", "stall"})
+
+	return outState.Read(payload)
 }
 
 func (lag *Lag) Close() error {
@@ -256,18 +282,6 @@ func minLagFraction() float64 {
 	return math.Ceil(float64(maxLagBars)/2) / float64(maxLagBars)
 }
 
-func (lag *Lag) publishReadings() {
-	lag.artifact = stageWritableArtifact(
-		lag.artifact,
-		"lag",
-		datura.Artifact_Type_json,
-	)
-	lag.artifact.MergeOutput("inefficient", lag.outcome.InefficientScore)
-	lag.artifact.MergeOutput("sync", lag.outcome.SyncScore)
-	lag.artifact.MergeOutput("decoupled", lag.outcome.DecoupledScore)
-	lag.artifact.MergeOutput("stall", lag.outcome.StallScore)
-}
-
 func (lag *Lag) InefficientReading() *LagReading {
 	return newLagReading(lag, func(outcome LagOutcome) float64 {
 		return outcome.InefficientScore
@@ -314,16 +328,19 @@ func (reading *LagReading) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-func (reading *LagReading) Read(p []byte) (int, error) {
+func (reading *LagReading) Read(payload []byte) (int, error) {
+	state := datura.Acquire("lag-reading-state", datura.APPJSON)
 	value := 0.0
 
 	if reading.lag != nil && reading.project != nil {
 		value = reading.project(reading.lag.outcome)
 	}
 
-	reading.artifact.WithPayload(encodePayload(value))
+	state.MergeOutput("value", value)
+	state.Merge("root", "output")
+	state.Merge("inputs", []string{"value"})
 
-	return reading.artifact.Read(p)
+	return state.Read(payload)
 }
 
 func (reading *LagReading) Close() error {

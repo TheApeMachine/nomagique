@@ -6,6 +6,7 @@ import (
 
 /*
 Forecaster learns a multiplicative scale from settled predicted-vs-actual outcomes.
+The constructor artifact holds config; Write buffers inbound wire on its payload.
 */
 type Forecaster struct {
 	artifact *datura.Artifact
@@ -13,40 +14,69 @@ type Forecaster struct {
 }
 
 /*
-Forecast returns a scale-learning dynamic ready from its first observation.
+Forecast returns a scale-learning stage wired from config attributes on the artifact.
 */
-func Forecast() *Forecaster {
+func Forecast(artifact *datura.Artifact) *Forecaster {
+	artifact.Inspect("learning", "forecast", "Forecast()")
+
 	return &Forecaster{
-		artifact: datura.Acquire("forecast", datura.APPJSON),
+		artifact: artifact,
 	}
 }
 
-func (forecaster *Forecaster) Write(p []byte) (int, error) {
-	return forecaster.artifact.Write(p)
+func (forecaster *Forecaster) Write(payload []byte) (int, error) {
+	forecaster.artifact.WithPayload(payload)
+	return len(payload), nil
 }
 
-func (forecaster *Forecaster) Read(p []byte) (int, error) {
-	predicted := datura.Peek[float64](forecaster.artifact, "sample")
-	actual := datura.Peek[float64](forecaster.artifact, "paired")
+func (forecaster *Forecaster) Read(payload []byte) (int, error) {
+	state := datura.Acquire("forecast-state", datura.APPJSON)
+	state.Inspect("learning", "forecast", "Read()", "p")
+
+	if _, err := state.Write(forecaster.artifact.DecryptPayload()); err != nil {
+		return 0, err
+	}
+
+	predicted := datura.Peek[float64](state, "sample")
+	actual := datura.Peek[float64](state, "paired")
 
 	if predicted == 0 && actual == 0 {
-		return forecaster.artifact.Read(p)
+		features := datura.Peek[[]float64](state, "features")
+
+		if len(features) >= 2 {
+			predicted = features[0]
+			actual = features[1]
+		}
+	}
+
+	if predicted == 0 && actual == 0 {
+		value := datura.Peek[float64](forecaster.artifact, "output", "value")
+
+		if forecaster.state.Ready {
+			state.MergeOutput("value", value)
+			state.Merge("root", "output")
+			state.Merge("inputs", []string{"value"})
+		}
+
+		return state.Read(payload)
 	}
 
 	if actual == 0 {
-		return forecaster.artifact.Read(p)
+		return state.Read(payload)
 	}
 
 	parsedPredicted, parsedActual, err := parsePredictedActual(predicted, []float64{actual})
 
 	if err != nil {
-		return forecaster.artifact.Read(p)
+		return state.Read(payload)
 	}
 
 	derived := ObserveForecast(&forecaster.state, parsedPredicted, parsedActual)
-	forecaster.artifact.Poke(datura.Map[float64]{"value": derived}, "output")
-
-	return forecaster.artifact.Read(p)
+	forecaster.artifact.Poke(derived, "output", "value")
+	state.MergeOutput("value", derived)
+	state.Merge("root", "output")
+	state.Merge("inputs", []string{"value"})
+	return state.Read(payload)
 }
 
 func (forecaster *Forecaster) Close() error {
@@ -74,7 +104,7 @@ Reset clears derived state.
 */
 func (forecaster *Forecaster) Reset() error {
 	forecaster.state.Reset()
-	forecaster.artifact.Poke(datura.Map[float64]{"value": 0}, "output")
+	forecaster.artifact.WithAttributes(datura.Map[any]{})
 
 	return nil
 }

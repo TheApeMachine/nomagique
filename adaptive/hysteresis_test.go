@@ -20,9 +20,8 @@ func TestHysteresis_Read(testingTB *testing.T) {
 				err := transport.NewFlipFlop(artifact, stage)
 
 				So(err, ShouldBeNil)
+				So(datura.Peek[float64](artifact, "output", "value"), ShouldEqual, 0)
 			}
-
-			So(datura.Peek[float64](stage.artifact, "output", "value"), ShouldEqual, 0)
 
 			artifact := datura.Acquire("test", datura.APPJSON).
 				Poke(1.0, "sample").
@@ -30,7 +29,7 @@ func TestHysteresis_Read(testingTB *testing.T) {
 			err := transport.NewFlipFlop(artifact, stage)
 
 			So(err, ShouldBeNil)
-			So(datura.Peek[float64](stage.artifact, "output", "value"), ShouldEqual, 1)
+			So(datura.Peek[float64](artifact, "output", "value"), ShouldEqual, 1)
 		})
 	})
 }

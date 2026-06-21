@@ -10,7 +10,7 @@ import (
 
 func TestMinSeries(t *testing.T) {
 	Convey("Given a Min stage", t, func() {
-		minStage := NewMin()
+		minStage := NewMin(datura.Acquire("min-config", datura.APPJSON))
 		artifact := datura.Acquire("test", datura.APPJSON)
 
 		for _, sample := range []float64{3, 1, 2} {

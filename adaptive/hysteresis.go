@@ -26,14 +26,7 @@ func NewHysteresis(artifact *datura.Artifact) *Hysteresis {
 }
 
 func (hysteresis *Hysteresis) Write(payload []byte) (int, error) {
-	output := datura.Peek[datura.Map[float64]](hysteresis.artifact, "output")
-
 	hysteresis.artifact.WithPayload(payload)
-
-	if output != nil {
-		hysteresis.artifact.Merge("output", output)
-	}
-
 	return len(payload), nil
 }
 
@@ -73,36 +66,32 @@ func (hysteresis *Hysteresis) Read(payload []byte) (int, error) {
 		}
 	}
 
-	output := datura.Peek[datura.Map[float64]](hysteresis.artifact, "output")
-
-	if output == nil {
-		output = datura.Map[float64]{
-			"value":       0,
-			"pendingHigh": 0,
-			"pendingLow":  0,
-		}
-	}
+	value := datura.Peek[float64](hysteresis.artifact, "output", "value")
+	pendingHigh := datura.Peek[float64](hysteresis.artifact, "output", "pendingHigh")
+	pendingLow := datura.Peek[float64](hysteresis.artifact, "output", "pendingLow")
 
 	if sample != 0 {
-		output["pendingHigh"]++
-		output["pendingLow"] = 0
+		pendingHigh++
+		pendingLow = 0
 
-		if output["pendingHigh"] >= float64(window) {
-			output["value"] = 1
+		if pendingHigh >= float64(window) {
+			value = 1
 		}
 	}
 
 	if sample == 0 {
-		output["pendingLow"]++
-		output["pendingHigh"] = 0
+		pendingLow++
+		pendingHigh = 0
 
-		if output["pendingLow"] >= float64(window) {
-			output["value"] = 0
+		if pendingLow >= float64(window) {
+			value = 0
 		}
 	}
 
-	hysteresis.artifact.Merge("output", output)
-	state.MergeOutput("value", output["value"])
+	hysteresis.artifact.Poke(value, "output", "value")
+	hysteresis.artifact.Poke(pendingHigh, "output", "pendingHigh")
+	hysteresis.artifact.Poke(pendingLow, "output", "pendingLow")
+	state.MergeOutput("value", value)
 	state.Merge("root", "output")
 	state.Merge("inputs", []string{"value"})
 	return state.Read(payload)

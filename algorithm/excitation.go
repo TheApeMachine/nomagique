@@ -45,43 +45,66 @@ Per-scope fit state is keyed from the artifact scope attribute.
 */
 type Excitation struct {
 	artifact *datura.Artifact
+	bytes    []byte
 	symbols  sync.Map
 	outcome  ExcitationOutcome
 }
 
 /*
-NewExcitation returns a Hawkes excitation stage for io.ReadWriter pipelines.
+NewExcitation returns a Hawkes excitation stage wired from config on the artifact.
 */
-func NewExcitation() *Excitation {
+func NewExcitation(artifact *datura.Artifact) *Excitation {
+	artifact.Inspect("algorithm", "excitation", "NewExcitation()")
+
 	return &Excitation{
-		artifact: datura.Acquire("excitation", datura.Artifact_Type_json),
+		artifact: artifact,
 	}
 }
 
-func (excitation *Excitation) Write(p []byte) (int, error) {
-	return excitation.artifact.Write(p)
+func (excitation *Excitation) Write(payload []byte) (int, error) {
+	excitation.bytes = append(excitation.bytes[:0], payload...)
+
+	return len(payload), nil
 }
 
-func (excitation *Excitation) Read(p []byte) (int, error) {
-	scope, _ := excitation.artifact.Scope()
+func (excitation *Excitation) Read(payload []byte) (int, error) {
+	state := datura.Acquire("excitation-state", datura.APPJSON)
+	state.Inspect("algorithm", "excitation", "Read()", "p")
 
-	rehydrateArtifact(&excitation.artifact, "excitation", datura.Artifact_Type_json)
+	if _, err := state.Write(excitation.bytes); err != nil {
+		return 0, err
+	}
+
+	scope, _ := state.Scope()
 
 	if scope == "" {
-		scope, _ = excitation.artifact.Scope()
+		scope = datura.Peek[string](state, "scope")
 	}
 
-	if scope == "" {
-		scope = datura.Peek[string](excitation.artifact, "scope")
+	batch := payloadSamples(state.DecryptPayload())
+
+	if len(batch) == 0 {
+		batch = datura.Peek[[]float64](state, "features")
 	}
 
-	if excitation.artifact.HasEncryptedPayload() {
-		payload := excitation.artifact.DecryptPayload()
-		excitation.outcome = excitation.evaluate(scope, payloadSamples(payload))
-		excitation.publishReadings()
+	if scope != "" && len(batch) > 0 {
+		excitation.outcome = excitation.evaluate(scope, batch)
 	}
 
-	return excitation.artifact.Read(p)
+	outState := datura.Acquire("excitation-out", datura.APPJSON)
+	outState.MergeOutput("frenzy", excitation.outcome.Frenzy)
+	outState.MergeOutput("saturation", excitation.outcome.Saturation)
+	outState.MergeOutput("organic", excitation.outcome.Organic)
+	outState.MergeOutput("exhaustion", excitation.outcome.Exhaustion)
+
+	if excitation.outcome.Eligible {
+		outState.Merge("excitation.eligible", 1.0)
+	}
+
+	outState.Merge("root", "output")
+	outState.Merge("inputs", []string{"frenzy", "saturation", "organic", "exhaustion"})
+
+	return outState.Read(payload)
 }
 
 func (excitation *Excitation) Close() error {
@@ -116,22 +139,6 @@ func (excitation *Excitation) evaluate(scope string, batch []float64) Excitation
 	}
 
 	return excitationOutcomeFromReading(reading)
-}
-
-func (excitation *Excitation) publishReadings() {
-	excitation.artifact = stageWritableArtifact(
-		excitation.artifact,
-		"excitation",
-		datura.Artifact_Type_json,
-	)
-	excitation.artifact.MergeOutput("frenzy", excitation.outcome.Frenzy)
-	excitation.artifact.MergeOutput("saturation", excitation.outcome.Saturation)
-	excitation.artifact.MergeOutput("organic", excitation.outcome.Organic)
-	excitation.artifact.MergeOutput("exhaustion", excitation.outcome.Exhaustion)
-
-	if excitation.outcome.Eligible {
-		excitation.artifact.Merge("excitation.eligible", 1.0)
-	}
 }
 
 func (excitation *Excitation) loadSymbol(scope string) *excitationSymbol {
@@ -192,16 +199,19 @@ func (reading *ExcitationReading) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-func (reading *ExcitationReading) Read(p []byte) (int, error) {
+func (reading *ExcitationReading) Read(payload []byte) (int, error) {
+	state := datura.Acquire("excitation-reading-state", datura.APPJSON)
 	value := 0.0
 
 	if reading.excitation != nil && reading.project != nil {
 		value = reading.project(reading.excitation.outcome)
 	}
 
-	reading.artifact.WithPayload(encodePayload(value))
+	state.MergeOutput("value", value)
+	state.Merge("root", "output")
+	state.Merge("inputs", []string{"value"})
 
-	return reading.artifact.Read(p)
+	return state.Read(payload)
 }
 
 func (reading *ExcitationReading) Close() error {

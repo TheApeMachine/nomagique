@@ -9,25 +9,44 @@ import (
 
 /*
 Median computes the sample median over retained history or panel peers.
+The constructor artifact holds config; Write buffers inbound wire on its payload.
 */
 type Median struct {
 	artifact *datura.Artifact
 }
 
 /*
-NewMedian creates a median stage.
+NewMedian returns a median stage wired from config attributes on the artifact.
 */
-func NewMedian() *Median {
+func NewMedian(artifact *datura.Artifact) *Median {
+	artifact.Inspect("statistic", "median", "NewMedian()")
+
 	return &Median{
-		artifact: datura.Acquire("median", datura.APPJSON),
+		artifact: artifact,
 	}
 }
 
-func (median *Median) Read(p []byte) (int, error) {
-	peers := datura.Peek[map[string]float64](median.artifact, "peers")
+func (median *Median) Write(payload []byte) (int, error) {
+	median.artifact.WithPayload(payload)
+	return len(payload), nil
+}
+
+func (median *Median) Read(payload []byte) (int, error) {
+	state := datura.Acquire("median-state", datura.APPJSON)
+	state.Inspect("statistic", "median", "Read()", "p")
+
+	if _, err := state.Write(median.artifact.DecryptPayload()); err != nil {
+		return 0, err
+	}
+
+	peers := panelPeers(state)
+
+	if len(peers) == 0 {
+		peers = panelPeers(median.artifact)
+	}
 
 	if len(peers) > 0 {
-		member := datura.Peek[float64](median.artifact, "member")
+		member := datura.Peek[float64](state, "member")
 		peerSamples := make([]float64, 0, len(peers))
 
 		for memberLabel, peerSample := range peers {
@@ -44,37 +63,37 @@ func (median *Median) Read(p []byte) (int, error) {
 			value = MedianOf(peerSamples)
 		}
 
-		median.artifact.Poke(datura.Map[float64]{"value": value}, "output")
-
-		return median.artifact.Read(p)
+		state.MergeOutput("value", value)
+		state.Merge("root", "output")
+		state.Merge("inputs", []string{"value"})
+		return state.Read(payload)
 	}
 
-	sample := datura.Peek[float64](median.artifact, "sample")
+	sample := datura.Peek[float64](state, "sample")
 
 	if datura.Peek[float64](median.artifact, "non_finite") != 0 {
-		median.artifact.Poke(datura.Map[float64]{"value": math.NaN()}, "output")
-
-		return median.artifact.Read(p)
+		state.MergeOutput("value", 0)
+		state.Merge("root", "output")
+		state.Merge("inputs", []string{"value"})
+		return state.Read(payload)
 	}
 
 	if math.IsNaN(sample) || math.IsInf(sample, 0) {
 		median.artifact.Poke(float64(1), "non_finite")
-		median.artifact.Poke(datura.Map[float64]{"value": sample}, "output")
-
-		return median.artifact.Read(p)
+		state.MergeOutput("value", 0)
+		state.Merge("root", "output")
+		state.Merge("inputs", []string{"value"})
+		return state.Read(payload)
 	}
 
 	history := datura.Peek[[]float64](median.artifact, "history")
 	history = append(history, sample)
 	median.artifact.Poke(history, "history")
 
-	median.artifact.Poke(datura.Map[float64]{"value": MedianOf(history)}, "output")
-
-	return median.artifact.Read(p)
-}
-
-func (median *Median) Write(p []byte) (int, error) {
-	return median.artifact.Write(p)
+	state.MergeOutput("value", MedianOf(history))
+	state.Merge("root", "output")
+	state.Merge("inputs", []string{"value"})
+	return state.Read(payload)
 }
 
 func (median *Median) Close() error {

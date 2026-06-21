@@ -1,6 +1,7 @@
 package hawkes
 
 import (
+	"encoding/binary"
 	"math"
 	"time"
 
@@ -139,14 +140,14 @@ func (fit *Fit) Close() error {
 }
 
 func momentSamples(artifact *datura.Artifact) (xValues, yValues, weights []float64, ok bool) {
-	batch := datura.Peek[[]float64](artifact, "batch")
+	batch := fitFloatBatch(artifact)
 
 	if len(batch) == 0 {
-		batch = equation.Features(artifact)
+		batch = datura.Peek[[]float64](artifact, "batch")
 	}
 
 	if len(batch) == 0 {
-		batch = fitFloatBatch(artifact)
+		batch = equation.Features(artifact)
 	}
 
 	if len(batch) < 4 || len(batch)%2 != 0 {
@@ -174,14 +175,14 @@ func momentSamples(artifact *datura.Artifact) (xValues, yValues, weights []float
 func fitTimes(artifact *datura.Artifact) (xTimes, yTimes []float64, ok bool) {
 	xCount := int(datura.Peek[float64](artifact, "config", "xCount"))
 	yCount := int(datura.Peek[float64](artifact, "config", "yCount"))
-	batch := datura.Peek[[]float64](artifact, "batch")
+	batch := fitFloatBatch(artifact)
 
 	if len(batch) == 0 {
-		batch = equation.Features(artifact)
+		batch = datura.Peek[[]float64](artifact, "batch")
 	}
 
 	if len(batch) == 0 {
-		batch = fitFloatBatch(artifact)
+		batch = equation.Features(artifact)
 	}
 
 	if xCount <= 0 || yCount <= 0 || len(batch) < xCount+yCount {
@@ -215,16 +216,7 @@ func fitFloatBatch(artifact *datura.Artifact) []float64 {
 
 	for index := range samples {
 		offset := index * 8
-		value := math.Float64frombits(
-			uint64(payload[offset])<<56 |
-				uint64(payload[offset+1])<<48 |
-				uint64(payload[offset+2])<<40 |
-				uint64(payload[offset+3])<<32 |
-				uint64(payload[offset+4])<<24 |
-				uint64(payload[offset+5])<<16 |
-				uint64(payload[offset+6])<<8 |
-				uint64(payload[offset+7]),
-		)
+		value := math.Float64frombits(binary.BigEndian.Uint64(payload[offset : offset+8]))
 
 		if math.IsNaN(value) || math.IsInf(value, 0) {
 			return nil

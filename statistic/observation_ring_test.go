@@ -10,7 +10,8 @@ import (
 
 func TestObservationRingObserve(t *testing.T) {
 	Convey("Given an observation ring", t, func() {
-		ring := NewObservationRing()
+		ringConfig := datura.Acquire("observation-ring-config", datura.APPJSON)
+		ring := NewObservationRing(ringConfig)
 		artifact := datura.Acquire("test", datura.APPJSON)
 
 		for _, sample := range []float64{0.7, 0.8, 0.9, 0.95} {
@@ -27,7 +28,7 @@ func TestObservationRingObserve(t *testing.T) {
 		})
 
 		Convey("It should retain observation history", func() {
-			history := datura.Peek[[]float64](artifact, "history")
+			history := datura.Peek[[]float64](ringConfig, "history")
 
 			So(len(history), ShouldEqual, 4)
 			So(history[len(history)-1], ShouldEqual, 0.95)
@@ -35,7 +36,8 @@ func TestObservationRingObserve(t *testing.T) {
 	})
 
 	Convey("Given a long run of similar samples", t, func() {
-		ring := NewObservationRing()
+		ringConfig := datura.Acquire("observation-ring-config-long", datura.APPJSON)
+		ring := NewObservationRing(ringConfig)
 		artifact := datura.Acquire("test", datura.APPJSON)
 
 		for index := range 100 {
@@ -46,7 +48,7 @@ func TestObservationRingObserve(t *testing.T) {
 			So(err, ShouldBeNil)
 		}
 
-		history := datura.Peek[[]float64](artifact, "history")
+		history := datura.Peek[[]float64](ringConfig, "history")
 
 		Convey("It should bound retained history", func() {
 			So(len(history), ShouldBeLessThan, 20)
@@ -54,7 +56,8 @@ func TestObservationRingObserve(t *testing.T) {
 	})
 
 	Convey("Given non-positive observations", t, func() {
-		ring := NewObservationRing()
+		ringConfig := datura.Acquire("observation-ring-config-invalid", datura.APPJSON)
+		ring := NewObservationRing(ringConfig)
 		artifact := datura.Acquire("test", datura.APPJSON)
 
 		for _, value := range []float64{0, -1} {
@@ -65,7 +68,7 @@ func TestObservationRingObserve(t *testing.T) {
 		}
 
 		Convey("It should ignore invalid samples", func() {
-			So(len(datura.Peek[[]float64](artifact, "history")), ShouldEqual, 0)
+			So(len(datura.Peek[[]float64](ringConfig, "history")), ShouldEqual, 0)
 		})
 	})
 }

@@ -11,32 +11,41 @@ import (
 
 /*
 Entropy computes Shannon entropy of a normalized mass distribution over history.
+The constructor artifact holds config; Write buffers inbound wire on its payload.
 */
 type Entropy struct {
 	artifact *datura.Artifact
-	floor    float64
 }
 
 /*
-NewEntropy creates an entropy stage.
-floor may be zero to derive a per-sample floor from each observation.
+NewEntropy returns an entropy stage wired from config attributes on the artifact.
+config.floor may be zero to derive a per-sample floor from each observation.
 */
-func NewEntropy(floor float64) *Entropy {
+func NewEntropy(artifact *datura.Artifact) *Entropy {
+	artifact.Inspect("statistic", "entropy", "NewEntropy()")
+
 	return &Entropy{
-		artifact: datura.Acquire("entropy", datura.APPJSON),
-		floor:    floor,
+		artifact: artifact,
 	}
 }
 
-func (entropy *Entropy) Write(p []byte) (int, error) {
-	return entropy.artifact.Write(p)
+func (entropy *Entropy) Write(payload []byte) (int, error) {
+	entropy.artifact.WithPayload(payload)
+	return len(payload), nil
 }
 
-func (entropy *Entropy) Read(p []byte) (int, error) {
-	sample := datura.Peek[float64](entropy.artifact, "sample")
+func (entropy *Entropy) Read(payload []byte) (int, error) {
+	state := datura.Acquire("entropy-state", datura.APPJSON)
+	state.Inspect("statistic", "entropy", "Read()", "p")
+
+	if _, err := state.Write(entropy.artifact.DecryptPayload()); err != nil {
+		return 0, err
+	}
+
+	sample := datura.Peek[float64](state, "sample")
 
 	if math.IsNaN(sample) || math.IsInf(sample, 0) {
-		return entropy.artifact.Read(p)
+		return state.Read(payload)
 	}
 
 	history := datura.Peek[[]float64](entropy.artifact, "history")
@@ -44,7 +53,7 @@ func (entropy *Entropy) Read(p []byte) (int, error) {
 	entropy.artifact.Poke(history, "history")
 
 	if len(history) == 0 {
-		return entropy.artifact.Read(p)
+		return state.Read(payload)
 	}
 
 	probabilities, ok := entropy.normalizedProbabilities(history)
@@ -55,13 +64,14 @@ func (entropy *Entropy) Read(p []byte) (int, error) {
 			EntropyError(EntropyErrorNonFiniteMass),
 		))
 
-		return entropy.artifact.Read(p)
+		return state.Read(payload)
 	}
 
 	value := stat.Entropy(probabilities)
-	entropy.artifact.Poke(datura.Map[float64]{"value": value}, "output")
-
-	return entropy.artifact.Read(p)
+	state.MergeOutput("value", value)
+	state.Merge("root", "output")
+	state.Merge("inputs", []string{"value"})
+	return state.Read(payload)
 }
 
 func (entropy *Entropy) Close() error {
@@ -102,8 +112,10 @@ func (entropy *Entropy) normalizedProbabilities(values []float64) ([]float64, bo
 }
 
 func (entropy *Entropy) probabilityFloor(values []float64) float64 {
-	if entropy.floor > 0 {
-		return entropy.floor
+	floor := datura.Peek[float64](entropy.artifact, "config", "floor")
+
+	if floor > 0 {
+		return floor
 	}
 
 	total := floats.Sum(values)

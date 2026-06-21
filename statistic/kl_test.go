@@ -10,7 +10,7 @@ import (
 
 func TestKLDivergenceSeries(t *testing.T) {
 	Convey("Given a KL stage", t, func() {
-		kl := NewKLDivergence(0, 0)
+		kl := NewKLDivergence(datura.Acquire("kl-config", datura.APPJSON))
 		artifact := datura.Acquire("test", datura.APPJSON)
 		observed := []float64{1, 1, 1, 1}
 		expected := []float64{1, 1, 1, 1}

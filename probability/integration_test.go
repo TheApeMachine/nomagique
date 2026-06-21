@@ -15,7 +15,7 @@ func TestIntegration(t *testing.T) {
 	Convey("Given probability stages composed through nomagique.Number", t, func() {
 		Convey("When Bernoulli observes a unit success", func() {
 			artifact := datura.Acquire("test", datura.APPJSON)
-			posterior := nomagique.Number(probability.NewBernoulli())
+			posterior := nomagique.Number(probability.NewBernoulli(datura.Acquire("bernoulli-config", datura.APPJSON)))
 
 			artifact.Poke(1, "sample")
 			err := transport.NewFlipFlop(artifact, posterior)
@@ -26,7 +26,7 @@ func TestIntegration(t *testing.T) {
 
 		Convey("When Rank streams two samples", func() {
 			artifact := datura.Acquire("test", datura.APPJSON)
-			empirical := nomagique.Number(probability.NewRank())
+			empirical := nomagique.Number(probability.NewRank(datura.Acquire("rank-config", datura.APPJSON)))
 
 			for _, sample := range []float64{10, 5} {
 				artifact.Poke(sample, "sample")

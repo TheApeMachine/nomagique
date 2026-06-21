@@ -16,7 +16,7 @@ func TestIntegration(t *testing.T) {
 			artifact := datura.Acquire("test", datura.APPJSON).
 				Poke(10, "sample").
 				Poke(10, "paired")
-			pipeline := nomagique.Number(learning.Weight())
+			pipeline := nomagique.Number(learning.Weight(datura.Acquire("trust-weight-config", datura.APPJSON)))
 			err := transport.NewFlipFlop(artifact, pipeline)
 
 			So(err, ShouldBeNil)
@@ -25,7 +25,10 @@ func TestIntegration(t *testing.T) {
 
 		Convey("When SampleRatio and Forecast run in sequence", func() {
 			artifact := datura.Acquire("test", datura.APPJSON)
-			pipeline := nomagique.Number(learning.SampleRatio(), learning.Forecast())
+			pipeline := nomagique.Number(
+				learning.SampleRatio(datura.Acquire("sample-ratio-config", datura.APPJSON)),
+				learning.Forecast(datura.Acquire("forecast-config", datura.APPJSON)),
+			)
 
 			artifact.Poke(10, "sample").Poke(10, "paired")
 			err := transport.NewFlipFlop(artifact, pipeline)

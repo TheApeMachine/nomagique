@@ -8,51 +8,57 @@ import (
 
 /*
 Mean computes a running arithmetic mean of streamed samples.
+The constructor artifact holds config; Write buffers inbound wire on its payload.
 */
 type Mean struct {
 	artifact *datura.Artifact
 }
 
 /*
-NewMean creates a mean stage.
+NewMean returns a mean stage wired from config attributes on the artifact.
 */
-func NewMean() *Mean {
+func NewMean(artifact *datura.Artifact) *Mean {
+	artifact.Inspect("statistic", "mean", "NewMean()")
+
 	return &Mean{
-		artifact: datura.Acquire("mean", datura.APPJSON),
+		artifact: artifact,
 	}
 }
 
-func (mean *Mean) Read(p []byte) (int, error) {
-	sample := datura.Peek[float64](mean.artifact, "sample")
+func (mean *Mean) Write(payload []byte) (int, error) {
+	mean.artifact.WithPayload(payload)
+	return len(payload), nil
+}
+
+func (mean *Mean) Read(payload []byte) (int, error) {
+	state := datura.Acquire("mean-state", datura.APPJSON)
+	state.Inspect("statistic", "mean", "Read()", "p")
+
+	if _, err := state.Write(mean.artifact.DecryptPayload()); err != nil {
+		return 0, err
+	}
+
+	sample := datura.Peek[float64](state, "sample")
 
 	if math.IsNaN(sample) || math.IsInf(sample, 0) {
-		return mean.artifact.Read(p)
+		return state.Read(payload)
 	}
 
-	output := datura.Peek[datura.Map[float64]](mean.artifact, "output")
+	count := datura.Peek[float64](mean.artifact, "output", "count")
+	sum := datura.Peek[float64](mean.artifact, "output", "sum")
 
-	if output == nil {
-		output = datura.Map[float64]{
-			"count": 0,
-			"sum":   0,
-			"value": 0,
-		}
-	}
+	count++
+	sum += sample
 
-	output["count"]++
-	output["sum"] += sample
+	value := sum / count
 
-	if output["count"] > 0 {
-		output["value"] = output["sum"] / output["count"]
-	}
-
-	mean.artifact.Poke(output, "output")
-
-	return mean.artifact.Read(p)
-}
-
-func (mean *Mean) Write(p []byte) (int, error) {
-	return mean.artifact.Write(p)
+	mean.artifact.Poke(count, "output", "count")
+	mean.artifact.Poke(sum, "output", "sum")
+	mean.artifact.Poke(value, "output", "value")
+	state.MergeOutput("value", value)
+	state.Merge("root", "output")
+	state.Merge("inputs", []string{"value"})
+	return state.Read(payload)
 }
 
 func (mean *Mean) Close() error {

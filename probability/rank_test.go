@@ -10,7 +10,7 @@ import (
 
 func TestRank(testingTB *testing.T) {
 	Convey("Given Rank constructor", testingTB, func() {
-		empirical := NewRank()
+		empirical := NewRank(datura.Acquire("rank-config", datura.APPJSON))
 
 		Convey("It should return a usable dynamic", func() {
 			So(empirical, ShouldNotBeNil)
@@ -20,7 +20,7 @@ func TestRank(testingTB *testing.T) {
 
 func TestEmpiricalRank_Observe(testingTB *testing.T) {
 	Convey("Given empty Observe inputs", testingTB, func() {
-		empirical := NewRank()
+		empirical := NewRank(datura.Acquire("rank-config", datura.APPJSON))
 		artifact := datura.Acquire("test", datura.APPJSON)
 		err := transport.NewFlipFlop(artifact, empirical)
 
@@ -32,7 +32,7 @@ func TestEmpiricalRank_Observe(testingTB *testing.T) {
 	})
 
 	Convey("Given empirical rank history", testingTB, func() {
-		empirical := NewRank()
+		empirical := NewRank(datura.Acquire("rank-config", datura.APPJSON))
 		artifact := datura.Acquire("test", datura.APPJSON)
 
 		artifact.Poke(10, "sample")
@@ -54,7 +54,7 @@ func TestEmpiricalRank_Observe(testingTB *testing.T) {
 	})
 
 	Convey("Given a combined scalar sample", testingTB, func() {
-		empirical := NewRank()
+		empirical := NewRank(datura.Acquire("rank-config", datura.APPJSON))
 		artifact := datura.Acquire("test", datura.APPJSON)
 
 		artifact.Poke(10, "sample")
@@ -69,7 +69,7 @@ func TestEmpiricalRank_Observe(testingTB *testing.T) {
 
 		withWork := datura.Peek[float64](artifact, "output", "value")
 
-		combined := NewRank()
+		combined := NewRank(datura.Acquire("rank-config-combined", datura.APPJSON))
 		reference := datura.Acquire("test", datura.APPJSON)
 
 		reference.Poke(10, "sample")
@@ -92,7 +92,7 @@ func TestEmpiricalRank_Observe(testingTB *testing.T) {
 
 func TestEmpiricalRank_Reset(testingTB *testing.T) {
 	Convey("Given an observed rank", testingTB, func() {
-		empirical := NewRank()
+		empirical := NewRank(datura.Acquire("rank-config", datura.APPJSON))
 		artifact := datura.Acquire("test", datura.APPJSON).
 			Poke(10, "sample")
 
@@ -113,7 +113,7 @@ func TestEmpiricalRank_Reset(testingTB *testing.T) {
 }
 
 func BenchmarkRank_Observe(testingTB *testing.B) {
-	empirical := NewRank()
+	empirical := NewRank(datura.Acquire("rank-config-bench", datura.APPJSON))
 	artifact := datura.Acquire("test", datura.APPJSON)
 
 	artifact.Poke(10, "sample")

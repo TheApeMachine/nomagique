@@ -6,21 +6,27 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/transport"
+	"github.com/theapemachine/nomagique/statistic"
+	"github.com/theapemachine/nomagique/vector"
 )
 
 func ignitionReplayConfig() *datura.Artifact {
 	return datura.Acquire("pumpdump-ignition-replay", datura.APPJSON).
+		Poke(0.0, "stageIndex").
 		Poke([]string{"rvol", "precursor", "compression"}, "order").
 		Poke([]string{"ignition", "compression", "trend", "exhaustion"}, "outputs").
 		Poke(0.0, "threshold").
 		Poke(map[string]any{
 			"rvol": map[string]any{
 				"input":       "volume",
-				"useDelta":    1.0,
+				"transform":   "deltaPositive",
 				"shortWindow": 0.0,
 				"longWindow":  0.0,
 				"outputKey":   "rvol",
 				"scale":       0.0,
+				"decline": map[string]any{
+					"output": "rvolDecline",
+				},
 			},
 			"precursor": map[string]any{
 				"input":        "last",
@@ -32,6 +38,7 @@ func ignitionReplayConfig() *datura.Artifact {
 				"scale":        0.0,
 			},
 			"compression": map[string]any{
+				"input":  "spread",
 				"source": "value",
 				"scale":  0.0,
 			},
@@ -46,6 +53,42 @@ func ignitionReplayConfig() *datura.Artifact {
 				"output":         "ignition",
 			},
 		}, "inputs")
+}
+
+func TestIgnitionSpreadAfterLogReturn(testingTB *testing.T) {
+	Convey("Given features after log-return z-score in ignition", testingTB, func() {
+		config := ignitionReplayConfig()
+		stage := transport.NewPipeline(
+			statistic.NewMeanMedianRatio(config),
+			NewLogReturnZScore(config),
+			vector.NewSpreadSample(config),
+		)
+		frame := datura.Acquire("ignition-spread-pipeline-frame", datura.APPJSON)
+		frame.Merge("root", "features")
+		frame.Merge("inputs", []string{"volume", "last", "bid", "ask"})
+		frame.Merge("features", []float64{120, 10050, 10050.0001, 10050.0002})
+
+		err := transport.NewFlipFlop(frame, stage)
+
+		So(err, ShouldBeNil)
+		So(datura.Peek[float64](frame, "output", "spread"), ShouldBeGreaterThan, 0)
+	})
+}
+
+func TestIgnitionSpreadOutput(testingTB *testing.T) {
+	Convey("Given bid and ask features through ignition", testingTB, func() {
+		config := ignitionReplayConfig()
+		stage := NewIgnition(config)
+		frame := datura.Acquire("ignition-spread-frame", datura.APPJSON)
+		frame.Merge("root", "features")
+		frame.Merge("inputs", []string{"volume", "last", "bid", "ask"})
+		frame.Merge("features", []float64{120, 10050, 10050.0001, 10050.0002})
+
+		err := transport.NewFlipFlop(frame, stage)
+
+		So(err, ShouldBeNil)
+		So(datura.Peek[float64](frame, "output", "spread"), ShouldBeGreaterThan, 0)
+	})
 }
 
 func TestIgnitionReplayTraversal(testingTB *testing.T) {

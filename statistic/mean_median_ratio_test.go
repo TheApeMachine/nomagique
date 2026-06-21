@@ -11,11 +11,11 @@ import (
 func TestMeanMedianRatioRead(testingTB *testing.T) {
 	Convey("Given configured windows on the artifact", testingTB, func() {
 		config := datura.Acquire("mean-median-ratio-config", datura.APPJSON).
+			Poke(0.0, "stageIndex").
 			Poke([]string{"rvol"}, "order").
 			Poke(map[string]any{
 				"rvol": map[string]any{
 					"input":       "volume",
-					"useDelta":    0.0,
 					"shortWindow": 3.0,
 					"longWindow":  5.0,
 					"outputKey":   "rvol",
@@ -49,6 +49,48 @@ func TestMeanMedianRatioRead(testingTB *testing.T) {
 		})
 	})
 
+	Convey("Given delta transform with decline output configured", testingTB, func() {
+		config := datura.Acquire("mean-median-ratio-decline-config", datura.APPJSON).
+			Poke(0.0, "stageIndex").
+			Poke([]string{"lift"}, "order").
+			Poke(map[string]any{
+				"lift": map[string]any{
+					"input":     "volume",
+					"transform": "deltaPositive",
+					"outputKey": "lift",
+					"decline": map[string]any{
+						"output": "liftDecline",
+					},
+				},
+			}, "inputs")
+
+		stage := NewMeanMedianRatio(config)
+		var lastFrame *datura.Artifact
+
+		for _, sample := range []float64{100, 200, 50} {
+			frame := datura.Acquire("mean-median-ratio-decline-frame", datura.APPJSON)
+			frame.Merge("root", "features")
+			frame.Merge("inputs", []string{"volume"})
+			frame.Merge("features", []float64{sample})
+
+			err := transport.NewFlipFlop(frame, stage)
+
+			So(err, ShouldBeNil)
+
+			if lastFrame != nil {
+				lastFrame.Release()
+			}
+
+			lastFrame = frame
+		}
+
+		defer lastFrame.Release()
+
+		Convey("It should publish decline from configured output key", func() {
+			So(datura.Peek[float64](lastFrame, "output", "liftDecline"), ShouldBeGreaterThan, 0)
+		})
+	})
+
 	Convey("Given missing window configuration", testingTB, func() {
 		config := datura.Acquire("mean-median-ratio-empty", datura.APPJSON)
 		stage := NewMeanMedianRatio(config)
@@ -66,11 +108,11 @@ func TestMeanMedianRatioRead(testingTB *testing.T) {
 
 func BenchmarkMeanMedianRatioRead(b *testing.B) {
 	config := datura.Acquire("mean-median-ratio-bench", datura.APPJSON).
+		Poke(0.0, "stageIndex").
 		Poke([]string{"rvol"}, "order").
 		Poke(map[string]any{
 			"rvol": map[string]any{
 				"input":       "volume",
-				"useDelta":    0.0,
 				"shortWindow": 3.0,
 				"longWindow":  5.0,
 				"outputKey":   "rvol",

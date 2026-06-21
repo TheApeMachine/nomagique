@@ -31,12 +31,7 @@ func (fixedScore *fixedScore) Close() error {
 	return nil
 }
 
-func readScalar(stage io.ReadWriter, samples ...float64) float64 {
-	inbound := datura.Acquire("test-in", datura.Artifact_Type_json)
-	inbound.WithPayload(equation.MarshalFeaturesPayload(samples))
-	buf, _ := inbound.Message().Marshal()
-	_, _ = stage.Write(buf)
-
+func readOutbound(stage io.Reader) *datura.Artifact {
 	var outBuf bytes.Buffer
 	chunk := make([]byte, 4096)
 
@@ -59,18 +54,27 @@ func readScalar(stage io.ReadWriter, samples ...float64) float64 {
 	outbound := datura.Acquire("test-out", datura.Artifact_Type_json)
 	_, _ = outbound.Write(outBuf.Bytes())
 
+	return outbound
+}
+
+func readScalar(stage io.ReadWriter, samples ...float64) float64 {
+	inbound := datura.Acquire("test-in", datura.Artifact_Type_json)
+	inbound.WithPayload(equation.MarshalFeaturesPayload(samples))
+	buf, err := inbound.Message().MarshalPacked()
+
+	if err != nil {
+		return 0
+	}
+
+	_, _ = stage.Write(buf)
+
+	outbound := readOutbound(stage)
+
 	if !outbound.HasEncryptedPayload() {
 		return 0
 	}
 
-	payload := outbound.DecryptPayload()
-	value, ok := payloadScalar(payload)
-
-	if !ok {
-		return 0
-	}
-
-	return value
+	return datura.Peek[float64](outbound, "output", "value")
 }
 
 func observeInputs(stage io.ReadWriter, series ...float64) float64 {

@@ -8,50 +8,60 @@ import (
 
 /*
 Min tracks the smallest streamed sample.
+The constructor artifact holds config; Write buffers inbound wire on its payload.
 */
 type Min struct {
 	artifact *datura.Artifact
 }
 
 /*
-NewMin creates a min stage.
+NewMin returns a min stage wired from config attributes on the artifact.
 */
-func NewMin() *Min {
+func NewMin(artifact *datura.Artifact) *Min {
+	artifact.Inspect("statistic", "min", "NewMin()")
+
 	return &Min{
-		artifact: datura.Acquire("min", datura.APPJSON),
+		artifact: artifact,
 	}
 }
 
-func (min *Min) Read(p []byte) (int, error) {
-	sample := datura.Peek[float64](min.artifact, "sample")
+func (min *Min) Write(payload []byte) (int, error) {
+	min.artifact.WithPayload(payload)
+	return len(payload), nil
+}
+
+func (min *Min) Read(payload []byte) (int, error) {
+	state := datura.Acquire("min-state", datura.APPJSON)
+	state.Inspect("statistic", "min", "Read()", "p")
+
+	if _, err := state.Write(min.artifact.DecryptPayload()); err != nil {
+		return 0, err
+	}
+
+	sample := datura.Peek[float64](state, "sample")
 
 	if math.IsNaN(sample) || math.IsInf(sample, 0) {
-		return min.artifact.Read(p)
+		return state.Read(payload)
 	}
 
-	output := datura.Peek[datura.Map[float64]](min.artifact, "output")
+	count := datura.Peek[float64](min.artifact, "output", "count")
+	value := datura.Peek[float64](min.artifact, "output", "value")
 
-	if output == nil {
-		output = datura.Map[float64]{
-			"value": sample,
-		}
-
-		min.artifact.Poke(output, "output")
-
-		return min.artifact.Read(p)
+	if count == 0 {
+		value = sample
 	}
 
-	if sample < output["value"] {
-		output["value"] = sample
+	if count > 0 && sample < value {
+		value = sample
 	}
 
-	min.artifact.Poke(output, "output")
-
-	return min.artifact.Read(p)
-}
-
-func (min *Min) Write(p []byte) (int, error) {
-	return min.artifact.Write(p)
+	count++
+	min.artifact.Poke(count, "output", "count")
+	min.artifact.Poke(value, "output", "value")
+	state.MergeOutput("value", value)
+	state.Merge("root", "output")
+	state.Merge("inputs", []string{"value"})
+	return state.Read(payload)
 }
 
 func (min *Min) Close() error {

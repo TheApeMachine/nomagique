@@ -10,7 +10,7 @@ import (
 
 func TestWeight(testingTB *testing.T) {
 	Convey("Given Weight constructor", testingTB, func() {
-		trustWeight := Weight()
+		trustWeight := Weight(datura.Acquire("trust-weight-config", datura.APPJSON))
 
 		Convey("It should return a usable dynamic", func() {
 			So(trustWeight, ShouldNotBeNil)
@@ -20,7 +20,7 @@ func TestWeight(testingTB *testing.T) {
 
 func TestTrustWeight_Observe(testingTB *testing.T) {
 	Convey("Given empty Observe inputs", testingTB, func() {
-		trustWeight := Weight()
+		trustWeight := Weight(datura.Acquire("trust-weight-config", datura.APPJSON))
 		artifact := datura.Acquire("test", datura.APPJSON)
 		err := transport.NewFlipFlop(artifact, trustWeight)
 
@@ -32,7 +32,7 @@ func TestTrustWeight_Observe(testingTB *testing.T) {
 	})
 
 	Convey("Given a fresh trust weight", testingTB, func() {
-		trustWeight := Weight()
+		trustWeight := Weight(datura.Acquire("trust-weight-config", datura.APPJSON))
 		artifact := datura.Acquire("test", datura.APPJSON).
 			Poke(10, "sample").
 			Poke(10, "paired")
@@ -48,7 +48,7 @@ func TestTrustWeight_Observe(testingTB *testing.T) {
 	})
 
 	Convey("Given diverging outcomes", testingTB, func() {
-		trustWeight := Weight()
+		trustWeight := Weight(datura.Acquire("trust-weight-config", datura.APPJSON))
 		artifact := datura.Acquire("test", datura.APPJSON)
 
 		artifact.Poke(10, "sample").Poke(10, "paired")
@@ -69,7 +69,7 @@ func TestTrustWeight_Observe(testingTB *testing.T) {
 	})
 
 	Convey("Given zero predicted", testingTB, func() {
-		trustWeight := Weight()
+		trustWeight := Weight(datura.Acquire("trust-weight-config", datura.APPJSON))
 		artifact := datura.Acquire("test", datura.APPJSON).
 			Poke(0, "sample").
 			Poke(10, "paired")
@@ -85,7 +85,7 @@ func TestTrustWeight_Observe(testingTB *testing.T) {
 	})
 
 	Convey("Given a non-scalar first input", testingTB, func() {
-		trustWeight := Weight()
+		trustWeight := Weight(datura.Acquire("trust-weight-config", datura.APPJSON))
 		artifact := datura.Acquire("test", datura.APPJSON)
 
 		artifact.Poke(10, "sample").Poke(10, "paired")
@@ -108,7 +108,7 @@ func TestTrustWeight_Observe(testingTB *testing.T) {
 
 func TestTrustWeight_Reset(testingTB *testing.T) {
 	Convey("Given trust weight with state", testingTB, func() {
-		trustWeight := Weight()
+		trustWeight := Weight(datura.Acquire("trust-weight-config", datura.APPJSON))
 		artifact := datura.Acquire("test", datura.APPJSON).
 			Poke(10, "sample").
 			Poke(10, "paired")
@@ -130,7 +130,7 @@ func TestTrustWeight_Reset(testingTB *testing.T) {
 }
 
 func BenchmarkWeight_Observe(testingTB *testing.B) {
-	trustWeight := Weight()
+	trustWeight := Weight(datura.Acquire("trust-weight-config-bench", datura.APPJSON))
 	artifact := datura.Acquire("test", datura.APPJSON)
 
 	artifact.Poke(10, "sample").Poke(10, "paired")
@@ -145,7 +145,7 @@ func BenchmarkWeight_Observe(testingTB *testing.B) {
 }
 
 func BenchmarkWeight_ObserveSamples(testingTB *testing.B) {
-	trustWeight := Weight()
+	trustWeight := Weight(datura.Acquire("trust-weight-config-bench", datura.APPJSON))
 	predicted := make([]float64, 1024)
 	actual := make([]float64, len(predicted))
 	out := make([]float64, len(predicted))

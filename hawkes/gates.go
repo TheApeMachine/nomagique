@@ -3,10 +3,7 @@ package hawkes
 import (
 	"math"
 
-	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/transport"
 	"github.com/theapemachine/nomagique/statistic"
-	"gonum.org/v1/gonum/stat"
 )
 
 const minFitGateHistory = 4
@@ -55,9 +52,5 @@ func FitGatesFromHistory(spectralRadii, asymmetries []float64) (FitGates, bool) 
 }
 
 func quantileFromHistory(history []float64, percentile float64) float64 {
-	artifact := datura.Acquire("hawkes-quantile", datura.APPJSON).Poke(history, "history")
-	quantile := statistic.NewQuantile(percentile, stat.LinInterp)
-	_ = transport.NewFlipFlop(artifact, quantile)
-
-	return datura.Peek[float64](artifact, "output", "value")
+	return statistic.QuantileOf(percentile, history)
 }

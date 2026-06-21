@@ -8,9 +8,15 @@ import (
 	"github.com/theapemachine/datura/transport"
 )
 
+func fastSlowConfig() *datura.Artifact {
+	return datura.Acquire("fast-slow-config", datura.APPJSON).
+		Poke(float64(3), "config", "fastWindow").
+		Poke(1e-6, "config", "epsilon")
+}
+
 func TestFastSlowSeries(t *testing.T) {
 	Convey("Given a FastSlow stage", t, func() {
-		ratio := NewFastSlow(3, 1e-6)
+		ratio := NewFastSlow(fastSlowConfig())
 		artifact := datura.Acquire("test", datura.APPJSON)
 
 		for _, sample := range []float64{0, 0, 0, 10, 10, 10} {
@@ -31,7 +37,7 @@ func TestFastSlowSeries(t *testing.T) {
 func TestFastSlowRate(t *testing.T) {
 	Convey("Given helper rates", t, func() {
 		stream := []float64{0, 0, 0, 10, 10, 10}
-		ratio := NewFastSlow(3, 1e-6)
+		ratio := NewFastSlow(fastSlowConfig())
 		artifact := datura.Acquire("test", datura.APPJSON)
 
 		for _, sample := range stream {

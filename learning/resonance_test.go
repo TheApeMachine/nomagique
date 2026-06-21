@@ -119,7 +119,7 @@ func TestResonanceManifold_Read(testingTB *testing.T) {
 		So(err, ShouldBeNil)
 
 		got := datura.Peek[float64](artifact, "output", "value")
-		latent := datura.Peek[[]float64](artifact, "latent")
+		latent := datura.Peek[[]float64](artifact, "output", "latent")
 
 		Convey("It should expose reconstruction and latent state on the artifact", func() {
 			So(math.IsNaN(got), ShouldBeFalse)

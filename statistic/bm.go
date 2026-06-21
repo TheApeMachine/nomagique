@@ -10,38 +10,46 @@ import (
 
 /*
 BivariateMoment computes E[(x - mu_x)^r (y - mu_y)^s] for paired sample streams.
+The constructor artifact holds config; Write buffers inbound wire on its payload.
 */
 type BivariateMoment struct {
 	artifact *datura.Artifact
-	r        float64
-	s        float64
 }
 
 /*
-NewBivariateMoment creates a bivariate moment stage at exponents r and s.
+NewBivariateMoment returns a bivariate moment stage wired from config attributes on the artifact.
+Exponents live under config.r and config.s.
 */
-func NewBivariateMoment(r, s float64) *BivariateMoment {
+func NewBivariateMoment(artifact *datura.Artifact) *BivariateMoment {
+	artifact.Inspect("statistic", "bivariate-moment", "NewBivariateMoment()")
+
 	return &BivariateMoment{
-		artifact: datura.Acquire("bivariate_moment", datura.APPJSON),
-		r:        r,
-		s:        s,
+		artifact: artifact,
 	}
 }
 
-func (bivariateMoment *BivariateMoment) Write(p []byte) (int, error) {
-	return bivariateMoment.artifact.Write(p)
+func (bivariateMoment *BivariateMoment) Write(payload []byte) (int, error) {
+	bivariateMoment.artifact.WithPayload(payload)
+	return len(payload), nil
 }
 
-func (bivariateMoment *BivariateMoment) Read(p []byte) (int, error) {
-	sample := datura.Peek[float64](bivariateMoment.artifact, "sample")
-	paired := datura.Peek[float64](bivariateMoment.artifact, "paired")
+func (bivariateMoment *BivariateMoment) Read(payload []byte) (int, error) {
+	state := datura.Acquire("bivariate-moment-state", datura.APPJSON)
+	state.Inspect("statistic", "bivariate-moment", "Read()", "p")
+
+	if _, err := state.Write(bivariateMoment.artifact.DecryptPayload()); err != nil {
+		return 0, err
+	}
+
+	sample := datura.Peek[float64](state, "sample")
+	paired := datura.Peek[float64](state, "paired")
 
 	if math.IsNaN(sample) || math.IsInf(sample, 0) {
-		return bivariateMoment.artifact.Read(p)
+		return state.Read(payload)
 	}
 
 	if math.IsNaN(paired) || math.IsInf(paired, 0) {
-		return bivariateMoment.artifact.Read(p)
+		return state.Read(payload)
 	}
 
 	xValues := datura.Peek[[]float64](bivariateMoment.artifact, "history")
@@ -58,19 +66,23 @@ func (bivariateMoment *BivariateMoment) Read(p []byte) (int, error) {
 			BivariateMomentError(BivariateMomentErrorInvalidStreams),
 		))
 
-		bivariateMoment.artifact.Poke(datura.Map[float64]{"value": 0}, "output")
-
-		return bivariateMoment.artifact.Read(p)
+		state.MergeOutput("value", 0.0)
+		state.Merge("root", "output")
+		state.Merge("inputs", []string{"value"})
+		return state.Read(payload)
 	}
 
+	exponentR := datura.Peek[float64](bivariateMoment.artifact, "config", "r")
+	exponentS := datura.Peek[float64](bivariateMoment.artifact, "config", "s")
 	moment := stat.BivariateMoment(
-		bivariateMoment.r, bivariateMoment.s,
+		exponentR, exponentS,
 		xValues, yValues, nil,
 	)
 
-	bivariateMoment.artifact.Poke(datura.Map[float64]{"value": moment}, "output")
-
-	return bivariateMoment.artifact.Read(p)
+	state.MergeOutput("value", moment)
+	state.Merge("root", "output")
+	state.Merge("inputs", []string{"value"})
+	return state.Read(payload)
 }
 
 func (bivariateMoment *BivariateMoment) Close() error {

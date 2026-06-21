@@ -4,6 +4,7 @@ import (
 	"math"
 
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/nomagique/statistic"
 )
 
 /*
@@ -38,6 +39,8 @@ func (positiveOnly *PositiveOnly) Read(payload []byte) (int, error) {
 		return 0, err
 	}
 
+	features := statistic.SnapshotFeatures(state)
+
 	stageKey := datura.Peek[string](positiveOnly.artifact, "stage")
 
 	if stageKey == "" {
@@ -54,24 +57,37 @@ func (positiveOnly *PositiveOnly) Read(payload []byte) (int, error) {
 	}
 
 	if stageKey == "" {
+		features.Restore(state)
+
 		return state.Read(payload)
 	}
 
 	outputKey := datura.Peek[string](positiveOnly.artifact, "inputs", stageKey, "outputKey")
 
 	if outputKey == "" {
+		features.Restore(state)
+
 		return state.Read(payload)
 	}
 
-	score := datura.Peek[float64](state, "sample")
+	score := 0.0
+	rootKey := datura.Peek[string](state, "root")
+
+	switch rootKey {
+	case "output":
+		score = datura.Peek[float64](state, "output", outputKey)
+	case "sample":
+		score = datura.Peek[float64](state, "sample")
+	}
 
 	if datura.Peek[float64](positiveOnly.artifact, "inputs", stageKey, "positiveOnly") > 0 {
 		score = math.Max(0, score)
 	}
 
 	state.MergeOutput(outputKey, score)
+	features.Restore(state)
 	state.Merge("root", "output")
-	state.Merge("inputs", []string{outputKey})
+
 	return state.Read(payload)
 }
 

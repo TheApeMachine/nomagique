@@ -11,7 +11,10 @@ import (
 
 func TestQuantileSeries(t *testing.T) {
 	Convey("Given a Quantile stage", t, func() {
-		quantile := NewQuantile(0.5, stat.LinInterp)
+		quantileConfig := datura.Acquire("quantile-config", datura.APPJSON).
+			Poke(0.5, "config", "percentile").
+			Poke(float64(stat.LinInterp), "config", "kind")
+		quantile := NewQuantile(quantileConfig)
 		artifact := datura.Acquire("test", datura.APPJSON)
 
 		for _, sample := range []float64{1, 2, 3, 4} {

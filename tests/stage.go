@@ -1,6 +1,7 @@
 package tests
 
 import (
+	"bytes"
 	"io"
 
 	"github.com/theapemachine/datura"
@@ -29,14 +30,26 @@ ReadOutputValue reads the stage output map value field.
 */
 func ReadOutputValue(stage io.Reader) (float64, error) {
 	buf := make([]byte, 4096)
-	readCount, err := stage.Read(buf)
+	var out bytes.Buffer
 
-	if err != nil && err != io.EOF && err != io.ErrShortBuffer {
-		return 0, err
+	for {
+		readCount, err := stage.Read(buf)
+
+		if readCount > 0 {
+			out.Write(buf[:readCount])
+		}
+
+		if err == io.EOF {
+			break
+		}
+
+		if err != nil && err != io.ErrShortBuffer {
+			return 0, err
+		}
 	}
 
 	outbound := datura.Acquire("test-out", datura.APPJSON)
-	_, _ = outbound.Write(buf[:readCount])
+	_, _ = outbound.Write(out.Bytes())
 
 	return datura.Peek[float64](outbound, "output", "value"), nil
 }

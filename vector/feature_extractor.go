@@ -45,12 +45,8 @@ func (extractor *FeatureExtractor) Read(payload []byte) (int, error) {
 	state.Inspect("feature-extractor", "Read()", "p")
 
 	if _, err := state.Write(extractor.bytes); err != nil {
-		state.Release()
-
 		return 0, err
 	}
-
-	defer state.Release()
 
 	role := datura.Peek[string](state, "channel")
 
@@ -99,8 +95,13 @@ func (extractor *FeatureExtractor) Read(payload []byte) (int, error) {
 			transport.NewFlipFlop(scratch, transformer(config))
 			scratch.Inspect("feature-extractor", "Read()", "transform", transform, "out")
 
-			sample = datura.Peek[float64](scratch, "output", "value")
-			scratch.Release()
+			rootKey := datura.Peek[string](scratch, "root")
+
+			if rootKey == "" {
+				rootKey = "output"
+			}
+
+			sample = datura.Peek[float64](scratch, rootKey, "value")
 		}
 
 		features[index] = sample

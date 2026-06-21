@@ -38,8 +38,9 @@ func (ring *ObservationRing) Read(p []byte) (int, error) {
 
 	if capacity > 0 && len(history) > capacity {
 		history = history[len(history)-capacity:]
-		ring.artifact.Poke(history, "history")
 	}
+
+	ring.artifact.Poke(history, "history")
 
 	ring.artifact.Poke(datura.Map[float64]{"value": sample}, "output")
 

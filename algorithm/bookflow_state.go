@@ -161,16 +161,18 @@ type BookGates struct {
 }
 
 type gateChannel struct {
-	artifact *datura.Artifact
-	ring     *statistic.ObservationRing
-	quantile *statistic.Quantile
+	artifact   *datura.Artifact
+	ring       *statistic.ObservationRing
+	quantile   *statistic.Quantile
+	percentile float64
 }
 
 func newGateChannel(percentile float64) gateChannel {
 	return gateChannel{
-		artifact: datura.Acquire("book-gate", datura.APPJSON),
-		ring:     statistic.NewObservationRing(),
-		quantile: statistic.NewQuantile(percentile, stat.LinInterp),
+		artifact:   datura.Acquire("book-gate", datura.APPJSON),
+		ring:       statistic.NewObservationRing(),
+		quantile:   statistic.NewQuantile(percentile, stat.LinInterp),
+		percentile: percentile,
 	}
 }
 
@@ -184,10 +186,13 @@ func (channel gateChannel) len() int {
 }
 
 func (channel gateChannel) quantileValue() float64 {
-	channel.artifact.Poke(math.NaN(), "sample")
-	_ = transport.NewFlipFlop(channel.artifact, channel.quantile)
+	history := datura.Peek[[]float64](channel.artifact, "history")
 
-	return datura.Peek[float64](channel.artifact, "output", "value")
+	if len(history) == 0 {
+		return 0
+	}
+
+	return statistic.QuantileOf(channel.percentile, history)
 }
 
 func NewBookGates() *BookGates {
@@ -267,6 +272,22 @@ func (gates *BookGates) SupportRatioGate(threshold float64) float64 {
 	low := channel.quantileValue()
 
 	return low / threshold
+}
+
+func (gates *BookGates) ObserveVacuumRatio(value float64) {
+	gates.VacuumRatios.observe(value)
+}
+
+func (gates *BookGates) ObserveChurnRatio(value float64) {
+	gates.ChurnRatios.observe(value)
+}
+
+func (gates *BookGates) VacuumRatioThreshold() float64 {
+	if gates.VacuumRatios.len() < 3 {
+		return 0
+	}
+
+	return gates.VacuumRatios.quantileValue()
 }
 
 func mathInf(sign int) float64 {

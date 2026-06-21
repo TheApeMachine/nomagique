@@ -25,6 +25,13 @@ func TestObservationRingObserve(t *testing.T) {
 		Convey("It should retain the latest sample", func() {
 			So(got, ShouldEqual, 0.95)
 		})
+
+		Convey("It should retain observation history", func() {
+			history := datura.Peek[[]float64](artifact, "history")
+
+			So(len(history), ShouldEqual, 4)
+			So(history[len(history)-1], ShouldEqual, 0.95)
+		})
 	})
 
 	Convey("Given non-positive observations", t, func() {

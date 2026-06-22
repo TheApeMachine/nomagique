@@ -39,16 +39,16 @@ func TestPipelineWireChain(testingTB *testing.T) {
 			"order":  []string{"rvol"},
 			"rvol": datura.Map[any]{
 				"input":       "volume",
-				"shortWindow": 0.0,
-				"longWindow":  0.0,
+				"shortWindow": 3.0,
+				"longWindow":  5.0,
 				"outputKey":   "rvol",
 			},
 		})
 
 		logitConfig := datura.Acquire("pipeline-logit", datura.APPJSON).WithAttributes(datura.Map[any]{
 			"root":   "output",
-			"inputs": []string{"rvol", "last"},
-			"order":  []string{"rvol", "last"},
+			"inputs": []string{"rvol"},
+			"order":  []string{"rvol"},
 			"outputs": []string{
 				"ignition",
 				"exhaustion",
@@ -58,12 +58,8 @@ func TestPipelineWireChain(testingTB *testing.T) {
 				"source": "rvol",
 				"scale":  2.0,
 			},
-			"last": datura.Map[any]{
-				"source": "last",
-				"scale":  1.0,
-			},
 			"ignition": datura.Map[any]{
-				"terms": []string{"rvol", "last"},
+				"terms": []string{"rvol"},
 			},
 			"exhaustion": datura.Map[any]{
 				"terms":   []string{"rvol"},
@@ -88,11 +84,11 @@ func TestPipelineWireChain(testingTB *testing.T) {
 			frame := tickerFrame(volume, 100+float64(index)*0.01)
 			err := transport.NewFlipFlop(frame, pipeline)
 
-			if index < len(volumes)-1 {
+			if index < 4 {
 				So(err, ShouldNotBeNil)
 			}
 
-			if index == len(volumes)-1 {
+			if index >= 4 {
 				So(err, ShouldBeNil)
 			}
 

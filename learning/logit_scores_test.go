@@ -74,6 +74,7 @@ func TestLogitScoresRead(testingTB *testing.T) {
 		artifact.MergeOutput("precursor", 2.5)
 		artifact.MergeOutput("value", 0.8)
 		artifact.MergeOutput("ignition", 2.7)
+		artifact.MergeOutput("rvolDecline", 0.0)
 
 		err := transport.NewFlipFlop(artifact, stage)
 
@@ -110,6 +111,7 @@ func TestLogitScoresRead(testingTB *testing.T) {
 			artifact.MergeOutput("precursor", sample.precursor)
 			artifact.MergeOutput("value", sample.value)
 			artifact.MergeOutput("ignition", 0.0)
+			artifact.MergeOutput("rvolDecline", 0.0)
 
 			err := transport.NewFlipFlop(artifact, stage)
 

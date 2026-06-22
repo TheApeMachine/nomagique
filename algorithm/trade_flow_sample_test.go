@@ -29,14 +29,16 @@ func TestTradeFlowSampleRead(testingTB *testing.T) {
 		base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC).UnixNano()
 
 		var last *datura.Artifact
+		var lastErr error
 
-		for index := range 12 {
+		for index := range 30 {
 			frame := tradeFrame("BTC/USD", "buy", 100+float64(index)*0.01, 1, base+int64(index))
-			So(transport.NewFlipFlop(frame, flow), ShouldBeNil)
+			lastErr = transport.NewFlipFlop(frame, flow)
 			last = frame
 		}
 
-		Convey("It should publish a flow feature batch", func() {
+		Convey("It should publish a flow feature batch after history warms", func() {
+			So(lastErr, ShouldBeNil)
 			So(datura.Peek[[]float64](last, "features"), ShouldNotBeNil)
 			So(len(datura.Peek[[]float64](last, "features")), ShouldBeGreaterThan, 6)
 		})

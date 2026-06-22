@@ -4,6 +4,7 @@ import (
 	"math"
 
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/equation"
 	"github.com/theapemachine/nomagique/statistic"
 )
@@ -66,7 +67,11 @@ func (decaySample *DecaySample) Read(payload []byte) (int, error) {
 	symbol := datura.Peek[string](state, "data", 0, "symbol")
 
 	if symbol == "" {
-		return state.Read(payload)
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"decay-sample: symbol required",
+			nil,
+		))
 	}
 
 	window := decaySample.window(symbol)
@@ -81,7 +86,11 @@ func (decaySample *DecaySample) Read(payload []byte) (int, error) {
 	features := decaySample.features(window)
 
 	if len(features) == 0 {
-		return state.Read(payload)
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"decay-sample: insufficient history",
+			nil,
+		))
 	}
 
 	state.WithScope(symbol)

@@ -93,6 +93,7 @@ func (compression *Compression) Read(payload []byte) (int, error) {
 	state.MergeOutput(outputKey, value)
 	features.Restore(state)
 	state.Merge("root", "output")
+	state.Merge("inputs", []string{outputKey})
 
 	return state.Read(payload)
 }

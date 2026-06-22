@@ -4,6 +4,7 @@ import (
 	"math"
 
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/errnie"
 )
 
 /*
@@ -38,7 +39,12 @@ func (contagion *Contagion) Read(p []byte) (int, error) {
 		return 0, err
 	}
 
-	peak := contagion.peakFromTable(state)
+	peak, err := contagion.peakFromTable(state)
+
+	if err != nil {
+		return 0, err
+	}
+
 	state.Merge("paired", peak)
 	state.MergeOutput("value", peak)
 	state.Merge("root", "output")
@@ -50,17 +56,25 @@ func (contagion *Contagion) Close() error {
 	return nil
 }
 
-func (contagion *Contagion) peakFromTable(state *datura.Artifact) float64 {
+func (contagion *Contagion) peakFromTable(state *datura.Artifact) (float64, error) {
 	rows, ok := tableRows(state)
 
 	if !ok {
-		return 0
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"causal contagion: table required",
+			nil,
+		))
 	}
 
 	rowCount := len(rows)
 
 	if rowCount <= 0 {
-		return 0
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"causal contagion: table has no rows",
+			nil,
+		))
 	}
 
 	latestRow := rows[rowCount-1]
@@ -80,7 +94,7 @@ func (contagion *Contagion) peakFromTable(state *datura.Artifact) float64 {
 		}
 	}
 
-	return peak
+	return peak, nil
 }
 
 func containsIndex(indices []int, nodeIndex int) bool {

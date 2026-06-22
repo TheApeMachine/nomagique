@@ -103,10 +103,8 @@ func TestNodeRingZip_Read(testingTB *testing.T) {
 			Poke([]float64{1}, "batch")
 		err := transport.NewFlipFlop(artifact, nodeRing)
 
-		Convey("It should ignore misaligned rows", func() {
-			So(err, ShouldBeNil)
-			So(datura.Peek[float64](artifact, "output", "value"), ShouldEqual, 0)
-			So(datura.Peek[float64](artifact, "streams", "nodeCount"), ShouldEqual, 0)
+		Convey("It should reject misaligned rows", func() {
+			So(err, ShouldNotBeNil)
 		})
 	})
 }

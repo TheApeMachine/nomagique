@@ -41,7 +41,12 @@ func (ema *EMA) Read(payload []byte) (int, error) {
 	}
 
 	features := statistic.SnapshotFeatures(state)
-	inputKey := statistic.WireInputKey(ema.artifact, state, "sample")
+	inputKey, err := statistic.WireInputKey(ema.artifact, state)
+
+	if err != nil {
+		return 0, err
+	}
+
 	sample, err := statistic.WireScalar(ema.artifact, state, inputKey)
 
 	if err != nil {
@@ -57,17 +62,34 @@ func (ema *EMA) Read(payload []byte) (int, error) {
 	}
 
 	output := datura.Peek[datura.Map[float64]](ema.artifact, "output")
+	outputReady := datura.KeyPresent(ema.artifact, "output", "prev")
 
 	switch {
-	case output == nil:
+	case !outputReady:
 		output = datura.Map[float64]{
-			"min":   sample,
-			"max":   sample,
-			"prev":  sample,
-			"rate":  0,
-			"value": sample,
+			"min":  sample,
+			"max":  sample,
+			"prev": sample,
+			"rate": 0,
 		}
+		ema.artifact.Poke(output, "output")
+
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"ema: insufficient samples",
+			nil,
+		))
 	default:
+		if output == nil {
+			output = datura.Map[float64]{
+				"min":   datura.Peek[float64](ema.artifact, "output", "min"),
+				"max":   datura.Peek[float64](ema.artifact, "output", "max"),
+				"prev":  datura.Peek[float64](ema.artifact, "output", "prev"),
+				"rate":  datura.Peek[float64](ema.artifact, "output", "rate"),
+				"value": datura.Peek[float64](ema.artifact, "output", "value"),
+			}
+		}
+
 		output["min"] = math.Min(output["min"], sample)
 		output["max"] = math.Max(output["max"], sample)
 

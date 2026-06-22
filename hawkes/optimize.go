@@ -236,7 +236,7 @@ func (estimator *BivariateEstimator) maximizeLikelihood(
 			}
 		},
 	}
-	result, _ := optimize.Minimize(
+	result, minimizeErr := optimize.Minimize(
 		problem,
 		freeStart,
 		&optimize.Settings{
@@ -245,6 +245,10 @@ func (estimator *BivariateEstimator) maximizeLikelihood(
 		},
 		&optimize.LBFGS{Store: lbfgsMemory},
 	)
+
+	if minimizeErr != nil || result.Status != optimize.Success && result.Status != optimize.GradientThreshold {
+		return BivariateFit{}
+	}
 
 	fit := fitFromLogParams(bounds.decode(result.X), context)
 
@@ -312,19 +316,23 @@ func (estimator *BivariateEstimator) multiStartSeeds(
 	muXStart := context.MuXStart()
 	muYStart := context.MuYStart()
 	betaStart := 1 / context.MedianGapSec
+	selfBranchSeed := math.Max(context.BranchFloor, selfBranchShareFromContext(context)*context.BranchCeiling)
+	crossBranchSeed := crossBranchFloorFromContext(context)
 	baseLog := [bivariateParamCount]float64{
 		decay.LogPositive(muXStart),
 		decay.LogPositive(muYStart),
 		decay.LogPositive(betaStart),
-		decay.LogPositive(0.2),
-		decay.LogPositive(0.05),
-		decay.LogPositive(0.05),
-		decay.LogPositive(0.2),
+		decay.LogPositive(selfBranchSeed),
+		decay.LogPositive(crossBranchSeed),
+		decay.LogPositive(crossBranchSeed),
+		decay.LogPositive(selfBranchSeed),
 	}
 	seeds := make([][bivariateParamCount]float64, 0, len(context.LocalScales)+2)
 
 	if estimator.prior.Valid() {
-		seeds = append(seeds, logParamsFromFit(estimator.prior))
+		if priorSeed, ok := logParamsFromFit(estimator.prior); ok {
+			seeds = append(seeds, priorSeed)
+		}
 	}
 
 	seeds = append(seeds, baseLog)
@@ -341,11 +349,11 @@ func (estimator *BivariateEstimator) multiStartSeeds(
 	return seeds
 }
 
-func logParamsFromFit(fit BivariateFit) [bivariateParamCount]float64 {
+func logParamsFromFit(fit BivariateFit) ([bivariateParamCount]float64, bool) {
 	beta := fit.Beta
 
 	if beta <= 0 {
-		beta = 1
+		return [bivariateParamCount]float64{}, false
 	}
 
 	return [bivariateParamCount]float64{
@@ -356,5 +364,5 @@ func logParamsFromFit(fit BivariateFit) [bivariateParamCount]float64 {
 		decay.LogPositive(fit.AlphaXY / beta),
 		decay.LogPositive(fit.AlphaYX / beta),
 		decay.LogPositive(fit.AlphaYY / beta),
-	}
+	}, true
 }

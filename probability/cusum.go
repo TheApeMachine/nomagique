@@ -54,13 +54,26 @@ func (cusum *CUSUM) Read(payload []byte) (int, error) {
 		state.MergeOutput("value", 0)
 		state.Merge("root", "output")
 		state.Merge("inputs", []string{"value"})
-		return state.Read(payload)
+
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"cusum: reset",
+			nil,
+		))
 	}
 
-	sampleKey := configString(cusum.artifact, state, "sampleKey")
+	sampleKey := statistic.ConfigString(cusum.artifact, state, "sampleKey")
+
+	if sampleKey == "" && datura.KeyPresent(state, "sample") {
+		sampleKey = "sample"
+	}
 
 	if sampleKey == "" {
-		sampleKey = "sample"
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"cusum: sampleKey required",
+			nil,
+		))
 	}
 
 	sample, err := statistic.WireScalar(cusum.artifact, state, sampleKey)

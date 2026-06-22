@@ -3,6 +3,7 @@ package learning
 import (
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/nomagique/statistic"
 )
 
 /*
@@ -59,13 +60,13 @@ func (trustWeight *TrustWeight) Read(payload []byte) (int, error) {
 }
 
 func (trustWeight *TrustWeight) resolvePair(state *datura.Artifact) (float64, float64, error) {
-	sampleKey := configString(trustWeight.artifact, state, "sampleKey")
+	sampleKey := statistic.ConfigString(trustWeight.artifact, state, "sampleKey")
 
 	if sampleKey == "" {
 		sampleKey = "sample"
 	}
 
-	pairedKey := configString(trustWeight.artifact, state, "pairedKey")
+	pairedKey := statistic.ConfigString(trustWeight.artifact, state, "pairedKey")
 
 	if pairedKey == "" {
 		pairedKey = "paired"

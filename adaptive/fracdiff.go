@@ -41,7 +41,12 @@ func (fractional *FracDiff) Read(payload []byte) (int, error) {
 	}
 
 	features := statistic.SnapshotFeatures(state)
-	sampleKey := statistic.WireInputKey(fractional.artifact, state, "sample")
+	sampleKey, err := statistic.WireInputKey(fractional.artifact, state)
+
+	if err != nil {
+		return 0, err
+	}
+
 	sample, err := statistic.WireScalar(fractional.artifact, state, sampleKey)
 
 	if err != nil {
@@ -57,8 +62,9 @@ func (fractional *FracDiff) Read(payload []byte) (int, error) {
 	}
 
 	output := datura.Peek[datura.Map[float64]](fractional.artifact, "output")
+	outputReady := datura.KeyPresent(fractional.artifact, "output", "count")
 
-	if output == nil {
+	if !outputReady {
 		capacity := float64(fracDiffMaxLag(0) + 1)
 		history := make([]float64, int(capacity))
 		history[0] = sample
@@ -71,21 +77,30 @@ func (fractional *FracDiff) Read(payload []byte) (int, error) {
 			"width": 1,
 			"head":  0,
 			"count": 1,
-			"value": sample,
 		}
 
 		fractional.artifact.Poke(output, "output")
 		fractional.artifact.Poke(history, "history")
 		fractional.artifact.Poke([]float64{1}, "weights")
-		state.MergeOutput("value", output["value"])
-		features.Restore(state)
-		state.Merge("root", "output")
 
-		if len(datura.Peek[[]string](state, "inputs")) == 0 {
-			state.Merge("inputs", []string{"value"})
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"fracdiff: insufficient samples",
+			nil,
+		))
+	}
+
+	if output == nil {
+		output = datura.Map[float64]{
+			"min":   datura.Peek[float64](fractional.artifact, "output", "min"),
+			"max":   datura.Peek[float64](fractional.artifact, "output", "max"),
+			"prev":  datura.Peek[float64](fractional.artifact, "output", "prev"),
+			"order": datura.Peek[float64](fractional.artifact, "output", "order"),
+			"width": datura.Peek[float64](fractional.artifact, "output", "width"),
+			"head":  datura.Peek[float64](fractional.artifact, "output", "head"),
+			"count": datura.Peek[float64](fractional.artifact, "output", "count"),
+			"value": datura.Peek[float64](fractional.artifact, "output", "value"),
 		}
-
-		return state.Read(payload)
 	}
 
 	output["min"] = math.Min(output["min"], sample)

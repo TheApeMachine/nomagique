@@ -104,6 +104,38 @@ func TargetLongWindow(history []float64, shortHint, longHint int) (int, error) {
 	return longWindow, nil
 }
 
+/*
+ReturnLag resolves a log-return lag from history when the hint is non-positive.
+Positive hints are returned unchanged.
+*/
+func ReturnLag(history []float64, lagHint, longHint int) (int, error) {
+	if lagHint > 0 {
+		return lagHint, nil
+	}
+
+	if len(history) == 0 {
+		return 1, nil
+	}
+
+	_, longWindow, err := RollingWindows(history, 0, longHint)
+
+	if err != nil {
+		return 0, err
+	}
+
+	lag := int(math.Ceil(math.Sqrt(float64(longWindow))))
+
+	if lag < 1 {
+		lag = 1
+	}
+
+	if longWindow > 1 && lag >= longWindow {
+		lag = longWindow - 1
+	}
+
+	return lag, nil
+}
+
 func coefficientOfVariation(values []float64) float64 {
 	if len(values) < 2 {
 		return 0

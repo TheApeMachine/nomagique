@@ -3,6 +3,7 @@ package learning
 import (
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/nomagique/statistic"
 )
 
 /*
@@ -57,13 +58,13 @@ func (forecaster *Forecaster) Read(payload []byte) (int, error) {
 }
 
 func (forecaster *Forecaster) resolvePair(state *datura.Artifact) (float64, float64, error) {
-	sampleKey := configString(forecaster.artifact, state, "sampleKey")
+	sampleKey := statistic.ConfigString(forecaster.artifact, state, "sampleKey")
 
 	if sampleKey == "" {
 		sampleKey = "sample"
 	}
 
-	pairedKey := configString(forecaster.artifact, state, "pairedKey")
+	pairedKey := statistic.ConfigString(forecaster.artifact, state, "pairedKey")
 
 	if pairedKey == "" {
 		pairedKey = "paired"

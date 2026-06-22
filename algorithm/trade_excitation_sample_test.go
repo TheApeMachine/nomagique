@@ -16,8 +16,9 @@ func TestTradeExcitationSampleRead(testingTB *testing.T) {
 		base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
 
 		var last *datura.Artifact
+		var lastErr error
 
-		for index := range 32 {
+		for index := range 64 {
 			side := "buy"
 
 			if index%2 == 0 {
@@ -31,11 +32,12 @@ func TestTradeExcitationSampleRead(testingTB *testing.T) {
 				1,
 				base.Add(time.Duration(index)*100*time.Millisecond).UnixNano(),
 			)
-			So(transport.NewFlipFlop(frame, sample), ShouldBeNil)
+			lastErr = transport.NewFlipFlop(frame, sample)
 			last = frame
 		}
 
 		Convey("It should publish an excitation feature batch", func() {
+			So(lastErr, ShouldBeNil)
 			features := datura.Peek[[]float64](last, "features")
 			So(len(features), ShouldBeGreaterThan, 8)
 		})
@@ -102,8 +104,10 @@ func TestTradeExcitationSampleRead(testingTB *testing.T) {
 				1,
 				base.Add(time.Duration(index)*100*time.Millisecond).UnixNano(),
 			)
-			So(transport.NewFlipFlop(frame, sample), ShouldBeNil)
-			last = frame
+
+			if transport.NewFlipFlop(frame, sample) == nil {
+				last = frame
+			}
 		}
 
 		batch := datura.Peek[[]float64](last, "features")

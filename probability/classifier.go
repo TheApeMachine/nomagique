@@ -41,7 +41,7 @@ func (classifier *Classifier) Read(payload []byte) (int, error) {
 
 	defer state.Release()
 
-	inputs := configStringSlice(classifier.config, state, "inputs")
+	inputs := statistic.ConfigStringSlice(classifier.config, state, "inputs")
 
 	if len(inputs) == 0 {
 		inputs = datura.Peek[[]string](state, "inputs")
@@ -55,10 +55,10 @@ func (classifier *Classifier) Read(payload []byte) (int, error) {
 		))
 	}
 
-	scoreRoot := configString(classifier.config, state, "scoreRoot")
+	scoreRoot := statistic.ConfigString(classifier.config, state, "scoreRoot")
 
 	if scoreRoot == "" {
-		scoreRoot = configString(classifier.config, state, "root")
+		scoreRoot = statistic.ConfigString(classifier.config, state, "root")
 	}
 
 	if scoreRoot == "" {

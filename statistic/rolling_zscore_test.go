@@ -66,6 +66,59 @@ func TestRollingZScoreRead(t *testing.T) {
 			)
 		})
 	})
+
+	Convey("Given a flat prior that later gains variance", t, func() {
+		config := datura.Acquire("rolling-zscore-flat-config", datura.APPJSON)
+		stage := NewRollingZScore(config)
+		var lastArtifact *datura.Artifact
+
+		for index := range 6 {
+			artifact := datura.Acquire("rolling-zscore-flat-test", datura.APPJSON)
+			artifact.Merge("sample", 0.0)
+
+			err := transport.NewFlipFlop(artifact, stage)
+
+			if index < 2 {
+				So(err, ShouldNotBeNil)
+			}
+
+			if index >= 2 {
+				So(err, ShouldBeNil)
+				So(datura.Peek[float64](artifact, "output", "value"), ShouldAlmostEqual, 0, 1e-9)
+			}
+
+			if lastArtifact != nil {
+				lastArtifact.Release()
+			}
+
+			lastArtifact = artifact
+		}
+
+		breakout := datura.Acquire("rolling-zscore-breakout-test", datura.APPJSON)
+		breakout.Merge("sample", 0.05)
+
+		err := transport.NewFlipFlop(breakout, stage)
+		So(err, ShouldBeNil)
+		So(datura.Peek[float64](breakout, "output", "value"), ShouldAlmostEqual, 1, 1e-9)
+
+		followThrough := datura.Acquire("rolling-zscore-follow-test", datura.APPJSON)
+		followThrough.Merge("sample", 0.06)
+
+		err = transport.NewFlipFlop(followThrough, stage)
+		breakout.Release()
+
+		if lastArtifact != nil {
+			lastArtifact.Release()
+		}
+
+		defer followThrough.Release()
+
+		Convey("It should advance retained samples through zero-variance priors", func() {
+			So(len(stage.samples), ShouldEqual, 8)
+			So(err, ShouldBeNil)
+			So(datura.Peek[float64](followThrough, "output", "value"), ShouldNotEqual, 0)
+		})
+	})
 }
 
 func BenchmarkRollingZScoreRead(b *testing.B) {

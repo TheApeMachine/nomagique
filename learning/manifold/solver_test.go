@@ -112,7 +112,7 @@ func TestBatchSolver_SettleLearnParityPerSlot(t *testing.T) {
 			convey.So(s.Settle(true), convey.ShouldBeNil)
 			convey.So(s.Learn(), convey.ShouldBeNil)
 			for slot := 0; slot < N; slot++ {
-				refs[slot].SettleFromBatchOptions(slotInput(slot, arch[0]), slotTarget(slot, 2), true, true)
+				_, _ = refs[slot].SettleFromBatchOptions(slotInput(slot, arch[0]), slotTarget(slot, 2), true, true)
 			}
 		}
 
@@ -153,7 +153,7 @@ func TestBatchSolver_ReadOutcomesParity(t *testing.T) {
 		convey.So(solver.ReadOutcomes(), convey.ShouldBeNil)
 
 		for slot := 0; slot < batchSize; slot++ {
-			references[slot].SettleFromBatchOptions(slotInput(slot, arch[0]), nil, true, true)
+			_, _ = references[slot].SettleFromBatchOptions(slotInput(slot, arch[0]), nil, true, true)
 		}
 
 		convey.Convey("Batch outcomes should match per-slot reads and gonum twins", func() {

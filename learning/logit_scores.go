@@ -70,13 +70,13 @@ func (logitScores *LogitScores) Read(payload []byte) (int, error) {
 		return 0, err
 	}
 
-	threshold, err := logitScores.resolveThreshold(features)
+	threshold, err := logitScores.resolveThreshold(features, state)
 
 	if err != nil {
 		return 0, err
 	}
 
-	weights, err := logitScores.logitWeights(threshold, order, features)
+	weights, err := logitScores.logitWeights(threshold, order, features, state)
 
 	if err != nil {
 		return 0, err
@@ -171,7 +171,7 @@ func (logitScores *LogitScores) resolveOutputScore(
 	combine := datura.Peek[string](logitScores.config, outputKey, "combine")
 
 	if combine == "ratio" {
-		scale, err := logitScores.resolveFeatureScale(outputKey, overrideValue)
+		scale, err := logitScores.resolveCompositeScale(outputKey, state)
 
 		if err != nil {
 			return 0, err
@@ -191,10 +191,10 @@ func (logitScores *LogitScores) resolveOutputScore(
 			))
 		}
 
-		return ratio, nil
+		return squashFeature(ratio), nil
 	}
 
-	scale, err := logitScores.resolveFeatureScale(outputKey, overrideValue)
+	scale, err := logitScores.resolveFeatureScale(outputKey, overrideValue, state)
 
 	if err != nil {
 		return 0, err
@@ -285,7 +285,13 @@ func (logitScores *LogitScores) applyGatedOutputs(
 			return err
 		}
 
-		if squashFeature(gateValue) <= 0 {
+		gateActive := squashFeature(gateValue) <= 0
+
+		if datura.Peek[float64](config, outputKey, "gateInvert") > 0 {
+			gateActive = squashFeature(gateValue) > 0
+		}
+
+		if gateActive {
 			scores[index] = 0
 		}
 	}
@@ -317,11 +323,12 @@ func (logitScores *LogitScores) logitWeights(
 	threshold float64,
 	order []string,
 	features map[string]float64,
+	state *datura.Artifact,
 ) (ClassifierWeights, error) {
 	scales := make(map[string]float64, len(order))
 
 	for _, key := range order {
-		scale, err := logitScores.resolveFeatureScale(key, features[key])
+		scale, err := logitScores.resolveFeatureScale(key, features[key], state)
 
 		if err != nil {
 			return ClassifierWeights{}, err
@@ -335,17 +342,53 @@ func (logitScores *LogitScores) logitWeights(
 
 func (logitScores *LogitScores) resolveThreshold(
 	features map[string]float64,
+	state *datura.Artifact,
 ) (float64, error) {
+	thresholdSource := datura.Peek[string](logitScores.config, "threshold", "source")
+
+	if thresholdSource != "" {
+		rootKey := statistic.ConfigString(logitScores.config, state, "root")
+
+		if rootKey == "" {
+			return 0, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"logit-scores: config root required for threshold source",
+				nil,
+			))
+		}
+
+		value, err := statistic.WireScalarAt(
+			logitScores.config, state, rootKey, thresholdSource,
+		)
+
+		if err != nil {
+			return 0, err
+		}
+
+		if value <= 0 || math.IsNaN(value) || math.IsInf(value, 0) {
+			return 0, errnie.Error(errnie.Err(
+				errnie.Validation,
+				fmt.Sprintf(
+					"logit-scores: threshold source %q is non-positive",
+					thresholdSource,
+				),
+				nil,
+			))
+		}
+
+		return value, nil
+	}
+
 	configured := datura.Peek[float64](logitScores.config, "threshold")
 
 	if configured > 0 {
 		return configured, nil
 	}
 
-	return logitScores.resolveThresholdFromFeatures(features)
+	return logitScores.resolveThresholdFromHistory(features)
 }
 
-func (logitScores *LogitScores) resolveThresholdFromFeatures(
+func (logitScores *LogitScores) resolveThresholdFromHistory(
 	features map[string]float64,
 ) (float64, error) {
 	magnitude := 0.0
@@ -370,7 +413,7 @@ func (logitScores *LogitScores) resolveThresholdFromFeatures(
 	if !ok || threshold <= 0 || math.IsNaN(threshold) || math.IsInf(threshold, 0) {
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
-			"logit-scores: threshold could not be derived from features",
+			"logit-scores: threshold could not be derived from feature history",
 			nil,
 		))
 	}
@@ -381,6 +424,7 @@ func (logitScores *LogitScores) resolveThresholdFromFeatures(
 func (logitScores *LogitScores) resolveFeatureScale(
 	stageKey string,
 	feature float64,
+	state *datura.Artifact,
 ) (float64, error) {
 	configured := datura.Peek[float64](logitScores.config, stageKey, "scale")
 
@@ -410,19 +454,37 @@ func (logitScores *LogitScores) resolveFeatureScale(
 	}
 
 	if scaleMode == "median" && derived <= 0 {
-		composite, err := logitScores.resolveCompositeScale(stageKey)
+		scaleWire := datura.Peek[string](logitScores.config, stageKey, "scaleWire")
 
-		if err != nil {
-			return 0, err
+		if scaleWire != "" {
+			rootKey := statistic.ConfigString(logitScores.config, state, "root")
+
+			if rootKey == "" {
+				return 0, errnie.Error(errnie.Err(
+					errnie.Validation,
+					"logit-scores: config root required for scaleWire",
+					nil,
+				))
+			}
+
+			wireScale, err := statistic.WireScalarAt(
+				logitScores.config, state, rootKey, scaleWire,
+			)
+
+			if err != nil {
+				return 0, err
+			}
+
+			scale = math.Abs(wireScale)
 		}
 
-		scale = composite
-	}
+		if scaleWire == "" {
+			composite, err := logitScores.resolveCompositeScale(stageKey, state)
 
-	if scale <= 0 {
-		composite, err := logitScores.resolveCompositeScale(stageKey)
+			if err != nil {
+				return 0, err
+			}
 
-		if err == nil && composite > 0 {
 			scale = composite
 		}
 	}
@@ -438,9 +500,17 @@ func (logitScores *LogitScores) resolveFeatureScale(
 	return scale, nil
 }
 
-func (logitScores *LogitScores) resolveCompositeScale(stageKey string) (float64, error) {
+func (logitScores *LogitScores) resolveCompositeScale(
+	stageKey string,
+	state *datura.Artifact,
+) (float64, error) {
 	leftKey := datura.Peek[string](logitScores.config, stageKey, "leftKey")
 	rightKey := datura.Peek[string](logitScores.config, stageKey, "rightKey")
+
+	if leftKey == "" || rightKey == "" {
+		leftKey = datura.Peek[string](logitScores.config, "joint", "leftKey")
+		rightKey = datura.Peek[string](logitScores.config, "joint", "rightKey")
+	}
 
 	if leftKey == "" || rightKey == "" {
 		return 0, errnie.Error(errnie.Err(
@@ -453,21 +523,34 @@ func (logitScores *LogitScores) resolveCompositeScale(stageKey string) (float64,
 	leftScale, err := logitScores.priorMedianScale(leftKey)
 
 	if err != nil {
+		leftScale, err = logitScores.resolveFeatureScale(leftKey, 0, state)
+	}
+
+	if err != nil {
 		return 0, err
 	}
 
 	rightScale, err := logitScores.priorMedianScale(rightKey)
 
 	if err != nil {
+		rightScale, err = logitScores.resolveFeatureScale(rightKey, 0, state)
+	}
+
+	if err != nil {
 		return 0, err
 	}
 
-	if rightScale <= 0 && leftScale > 0 {
-		return leftScale, nil
-	}
-
-	if leftScale <= 0 && rightScale > 0 {
-		return rightScale, nil
+	if leftScale <= 0 || rightScale <= 0 ||
+		math.IsNaN(leftScale) || math.IsNaN(rightScale) ||
+		math.IsInf(leftScale, 0) || math.IsInf(rightScale, 0) {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			fmt.Sprintf(
+				"logit-scores: composite scale operands for %q are non-positive",
+				stageKey,
+			),
+			nil,
+		))
 	}
 
 	return math.Sqrt(leftScale * rightScale), nil
@@ -475,6 +558,20 @@ func (logitScores *LogitScores) resolveCompositeScale(stageKey string) (float64,
 
 func (logitScores *LogitScores) priorMedianScale(stageKey string) (float64, error) {
 	samples := datura.Peek[[]float64](logitScores.config, "output", "scaleSamples", stageKey)
+
+	if len(samples) >= 2 {
+		median, ok := statistic.MedianOf(samples[:len(samples)-1])
+
+		if ok && median > 0 && !math.IsNaN(median) && !math.IsInf(median, 0) {
+			return median, nil
+		}
+	}
+
+	configured := datura.Peek[float64](logitScores.config, stageKey, "scale")
+
+	if configured > 0 && !math.IsNaN(configured) && !math.IsInf(configured, 0) {
+		return configured, nil
+	}
 
 	if len(samples) < 2 {
 		return 0, errnie.Error(errnie.Err(
@@ -486,7 +583,7 @@ func (logitScores *LogitScores) priorMedianScale(stageKey string) (float64, erro
 
 	median, ok := statistic.MedianOf(samples[:len(samples)-1])
 
-	if !ok {
+	if !ok || median <= 0 || math.IsNaN(median) || math.IsInf(median, 0) {
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
 			fmt.Sprintf("logit-scores: prior median scale for %q could not be derived", stageKey),

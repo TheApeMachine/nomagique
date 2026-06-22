@@ -35,11 +35,15 @@ func TestIntegration(t *testing.T) {
 			})
 
 			artifact := datura.Acquire("test", datura.APPJSON).Poke(3.0, "sample")
+			_ = transport.NewFlipFlop(artifact, nomagique.Number(circuit))
+			artifact.Poke(4.0, "sample")
 			err := transport.NewFlipFlop(artifact, nomagique.Number(circuit))
 
 			So(err, ShouldBeNil)
 
 			expectedArtifact := datura.Acquire("test", datura.APPJSON).Poke(3.0, "sample")
+			_ = transport.NewFlipFlop(expectedArtifact, consequence)
+			expectedArtifact.Poke(4.0, "sample")
 			err = transport.NewFlipFlop(expectedArtifact, consequence)
 
 			So(err, ShouldBeNil)

@@ -63,34 +63,42 @@ func (moment *Moment) Read(p []byte) (int, error) {
 	}
 
 	params := bivariateParamsFromArtifact(moment.artifact)
+
+	if !datura.KeyPresent(moment.artifact, "config", "momentR") ||
+		!datura.KeyPresent(moment.artifact, "config", "momentS") {
+		state.Release()
+
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"hawkes-moment: config momentR and momentS required",
+			nil,
+		))
+	}
+
 	momentR := datura.Peek[float64](moment.artifact, "config", "momentR")
-
-	if momentR == 0 {
-		momentR = 1
-	}
-
 	momentS := datura.Peek[float64](moment.artifact, "config", "momentS")
-
-	if momentS == 0 {
-		momentS = 1
-	}
 
 	empirical := stat.BivariateMoment(momentR, momentS, xValues, yValues, weights)
 	theoretical, theoreticalOK := TheoreticalCentralMoment(params, momentR, momentS)
-	confidence := 0.0
 
-	if theoreticalOK {
-		var confidenceOK bool
+	if !theoreticalOK {
+		state.Release()
 
-		confidence, confidenceOK = MomentConfidence(empirical, theoretical)
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"hawkes-moment: theoretical moment unavailable for parameters",
+			nil,
+		))
+	}
 
-		if !confidenceOK {
-			return 0, errnie.Error(errnie.Err(
-				errnie.Validation,
-				"hawkes-moment: confidence could not be derived",
-				nil,
-			))
-		}
+	confidence, confidenceOK := MomentConfidence(empirical, theoretical)
+
+	if !confidenceOK {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"hawkes-moment: confidence could not be derived",
+			nil,
+		))
 	}
 
 	state.MergeOutput("value", confidence)

@@ -31,11 +31,11 @@ func TestMeanMedianRatioRead(testingTB *testing.T) {
 
 			err := transport.NewFlipFlop(frame, stage)
 
-			if len(stage.histories["rvol"]) < 5 {
+			if len(datura.Peek[[]float64](stage.artifact, "output", "histories", "rvol")) < 5 {
 				So(err, ShouldNotBeNil)
 			}
 
-			if len(stage.histories["rvol"]) >= 5 {
+			if len(datura.Peek[[]float64](stage.artifact, "output", "histories", "rvol")) >= 5 {
 				So(err, ShouldBeNil)
 			}
 
@@ -76,11 +76,11 @@ func TestMeanMedianRatioRead(testingTB *testing.T) {
 
 			err := transport.NewFlipFlop(frame, stage)
 
-			if len(stage.histories["rvol"]) < 5 {
+			if len(datura.Peek[[]float64](stage.artifact, "output", "histories", "rvol")) < 5 {
 				So(err, ShouldNotBeNil)
 			}
 
-			if len(stage.histories["rvol"]) >= 5 {
+			if len(datura.Peek[[]float64](stage.artifact, "output", "histories", "rvol")) >= 5 {
 				So(err, ShouldBeNil)
 			}
 
@@ -132,11 +132,11 @@ func TestMeanMedianRatioRead(testingTB *testing.T) {
 
 			err := transport.NewFlipFlop(frame, stage)
 
-			if len(stage.histories["lift"]) < 2 {
+			if len(datura.Peek[[]float64](stage.artifact, "output", "histories", "lift")) < 2 {
 				So(err, ShouldNotBeNil)
 			}
 
-			if len(stage.histories["lift"]) >= 2 {
+			if len(datura.Peek[[]float64](stage.artifact, "output", "histories", "lift")) >= 2 {
 				So(err, ShouldBeNil)
 			}
 
@@ -164,7 +164,7 @@ func TestMeanMedianRatioRead(testingTB *testing.T) {
 
 		err := transport.NewFlipFlop(artifact, stage)
 
-		So(err, ShouldBeNil)
+		So(err, ShouldNotBeNil)
 	})
 
 	Convey("Given dynamic windows on the first sample", testingTB, func() {
@@ -187,6 +187,47 @@ func TestMeanMedianRatioRead(testingTB *testing.T) {
 		err := transport.NewFlipFlop(artifact, stage)
 
 		So(err, ShouldNotBeNil)
+	})
+
+	Convey("Given deltaPositive history dominated by zero long-window samples", testingTB, func() {
+		config := datura.Acquire("mean-median-ratio-zero-long-config", datura.APPJSON).
+			Poke(0.0, "stageIndex").
+			Poke([]string{"lift"}, "order").
+			Poke(map[string]any{
+				"input":       "volume",
+				"transform":   "deltaPositive",
+				"shortWindow": 1.0,
+				"longWindow":  4.0,
+				"outputKey":   "lift",
+			}, "lift")
+
+		stage := NewMeanMedianRatio(config)
+		var lastFrame *datura.Artifact
+
+		for _, sample := range []float64{1000, 1100, 1200, 1300, 1400, 2000} {
+			frame := datura.Acquire("mean-median-ratio-zero-long-frame", datura.APPJSON)
+			frame.Merge("root", "features")
+			frame.Merge("inputs", []string{"volume"})
+			frame.Merge("features", []float64{sample})
+
+			err := transport.NewFlipFlop(frame, stage)
+
+			if len(datura.Peek[[]float64](stage.artifact, "output", "histories", "lift")) < 4 {
+				So(err, ShouldNotBeNil)
+			}
+
+			if lastFrame != nil {
+				lastFrame.Release()
+			}
+
+			lastFrame = frame
+		}
+
+		defer lastFrame.Release()
+
+		Convey("It should derive the long median from positive deltas only", func() {
+			So(datura.Peek[float64](lastFrame, "output", "lift"), ShouldBeGreaterThan, 1)
+		})
 	})
 }
 

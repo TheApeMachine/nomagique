@@ -57,10 +57,18 @@ func (rank *Rank) Read(payload []byte) (int, error) {
 		return state.Read(payload)
 	}
 
-	sampleKey := configString(rank.artifact, state, "sampleKey")
+	sampleKey := statistic.ConfigString(rank.artifact, state, "sampleKey")
+
+	if sampleKey == "" && datura.KeyPresent(state, "sample") {
+		sampleKey = "sample"
+	}
 
 	if sampleKey == "" {
-		sampleKey = "sample"
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"rank: sampleKey required",
+			nil,
+		))
 	}
 
 	sample, err := statistic.WireScalar(rank.artifact, state, sampleKey)

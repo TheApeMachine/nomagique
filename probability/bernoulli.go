@@ -54,16 +54,29 @@ func (bernoulli *Bernoulli) Read(payload []byte) (int, error) {
 		state.MergeOutput("value", 0)
 		state.Merge("root", "output")
 		state.Merge("inputs", []string{"value"})
-		return state.Read(payload)
+
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"bernoulli: reset",
+			nil,
+		))
 	}
 
-	sampleKey := configString(bernoulli.artifact, state, "sampleKey")
+	sampleKey := statistic.ConfigString(bernoulli.artifact, state, "sampleKey")
 
-	if sampleKey == "" {
+	if sampleKey == "" && datura.KeyPresent(state, "sample") {
 		sampleKey = "sample"
 	}
 
-	pairedKey := configString(bernoulli.artifact, state, "pairedKey")
+	if sampleKey == "" {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"bernoulli: sampleKey required",
+			nil,
+		))
+	}
+
+	pairedKey := statistic.ConfigString(bernoulli.artifact, state, "pairedKey")
 
 	if pairedKey == "" {
 		pairedKey = "paired"

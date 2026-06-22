@@ -42,7 +42,12 @@ func (momentum *Momentum) Read(payload []byte) (int, error) {
 	}
 
 	features := statistic.SnapshotFeatures(state)
-	sampleKey := statistic.WireInputKey(momentum.artifact, state, "sample")
+	sampleKey, err := statistic.WireInputKey(momentum.artifact, state)
+
+	if err != nil {
+		return 0, err
+	}
+
 	sample, err := statistic.WireScalar(momentum.artifact, state, sampleKey)
 
 	if err != nil {
@@ -74,15 +79,12 @@ func (momentum *Momentum) Read(payload []byte) (int, error) {
 
 		momentum.bootstrapped = true
 		momentum.artifact.Poke(output, "output")
-		state.MergeOutput("value", output["value"])
-		features.Restore(state)
-		state.Merge("root", "output")
 
-		if len(datura.Peek[[]string](state, "inputs")) == 0 {
-			state.Merge("inputs", []string{"value"})
-		}
-
-		return state.Read(payload)
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"momentum: insufficient samples",
+			nil,
+		))
 	}
 
 	output["min"] = math.Min(output["min"], sample)

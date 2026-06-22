@@ -55,20 +55,57 @@ func ConfigStringSlice(config, state *datura.Artifact, key string) []string {
 }
 
 /*
-WireInputKey resolves the inbound scalar key from config with a package default.
+WireInputKey resolves the inbound scalar key from config attributes.
 */
-func WireInputKey(config, state *datura.Artifact, defaultKey string) string {
+func WireInputKey(config, state *datura.Artifact) (string, error) {
 	inputKey := ConfigString(config, state, "input")
 
 	if inputKey == "" {
 		inputKey = ConfigString(config, state, "sampleKey")
 	}
 
-	if inputKey == "" {
-		inputKey = defaultKey
+	if inputKey == "" && datura.KeyPresent(state, "sample") {
+		return "sample", nil
 	}
 
-	return inputKey
+	if inputKey == "" {
+		inputKeys := ConfigStringSlice(config, state, "inputs")
+
+		if len(inputKeys) == 0 {
+			inputKeys = datura.Peek[[]string](state, "inputs")
+		}
+
+		if len(inputKeys) == 1 && inputKeys[0] != "" {
+			return inputKeys[0], nil
+		}
+	}
+
+	if inputKey == "" {
+		return "", errnie.Error(errnie.Err(
+			errnie.Validation,
+			"wire: config input or sampleKey required",
+			nil,
+		))
+	}
+
+	return inputKey, nil
+}
+
+/*
+ConfigFloat64 reads a float attribute from config, preferring role-scoped keys.
+*/
+func ConfigFloat64(config, state *datura.Artifact, key string) float64 {
+	role := WireRole(state)
+
+	if role != "" && datura.KeyPresent(config, role, key) {
+		return datura.Peek[float64](config, role, key)
+	}
+
+	if datura.KeyPresent(config, key) {
+		return datura.Peek[float64](config, key)
+	}
+
+	return 0
 }
 
 /*

@@ -321,7 +321,12 @@ func (rm *ResonanceManifold) Read(payload []byte) (int, error) {
 		target = values[rm.arch[0] : rm.arch[0]+rm.targetDim]
 	}
 
-	reconstruction := rm.SettleFromBatch(input, target)
+	reconstruction, settleErr := rm.SettleFromBatch(input, target)
+
+	if settleErr != nil {
+		return 0, settleErr
+	}
+
 	latent := rm.LatentState()
 
 	state.MergeOutput("value", reconstruction)
@@ -335,7 +340,7 @@ func (rm *ResonanceManifold) Close() error {
 	return nil
 }
 
-func (rm *ResonanceManifold) SettleFromBatch(input []float64, target []float64) float64 {
+func (rm *ResonanceManifold) SettleFromBatch(input []float64, target []float64) (float64, error) {
 	return rm.SettleFromBatchOptions(input, target, rm.streamLearn, rm.streamAdvanceTemporal)
 }
 
@@ -344,29 +349,23 @@ func (rm *ResonanceManifold) SettleFromBatchOptions(
 	target []float64,
 	learn bool,
 	advanceTemporal bool,
-) float64 {
+) (float64, error) {
 	if len(input) != rm.arch[0] {
-		rm.output = 0
-		errnie.Error(errnie.Err(
+		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"resonance: input dimension mismatch",
 			errors.New("resonance: input dimension mismatch"),
 		))
-
-		return rm.output
 	}
 
 	settleErr := rm.Settle(input, advanceTemporal)
 
 	if settleErr != nil {
-		rm.output = 0
-		errnie.Error(errnie.Err(
+		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"resonance: settle failed",
 			settleErr,
 		))
-
-		return rm.output
 	}
 
 	if learn {
@@ -376,7 +375,7 @@ func (rm *ResonanceManifold) SettleFromBatchOptions(
 	reconstruction := rm.ReconstructionError()
 	rm.output = reconstruction
 
-	return rm.output
+	return reconstruction, nil
 }
 
 func (rm *ResonanceManifold) ReconstructionOutput() float64 {

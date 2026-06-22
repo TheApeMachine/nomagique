@@ -38,6 +38,8 @@ func logitScoresConfig() *datura.Artifact {
 			"terms":   []string{"rvol", "precursor"},
 			"source":  "ignition",
 			"combine": "ratio",
+			"leftKey": "rvol",
+			"rightKey": "precursor",
 		},
 		"trend": datura.Map[any]{
 			"terms":   []string{"precursor", "compression", "rvol"},
@@ -140,6 +142,52 @@ func TestLogitScoresRead(testingTB *testing.T) {
 		})
 	})
 
+	Convey("Given spread-sourced threshold and composite wire scales", testingTB, func() {
+		config := logitScoresConfig()
+		config.Poke(0.0, "threshold")
+		config.Poke(map[string]any{
+			"source": "spread",
+		}, "threshold")
+		config.Poke(0.0, "rvol", "scale")
+		config.Poke(0.0, "precursor", "scale")
+		config.Poke(0.0, "compression", "scale")
+		config.Poke("median", "rvol", "scaleMode")
+		config.Poke("median", "precursor", "scaleMode")
+		config.Poke("median", "compression", "scaleMode")
+		config.Poke("spread", "rvol", "leftKey")
+		config.Poke("spread", "rvol", "rightKey")
+		config.Poke("spread", "precursor", "leftKey")
+		config.Poke("spread", "precursor", "rightKey")
+		config.Poke("spread", "compression", "leftKey")
+		config.Poke("spread", "compression", "rightKey")
+		config.Poke(map[string]any{
+			"terms": []string{"rvol", "precursor"},
+		}, "ignition")
+
+		stage := NewLogitScores(config)
+		artifact := datura.Acquire("logit-scores-spread-threshold-test", datura.APPJSON)
+		artifact.Merge("root", "output")
+		artifact.Merge("inputs", []string{"rvol", "precursor", "compression", "spread", "ignition", "value"})
+		artifact.MergeOutput("rvol", 0.0)
+		artifact.MergeOutput("precursor", 0.0)
+		artifact.MergeOutput("value", 0.0)
+		artifact.MergeOutput("spread", 0.0001)
+		artifact.MergeOutput("compression", 0.5)
+		artifact.MergeOutput("ignition", 0.0)
+		artifact.MergeOutput("rvolDecline", 0.0)
+
+		err := transport.NewFlipFlop(artifact, stage)
+
+		So(err, ShouldBeNil)
+
+		Convey("It should publish finite logits from spread-derived threshold", func() {
+			So(datura.Peek[float64](artifact, "output", "ignition"), ShouldBeGreaterThanOrEqualTo, 0)
+			So(math.IsNaN(datura.Peek[float64](artifact, "output", "trend")), ShouldBeFalse)
+		})
+
+		artifact.Release()
+	})
+
 	Convey("Given fading volume lift with flat precursor", testingTB, func() {
 		config := logitScoresConfig()
 
@@ -163,6 +211,38 @@ func TestLogitScoresRead(testingTB *testing.T) {
 
 			So(exhaustion, ShouldBeGreaterThan, coiled)
 		})
+	})
+	Convey("Given elevated precursor with gateInvert on compression", testingTB, func() {
+		config := logitScoresConfig()
+		config.Poke(map[string]any{
+			"source":     "value",
+			"scale":      1.5,
+			"terms":      []string{"compression", "precursor"},
+			"inverts":    []string{"precursor"},
+			"gate":       "precursor",
+			"gateInvert": 1.0,
+		}, "compression")
+
+		stage := NewLogitScores(config)
+		artifact := datura.Acquire("logit-scores-gate-invert-test", datura.APPJSON)
+		artifact.Merge("root", "output")
+		artifact.Merge("inputs", []string{"rvol", "precursor", "compression", "ignition", "value", "rvolDecline"})
+		artifact.MergeOutput("rvol", 3.0)
+		artifact.MergeOutput("precursor", 2.5)
+		artifact.MergeOutput("value", 0.8)
+		artifact.MergeOutput("ignition", 2.7)
+		artifact.MergeOutput("rvolDecline", 0.0)
+
+		err := transport.NewFlipFlop(artifact, stage)
+
+		So(err, ShouldBeNil)
+
+		Convey("It should suppress compression when precursor is elevated", func() {
+			So(datura.Peek[float64](artifact, "output", "compression"), ShouldAlmostEqual, 0, 0.0001)
+			So(datura.Peek[float64](artifact, "output", "ignition"), ShouldBeGreaterThan, 0)
+		})
+
+		artifact.Release()
 	})
 }
 

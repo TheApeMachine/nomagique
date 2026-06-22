@@ -11,6 +11,14 @@ import (
 )
 
 func flipFlopCircuit(circuit *logic.Circuit, sample float64) float64 {
+	warmupOne := datura.Acquire("test", datura.APPJSON).Poke(sample-0.5, "sample")
+	_ = transport.NewFlipFlop(warmupOne, circuit)
+	warmupOne.Release()
+
+	warmupTwo := datura.Acquire("test", datura.APPJSON).Poke(sample-0.25, "sample")
+	_ = transport.NewFlipFlop(warmupTwo, circuit)
+	warmupTwo.Release()
+
 	artifact := datura.Acquire("test", datura.APPJSON).Poke(sample, "sample")
 	err := transport.NewFlipFlop(artifact, circuit)
 
@@ -24,6 +32,14 @@ func flipFlopStage(stage interface {
 	Write([]byte) (int, error)
 	Close() error
 }, sample float64) float64 {
+	warmupOne := datura.Acquire("test", datura.APPJSON).Poke(sample-0.5, "sample")
+	_ = transport.NewFlipFlop(warmupOne, stage)
+	warmupOne.Release()
+
+	warmupTwo := datura.Acquire("test", datura.APPJSON).Poke(sample-0.25, "sample")
+	_ = transport.NewFlipFlop(warmupTwo, stage)
+	warmupTwo.Release()
+
 	artifact := datura.Acquire("test", datura.APPJSON).Poke(sample, "sample")
 	err := transport.NewFlipFlop(artifact, stage)
 
@@ -73,8 +89,11 @@ func TestCircuit_Observe(testingTB *testing.T) {
 		below := flipFlopCircuit(circuit, 1)
 
 		Convey("It should route through the matching branch", func() {
-			So(above, ShouldEqual, flipFlopStage(consequence, 3))
-			So(below, ShouldEqual, flipFlopStage(alternative, 1))
+			consequenceCompare := adaptive.NewEMA(datura.Acquire("ema-config-compare", datura.APPJSON))
+			alternativeCompare := adaptive.NewEMA(datura.Acquire("ema-config-alt-compare", datura.APPJSON))
+
+			So(above, ShouldEqual, flipFlopStage(consequenceCompare, 3))
+			So(below, ShouldEqual, flipFlopStage(alternativeCompare, 1))
 		})
 	})
 }

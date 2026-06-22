@@ -42,7 +42,12 @@ func (extent *Range) Read(payload []byte) (int, error) {
 	}
 
 	features := statistic.SnapshotFeatures(state)
-	sampleKey := statistic.WireInputKey(extent.artifact, state, "sample")
+	sampleKey, err := statistic.WireInputKey(extent.artifact, state)
+
+	if err != nil {
+		return 0, err
+	}
+
 	sample, err := statistic.WireScalar(extent.artifact, state, sampleKey)
 
 	if err != nil {
@@ -72,15 +77,12 @@ func (extent *Range) Read(payload []byte) (int, error) {
 
 		extent.bootstrapped = true
 		extent.artifact.Poke(output, "output")
-		state.MergeOutput("value", output["value"])
-		features.Restore(state)
-		state.Merge("root", "output")
 
-		if len(datura.Peek[[]string](state, "inputs")) == 0 {
-			state.Merge("inputs", []string{"value"})
-		}
-
-		return state.Read(payload)
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"range: insufficient samples",
+			nil,
+		))
 	}
 
 	output["min"] = math.Min(output["min"], sample)

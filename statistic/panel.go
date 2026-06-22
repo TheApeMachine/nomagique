@@ -53,8 +53,18 @@ func (panel *Panel) Read(payload []byte) (int, error) {
 		sampleField = "sample"
 	}
 
+	if datura.Peek[float64](state, "table", "rowCount") > 0 {
+		if !datura.KeyPresent(state, memberField) && !datura.KeyPresent(state, sampleField) {
+			return state.Read(payload)
+		}
+	}
+
 	if !datura.KeyPresent(state, memberField) || !datura.KeyPresent(state, sampleField) {
-		return state.Read(payload)
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"panel: member and sample keys required on wire",
+			nil,
+		))
 	}
 
 	member, err := WireScalar(panel.artifact, state, memberField)

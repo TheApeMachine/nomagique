@@ -41,7 +41,12 @@ func (variance *Variance) Read(payload []byte) (int, error) {
 		return 0, err
 	}
 
-	sampleKey := statistic.WireInputKey(variance.artifact, state, "sample")
+	sampleKey, err := statistic.WireInputKey(variance.artifact, state)
+
+	if err != nil {
+		return 0, err
+	}
+
 	sample, err := statistic.WireScalar(variance.artifact, state, sampleKey)
 
 	if err != nil {

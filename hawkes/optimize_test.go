@@ -83,7 +83,10 @@ func TestLogParamsFromFit(testingTB *testing.T) {
 			Beta:    2,
 		}
 
-		logParams := logParamsFromFit(fit)
+		logParams, ok := logParamsFromFit(fit)
+
+		So(ok, ShouldBeTrue)
+
 		rebuilt := fitFromLogParams(logParams, FitContext{
 			BranchFloor:   0.01,
 			BranchCeiling: 0.9,

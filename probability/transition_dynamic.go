@@ -4,6 +4,7 @@ import (
 	"github.com/bytedance/sonic"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/nomagique/statistic"
 )
 
 /*
@@ -50,8 +51,8 @@ func (transition *Transition) Read(payload []byte) (int, error) {
 
 	defer state.Release()
 
-	numStates := int(configFloat64(transition.artifact, state, "numStates"))
-	alpha := configFloat64(transition.artifact, state, "alpha")
+	numStates := int(statistic.ConfigFloat64(transition.artifact, state, "numStates"))
+	alpha := statistic.ConfigFloat64(transition.artifact, state, "alpha")
 	inboundAlpha := datura.Peek[float64](state, "alpha")
 
 	if inboundAlpha > 0 {

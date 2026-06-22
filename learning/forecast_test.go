@@ -176,6 +176,8 @@ func TestForecaster_withAdaptiveSignal(testingTB *testing.T) {
 		exponential := adaptive.NewEMA(datura.Acquire("ema-config", datura.APPJSON))
 		forecaster := Forecast(datura.Acquire("forecast-config", datura.APPJSON))
 		signal := datura.Acquire("test", datura.APPJSON).Poke(10, "sample")
+		_ = transport.NewFlipFlop(signal, exponential)
+		signal.Poke(12, "sample")
 		err := transport.NewFlipFlop(signal, exponential)
 
 		So(err, ShouldBeNil)

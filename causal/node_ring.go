@@ -51,29 +51,47 @@ func (nodeRing *NodeRing) Read(p []byte) (int, error) {
 	nodeCount := nodeRing.nodeCountFromArtifact()
 	capacity := nodeRing.capacityFromArtifact()
 	row := datura.Peek[[]float64](state, "batch")
+
+	if len(row) == 0 {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"causal node-ring: batch required",
+			nil,
+		))
+	}
+
+	if len(row) != nodeCount {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			fmt.Sprintf("causal node-ring: batch length %d does not match nodeCount %d", len(row), nodeCount),
+			nil,
+		))
+	}
+
 	output := 0.0
 
-	if len(row) == nodeCount {
-		for nodeIndex, sample := range row {
-			if math.IsNaN(sample) || math.IsInf(sample, 0) {
-				return 0, errnie.Error(errnie.Err(
-					errnie.Validation,
-					"causal node-ring: sample is non-finite",
-					fmt.Errorf("causal: node %d sample is non-finite", nodeIndex),
-				))
-			}
-
-			stream := nodeRing.loadStream(nodeIndex, capacity)
-			stream.Push(sample)
-			nodeRing.persistStream(nodeIndex, stream)
+	for nodeIndex, sample := range row {
+		if math.IsNaN(sample) || math.IsInf(sample, 0) {
+			return 0, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"causal node-ring: sample is non-finite",
+				fmt.Errorf("causal: node %d sample is non-finite", nodeIndex),
+			))
 		}
 
-		nodeRing.artifact.Poke(float64(nodeCount), "streams", "nodeCount")
-		output = row[nodeCount-1]
+		stream := nodeRing.loadStream(nodeIndex, capacity)
+		stream.Push(sample)
+		nodeRing.persistStream(nodeIndex, stream)
 	}
+
+	nodeRing.artifact.Poke(float64(nodeCount), "streams", "nodeCount")
+	output = row[nodeCount-1]
 
 	nodeRing.copyStreamsTo(state)
 	state.MergeOutput("value", output)
+	state.Merge("root", "output")
+	state.Merge("inputs", []string{"value"})
+
 	return state.Read(p)
 }
 

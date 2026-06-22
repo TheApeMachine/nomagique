@@ -3,6 +3,7 @@ package learning
 import (
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/nomagique/statistic"
 )
 
 /*
@@ -59,13 +60,13 @@ func (calibrator *Calibrator) Read(payload []byte) (int, error) {
 }
 
 func (calibrator *Calibrator) resolvePair(state *datura.Artifact) (float64, float64, error) {
-	sampleKey := configString(calibrator.artifact, state, "sampleKey")
+	sampleKey := statistic.ConfigString(calibrator.artifact, state, "sampleKey")
 
 	if sampleKey == "" {
 		sampleKey = "sample"
 	}
 
-	pairedKey := configString(calibrator.artifact, state, "pairedKey")
+	pairedKey := statistic.ConfigString(calibrator.artifact, state, "pairedKey")
 
 	if pairedKey == "" {
 		pairedKey = "paired"

@@ -76,17 +76,36 @@ func (conviction *Conviction) Read(p []byte) (int, error) {
 	}
 
 	leader := fields[3] > 0
-	surgeScore := breadth
-	divergentScore := math.Abs(change)
-	slumpScore := math.Max(0, surgeThreshold-breadth)
 	category := classifyConviction(breadth, change, surgeThreshold, leader)
+
+	surgeScore := 0.0
+	divergentScore := 0.0
+	slumpScore := 0.0
+
+	switch category {
+	case 1:
+		surgeScore = breadth
+	case 2:
+		divergentScore = math.Abs(change)
+	case 3:
+		slumpScore = math.Max(math.Max(0, surgeThreshold-breadth), math.Abs(change))
+
+		if slumpScore == 0 {
+			slumpScore = 1.0
+		}
+	}
+
 	strength := breadth
 
 	if category == 2 {
 		strength = divergentScore
 	}
 
-	if strength <= 0 && category != 3 {
+	if category == 3 {
+		strength = slumpScore
+	}
+
+	if strength <= 0 {
 		return rejectStage(state, "equation: invalid stage input")
 	}
 
@@ -109,7 +128,7 @@ func classifyConviction(
 	breadth, change, surgeThreshold float64,
 	leader bool,
 ) int {
-	if breadth >= surgeThreshold {
+	if breadth >= surgeThreshold && leader {
 		return 1
 	}
 

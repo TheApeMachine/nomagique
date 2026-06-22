@@ -87,8 +87,16 @@ func (extractor *FeatureExtractor) Read(payload []byte) (int, error) {
 
 			config := datura.Acquire("feature-extractor-ema", datura.APPJSON)
 			scratch.Inspect("feature-extractor", "Read()", "transform", transform, "in")
-			transport.NewFlipFlop(scratch, transformer(config))
+
+			if transformErr := transport.NewFlipFlop(scratch, transformer(config)); transformErr != nil {
+				scratch.Release()
+				config.Release()
+
+				return 0, transformErr
+			}
+
 			scratch.Inspect("feature-extractor", "Read()", "transform", transform, "out")
+			config.Release()
 
 			rootKey := datura.Peek[string](scratch, "root")
 

@@ -2,6 +2,7 @@ package learning
 
 import (
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/errnie"
 )
 
 /*
@@ -56,22 +57,41 @@ func (rls *RLS) Read(payload []byte) (int, error) {
 	if len(values) >= rls.filter.dimension+1 {
 		features := values[:rls.filter.dimension]
 		target := values[len(values)-1]
-		observeErr := rls.filter.Observe(features, target)
 
-		if observeErr == nil {
-			prediction, predictErr := rls.filter.Predict(features)
-
-			if predictErr == nil {
-				rls.output = prediction
-				rls.artifact.Poke(rls.output, "output", "value")
-			}
+		if observeErr := rls.filter.Observe(features, target); observeErr != nil {
+			return 0, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"rls: observe failed",
+				observeErr,
+			))
 		}
+
+		prediction, predictErr := rls.filter.Predict(features)
+
+		if predictErr != nil {
+			return 0, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"rls: predict failed",
+				predictErr,
+			))
+		}
+
+		rls.output = prediction
+		rls.artifact.Poke(rls.output, "output", "value")
 	}
 
 	value := rls.output
 
 	if len(values) >= rls.filter.dimension+1 {
 		value = datura.Peek[float64](rls.artifact, "output", "value")
+	}
+
+	if len(values) < rls.filter.dimension+1 {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"rls: batch shorter than feature dimension plus target",
+			nil,
+		))
 	}
 
 	state.MergeOutput("value", value)

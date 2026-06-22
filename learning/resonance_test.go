@@ -139,9 +139,9 @@ func TestResonanceManifold_SetStreamLearn(testingTB *testing.T) {
 
 		baselineWeights := mat.DenseCopyOf(baseline.W[0])
 
-		baseline.SettleFromBatchOptions(input, target, true, true)
+		_, _ = baseline.SettleFromBatchOptions(input, target, true, true)
 		frozenManifold.SetStreamLearn(false)
-		frozenManifold.SettleFromBatchOptions(input, target, false, true)
+		_, _ = frozenManifold.SettleFromBatchOptions(input, target, false, true)
 
 		Convey("It should leave weights unchanged when learning is disabled", func() {
 			So(mat.Equal(baselineWeights, frozenManifold.W[0]), ShouldBeTrue)

@@ -23,6 +23,8 @@ func TestNodeRingRead(t *testing.T) {
 
 			So(err, ShouldBeNil)
 			So(datura.Peek[float64](artifact, "output", "value"), ShouldEqual, 2.0)
+			So(datura.Peek[string](artifact, "root"), ShouldEqual, "output")
+			So(datura.Peek[[]string](artifact, "inputs"), ShouldContain, "value")
 		})
 	})
 }

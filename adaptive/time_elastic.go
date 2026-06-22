@@ -42,7 +42,12 @@ func (timeElastic *TimeElastic) Read(payload []byte) (int, error) {
 	}
 
 	features := statistic.SnapshotFeatures(state)
-	sampleKey := statistic.WireInputKey(timeElastic.artifact, state, "sample")
+	sampleKey, err := statistic.WireInputKey(timeElastic.artifact, state)
+
+	if err != nil {
+		return 0, err
+	}
+
 	sample, err := statistic.WireScalar(timeElastic.artifact, state, sampleKey)
 
 	if err != nil {

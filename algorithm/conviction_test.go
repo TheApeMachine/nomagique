@@ -10,7 +10,7 @@ import (
 )
 
 func TestConvictionEvaluate(testingTB *testing.T) {
-	Convey("Given broad positive breadth", testingTB, func() {
+	Convey("Given broad positive breadth with leadership", testingTB, func() {
 		conviction := equation.NewConviction(nil)
 		writeErr := tests.WriteSamples(conviction, 1.0, 2.0, 0.5, 1, 2.0)
 

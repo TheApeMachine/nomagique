@@ -114,11 +114,11 @@ func TestPosterior_Reset(testingTB *testing.T) {
 		resetArtifact := datura.Acquire("test", datura.APPJSON).Poke(1, "reset")
 		err = transport.NewFlipFlop(resetArtifact, posterior)
 
-		So(err, ShouldBeNil)
+		So(err, ShouldNotBeNil)
 
 		Convey("It should clear derived state", func() {
-			So(datura.Peek[float64](resetArtifact, "output", "ready"), ShouldEqual, 0)
-			So(datura.Peek[float64](resetArtifact, "output", "value"), ShouldEqual, 0)
+			So(datura.Peek[float64](posterior.artifact, "output", "ready"), ShouldEqual, 0)
+			So(datura.Peek[float64](posterior.artifact, "output", "value"), ShouldEqual, 0)
 		})
 	})
 }

@@ -9,7 +9,7 @@ import (
 )
 
 func TestConviction_Read(testingTB *testing.T) {
-	Convey("Given broad positive breadth", testingTB, func() {
+	Convey("Given broad positive breadth with leadership", testingTB, func() {
 		stage := equation.NewConviction(nil)
 		writeErr := writeFeatureStage(stage, equation.ConvictionInputKeys, 1.0, 2.0, 0.5, 1, 2.0)
 
@@ -22,6 +22,22 @@ func TestConviction_Read(testingTB *testing.T) {
 		Convey("It should classify risk-on surge", func() {
 			So(int(datura.Peek[float64](outbound, "output", "category")), ShouldEqual, 1)
 			So(datura.Peek[float64](outbound, "output", "value"), ShouldEqual, 1)
+		})
+	})
+
+	Convey("Given broad positive breadth without leadership", testingTB, func() {
+		stage := equation.NewConviction(nil)
+		writeErr := writeFeatureStage(stage, equation.ConvictionInputKeys, 1.0, 0.1, 0.5, 0, 0.1)
+
+		So(writeErr, ShouldBeNil)
+
+		outbound, err := readStageOutput(stage)
+
+		So(err, ShouldBeNil)
+
+		Convey("It should not classify risk-on surge without a leader", func() {
+			So(int(datura.Peek[float64](outbound, "output", "category")), ShouldNotEqual, 1)
+			So(int(datura.Peek[float64](outbound, "output", "category")), ShouldEqual, 3)
 		})
 	})
 

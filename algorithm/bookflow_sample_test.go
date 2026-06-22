@@ -61,6 +61,19 @@ func TestBookflowSample_Read(t *testing.T) {
 	})
 }
 
+func TestBookflowSample_ReadRejectsMissingSymbol(t *testing.T) {
+	Convey("Given a book frame without symbol", t, func() {
+		encoder := NewBookflowSample(datura.Acquire("bookflow-sample", datura.APPJSON))
+		frame := []byte(`{"channel":"book","type":"update","data":[{"bids":[{"price":100,"qty":10}],"asks":[{"price":101,"qty":10}]}]}`)
+		state := datura.Acquire("measurement", datura.APPJSON).WithPayload(frame)
+
+		err := transport.NewFlipFlop(state, encoder)
+
+		So(err, ShouldNotBeNil)
+		state.Release()
+	})
+}
+
 func BenchmarkBookflowSample_Read(b *testing.B) {
 	encoder := NewBookflowSample(datura.Acquire("bookflow-sample", datura.APPJSON))
 	bookPayload := []byte(`{"channel":"book","type":"update","data":[{"symbol":"BTC/USD","bids":[{"price":100,"qty":20}],"asks":[{"price":101,"qty":8}]}]}`)

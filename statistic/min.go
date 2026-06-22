@@ -39,7 +39,12 @@ func (min *Min) Read(payload []byte) (int, error) {
 		return 0, err
 	}
 
-	sampleKey := WireInputKey(min.artifact, state, "sample")
+	sampleKey, err := WireInputKey(min.artifact, state)
+
+	if err != nil {
+		return 0, err
+	}
+
 	sample, err := WireScalar(min.artifact, state, sampleKey)
 
 	if err != nil {

@@ -41,7 +41,12 @@ func (delta *Delta) Read(payload []byte) (int, error) {
 		return 0, err
 	}
 
-	sampleKey := statistic.WireInputKey(delta.artifact, state, "sample")
+	sampleKey, err := statistic.WireInputKey(delta.artifact, state)
+
+	if err != nil {
+		return 0, err
+	}
+
 	sample, err := statistic.WireScalar(delta.artifact, state, sampleKey)
 
 	if err != nil {

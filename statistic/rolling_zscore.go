@@ -103,23 +103,46 @@ func (rollingZScore *RollingZScore) Read(payload []byte) (int, error) {
 
 	meanSample := stat.Mean(prior, nil)
 	stdSample := stat.StdDev(prior, nil)
-
-	if stdSample <= 0 {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"rolling-zscore: prior standard deviation is zero",
-			nil,
-		))
-	}
-
-	score := (sample - meanSample) / stdSample
-
-	samples := append(prior, sample)
 	longHint := 0
 
 	if stageKey != "" {
 		longHint = int(datura.Peek[float64](rollingZScore.artifact, stageKey, "longWindow"))
 	}
+
+	var score float64
+
+	if stdSample <= 0 {
+		meanAbsoluteDeviation := 0.0
+
+		for _, priorSample := range prior {
+			meanAbsoluteDeviation += math.Abs(priorSample - meanSample)
+		}
+
+		meanAbsoluteDeviation /= float64(len(prior))
+
+		delta := sample - meanSample
+		scale := meanAbsoluteDeviation
+
+		if scale <= 0 {
+			if delta == 0 {
+				score = 0
+			}
+
+			if delta != 0 {
+				score = delta / math.Abs(delta)
+			}
+		}
+
+		if scale > 0 {
+			score = delta / scale
+		}
+	}
+
+	if stdSample > 0 {
+		score = (sample - meanSample) / stdSample
+	}
+
+	samples := append(prior, sample)
 
 	_, longWindow, err := RollingWindows(samples, 0, longHint)
 

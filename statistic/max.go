@@ -39,7 +39,12 @@ func (max *Max) Read(payload []byte) (int, error) {
 		return 0, err
 	}
 
-	sampleKey := WireInputKey(max.artifact, state, "sample")
+	sampleKey, err := WireInputKey(max.artifact, state)
+
+	if err != nil {
+		return 0, err
+	}
+
 	sample, err := WireScalar(max.artifact, state, sampleKey)
 
 	if err != nil {

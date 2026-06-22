@@ -13,7 +13,6 @@ The constructor artifact holds config; runtime history lives on the stage instan
 */
 type PriceRing struct {
 	artifact *datura.Artifact
-	samples  []float64
 }
 
 /*
@@ -24,7 +23,6 @@ func NewPriceRing(artifact *datura.Artifact) *PriceRing {
 
 	return &PriceRing{
 		artifact: artifact,
-		samples:  []float64{},
 	}
 }
 
@@ -76,18 +74,23 @@ func (priceRing *PriceRing) Read(payload []byte) (int, error) {
 		))
 	}
 
-	returnLag := int(datura.Peek[float64](priceRing.artifact, stageKey, "returnLag"))
 	longHint := int(datura.Peek[float64](priceRing.artifact, stageKey, "longWindow"))
 
-	if returnLag <= 0 {
+	returnLag, err := ReturnLag(
+		datura.Peek[[]float64](priceRing.artifact, stageKey, "priceSamples"),
+		int(datura.Peek[float64](priceRing.artifact, stageKey, "returnLag")),
+		longHint,
+	)
+
+	if err != nil {
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
-			"price-ring: returnLag must be positive",
-			nil,
+			"price-ring: unable to resolve return lag",
+			err,
 		))
 	}
 
-	samples := priceRing.samples
+	samples := datura.Peek[[]float64](priceRing.artifact, stageKey, "priceSamples")
 	samples = append(samples, sample)
 
 	_, longWindow, err := RollingWindows(samples, 0, longHint)
@@ -104,7 +107,7 @@ func (priceRing *PriceRing) Read(payload []byte) (int, error) {
 		samples = samples[len(samples)-longWindow-returnLag:]
 	}
 
-	priceRing.samples = samples
+	priceRing.artifact.Poke(samples, stageKey, "priceSamples")
 	features.Restore(state)
 	state.MergeOutput(sourceKey, sample)
 	state.Merge("root", "output")

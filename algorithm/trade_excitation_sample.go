@@ -1,10 +1,12 @@
 package algorithm
 
 import (
+	"fmt"
 	"math"
 	"time"
 
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/errnie"
 )
 
 const excitationSampleHistoryCap = 128
@@ -53,14 +55,22 @@ func (tradeExcitationSample *TradeExcitationSample) Read(payload []byte) (int, e
 	channel := datura.Peek[string](state, "channel")
 
 	if channel != "trade" {
-		return state.Read(payload)
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			fmt.Sprintf("trade-excitation-sample: expected trade channel, got %q", channel),
+			nil,
+		))
 	}
 
 	symbol := datura.Peek[string](state, "data", 0, "symbol")
 	side := datura.Peek[string](state, "data", 0, "side")
 
 	if symbol == "" || (side != "buy" && side != "sell") {
-		return state.Read(payload)
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"trade-excitation-sample: trade frame requires symbol and buy/sell side",
+			nil,
+		))
 	}
 
 	arrival := tradeExcitationSample.arrivalSecond(state)
@@ -87,7 +97,11 @@ func (tradeExcitationSample *TradeExcitationSample) Read(payload []byte) (int, e
 	features := tradeExcitationSample.features(window)
 
 	if len(features) == 0 {
-		return state.Read(payload)
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"trade-excitation-sample: insufficient trade history for excitation features",
+			nil,
+		))
 	}
 
 	state.WithScope(symbol)

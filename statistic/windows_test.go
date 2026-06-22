@@ -46,6 +46,17 @@ func TestRollingWindows(t *testing.T) {
 	})
 }
 
+func TestReturnLag(testingTB *testing.T) {
+	Convey("Given history without an explicit return lag hint", testingTB, func() {
+		lag, err := ReturnLag([]float64{1, 2, 3, 4, 5, 6, 7, 8}, 0, 0)
+
+		Convey("It should derive a positive lag from the long window", func() {
+			So(err, ShouldBeNil)
+			So(lag, ShouldBeGreaterThan, 0)
+		})
+	})
+}
+
 func BenchmarkRollingWindows(b *testing.B) {
 	history := make([]float64, 128)
 

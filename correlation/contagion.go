@@ -92,18 +92,42 @@ func (contagion *Contagion) Read(p []byte) (int, error) {
 		return 0, err
 	}
 
-	member := int(datura.Peek[float64](state, "member"))
-	level := datura.Peek[float64](state, "paired")
+	memberField := statistic.ConfigString(contagion.artifact, state, "memberKey")
 
-	if member > 0 && level > 0 {
-		epoch := int64(datura.Peek[float64](state, "sample"))
-		contagion.recordMember(member)
-		contagion.ingest(
-			contagion.memberCapacityFromArtifact(),
-			epoch,
-			level,
-			contagion.memberSegment(member),
-		)
+	if memberField == "" {
+		memberField = "member"
+	}
+
+	sampleField := statistic.ConfigString(contagion.artifact, state, "sampleKey")
+
+	if sampleField == "" {
+		sampleField = "sample"
+	}
+
+	pairedField := statistic.ConfigString(contagion.artifact, state, "pairedKey")
+
+	if pairedField == "" {
+		pairedField = "paired"
+	}
+
+	memberValue, memberErr := statistic.WireScalar(contagion.artifact, state, memberField)
+	levelValue, levelErr := statistic.WireScalar(contagion.artifact, state, pairedField)
+	epochValue, epochErr := statistic.WireScalar(contagion.artifact, state, sampleField)
+
+	if memberErr == nil && levelErr == nil && epochErr == nil {
+		member := int(memberValue)
+		level := levelValue
+
+		if member > 0 && level > 0 {
+			epoch := int64(epochValue)
+			contagion.recordMember(member)
+			contagion.ingest(
+				contagion.memberCapacityFromArtifact(),
+				epoch,
+				level,
+				contagion.memberSegment(member),
+			)
+		}
 	}
 
 	snapshots := contagion.snapshots()
@@ -115,7 +139,12 @@ func (contagion *Contagion) Read(p []byte) (int, error) {
 		))
 	}
 
-	output, readings := contagion.observeSnapshots(snapshots)
+	output, readings, err := contagion.observeSnapshots(snapshots)
+
+	if err != nil {
+		return 0, err
+	}
+
 	state.MergeOutput("value", output)
 	state.MergeOutput("tier.fast", readings.fast)
 	state.MergeOutput("tier.medium", readings.medium)
@@ -237,17 +266,19 @@ func (contagion *Contagion) memberCapFromArtifact() int {
 	return memberCap
 }
 
-func (contagion *Contagion) adaptiveSigmaFromArtifact() float64 {
-	sigma := datura.Peek[float64](contagion.artifact, "config", "adaptiveSigma")
-
-	if sigma > 0 {
-		return sigma
+func (contagion *Contagion) adaptiveSigmaFromArtifact() (float64, error) {
+	if datura.KeyPresent(contagion.artifact, "config", "adaptiveSigma") {
+		return datura.Peek[float64](contagion.artifact, "config", "adaptiveSigma"), nil
 	}
 
 	count := spreadLength(contagion.artifact)
 
 	if count < 2 {
-		return 1
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"correlation contagion: insufficient spread history for adaptiveSigma",
+			nil,
+		))
 	}
 
 	mean := 0.0
@@ -259,7 +290,11 @@ func (contagion *Contagion) adaptiveSigmaFromArtifact() float64 {
 	mean /= float64(count)
 
 	if mean == 0 {
-		return 1
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"correlation contagion: spread mean is zero",
+			nil,
+		))
 	}
 
 	variance := 0.0
@@ -272,10 +307,14 @@ func (contagion *Contagion) adaptiveSigmaFromArtifact() float64 {
 	stddev := math.Sqrt(variance / float64(count-1))
 
 	if stddev <= 0 {
-		return 1
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"correlation contagion: spread stddev is invalid",
+			nil,
+		))
 	}
 
-	return stddev / math.Abs(mean)
+	return stddev / math.Abs(mean), nil
 }
 
 func (contagion *Contagion) spreadCapacityFromArtifact() int {
@@ -354,7 +393,7 @@ func (contagion *Contagion) snapshots() []memberSnapshot {
 	return snapshots
 }
 
-func (contagion *Contagion) observeSnapshots(snapshots []memberSnapshot) (float64, tierReadings) {
+func (contagion *Contagion) observeSnapshots(snapshots []memberSnapshot) (float64, tierReadings, error) {
 	fastSeries, mediumSeries, slowSeries := collectTierSeries(
 		snapshots,
 		contagion.minSamplesFromArtifact(),
@@ -364,10 +403,12 @@ func (contagion *Contagion) observeSnapshots(snapshots []memberSnapshot) (float6
 	readings := tierReadingsFromSeries(fastSeries, mediumSeries, slowSeries)
 
 	if readings.medium <= 0 && readings.fast <= 0 && readings.slow <= 0 {
-		return 0, readings
+		return 0, readings, nil
 	}
 
-	return contagion.adaptive(readings), readings
+	value, err := contagion.adaptive(readings)
+
+	return value, readings, err
 }
 
 func collectTierSeries(
@@ -465,37 +506,43 @@ func medianPairwiseAbsCorrelation(series []intervalSlices) float64 {
 	return median
 }
 
-func (contagion *Contagion) adaptive(readings tierReadings) float64 {
+func (contagion *Contagion) adaptive(readings tierReadings) (float64, error) {
 	if readings.fast <= 0 && readings.medium <= 0 {
-		return readings.slow
+		return readings.slow, nil
 	}
 
 	if readings.slow <= 0 {
 		if readings.medium > 0 {
-			return readings.medium
+			return readings.medium, nil
 		}
 
-		return readings.fast
+		return readings.fast, nil
 	}
 
 	spread := readings.fast - readings.slow
 	pushSpread(contagion.artifact, contagion.spreadCapacityFromArtifact(), spread)
 
+	sigma, err := contagion.adaptiveSigmaFromArtifact()
+
+	if err != nil {
+		return 0, err
+	}
+
 	threshold := adaptiveSpreadThreshold(
 		contagion.artifact,
 		readings.slow,
-		contagion.adaptiveSigmaFromArtifact(),
+		sigma,
 	)
 
 	if spread > threshold {
-		return readings.fast
+		return readings.fast, nil
 	}
 
 	if readings.medium > 0 {
-		return readings.medium
+		return readings.medium, nil
 	}
 
-	return readings.slow
+	return readings.slow, nil
 }
 
 func pushSpread(artifact *datura.Artifact, capacity int, value float64) {

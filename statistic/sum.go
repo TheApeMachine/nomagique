@@ -39,7 +39,12 @@ func (sum *Sum) Read(payload []byte) (int, error) {
 		return 0, err
 	}
 
-	sampleKey := WireInputKey(sum.artifact, state, "sample")
+	sampleKey, err := WireInputKey(sum.artifact, state)
+
+	if err != nil {
+		return 0, err
+	}
+
 	sample, err := WireScalar(sum.artifact, state, sampleKey)
 
 	if err != nil {

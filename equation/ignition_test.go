@@ -1,11 +1,14 @@
 package equation
 
 import (
+	"fmt"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/transport"
+	"github.com/theapemachine/nomagique"
+	"github.com/theapemachine/nomagique/probability"
 	"github.com/theapemachine/nomagique/statistic"
 	"github.com/theapemachine/nomagique/vector"
 )
@@ -25,31 +28,45 @@ func ignitionReplayConfig() *datura.Artifact {
 			"longWindow":  0.0,
 			"outputKey":   "rvol",
 			"scale":       0.0,
+			"scaleMode":   "median",
+			"leftKey":     "rvol",
+			"rightKey":    "precursor",
 			"decline": map[string]any{
 				"output": "rvolDecline",
 			},
 		}, "rvol").
 		Poke(map[string]any{
 			"input":        "last",
-			"returnLag":    1.0,
+			"returnLag":    0.0,
 			"longWindow":   0.0,
 			"positiveOnly": 1.0,
 			"outputKey":    "precursor",
 			"stageIndex":   1.0,
 			"scale":        0.0,
+			"scaleMode":    "median",
+			"leftKey":      "rvol",
+			"rightKey":     "precursor",
 		}, "precursor").
 		Poke(map[string]any{
-			"input":     "spread",
-			"outputKey": "compression",
-			"scale":     0.0,
-			"source":    "compression",
-			"terms":     []string{"compression"},
+			"input":       "spread",
+			"outputKey":   "compression",
+			"scale":       0.0,
+			"scaleMode":   "median",
+			"terms":       []string{"compression", "precursor", "rvol"},
+			"inverts":     []string{"precursor", "rvol"},
+			"gate":        "precursor",
+			"gateInvert":  1.0,
+			"leftKey":     "rvol",
+			"rightKey":    "precursor",
 		}, "compression").
 		Poke(map[string]any{
-			"terms":   []string{"rvol", "precursor"},
-			"source":  "ignition",
-			"combine": "ratio",
-			"scale":   0.0,
+			"terms":     []string{"rvol", "precursor"},
+			"source":    "ignition",
+			"combine":   "ratio",
+			"scale":     0.0,
+			"leftKey":   "rvol",
+			"rightKey":  "precursor",
+			"scaleMode": "median",
 		}, "ignition").
 		Poke(map[string]any{
 			"terms":   []string{"precursor", "compression", "rvol"},
@@ -76,6 +93,71 @@ func ignitionReplayConfig() *datura.Artifact {
 			"source":         "ignition",
 			"output":         "ignition",
 		}, "joint")
+}
+
+func TestIgnitionFeatureExtractorPipeline(testingTB *testing.T) {
+	Convey("Given FeatureExtractor through Ignition and Classifier", testingTB, func() {
+		schema := datura.Acquire("ignition-pipeline-schema", datura.APPJSON).WithAttributes(datura.Map[any]{
+			"required": []string{"ticker"},
+			"ticker": datura.Map[any]{
+				"root":   "data",
+				"inputs": []string{"symbol", "bid", "ask", "last", "volume"},
+			},
+		})
+
+		pipeline := nomagique.Number(
+			vector.NewFeatureExtractor(schema),
+			NewIgnition(ignitionReplayConfig()),
+			probability.NewClassifier(
+				datura.Acquire("ignition-pipeline-classifier", datura.APPJSON).WithAttributes(datura.Map[any]{
+					"inputs": []string{"ignition", "compression", "trend", "exhaustion"},
+				}),
+			),
+		)
+
+		var lastFrame *datura.Artifact
+
+		for _, tick := range ignitionWarmupTicks() {
+			payload := fmt.Sprintf(
+				`{"channel":"ticker","type":"update","data":[{"symbol":"BTC/USD","bid":%g,"ask":%g,"last":%g,"volume":%g}]}`,
+				tick.last-1, tick.last+1, tick.last, tick.volume,
+			)
+			frame := datura.Acquire("ignition-pipeline-frame", datura.APPJSON)
+			frame.WithPayload([]byte(payload))
+
+			_ = transport.NewFlipFlop(frame, pipeline)
+
+			if lastFrame != nil {
+				lastFrame.Release()
+			}
+
+			lastFrame = frame
+		}
+
+		spikeVolume, spikeLast := ignitionSpikeTick()
+		spikePayload := fmt.Sprintf(
+			`{"channel":"ticker","type":"update","data":[{"symbol":"BTC/USD","bid":%g,"ask":%g,"last":%g,"volume":%g}]}`,
+			spikeLast-1, spikeLast+1, spikeLast, spikeVolume,
+		)
+		spikeFrame := datura.Acquire("ignition-pipeline-spike", datura.APPJSON)
+		spikeFrame.WithPayload([]byte(spikePayload))
+
+		err := transport.NewFlipFlop(spikeFrame, pipeline)
+
+		if lastFrame != nil {
+			lastFrame.Release()
+		}
+
+		defer spikeFrame.Release()
+
+		Convey("It should classify ignition from the full ticker pipeline", func() {
+			So(err, ShouldBeNil)
+			So(datura.Peek[float64](spikeFrame, "output", "rvol"), ShouldBeGreaterThan, 0)
+			So(datura.Peek[float64](spikeFrame, "output", "precursor"), ShouldBeGreaterThan, 0)
+			So(int(datura.Peek[float64](spikeFrame, "output", "category")), ShouldBeBetweenOrEqual, 1, 4)
+			So(datura.Peek[float64](spikeFrame, "output", "confidence"), ShouldBeGreaterThan, 0.25)
+		})
+	})
 }
 
 func TestIgnitionSpreadAfterLogReturn(testingTB *testing.T) {

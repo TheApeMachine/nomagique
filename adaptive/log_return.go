@@ -14,7 +14,6 @@ The constructor artifact holds config; Write buffers inbound wire on its payload
 */
 type LogReturn struct {
 	artifact *datura.Artifact
-	samples  []float64
 }
 
 /*
@@ -25,7 +24,6 @@ func NewLogReturn(artifact *datura.Artifact) *LogReturn {
 
 	return &LogReturn{
 		artifact: artifact,
-		samples:  []float64{},
 	}
 }
 
@@ -61,7 +59,12 @@ func (logReturn *LogReturn) Read(payload []byte) (int, error) {
 	}
 
 	if inputKey == "" {
-		inputKey = statistic.WireInputKey(logReturn.artifact, state, "sample")
+		var wireErr error
+		inputKey, wireErr = statistic.WireInputKey(logReturn.artifact, state)
+
+		if wireErr != nil {
+			return 0, wireErr
+		}
 	}
 
 	sample, err := logReturn.resolveSample(state, inputKey)
@@ -78,18 +81,23 @@ func (logReturn *LogReturn) Read(payload []byte) (int, error) {
 		))
 	}
 
-	returnLag := int(datura.Peek[float64](logReturn.artifact, stageKey, "returnLag"))
 	longHint := int(datura.Peek[float64](logReturn.artifact, stageKey, "longWindow"))
 
-	if returnLag <= 0 {
+	returnLag, err := statistic.ReturnLag(
+		datura.Peek[[]float64](logReturn.artifact, stageKey, "logSamples"),
+		int(datura.Peek[float64](logReturn.artifact, stageKey, "returnLag")),
+		longHint,
+	)
+
+	if err != nil {
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
-			"log-return: returnLag must be positive",
-			nil,
+			"log-return: unable to resolve return lag",
+			err,
 		))
 	}
 
-	samples := logReturn.samples
+	samples := datura.Peek[[]float64](logReturn.artifact, stageKey, "logSamples")
 	samples = append(samples, sample)
 
 	_, longWindow, err := statistic.RollingWindows(samples, 0, longHint)
@@ -106,7 +114,7 @@ func (logReturn *LogReturn) Read(payload []byte) (int, error) {
 		samples = samples[len(samples)-longWindow-returnLag:]
 	}
 
-	logReturn.samples = samples
+	logReturn.artifact.Poke(samples, stageKey, "logSamples")
 
 	if len(samples) <= returnLag {
 		features.Restore(state)

@@ -29,6 +29,11 @@ func TestIntegration(t *testing.T) {
 				artifact.Poke(20, "sample")
 				err := transport.NewFlipFlop(artifact, pipeline)
 
+				So(err, ShouldNotBeNil)
+
+				artifact.Poke(30, "sample")
+				err = transport.NewFlipFlop(artifact, pipeline)
+
 				So(err, ShouldBeIn, nil, io.EOF)
 
 				delta := datura.Peek[float64](artifact, "output", "value")
@@ -61,6 +66,16 @@ func TestIntegration(t *testing.T) {
 				referenceArtifact.Poke(20, "sample")
 				err = transport.NewFlipFlop(mainArtifact, mainPipeline)
 
+				So(err, ShouldNotBeNil)
+
+				err = transport.NewFlipFlop(referenceArtifact, referencePipeline)
+
+				So(err, ShouldNotBeNil)
+
+				mainArtifact.Poke(30, "sample")
+				referenceArtifact.Poke(30, "sample")
+				err = transport.NewFlipFlop(mainArtifact, mainPipeline)
+
 				So(err, ShouldBeIn, nil, io.EOF)
 
 				err = transport.NewFlipFlop(referenceArtifact, referencePipeline)
@@ -79,14 +94,13 @@ func TestIntegration(t *testing.T) {
 
 				err := transport.NewFlipFlop(retained, exponential)
 
-				So(err, ShouldBeNil)
-				So(datura.Peek[float64](retained, "output", "value"), ShouldEqual, 10)
+				So(err, ShouldNotBeNil)
 
 				retained.Poke(20, "sample")
 				err = transport.NewFlipFlop(retained, exponential)
 
 				So(err, ShouldBeNil)
-				So(datura.Peek[float64](retained, "output", "value"), ShouldEqual, 20)
+				So(datura.Peek[float64](retained, "output", "value"), ShouldBeGreaterThan, 0)
 			})
 		})
 
@@ -114,6 +128,11 @@ func TestIntegration(t *testing.T) {
 				artifact.Poke(30, "sample")
 				err = transport.NewFlipFlop(artifact, pipeline)
 
+				So(err, ShouldNotBeNil)
+
+				artifact.Poke(40, "sample")
+				err = transport.NewFlipFlop(artifact, pipeline)
+
 				So(err, ShouldBeNil)
 
 				surprise := datura.Peek[float64](artifact, "output", "value")
@@ -138,6 +157,11 @@ func TestIntegration(t *testing.T) {
 				varianceArtifact.Poke(22, "sample")
 				err = transport.NewFlipFlop(varianceArtifact, variancePipeline)
 
+				So(err, ShouldNotBeNil)
+
+				varianceArtifact.Poke(30, "sample")
+				err = transport.NewFlipFlop(varianceArtifact, variancePipeline)
+
 				So(err, ShouldBeNil)
 				So(datura.Peek[float64](varianceArtifact, "output", "value"), ShouldBeGreaterThan, 0)
 			})
@@ -151,11 +175,13 @@ func TestIntegration(t *testing.T) {
 			pipeline := nomagique.Number(adaptive.NewRange(rangeConfig), adaptive.NewMomentum(momentumConfig))
 			err := transport.NewFlipFlop(artifact, pipeline)
 
-			So(err, ShouldBeNil)
-			So(datura.Peek[float64](artifact, "output", "value"), ShouldEqual, 0)
+			So(err, ShouldNotBeNil)
 
 			Convey("It should bootstrap then emit signed unit-normalized momentum", func() {
 				artifact.Poke(3, "sample")
+				So(transport.NewFlipFlop(artifact, pipeline), ShouldNotBeNil)
+
+				artifact.Poke(5, "sample")
 				err := transport.NewFlipFlop(artifact, pipeline)
 
 				So(err, ShouldBeNil)
@@ -170,6 +196,9 @@ func TestIntegration(t *testing.T) {
 
 			Convey("It should accept a second FlipFlop on the same pipeline", func() {
 				artifact.Poke(3, "sample")
+				So(transport.NewFlipFlop(artifact, pipeline), ShouldNotBeNil)
+
+				artifact.Poke(5, "sample")
 				err := transport.NewFlipFlop(artifact, pipeline)
 
 				So(err, ShouldBeNil)
@@ -191,8 +220,7 @@ func TestIntegration(t *testing.T) {
 			)
 			err := transport.NewFlipFlop(artifact, pipeline)
 
-			So(err, ShouldBeNil)
-			So(datura.Peek[float64](artifact, "output", "value"), ShouldEqual, 1)
+			So(err, ShouldNotBeNil)
 
 			Convey("It should bootstrap at unity then stay finite and positive", func() {
 				artifact.Poke(14, "sample").
@@ -200,6 +228,7 @@ func TestIntegration(t *testing.T) {
 				err := transport.NewFlipFlop(artifact, pipeline)
 
 				So(err, ShouldBeNil)
+				So(datura.Peek[float64](artifact, "output", "value"), ShouldEqual, 1)
 
 				relative := datura.Peek[float64](artifact, "output", "value")
 

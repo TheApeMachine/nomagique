@@ -91,7 +91,6 @@ func (tradeExcitationSample *TradeExcitationSample) Read(payload []byte) (int, e
 	}
 
 	state.WithScope(symbol)
-	state.WithPayload(encodePayload(features...))
 	state.Merge("features", features)
 	state.Merge("root", "features")
 	state.Merge("inputs", []string{"features"})

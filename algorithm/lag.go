@@ -65,15 +65,7 @@ func (lag *Lag) Read(payload []byte) (int, error) {
 		return 0, err
 	}
 
-	batch := payloadSamples(state.DecryptPayload())
-
-	if len(batch) < lagPayloadFields {
-		features := datura.Peek[[]float64](state, "features")
-
-		if len(features) >= lagPayloadFields {
-			batch = features
-		}
-	}
+	batch := datura.Peek[[]float64](state, "features")
 
 	if len(batch) >= lagPayloadFields {
 		lag.outcome = lag.evaluate(batch)

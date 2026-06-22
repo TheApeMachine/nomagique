@@ -61,36 +61,27 @@ func NewExcitation(artifact *datura.Artifact) *Excitation {
 }
 
 func (excitation *Excitation) Write(payload []byte) (int, error) {
-	n, err := excitation.artifact.Unpack(payload)
-
-	if err != nil {
-		return 0, err
-	}
-
-	return n, nil
+	excitation.artifact.WithPayload(payload)
+	return len(payload), nil
 }
 
 func (excitation *Excitation) Read(payload []byte) (int, error) {
-	scope, _ := excitation.artifact.Scope()
+	state := datura.Acquire("excitation-state", datura.APPJSON)
+
+	if _, err := state.Write(excitation.artifact.DecryptPayload()); err != nil {
+		return 0, err
+	}
+
+	scope, _ := state.Scope()
 
 	if scope == "" {
-		scope = datura.Peek[string](excitation.artifact, "scope")
+		scope = datura.Peek[string](state, "scope")
 	}
 
-	batch := payloadSamples(excitation.artifact.DecryptPayload())
-
-	if len(batch) == 0 {
-		batch = datura.Peek[[]float64](excitation.artifact, "features")
-	}
+	batch := datura.Peek[[]float64](state, "features")
 
 	if scope != "" && len(batch) > 0 {
 		excitation.outcome = excitation.evaluate(scope, batch)
-	}
-
-	state := datura.Acquire("excitation-state", datura.APPJSON)
-
-	if _, err := state.Unpack(excitation.artifact.Pack()); err != nil {
-		return 0, err
 	}
 
 	state.MergeOutput("frenzy", excitation.outcome.Frenzy)
@@ -477,8 +468,8 @@ func (symbol *excitationSymbol) measureFit(fit hawkes.BivariateFit) (excitationR
 }
 
 func (symbol *excitationSymbol) rawBaseStep(sample float64) float64 {
-	inbound := datura.Acquire("excitation-ema-in", datura.Artifact_Type_json)
-	inbound.WithPayload(encodePayload(sample))
+	inbound := datura.Acquire("excitation-ema-in", datura.APPJSON)
+	inbound.WithPayload(datura.Map[any]{"sample": sample}.Marshal())
 	frame, err := inbound.MarshalPacked()
 
 	if err != nil {

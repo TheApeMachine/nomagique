@@ -6,6 +6,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/nomagique/equation"
 	"github.com/theapemachine/nomagique/hawkes"
 )
 
@@ -29,7 +30,7 @@ func TestHawkesFit_Observe(testingTB *testing.T) {
 		inbound := datura.Acquire("hawkes-fit-test", datura.APPJSON).
 			Poke(float64(len(xTimes)), "config", "xCount").
 			Poke(float64(len(yTimes)), "config", "yCount").
-			WithPayload(encodePayload(append(xTimes, yTimes...)...))
+			WithPayload(equation.MarshalFeaturesPayload(append(xTimes, yTimes...)))
 		frame, frameErr := inbound.MarshalPacked()
 
 		So(frameErr, ShouldBeNil)
@@ -61,7 +62,7 @@ func BenchmarkHawkesFit_Observe(testingTB *testing.B) {
 	inbound := datura.Acquire("hawkes-fit-bench", datura.APPJSON).
 		Poke(float64(len(xTimes)), "config", "xCount").
 		Poke(float64(len(yTimes)), "config", "yCount").
-		WithPayload(encodePayload(append(xTimes, yTimes...)...))
+		WithPayload(equation.MarshalFeaturesPayload(append(xTimes, yTimes...)))
 	frame, _ := inbound.MarshalPacked()
 	readFrame := make([]byte, 4096)
 

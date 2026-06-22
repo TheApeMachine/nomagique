@@ -7,6 +7,7 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/transport"
+	"github.com/theapemachine/nomagique/equation"
 	"github.com/theapemachine/nomagique/hawkes"
 )
 
@@ -103,9 +104,9 @@ func excitationBurstSamples(base time.Time, count int) []float64 {
 }
 
 func daturaBurstArtifact(scope string, samples []float64) *datura.Artifact {
-	inbound := datura.Acquire("excitation-test", datura.Artifact_Type_json)
+	inbound := datura.Acquire("excitation-test", datura.APPJSON)
 	inbound.WithScope(scope)
-	inbound.WithPayload(encodePayload(samples...))
+	inbound.WithPayload(equation.MarshalFeaturesPayload(samples))
 
 	return inbound
 }

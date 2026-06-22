@@ -84,7 +84,7 @@ func (bookflowSample *BookflowSample) Read(payload []byte) (int, error) {
 	features := bookflowSample.features(window)
 
 	if len(features) == 0 {
-		return 0, nil
+		return state.Read(payload)
 	}
 
 	state.WithScope(symbol)

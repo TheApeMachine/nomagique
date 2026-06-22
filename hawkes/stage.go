@@ -161,14 +161,14 @@ func (fit *Fit) Close() error {
 }
 
 func momentSamples(wire, config *datura.Artifact) (xValues, yValues, weights []float64, ok bool) {
-	batch := fitFloatBatch(wire)
+	batch := equation.Features(wire)
 
 	if len(batch) == 0 {
-		batch = datura.Peek[[]float64](wire, "batch")
+		batch = fitFloatBatch(wire)
 	}
 
 	if len(batch) == 0 {
-		batch = equation.Features(wire)
+		batch = datura.Peek[[]float64](wire, "batch")
 	}
 
 	if len(batch) < 4 || len(batch)%2 != 0 {
@@ -209,14 +209,14 @@ func fitTimes(wire, config *datura.Artifact) (xTimes, yTimes []float64, ok bool)
 		yCount = int(datura.Peek[float64](config, "config", "yCount"))
 	}
 
-	batch := fitFloatBatch(wire)
+	batch := equation.Features(wire)
 
 	if len(batch) == 0 {
-		batch = datura.Peek[[]float64](wire, "batch")
+		batch = fitFloatBatch(wire)
 	}
 
 	if len(batch) == 0 {
-		batch = equation.Features(wire)
+		batch = datura.Peek[[]float64](wire, "batch")
 	}
 
 	if xCount <= 0 || yCount <= 0 || len(batch) < xCount+yCount {

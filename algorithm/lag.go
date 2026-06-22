@@ -273,13 +273,21 @@ func minLagFraction(maxBars int) float64 {
 }
 
 func lagMinSamples() int {
-	_, longWindow := statistic.RollingWindows(nil, 0, 0)
+	_, longWindow, err := statistic.RollingWindows(make([]float64, 1), 0, 0)
+
+	if err != nil {
+		return 1
+	}
 
 	return longWindow
 }
 
 func lagMaxBars() int {
-	_, longWindow := statistic.RollingWindows(nil, 0, 0)
+	_, longWindow, err := statistic.RollingWindows(make([]float64, 1), 0, 0)
+
+	if err != nil {
+		return 1
+	}
 
 	return longWindow
 }
@@ -289,7 +297,17 @@ func maxLagBarsForSeries(sampleCount int) int {
 		return lagMaxBars()
 	}
 
-	_, longWindow := statistic.RollingWindows(make([]float64, sampleCount), 0, 0)
+	_, longWindow, err := statistic.RollingWindows(make([]float64, sampleCount), 0, 0)
+
+	if err != nil {
+		halfSeries := sampleCount / 2
+
+		if halfSeries < 1 {
+			return 1
+		}
+
+		return halfSeries
+	}
 	halfSeries := sampleCount / 2
 
 	if longWindow > halfSeries {
@@ -563,9 +581,9 @@ func (baseline *MoveBaseline) pathMoveFloor() float64 {
 	sortedMoves := append([]float64(nil), baseline.pathMoves...)
 	sort.Float64s(sortedMoves)
 	lowerRank := 1 / float64(len(sortedMoves))
-	floor := statistic.QuantileOf(lowerRank, sortedMoves)
+	floor, ok := statistic.QuantileOf(lowerRank, sortedMoves)
 
-	if floor > 0 {
+	if ok && floor > 0 {
 		return floor
 	}
 

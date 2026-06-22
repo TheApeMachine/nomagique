@@ -224,7 +224,13 @@ func bookflowMedianAbsolute(values []float64) float64 {
 		absoluteValues[index] = math.Abs(value)
 	}
 
-	return statistic.MedianOf(absoluteValues)
+	median, ok := statistic.MedianOf(absoluteValues)
+
+	if !ok {
+		return 0
+	}
+
+	return median
 }
 
 func bookflowSpoofContrast(weightedHistory, level1History []float64) float64 {

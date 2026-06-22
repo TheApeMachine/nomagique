@@ -213,9 +213,9 @@ func (decaySample *DecaySample) features(window *decayWindow) []float64 {
 		return nil
 	}
 
-	_, longWindow := statistic.RollingWindows(window.densityHist, 0, 0)
+	_, longWindow, err := statistic.RollingWindows(window.densityHist, 0, 0)
 
-	if minLength < longWindow {
+	if err != nil || minLength < longWindow {
 		return nil
 	}
 

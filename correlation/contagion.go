@@ -159,7 +159,21 @@ func (contagion *Contagion) tiersFromArtifact() tierWindows {
 	}
 
 	maxLen := contagion.maxMemberRetLength()
-	fast, slow := statistic.RollingWindows(make([]float64, maxLen), tiers.fast, tiers.slow)
+	fast, slow, err := statistic.RollingWindows(make([]float64, maxLen), tiers.fast, tiers.slow)
+
+	if err != nil {
+		if maxLen <= 0 {
+			return tiers
+		}
+
+		fast = maxLen / 3
+
+		if fast < 1 {
+			fast = 1
+		}
+
+		slow = maxLen
+	}
 	medium := (fast + slow) / 2
 
 	if medium <= fast {
@@ -442,7 +456,13 @@ func medianPairwiseAbsCorrelation(series []intervalSlices) float64 {
 		return 0
 	}
 
-	return statistic.MedianOf(correlations)
+	median, ok := statistic.MedianOf(correlations)
+
+	if !ok {
+		return 0
+	}
+
+	return median
 }
 
 func (contagion *Contagion) adaptive(readings tierReadings) float64 {

@@ -64,12 +64,13 @@ func NewFitContext(stream ArrivalStream, horizon time.Time) (FitContext, bool) {
 		return FitContext{}, false
 	}
 
-	medianGap := statistic.MedianOf(gaps)
-	lowerGap, upperGap := statistic.Quartiles(gaps)
+	medianGap, ok := statistic.MedianOf(gaps)
 
-	if medianGap <= 0 {
+	if !ok || medianGap <= 0 {
 		return FitContext{}, false
 	}
+
+	lowerGap, upperGap := statistic.Quartiles(gaps)
 
 	if upperGap <= lowerGap {
 		upperGap = medianGap * (1 + 1/math.Sqrt(float64(len(gaps))))

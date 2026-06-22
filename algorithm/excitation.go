@@ -503,7 +503,11 @@ func (symbol *excitationSymbol) recordFitGates(spectralRadius, asymmetry float64
 }
 
 func fitGateHistoryCap(history []float64) int {
-	_, longWindow := statistic.RollingWindows(history, 0, 0)
+	_, longWindow, err := statistic.RollingWindows(history, 0, 0)
+
+	if err != nil {
+		return len(history)
+	}
 
 	return longWindow
 }

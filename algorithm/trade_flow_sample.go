@@ -129,9 +129,9 @@ func (tradeFlowSample *TradeFlowSample) features(window *tradeFlowWindow) []floa
 		notionals[index] = tick.notional
 	}
 
-	_, longWindow := statistic.RollingWindows(notionals, 0, 0)
+	_, longWindow, err := statistic.RollingWindows(notionals, 0, 0)
 
-	if tradeCount < longWindow {
+	if err != nil || tradeCount < longWindow {
 		return nil
 	}
 
@@ -190,5 +190,11 @@ func medianPositive(values []float64) float64 {
 		return 0
 	}
 
-	return statistic.MedianOf(positive)
+	median, ok := statistic.MedianOf(positive)
+
+	if !ok {
+		return 0
+	}
+
+	return median
 }

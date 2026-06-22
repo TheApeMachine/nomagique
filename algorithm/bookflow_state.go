@@ -274,7 +274,13 @@ func (gate *GateQuantile) value(percentileOverride float64) float64 {
 		return 0
 	}
 
-	return statistic.QuantileOf(percentile, history)
+	value, ok := statistic.QuantileOf(percentile, history)
+
+	if !ok {
+		return 0
+	}
+
+	return value
 }
 
 /*

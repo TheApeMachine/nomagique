@@ -272,11 +272,11 @@ func (bookflowSample *BookflowSample) features(window *bookflowWindow) []float64
 		return nil
 	}
 
-	_, longWindow := statistic.RollingWindows(
+	_, longWindow, err := statistic.RollingWindows(
 		window.weightedHist, 0, 0,
 	)
 
-	if historyCount < longWindow {
+	if err != nil || historyCount < longWindow {
 		return nil
 	}
 
@@ -397,7 +397,11 @@ func bookflowFlatDepth(bids, asks map[float64]float64) int {
 		return 0
 	}
 
-	_, longWindow := statistic.RollingWindows(nil, 0, 0)
+	_, longWindow, err := statistic.RollingWindows(make([]float64, levelCount), 0, 0)
+
+	if err != nil {
+		return 2
+	}
 	flatDepth := int(math.Ceil(math.Sqrt(float64(levelCount))))
 
 	if flatDepth < 2 {

@@ -54,8 +54,17 @@ func (spreadSample *SpreadSample) Read(p []byte) (int, error) {
 		))
 	}
 
-	left := statistic.FeatureColumn(state, sourceKeys[0])
-	right := statistic.FeatureColumn(state, sourceKeys[1])
+	left, err := statistic.FeatureColumn(state, sourceKeys[0])
+
+	if err != nil {
+		return 0, err
+	}
+
+	right, err := statistic.FeatureColumn(state, sourceKeys[1])
+
+	if err != nil {
+		return 0, err
+	}
 
 	if math.IsNaN(left) || math.IsInf(left, 0) ||
 		math.IsNaN(right) || math.IsInf(right, 0) {
@@ -82,7 +91,6 @@ func (spreadSample *SpreadSample) Read(p []byte) (int, error) {
 	state.MergeOutput("spread", spread)
 	state.MergeOutput("value", spread)
 	state.Merge("root", "output")
-	state.Merge("inputs", []string{"spread", "value"})
 
 	return state.Read(p)
 }

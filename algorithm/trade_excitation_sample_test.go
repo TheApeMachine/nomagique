@@ -1,6 +1,7 @@
 package algorithm
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -123,6 +124,51 @@ func TestTradeExcitationSampleRead(testingTB *testing.T) {
 			So(excitation.Outcome().Strength, ShouldBeGreaterThan, 0)
 		})
 	})
+
+	Convey("Given a book frame before trades", testingTB, func() {
+		book := bookTouchFrame("ALT/EUR", 1000, 200)
+
+		Convey("It should derive touch imbalance from top-of-book quantities", func() {
+			So(bookTouchImbalance(book), ShouldAlmostEqual, 2.0/3.0, 0.001)
+		})
+	})
+
+	Convey("Given a book frame before a warmed trade sample", testingTB, func() {
+		sample := NewTradeExcitationSample(datura.Acquire("trade-excitation-config", datura.APPJSON))
+		book := bookTouchFrame("ALT/EUR", 1000, 200)
+		_, writeErr := sample.Write(book.Pack())
+
+		So(writeErr, ShouldBeNil)
+
+		base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
+		var last *datura.Artifact
+		var lastErr error
+
+		for index := range 64 {
+			side := "buy"
+
+			if index%2 == 0 {
+				side = "sell"
+			}
+
+			frame := tradeFrame(
+				"ALT/EUR",
+				side,
+				1,
+				1,
+				base.Add(time.Duration(index)*100*time.Millisecond).UnixNano(),
+			)
+			lastErr = transport.NewFlipFlop(frame, sample)
+			last = frame
+		}
+
+		Convey("It should include touch imbalance in the feature batch", func() {
+			So(lastErr, ShouldBeNil)
+			features := datura.Peek[[]float64](last, "features")
+			So(len(features), ShouldBeGreaterThanOrEqualTo, 5)
+			So(features[4], ShouldAlmostEqual, 2.0/3.0, 0.001)
+		})
+	})
 }
 
 func BenchmarkTradeExcitationSampleRead(b *testing.B) {
@@ -135,4 +181,15 @@ func BenchmarkTradeExcitationSampleRead(b *testing.B) {
 		frame := tradeFrame("ALT/EUR", "buy", 1, 1, base.Add(time.Duration(b.N)*time.Millisecond).UnixNano())
 		_ = transport.NewFlipFlop(frame, sample)
 	}
+}
+
+func bookTouchFrame(symbol string, bidQty, askQty float64) *datura.Artifact {
+	payload := fmt.Sprintf(
+		`{"channel":"book","type":"update","data":[{"symbol":%q,"bids":[{"price":1,"qty":%g}],"asks":[{"price":1.01,"qty":%g}]}]}`,
+		symbol, bidQty, askQty,
+	)
+	artifact := datura.Acquire("book-touch-test", datura.APPJSON)
+	artifact.WithPayload([]byte(payload))
+
+	return artifact
 }

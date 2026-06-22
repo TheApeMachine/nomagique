@@ -35,10 +35,10 @@ func logitScoresConfig() *datura.Artifact {
 			},
 		},
 		"ignition": datura.Map[any]{
-			"terms":   []string{"rvol", "precursor"},
-			"source":  "ignition",
-			"combine": "ratio",
-			"leftKey": "rvol",
+			"terms":    []string{"rvol", "precursor"},
+			"source":   "ignition",
+			"combine":  "ratio",
+			"leftKey":  "rvol",
 			"rightKey": "precursor",
 		},
 		"trend": datura.Map[any]{
@@ -215,7 +215,6 @@ func TestLogitScoresRead(testingTB *testing.T) {
 	Convey("Given elevated precursor with gateInvert on compression", testingTB, func() {
 		config := logitScoresConfig()
 		config.Poke(map[string]any{
-			"source":     "value",
 			"scale":      1.5,
 			"terms":      []string{"compression", "precursor"},
 			"inverts":    []string{"precursor"},
@@ -229,7 +228,7 @@ func TestLogitScoresRead(testingTB *testing.T) {
 		artifact.Merge("inputs", []string{"rvol", "precursor", "compression", "ignition", "value", "rvolDecline"})
 		artifact.MergeOutput("rvol", 3.0)
 		artifact.MergeOutput("precursor", 2.5)
-		artifact.MergeOutput("value", 0.8)
+		artifact.MergeOutput("compression", 0.8)
 		artifact.MergeOutput("ignition", 2.7)
 		artifact.MergeOutput("rvolDecline", 0.0)
 

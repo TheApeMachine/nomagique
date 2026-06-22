@@ -15,7 +15,7 @@ import (
 )
 
 const (
-	excitationPayloadHeader = 4
+	excitationPayloadHeader = 5
 	bivariateParamCount     = 7
 	hawkesFitCooldownMult   = 50
 )
@@ -25,6 +25,7 @@ var ExcitationSampleInputKeys = []string{
 	"fitCooldownSeconds",
 	"buyCount",
 	"sellCount",
+	"touchImbalance",
 }
 
 /*
@@ -50,7 +51,7 @@ type ExcitationOutcome struct {
 Excitation fits a bivariate Hawkes process over buy/sell arrival times.
 
 Payload layout: horizonSeconds, fitCooldownSeconds, buyCount, sellCount,
-then buy arrival seconds, then sell arrival seconds.
+touchImbalance, then buy arrival seconds, then sell arrival seconds.
 Per-scope fit state is keyed from the artifact scope attribute.
 */
 type Excitation struct {
@@ -174,9 +175,10 @@ func (excitation *Excitation) evaluate(scope string, batch []float64) (Excitatio
 
 	buyTimes := secondsToTimes(batch[excitationPayloadHeader : excitationPayloadHeader+buyCount])
 	sellTimes := secondsToTimes(batch[excitationPayloadHeader+buyCount : expectedLen])
+	touchImbalance := batch[4]
 
 	symbolState := excitation.loadSymbol(scope)
-	reading, ok := symbolState.measure(buyTimes, sellTimes, horizon, fitCooldown)
+	reading, ok := symbolState.measure(buyTimes, sellTimes, horizon, fitCooldown, touchImbalance)
 
 	if !ok {
 		return ExcitationOutcome{}, errnie.Error(errnie.Err(
@@ -284,17 +286,18 @@ type excitationReading struct {
 }
 
 type excitationSymbol struct {
-	fit             hawkes.BivariateFit
-	hasFit          bool
-	lastFitEventKey fitEventKey
-	lastFitTime     time.Time
-	fitCooldown     time.Duration
-	minFitEvents    int
-	rawBase         *adaptive.EMA
-	lastRawNorm     float64
-	lastCategory    hawkes.FitCategory
-	spectralRadii   []float64
-	asymmetries     []float64
+	fit                hawkes.BivariateFit
+	hasFit             bool
+	lastFitEventKey    fitEventKey
+	lastFitTime        time.Time
+	fitCooldown        time.Duration
+	minFitEvents       int
+	rawBase            *adaptive.EMA
+	lastRawNorm        float64
+	lastCategory       hawkes.FitCategory
+	spectralRadii      []float64
+	asymmetries        []float64
+	bookTouchImbalance float64
 }
 
 type fitEventKey struct {
@@ -315,8 +318,10 @@ func (symbol *excitationSymbol) measure(
 	buyTimes, sellTimes []time.Time,
 	horizon time.Time,
 	fitCooldown time.Duration,
+	touchImbalance float64,
 ) (excitationReading, bool) {
 	symbol.fitCooldown = fitCooldown
+	symbol.bookTouchImbalance = touchImbalance
 
 	stream := hawkes.NewArrivalStream(buyTimes, sellTimes)
 	context, adaptiveStream, ok := fitContextFromStream(stream, horizon)
@@ -424,6 +429,7 @@ func (symbol *excitationSymbol) enrichReading(
 func (symbol *excitationSymbol) measureFit(fit hawkes.BivariateFit) (excitationReading, bool) {
 	sellSide := fit.Asymmetry(true) > fit.Asymmetry(false)
 	asymmetry := fit.Asymmetry(sellSide)
+	asymmetry = confirmAsymmetryWithBook(asymmetry, sellSide, symbol.bookTouchImbalance)
 
 	intensity, baseline := fit.IntensityX, fit.MuX
 
@@ -803,4 +809,38 @@ func DeriveFitCooldown(windowSpan time.Duration) time.Duration {
 	}
 
 	return windowSpan * hawkesFitCooldownMult
+}
+
+func confirmAsymmetryWithBook(
+	asymmetry float64,
+	sellSide bool,
+	touchImbalance float64,
+) float64 {
+	if math.IsNaN(touchImbalance) || math.IsInf(touchImbalance, 0) || touchImbalance == 0 {
+		return asymmetry
+	}
+
+	bookMagnitude := math.Abs(touchImbalance)
+
+	if bookMagnitude > 1 {
+		bookMagnitude = 1
+	}
+
+	hawkesSign := 1.0
+
+	if sellSide {
+		hawkesSign = -1.0
+	}
+
+	bookSign := 1.0
+
+	if touchImbalance < 0 {
+		bookSign = -1.0
+	}
+
+	if hawkesSign*bookSign > 0 {
+		return math.Min(1, asymmetry+bookMagnitude*(1-asymmetry))
+	}
+
+	return asymmetry * (1 - bookMagnitude)
 }

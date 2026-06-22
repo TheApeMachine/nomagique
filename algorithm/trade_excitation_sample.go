@@ -22,8 +22,9 @@ type TradeExcitationSample struct {
 }
 
 type tradeExcitationWindow struct {
-	buySeconds  []float64
-	sellSeconds []float64
+	buySeconds     []float64
+	sellSeconds    []float64
+	touchImbalance float64
 }
 
 /*
@@ -38,6 +39,25 @@ func NewTradeExcitationSample(artifact *datura.Artifact) *TradeExcitationSample 
 
 func (tradeExcitationSample *TradeExcitationSample) Write(payload []byte) (int, error) {
 	tradeExcitationSample.artifact.WithPayload(payload)
+
+	state := datura.Acquire("trade-excitation-write-state", datura.APPJSON)
+
+	if _, err := state.Write(payload); err != nil {
+		state.Release()
+
+		return 0, err
+	}
+
+	channel := datura.Peek[string](state, "channel")
+
+	if channel == "book" {
+		symbol := datura.Peek[string](state, "data", 0, "symbol")
+		window := tradeExcitationSample.window(symbol)
+		window.touchImbalance = bookTouchImbalance(state)
+	}
+
+	state.Release()
+
 	return len(payload), nil
 }
 
@@ -202,6 +222,7 @@ func (tradeExcitationSample *TradeExcitationSample) features(window *tradeExcita
 		cooldown,
 		float64(len(window.buySeconds)),
 		float64(len(window.sellSeconds)),
+		window.touchImbalance,
 	}
 	features = append(features, window.buySeconds...)
 	features = append(features, window.sellSeconds...)
@@ -217,4 +238,16 @@ func excitationSampleMinEvents(eventCount int) int {
 	}
 
 	return required
+}
+
+func bookTouchImbalance(state *datura.Artifact) float64 {
+	bidQty := datura.Peek[float64](state, "data", 0, "bids", 0, "qty")
+	askQty := datura.Peek[float64](state, "data", 0, "asks", 0, "qty")
+	total := bidQty + askQty
+
+	if total <= 0 {
+		return 0
+	}
+
+	return (bidQty - askQty) / total
 }

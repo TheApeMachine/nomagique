@@ -36,6 +36,7 @@ var FluidflowInputKeys = []string{
 	"icebergScore",
 	"vorticity",
 	"turbulence",
+	"memory",
 	"price",
 	"spreadBPS",
 	"changePct",

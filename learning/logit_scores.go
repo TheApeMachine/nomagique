@@ -520,21 +520,13 @@ func (logitScores *LogitScores) resolveCompositeScale(
 		))
 	}
 
-	leftScale, err := logitScores.priorMedianScale(leftKey)
-
-	if err != nil {
-		leftScale, err = logitScores.resolveFeatureScale(leftKey, 0, state)
-	}
+	leftScale, err := logitScores.compositeOperandScale(leftKey, state)
 
 	if err != nil {
 		return 0, err
 	}
 
-	rightScale, err := logitScores.priorMedianScale(rightKey)
-
-	if err != nil {
-		rightScale, err = logitScores.resolveFeatureScale(rightKey, 0, state)
-	}
+	rightScale, err := logitScores.compositeOperandScale(rightKey, state)
 
 	if err != nil {
 		return 0, err
@@ -554,6 +546,43 @@ func (logitScores *LogitScores) resolveCompositeScale(
 	}
 
 	return math.Sqrt(leftScale * rightScale), nil
+}
+
+func (logitScores *LogitScores) compositeOperandScale(
+	stageKey string,
+	state *datura.Artifact,
+) (float64, error) {
+	scale, err := logitScores.priorMedianScale(stageKey)
+
+	if err == nil {
+		return scale, nil
+	}
+
+	rootKey := statistic.ConfigString(logitScores.config, state, "root")
+
+	if rootKey == "" {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"logit-scores: config root required for composite operand scale",
+			nil,
+		))
+	}
+
+	wireValue, err := statistic.WireScalarAt(logitScores.config, state, rootKey, stageKey)
+
+	if err != nil {
+		return 0, err
+	}
+
+	if wireValue <= 0 || math.IsNaN(wireValue) || math.IsInf(wireValue, 0) {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			fmt.Sprintf("logit-scores: composite operand %q is non-positive", stageKey),
+			nil,
+		))
+	}
+
+	return math.Abs(wireValue), nil
 }
 
 func (logitScores *LogitScores) priorMedianScale(stageKey string) (float64, error) {

@@ -13,7 +13,7 @@ func TestFluidflow_Read(testingTB *testing.T) {
 		stage := equation.NewFluidflow(nil)
 		writeErr := writeFeatureStage(stage, equation.FluidflowInputKeys,
 			0.5, 0.01, 0.8, 1, 1,
-			2, 4, 0, 0.05, 0, 0, 0,
+			2, 4, 0, 0.05, 0, 0, 0, 0,
 			100, 2, 0.01, 1000,
 		)
 
@@ -34,7 +34,7 @@ func TestFluidflow_Read(testingTB *testing.T) {
 		stage := equation.NewFluidflow(nil)
 		writeErr := writeFeatureStage(stage, equation.FluidflowInputKeys,
 			8, 0.2, 0.5, 1, 1,
-			2, 4, 1, 0.1, 0, 0.5, 0.8,
+			2, 4, 1, 0.1, 0, 0.5, 0.8, 0,
 			100, 2, 0.01, 1000,
 		)
 
@@ -56,7 +56,7 @@ func BenchmarkFluidflowRead(b *testing.B) {
 	stage := equation.NewFluidflow(nil)
 	values := []float64{
 		2, 0.1, 0.6, 1, 1,
-		3, 5, 1, 0.08, 0, 0.2, 0.3,
+		3, 5, 1, 0.08, 0, 0.2, 0.3, 0,
 		100, 2, 0.01, 1000,
 	}
 

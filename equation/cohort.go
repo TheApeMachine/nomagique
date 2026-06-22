@@ -60,6 +60,7 @@ func (cohort *Cohort) Read(p []byte) (int, error) {
 		"alphaScore":  outcome.alphaScore,
 		"noiseScore":  outcome.noiseScore,
 		"stressScore": outcome.stressScore,
+		"peakScore":   outcome.peakScore,
 		"category":    float64(outcome.category),
 		"correlation": outcome.correlation,
 		"energy":      outcome.energy,
@@ -80,6 +81,7 @@ type cohortOutcome struct {
 	alphaScore  float64
 	noiseScore  float64
 	stressScore float64
+	peakScore   float64
 }
 
 func evaluateCohort(state *datura.Artifact, inputKeys []string) cohortOutcome {
@@ -153,6 +155,11 @@ func evaluateCohort(state *datura.Artifact, inputKeys []string) cohortOutcome {
 	}
 
 	scores := cohortClassifierScores(category, correlation, energy, upperEnergy)
+	peakScore := 0.0
+
+	if cohortPeakGate(correlation, peerCorrelations) {
+		peakScore = math.Abs(correlation) * energy
+	}
 
 	return cohortOutcome{
 		correlation: correlation,
@@ -164,7 +171,22 @@ func evaluateCohort(state *datura.Artifact, inputKeys []string) cohortOutcome {
 		alphaScore:  scores[1],
 		noiseScore:  scores[2],
 		stressScore: scores[3],
+		peakScore:   peakScore,
 	}
+}
+
+func cohortPeakGate(correlation float64, peerCorrelations []float64) bool {
+	if len(peerCorrelations) < 2 {
+		return correlation > 0
+	}
+
+	peakQuantile := cohortQuantileSorted(cohortCopySorted(peerCorrelations), 0.9)
+
+	if peakQuantile <= 0 {
+		return correlation > 0
+	}
+
+	return correlation >= peakQuantile
 }
 
 func cohortClassifierScores(
@@ -242,7 +264,7 @@ func classifyCohort(
 		return 4
 	}
 
-	if highPositiveCorrelation && highEnergy {
+	if highPositiveCorrelation && highEnergy && cohortPeakGate(correlation, peerCorrelations) {
 		return 1
 	}
 

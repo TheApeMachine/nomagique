@@ -64,10 +64,11 @@ func (fluidflow *Fluidflow) Read(p []byte) (int, error) {
 	icebergScore := fields[9]
 	vorticity := fields[10]
 	turbulence := fields[11]
-	price := fields[12]
-	spreadBPS := fields[13]
-	changePct := fields[14]
-	volume := fields[15]
+	memory := fields[12]
+	price := fields[13]
+	spreadBPS := fields[14]
+	changePct := fields[15]
+	volume := fields[16]
 
 	if price <= 0 || spreadBPS <= 0 || changePct <= 0 || volume <= 0 {
 		return rejectStage(state, "equation: invalid stage input")
@@ -118,6 +119,10 @@ func (fluidflow *Fluidflow) Read(p []byte) (int, error) {
 
 	if icebergScore > 0 {
 		viscousScore = math.Max(viscousScore, icebergScore)
+	}
+
+	if memory > 0 {
+		viscousScore = math.Max(viscousScore, memory*viscosity)
 	}
 
 	midActivity := midAddRate + midExecuteRate

@@ -100,6 +100,10 @@ func TestCohort_Read(testingTB *testing.T) {
 			Convey("It should classify the cohort", func() {
 				So(datura.Peek[float64](outbound, "output", "value"), ShouldBeGreaterThan, 0)
 				So(int(datura.Peek[float64](outbound, "output", "category")), ShouldEqual, testCase.wantCat)
+
+				if testCase.wantCat == 1 {
+					So(datura.Peek[float64](outbound, "output", "peakScore"), ShouldBeGreaterThan, 0)
+				}
 			})
 		})
 	}

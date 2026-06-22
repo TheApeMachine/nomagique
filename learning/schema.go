@@ -32,15 +32,15 @@ func configString(config, state *datura.Artifact, key string) string {
 func configFloat64(config, state *datura.Artifact, key string) float64 {
 	role := wireRole(state)
 
-	if role != "" {
-		scoped := datura.Peek[float64](config, role, key)
-
-		if scoped != 0 {
-			return scoped
-		}
+	if role != "" && datura.KeyPresent(config, role, key) {
+		return datura.Peek[float64](config, role, key)
 	}
 
-	return datura.Peek[float64](config, key)
+	if datura.KeyPresent(config, key) {
+		return datura.Peek[float64](config, key)
+	}
+
+	return 0
 }
 
 func configStringSlice(config, state *datura.Artifact, key string) []string {

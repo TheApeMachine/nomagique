@@ -30,6 +30,20 @@ func TestExcitationMeasure(testingTB *testing.T) {
 			So(excitation.Outcome().Strength, ShouldBeGreaterThan, 0)
 		})
 	})
+
+	Convey("Given a feature batch without scope", testingTB, func() {
+		excitation := NewExcitation(datura.Acquire("excitation-config", datura.APPJSON))
+		base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
+		samples := excitationBurstSamples(base, 32)
+		inbound := datura.Acquire("excitation-no-scope", datura.APPJSON)
+		inbound.WithPayload(equation.MarshalFeaturesPayload(samples))
+
+		err := transport.NewFlipFlop(inbound, excitation)
+
+		Convey("It should return a validation error", func() {
+			So(err, ShouldNotBeNil)
+		})
+	})
 }
 
 func TestClassifyFitSaturation(testingTB *testing.T) {

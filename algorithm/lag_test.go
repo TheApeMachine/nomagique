@@ -50,6 +50,23 @@ func TestLagEvaluateAnchorStall(testingTB *testing.T) {
 	})
 }
 
+func TestLagReadInsufficientFields(testingTB *testing.T) {
+	Convey("Given fewer than eleven lag feature fields", testingTB, func() {
+		lag := NewLag(datura.Acquire("lag-config", datura.APPJSON))
+		writeErr := tests.WriteSamples(lag,
+			0, 100,
+			0, 0, 0,
+		)
+		So(writeErr, ShouldBeNil)
+
+		_, readErr := lag.Read(make([]byte, 4096))
+
+		Convey("It should return a validation error", func() {
+			So(readErr, ShouldNotBeNil)
+		})
+	})
+}
+
 func TestCrossLagScore(testingTB *testing.T) {
 	Convey("Given a follower that leads the anchor", testingTB, func() {
 		start := time.Date(2026, 6, 11, 12, 0, 0, 0, time.UTC)

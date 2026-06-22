@@ -135,7 +135,11 @@ func (classifier *Classifier) Read(payload []byte) (int, error) {
 	state.MergeOutput("strength", strength)
 	state.MergeOutput("value", categoryIndex)
 	state.Merge("root", "output")
-	state.Merge("inputs", []string{"value"})
+
+	outputInputs := make([]string, 0, len(inputs)+5)
+	outputInputs = append(outputInputs, inputs...)
+	outputInputs = append(outputInputs, "probabilities", "category", "confidence", "strength", "value")
+	state.Merge("inputs", outputInputs)
 
 	return state.Read(payload)
 }

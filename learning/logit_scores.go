@@ -45,8 +45,8 @@ func (logitScores *LogitScores) Read(payload []byte) (int, error) {
 
 	defer state.Release()
 
-	order := configStringSlice(logitScores.config, state, "order")
-	outputs := configStringSlice(logitScores.config, state, "outputs")
+	order := statistic.ConfigStringSlice(logitScores.config, state, "order")
+	outputs := statistic.ConfigStringSlice(logitScores.config, state, "outputs")
 
 	if len(order) == 0 {
 		return 0, errnie.Error(errnie.Err(
@@ -99,6 +99,16 @@ func (logitScores *LogitScores) Read(payload []byte) (int, error) {
 	}
 
 	state.MergeOutput("value", scores[0])
+
+	strength := scores[0]
+
+	for _, score := range scores[1:] {
+		if score > strength {
+			strength = score
+		}
+	}
+
+	state.MergeOutput("strength", strength)
 	state.Merge("root", "output")
 	state.Merge("inputs", outputs)
 
@@ -118,7 +128,17 @@ func (logitScores *LogitScores) featureValues(
 			wireKey = key
 		}
 
-		value, err := logitScores.wireValue(state, wireKey)
+		rootKey := statistic.ConfigString(logitScores.config, state, "root")
+
+		if rootKey == "" {
+			return nil, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"logit-scores: config root required",
+				nil,
+			))
+		}
+
+		value, err := statistic.WireScalarAt(logitScores.config, state, rootKey, wireKey)
 
 		if err != nil {
 			return nil, err
@@ -128,57 +148,6 @@ func (logitScores *LogitScores) featureValues(
 	}
 
 	return features, nil
-}
-
-func (logitScores *LogitScores) wireValue(
-	state *datura.Artifact,
-	wireKey string,
-) (float64, error) {
-	rootKey := configString(logitScores.config, state, "root")
-
-	if rootKey == "" {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"logit-scores: config root required",
-			nil,
-		))
-	}
-
-	inputKeys := configStringSlice(logitScores.config, state, "inputs")
-
-	if len(inputKeys) == 0 {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"logit-scores: config inputs required",
-			nil,
-		))
-	}
-
-	index := inputIndex(inputKeys, wireKey)
-
-	if index < 0 {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			fmt.Sprintf("logit-scores: wire key %q not listed in config inputs", wireKey),
-			nil,
-		))
-	}
-
-	if rootKey == "features" {
-		features := datura.Peek[[]float64](state, "features")
-
-		if index >= len(features) {
-			return 0, errnie.Error(errnie.Err(
-				errnie.Validation,
-				fmt.Sprintf("logit-scores: features index out of range for %q", wireKey),
-				nil,
-			))
-		}
-
-		return features[index], nil
-	}
-
-	return datura.Peek[float64](state, rootKey, wireKey), nil
 }
 
 func (logitScores *LogitScores) resolveOutputScore(
@@ -192,7 +161,8 @@ func (logitScores *LogitScores) resolveOutputScore(
 		return computed, nil
 	}
 
-	overrideValue, err := logitScores.wireValue(state, source)
+	rootKey := statistic.ConfigString(logitScores.config, state, "root")
+	overrideValue, err := statistic.WireScalarAt(logitScores.config, state, rootKey, source)
 
 	if err != nil {
 		return 0, err
@@ -246,7 +216,8 @@ func (logitScores *LogitScores) applyDecline(
 		return logitScores.applyGatedOutputs(state, config, scores)
 	}
 
-	declineValue, err := logitScores.wireValue(state, declineSource)
+	rootKey := statistic.ConfigString(logitScores.config, state, "root")
+	declineValue, err := statistic.WireScalarAt(logitScores.config, state, rootKey, declineSource)
 
 	if err != nil {
 		return err
@@ -307,7 +278,8 @@ func (logitScores *LogitScores) applyGatedOutputs(
 			continue
 		}
 
-		gateValue, err := logitScores.wireValue(state, gateSource)
+		rootKey := statistic.ConfigString(logitScores.config, state, "root")
+		gateValue, err := statistic.WireScalarAt(logitScores.config, state, rootKey, gateSource)
 
 		if err != nil {
 			return err
@@ -319,16 +291,6 @@ func (logitScores *LogitScores) applyGatedOutputs(
 	}
 
 	return nil
-}
-
-func inputIndex(inputKeys []string, wireKey string) int {
-	for index, inputKey := range inputKeys {
-		if inputKey == wireKey {
-			return index
-		}
-	}
-
-	return -1
 }
 
 func outputIndex(config *datura.Artifact, outputKey string) (int, error) {
@@ -457,6 +419,14 @@ func (logitScores *LogitScores) resolveFeatureScale(
 		scale = composite
 	}
 
+	if scale <= 0 {
+		composite, err := logitScores.resolveCompositeScale(stageKey)
+
+		if err == nil && composite > 0 {
+			scale = composite
+		}
+	}
+
 	if scale <= 0 || math.IsNaN(scale) || math.IsInf(scale, 0) {
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
@@ -490,6 +460,14 @@ func (logitScores *LogitScores) resolveCompositeScale(stageKey string) (float64,
 
 	if err != nil {
 		return 0, err
+	}
+
+	if rightScale <= 0 && leftScale > 0 {
+		return leftScale, nil
+	}
+
+	if leftScale <= 0 && rightScale > 0 {
+		return rightScale, nil
 	}
 
 	return math.Sqrt(leftScale * rightScale), nil

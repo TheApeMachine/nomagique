@@ -65,6 +65,17 @@ func TestClassifier_Read(testingTB *testing.T) {
 			So(confidence, ShouldBeGreaterThan, 0)
 			So(confidence, ShouldBeLessThan, 1)
 		})
+
+		Convey("It should propagate score keys on output wire", func() {
+			inputs := datura.Peek[[]string](artifact, "inputs")
+
+			So(inputs, ShouldContain, "s0")
+			So(inputs, ShouldContain, "s1")
+			So(inputs, ShouldContain, "s2")
+			So(inputs, ShouldContain, "s3")
+			So(inputs, ShouldContain, "category")
+			So(inputs, ShouldContain, "value")
+		})
 	})
 
 	Convey("Given an empty score key in schema inputs", testingTB, func() {

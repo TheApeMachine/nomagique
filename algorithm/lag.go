@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/correlation"
 	"github.com/theapemachine/nomagique/equation"
 	"github.com/theapemachine/nomagique/statistic"
@@ -69,8 +70,22 @@ func (lag *Lag) Read(payload []byte) (int, error) {
 		return 0, err
 	}
 
-	if len(fields) >= lagPayloadFields {
-		lag.outcome = lag.evaluateFields(fields)
+	if len(fields) < lagPayloadFields {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"lag: insufficient feature fields",
+			nil,
+		))
+	}
+
+	lag.outcome = lag.evaluateFields(fields)
+
+	if !lag.outcome.Eligible || lag.outcome.Strength <= 0 {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"lag: ineligible classification",
+			nil,
+		))
 	}
 
 	state.MergeOutput("inefficient", lag.outcome.InefficientScore)

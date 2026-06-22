@@ -1,9 +1,11 @@
 package algorithm
 
 import (
+	"fmt"
 	"math"
 
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/equation"
 	"github.com/theapemachine/nomagique/statistic"
 )
@@ -62,7 +64,11 @@ func (tradeFlowSample *TradeFlowSample) Read(payload []byte) (int, error) {
 	channel := datura.Peek[string](state, "channel")
 
 	if channel != "trade" {
-		return state.Read(payload)
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			fmt.Sprintf("trade-flow-sample: expected trade channel, got %q", channel),
+			nil,
+		))
 	}
 
 	symbol := datura.Peek[string](state, "data", 0, "symbol")
@@ -71,7 +77,11 @@ func (tradeFlowSample *TradeFlowSample) Read(payload []byte) (int, error) {
 	side := datura.Peek[string](state, "data", 0, "side")
 
 	if symbol == "" || price <= 0 || quantity <= 0 {
-		return state.Read(payload)
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"trade-flow-sample: trade frame requires symbol, price, and qty",
+			nil,
+		))
 	}
 
 	window := tradeFlowSample.window(symbol)
@@ -89,7 +99,11 @@ func (tradeFlowSample *TradeFlowSample) Read(payload []byte) (int, error) {
 	features := tradeFlowSample.features(window)
 
 	if len(features) == 0 {
-		return state.Read(payload)
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"trade-flow-sample: insufficient trade history for flow features",
+			nil,
+		))
 	}
 
 	state.WithScope(symbol)

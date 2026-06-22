@@ -41,6 +41,31 @@ func TestTradeFlowSampleRead(testingTB *testing.T) {
 			So(len(datura.Peek[[]float64](last, "features")), ShouldBeGreaterThan, 6)
 		})
 	})
+
+	Convey("Given a non-trade channel frame", testingTB, func() {
+		sample := NewTradeFlowSample(datura.Acquire("trade-flow-config", datura.APPJSON))
+		payload := `{"channel":"ticker","type":"update","data":[{"symbol":"BTC/USD","last":100}]}`
+		frame := datura.Acquire("trade-flow-ticker", datura.APPJSON)
+		frame.WithPayload([]byte(payload))
+
+		err := transport.NewFlipFlop(frame, sample)
+
+		Convey("It should return a validation error", func() {
+			So(err, ShouldNotBeNil)
+		})
+	})
+
+	Convey("Given a single trade before history warms", testingTB, func() {
+		sample := NewTradeFlowSample(datura.Acquire("trade-flow-config", datura.APPJSON))
+		base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC).UnixNano()
+		frame := tradeFrame("BTC/USD", "buy", 100, 1, base)
+
+		err := transport.NewFlipFlop(frame, sample)
+
+		Convey("It should return a validation error", func() {
+			So(err, ShouldNotBeNil)
+		})
+	})
 }
 
 func BenchmarkTradeFlowSampleRead(b *testing.B) {

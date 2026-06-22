@@ -86,15 +86,21 @@ func (excitation *Excitation) Read(payload []byte) (int, error) {
 		scope = datura.Peek[string](state, "scope")
 	}
 
-	if scope != "" {
-		outcome, err := excitation.evaluateState(state, scope)
-
-		if err != nil {
-			return 0, err
-		}
-
-		excitation.outcome = outcome
+	if scope == "" {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"excitation: scope required",
+			nil,
+		))
 	}
+
+	outcome, err := excitation.evaluateState(state, scope)
+
+	if err != nil {
+		return 0, err
+	}
+
+	excitation.outcome = outcome
 
 	state.MergeOutput("frenzy", excitation.outcome.Frenzy)
 	state.MergeOutput("saturation", excitation.outcome.Saturation)

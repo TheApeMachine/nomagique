@@ -44,9 +44,9 @@ func (flow *Flow) Read(p []byte) (int, error) {
 		return 0, err
 	}
 
-	inputKeys := ensureFeatureSchema(state, flow.artifact, FlowInputKeys)
+	inputKeys := EnsureFeatureSchema(state, flow.artifact, FlowInputKeys)
 
-	fields, err := featureFields(state, inputKeys)
+	fields, err := FeatureFields(state, inputKeys)
 
 	if err != nil || len(fields) < len(FlowInputKeys) {
 		return rejectStage(state, "equation: invalid stage input")
@@ -58,7 +58,7 @@ func (flow *Flow) Read(p []byte) (int, error) {
 	grossFloor := fields[3]
 	medianNotional := fields[4]
 
-	prices, err := featureSlice(state, len(inputKeys), len(Features(state))-len(inputKeys))
+	prices, err := FeatureSlice(state, len(inputKeys), len(Features(state))-len(inputKeys))
 
 	if err != nil {
 		return rejectStage(state, "equation: invalid stage input")

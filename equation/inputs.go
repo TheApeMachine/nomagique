@@ -103,6 +103,20 @@ var CohortInputKeys = []string{
 	"barSpacingSeconds",
 }
 
+var LagInputKeys = []string{
+	"isAnchor",
+	"price",
+	"moveReady",
+	"moveMoved",
+	"stallMargin",
+	"lagOK",
+	"lagBars",
+	"lagCorr",
+	"contempOK",
+	"contempCorr",
+	"sampleCount",
+}
+
 /*
 featureField reads one named scalar from a features/root payload.
 */
@@ -111,9 +125,9 @@ func featureField(state *datura.Artifact, key string) (float64, error) {
 }
 
 /*
-featureFields reads named scalars in order; missing keys return validation errors.
+FeatureFields reads named scalars in order; missing keys return validation errors.
 */
-func featureFields(state *datura.Artifact, keys []string) ([]float64, error) {
+func FeatureFields(state *datura.Artifact, keys []string) ([]float64, error) {
 	values := make([]float64, len(keys))
 
 	for index, key := range keys {
@@ -130,9 +144,9 @@ func featureFields(state *datura.Artifact, keys []string) ([]float64, error) {
 }
 
 /*
-ensureFeatureSchema stamps root/inputs from config when the wire payload omitted them.
+EnsureFeatureSchema stamps root/inputs from config when the wire payload omitted them.
 */
-func ensureFeatureSchema(state, config *datura.Artifact, defaultKeys []string) []string {
+func EnsureFeatureSchema(state, config *datura.Artifact, defaultKeys []string) []string {
 	inputKeys := datura.Peek[[]string](state, "inputs")
 
 	if len(inputKeys) == 0 {
@@ -153,9 +167,9 @@ func ensureFeatureSchema(state, config *datura.Artifact, defaultKeys []string) [
 }
 
 /*
-featureSlice reads a contiguous segment from the features vector.
+FeatureSlice reads a contiguous segment from the features vector.
 */
-func featureSlice(state *datura.Artifact, offset, count int) ([]float64, error) {
+func FeatureSlice(state *datura.Artifact, offset, count int) ([]float64, error) {
 	features := Features(state)
 
 	if count < 0 || offset+count > len(features) {

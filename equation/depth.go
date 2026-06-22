@@ -46,9 +46,9 @@ func (depth *Depth) Read(p []byte) (int, error) {
 		return 0, err
 	}
 
-	inputKeys := ensureFeatureSchema(state, depth.artifact, DepthInputKeys)
+	inputKeys := EnsureFeatureSchema(state, depth.artifact, DepthInputKeys)
 
-	fields, err := featureFields(state, inputKeys)
+	fields, err := FeatureFields(state, inputKeys)
 
 	if err != nil || len(fields) < len(DepthInputKeys) {
 		return rejectStage(state, "equation: invalid stage input")
@@ -58,13 +58,13 @@ func (depth *Depth) Read(p []byte) (int, error) {
 	peerCount := int(fields[1])
 	headerLen := len(inputKeys)
 
-	peers, err := featureSlice(state, headerLen, peerCount)
+	peers, err := FeatureSlice(state, headerLen, peerCount)
 
 	if err != nil {
 		return rejectStage(state, "equation: invalid stage input")
 	}
 
-	trailer, err := featureSlice(state, headerLen+peerCount, 2)
+	trailer, err := FeatureSlice(state, headerLen+peerCount, 2)
 
 	if err != nil {
 		return rejectStage(state, "equation: invalid stage input")

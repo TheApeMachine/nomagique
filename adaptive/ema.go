@@ -41,7 +41,12 @@ func (ema *EMA) Read(payload []byte) (int, error) {
 	}
 
 	features := statistic.SnapshotFeatures(state)
-	sample := datura.Peek[float64](state, "sample")
+	inputKey := statistic.WireInputKey(ema.artifact, state, "sample")
+	sample, err := statistic.WireScalar(ema.artifact, state, inputKey)
+
+	if err != nil {
+		return 0, err
+	}
 
 	if math.IsNaN(sample) || math.IsInf(sample, 0) {
 		return 0, errnie.Error(errnie.Err(

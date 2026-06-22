@@ -47,9 +47,9 @@ func (decay *Decay) Read(p []byte) (int, error) {
 		return 0, err
 	}
 
-	inputKeys := ensureFeatureSchema(state, decay.artifact, DecayInputKeys)
+	inputKeys := EnsureFeatureSchema(state, decay.artifact, DecayInputKeys)
 
-	fields, err := featureFields(state, inputKeys)
+	fields, err := FeatureFields(state, inputKeys)
 
 	if err != nil || len(fields) < len(DecayInputKeys) {
 		return rejectStage(state, "equation: invalid stage input")

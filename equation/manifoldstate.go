@@ -44,7 +44,7 @@ func (manifoldstate *Manifoldstate) Read(p []byte) (int, error) {
 		return 0, err
 	}
 
-	inputKeys := ensureFeatureSchema(state, manifoldstate.artifact, ManifoldInputKeys)
+	inputKeys := EnsureFeatureSchema(state, manifoldstate.artifact, ManifoldInputKeys)
 	outcome := evaluateManifoldstate(state, inputKeys)
 
 	if !outcome.eligible || outcome.strength <= 0 {
@@ -76,7 +76,7 @@ type manifoldstateOutcome struct {
 }
 
 func evaluateManifoldstate(state *datura.Artifact, inputKeys []string) manifoldstateOutcome {
-	fields, err := featureFields(state, inputKeys)
+	fields, err := FeatureFields(state, inputKeys)
 
 	if err != nil || len(fields) < len(ManifoldInputKeys) {
 		return manifoldstateOutcome{}

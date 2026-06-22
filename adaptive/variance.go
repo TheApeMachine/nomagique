@@ -5,6 +5,7 @@ import (
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/nomagique/statistic"
 )
 
 /*
@@ -40,7 +41,12 @@ func (variance *Variance) Read(payload []byte) (int, error) {
 		return 0, err
 	}
 
-	sample := datura.Peek[float64](state, "sample")
+	sampleKey := statistic.WireInputKey(variance.artifact, state, "sample")
+	sample, err := statistic.WireScalar(variance.artifact, state, sampleKey)
+
+	if err != nil {
+		return 0, err
+	}
 
 	if math.IsNaN(sample) || math.IsInf(sample, 0) {
 		return 0, errnie.Error(errnie.Err(

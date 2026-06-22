@@ -6,6 +6,7 @@ import (
 	"strconv"
 
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/errnie"
 )
 
 /*
@@ -40,11 +41,40 @@ func (panel *Panel) Read(payload []byte) (int, error) {
 		return 0, err
 	}
 
-	member := datura.Peek[float64](state, "member")
-	sample := datura.Peek[float64](state, "sample")
+	memberField := ConfigString(panel.artifact, state, "memberKey")
+
+	if memberField == "" {
+		memberField = "member"
+	}
+
+	sampleField := ConfigString(panel.artifact, state, "sampleKey")
+
+	if sampleField == "" {
+		sampleField = "sample"
+	}
+
+	if !datura.KeyPresent(state, memberField) || !datura.KeyPresent(state, sampleField) {
+		return state.Read(payload)
+	}
+
+	member, err := WireScalar(panel.artifact, state, memberField)
+
+	if err != nil {
+		return 0, err
+	}
+
+	sample, err := WireScalar(panel.artifact, state, sampleField)
+
+	if err != nil {
+		return 0, err
+	}
 
 	if math.IsNaN(sample) || math.IsInf(sample, 0) {
-		return state.Read(payload)
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"panel: sample is non-finite",
+			nil,
+		))
 	}
 
 	key := memberKey(member)

@@ -52,7 +52,11 @@ func (compression *Compression) Read(payload []byte) (int, error) {
 	}
 
 	features := statistic.SnapshotFeatures(state)
-	sample := compression.sample(state, inputKey)
+	sample, err := statistic.WireScalar(compression.artifact, state, inputKey)
+
+	if err != nil {
+		return 0, err
+	}
 
 	if math.IsNaN(sample) || math.IsInf(sample, 0) {
 		return 0, errnie.Error(errnie.Err(
@@ -74,13 +78,17 @@ func (compression *Compression) Read(payload []byte) (int, error) {
 		))
 	}
 
-	value := 0.0
-
 	if sample > baseline {
 		compression.artifact.Poke(sample, "output", "baseline")
-	} else {
-		value = (baseline - sample) / baseline
+
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"compression: sample exceeds baseline",
+			nil,
+		))
 	}
+
+	value := (baseline - sample) / baseline
 
 	state.MergeOutput(outputKey, value)
 	features.Restore(state)
@@ -91,20 +99,4 @@ func (compression *Compression) Read(payload []byte) (int, error) {
 
 func (compression *Compression) Close() error {
 	return nil
-}
-
-func (compression *Compression) sample(state *datura.Artifact, inputKey string) float64 {
-	body := datura.As[datura.Map[any]](state)
-
-	if body != nil {
-		output, ok := body["output"].(map[string]any)
-
-		if ok {
-			if _, present := output[inputKey]; present {
-				return datura.Peek[float64](state, "output", inputKey)
-			}
-		}
-	}
-
-	return datura.Peek[float64](state, inputKey)
 }

@@ -7,6 +7,7 @@ import (
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/nomagique/correlation"
+	"github.com/theapemachine/nomagique/equation"
 	"github.com/theapemachine/nomagique/statistic"
 )
 
@@ -61,10 +62,15 @@ func (lag *Lag) Read(payload []byte) (int, error) {
 		return 0, err
 	}
 
-	batch := datura.Peek[[]float64](state, "features")
+	inputKeys := equation.EnsureFeatureSchema(state, lag.artifact, equation.LagInputKeys)
+	fields, err := equation.FeatureFields(state, inputKeys)
 
-	if len(batch) >= lagPayloadFields {
-		lag.outcome = lag.evaluate(batch)
+	if err != nil {
+		return 0, err
+	}
+
+	if len(fields) >= lagPayloadFields {
+		lag.outcome = lag.evaluateFields(fields)
 	}
 
 	state.MergeOutput("inefficient", lag.outcome.InefficientScore)
@@ -88,22 +94,22 @@ func (lag *Lag) Outcome() LagOutcome {
 	return lag.outcome
 }
 
-func (lag *Lag) evaluate(batch []float64) LagOutcome {
-	if len(batch) < lagPayloadFields {
+func (lag *Lag) evaluateFields(fields []float64) LagOutcome {
+	if len(fields) < lagPayloadFields {
 		return LagOutcome{}
 	}
 
-	isAnchor := batch[0] > 0
-	price := batch[1]
-	moveReady := batch[2] > 0
-	moveMoved := batch[3] > 0
-	stallMargin := batch[4]
-	lagOK := batch[5] > 0
-	lagBars := int(batch[6])
-	lagCorr := batch[7]
-	contempOK := batch[8] > 0
-	contempCorr := batch[9]
-	sampleCount := int(batch[10])
+	isAnchor := fields[0] > 0
+	price := fields[1]
+	moveReady := fields[2] > 0
+	moveMoved := fields[3] > 0
+	stallMargin := fields[4]
+	lagOK := fields[5] > 0
+	lagBars := int(fields[6])
+	lagCorr := fields[7]
+	contempOK := fields[8] > 0
+	contempCorr := fields[9]
+	sampleCount := int(fields[10])
 
 	if price <= 0 {
 		return LagOutcome{}

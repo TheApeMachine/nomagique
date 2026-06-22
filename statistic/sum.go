@@ -4,6 +4,7 @@ import (
 	"math"
 
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/errnie"
 )
 
 /*
@@ -38,10 +39,19 @@ func (sum *Sum) Read(payload []byte) (int, error) {
 		return 0, err
 	}
 
-	sample := datura.Peek[float64](state, "sample")
+	sampleKey := WireInputKey(sum.artifact, state, "sample")
+	sample, err := WireScalar(sum.artifact, state, sampleKey)
+
+	if err != nil {
+		return 0, err
+	}
 
 	if math.IsNaN(sample) || math.IsInf(sample, 0) {
-		return state.Read(payload)
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"sum: sample is non-finite",
+			nil,
+		))
 	}
 
 	value := datura.Peek[float64](sum.artifact, "output", "value") + sample

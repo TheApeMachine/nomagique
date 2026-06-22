@@ -5,6 +5,7 @@ import (
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/nomagique/statistic"
 )
 
 /*
@@ -56,16 +57,30 @@ func (bernoulli *Bernoulli) Read(payload []byte) (int, error) {
 		return state.Read(payload)
 	}
 
-	samplePresent := attributeKeyPresent(state, "sample")
-	pairedPresent := attributeKeyPresent(state, "paired")
+	sampleKey := configString(bernoulli.artifact, state, "sampleKey")
 
-	if !samplePresent && !pairedPresent {
+	if sampleKey == "" {
+		sampleKey = "sample"
+	}
+
+	pairedKey := configString(bernoulli.artifact, state, "pairedKey")
+
+	if pairedKey == "" {
+		pairedKey = "paired"
+	}
+
+	sample, sampleErr := statistic.WireScalar(bernoulli.artifact, state, sampleKey)
+	_, pairedErr := statistic.WireScalar(bernoulli.artifact, state, pairedKey)
+
+	if sampleErr != nil && pairedErr != nil {
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"bernoulli: sample or paired required",
 			nil,
 		))
 	}
+
+	pairedPresent := pairedErr == nil
 
 	betaState := BetaState{
 		Alpha: datura.Peek[float64](bernoulli.artifact, "output", "alpha"),
@@ -77,11 +92,15 @@ func (bernoulli *Bernoulli) Read(payload []byte) (int, error) {
 		Ready: datura.Peek[float64](bernoulli.artifact, "output", "ready") != 0,
 	}
 
-	sample := datura.Peek[float64](state, "sample")
 	value := 0.0
 
 	if pairedPresent {
-		paired := datura.Peek[float64](state, "paired")
+		paired, err := statistic.WireScalar(bernoulli.artifact, state, pairedKey)
+
+		if err != nil {
+			return 0, err
+		}
+
 		predicted, actual, parseErr := parsePredictedActual(sample, []float64{paired})
 
 		if parseErr != nil {
@@ -96,6 +115,10 @@ func (bernoulli *Bernoulli) Read(payload []byte) (int, error) {
 	}
 
 	if !pairedPresent {
+		if sampleErr != nil {
+			return 0, sampleErr
+		}
+
 		if math.IsNaN(sample) || math.IsInf(sample, 0) {
 			return 0, errnie.Error(errnie.Err(
 				errnie.Validation,

@@ -41,7 +41,12 @@ func (fractional *FracDiff) Read(payload []byte) (int, error) {
 	}
 
 	features := statistic.SnapshotFeatures(state)
-	sample := datura.Peek[float64](state, "sample")
+	sampleKey := statistic.WireInputKey(fractional.artifact, state, "sample")
+	sample, err := statistic.WireScalar(fractional.artifact, state, sampleKey)
+
+	if err != nil {
+		return 0, err
+	}
 
 	if math.IsNaN(sample) || math.IsInf(sample, 0) {
 		return 0, errnie.Error(errnie.Err(

@@ -60,10 +60,14 @@ func (logReturn *LogReturn) Read(payload []byte) (int, error) {
 		outputKey = "value"
 	}
 
-	sample := datura.Peek[float64](state, "sample")
+	if inputKey == "" {
+		inputKey = statistic.WireInputKey(logReturn.artifact, state, "sample")
+	}
 
-	if datura.Peek[string](state, "root") == "output" && inputKey != "" {
-		sample = datura.Peek[float64](state, "output", inputKey)
+	sample, err := logReturn.resolveSample(state, inputKey)
+
+	if err != nil {
+		return 0, err
 	}
 
 	if sample <= 0 || math.IsNaN(sample) || math.IsInf(sample, 0) {
@@ -130,6 +134,27 @@ func (logReturn *LogReturn) Read(payload []byte) (int, error) {
 	state.Merge("root", "output")
 
 	return state.Read(payload)
+}
+
+func (logReturn *LogReturn) resolveSample(
+	state *datura.Artifact,
+	inputKey string,
+) (float64, error) {
+	rootKey := datura.Peek[string](state, "root")
+
+	if rootKey == "output" && inputKey != "" {
+		if datura.KeyPresent(state, "output", inputKey) {
+			return statistic.WireScalarAt(logReturn.artifact, state, "output", inputKey)
+		}
+	}
+
+	sample, err := statistic.WireScalar(logReturn.artifact, state, inputKey)
+
+	if err != nil && inputKey != "sample" {
+		return statistic.WireScalar(logReturn.artifact, state, "sample")
+	}
+
+	return sample, err
 }
 
 func (logReturn *LogReturn) stageKey() string {

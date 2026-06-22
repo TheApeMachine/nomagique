@@ -8,6 +8,7 @@ import (
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/adaptive"
+	"github.com/theapemachine/nomagique/equation"
 	"github.com/theapemachine/nomagique/hawkes"
 	"github.com/theapemachine/nomagique/probability"
 	"github.com/theapemachine/nomagique/statistic"
@@ -85,10 +86,8 @@ func (excitation *Excitation) Read(payload []byte) (int, error) {
 		scope = datura.Peek[string](state, "scope")
 	}
 
-	batch := datura.Peek[[]float64](state, "features")
-
-	if scope != "" && len(batch) > 0 {
-		outcome, err := excitation.evaluate(scope, batch)
+	if scope != "" {
+		outcome, err := excitation.evaluateState(state, scope)
 
 		if err != nil {
 			return 0, err
@@ -128,6 +127,30 @@ func (excitation *Excitation) Outcome() ExcitationOutcome {
 	return excitation.outcome
 }
 
+func (excitation *Excitation) evaluateState(
+	state *datura.Artifact,
+	scope string,
+) (ExcitationOutcome, error) {
+	inputKeys := equation.EnsureFeatureSchema(state, excitation.artifact, ExcitationSampleInputKeys)
+	header, err := equation.FeatureFields(state, inputKeys)
+
+	if err != nil {
+		return ExcitationOutcome{}, err
+	}
+
+	buyCount := int(header[2])
+	sellCount := int(header[3])
+	tail, err := equation.FeatureSlice(state, excitationPayloadHeader, buyCount+sellCount)
+
+	if err != nil {
+		return ExcitationOutcome{}, err
+	}
+
+	batch := append(append([]float64(nil), header...), tail...)
+
+	return excitation.evaluate(scope, batch)
+}
+
 func (excitation *Excitation) evaluate(scope string, batch []float64) (ExcitationOutcome, error) {
 	buyCount, _, expectedLen, batchOK := excitationBatchBounds(batch)
 
@@ -145,8 +168,8 @@ func (excitation *Excitation) evaluate(scope string, batch []float64) (Excitatio
 	buyTimes := secondsToTimes(batch[excitationPayloadHeader : excitationPayloadHeader+buyCount])
 	sellTimes := secondsToTimes(batch[excitationPayloadHeader+buyCount : expectedLen])
 
-	state := excitation.loadSymbol(scope)
-	reading, ok := state.measure(buyTimes, sellTimes, horizon, fitCooldown)
+	symbolState := excitation.loadSymbol(scope)
+	reading, ok := symbolState.measure(buyTimes, sellTimes, horizon, fitCooldown)
 
 	if !ok {
 		return ExcitationOutcome{}, errnie.Error(errnie.Err(

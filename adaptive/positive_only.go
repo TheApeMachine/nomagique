@@ -61,7 +61,11 @@ func (positiveOnly *PositiveOnly) Read(payload []byte) (int, error) {
 		))
 	}
 
-	score := positiveOnly.score(state, outputKey)
+	score, err := positiveOnly.score(state, outputKey)
+
+	if err != nil {
+		return 0, err
+	}
 
 	if math.IsNaN(score) || math.IsInf(score, 0) {
 		return 0, errnie.Error(errnie.Err(
@@ -103,17 +107,14 @@ func (positiveOnly *PositiveOnly) stageKey() string {
 	return ""
 }
 
-func (positiveOnly *PositiveOnly) score(state *datura.Artifact, outputKey string) float64 {
-	rootKey := datura.Peek[string](state, "root")
-
-	switch rootKey {
-	case "output":
-		return datura.Peek[float64](state, "output", outputKey)
-	case "sample":
-		return datura.Peek[float64](state, "sample")
-	default:
-		return datura.Peek[float64](state, "sample")
+func (positiveOnly *PositiveOnly) score(state *datura.Artifact, outputKey string) (float64, error) {
+	if datura.Peek[string](state, "root") == "output" {
+		if datura.KeyPresent(state, "output", outputKey) {
+			return statistic.WireScalarAt(positiveOnly.artifact, state, "output", outputKey)
+		}
 	}
+
+	return statistic.WireScalar(positiveOnly.artifact, state, "sample")
 }
 
 func (positiveOnly *PositiveOnly) Close() error {

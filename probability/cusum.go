@@ -5,6 +5,7 @@ import (
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/nomagique/statistic"
 )
 
 /*
@@ -56,15 +57,17 @@ func (cusum *CUSUM) Read(payload []byte) (int, error) {
 		return state.Read(payload)
 	}
 
-	if !attributeKeyPresent(state, "sample") {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"cusum: sample required",
-			nil,
-		))
+	sampleKey := configString(cusum.artifact, state, "sampleKey")
+
+	if sampleKey == "" {
+		sampleKey = "sample"
 	}
 
-	sample := datura.Peek[float64](state, "sample")
+	sample, err := statistic.WireScalar(cusum.artifact, state, sampleKey)
+
+	if err != nil {
+		return 0, err
+	}
 
 	if math.IsNaN(sample) || math.IsInf(sample, 0) {
 		return 0, errnie.Error(errnie.Err(

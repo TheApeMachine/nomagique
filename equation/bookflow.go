@@ -47,7 +47,7 @@ func (bookflow *Bookflow) Read(p []byte) (int, error) {
 		return 0, err
 	}
 
-	inputKeys := ensureFeatureSchema(state, bookflow.artifact, BookflowInputKeys)
+	inputKeys := EnsureFeatureSchema(state, bookflow.artifact, BookflowInputKeys)
 	outcome := evaluateBookflow(state, inputKeys)
 
 	if !outcome.eligible || outcome.strength <= 0 {
@@ -80,7 +80,7 @@ type bookflowOutcome struct {
 }
 
 func evaluateBookflow(state *datura.Artifact, inputKeys []string) bookflowOutcome {
-	fields, err := featureFields(state, inputKeys)
+	fields, err := FeatureFields(state, inputKeys)
 
 	if err != nil || len(fields) < len(BookflowInputKeys) {
 		return bookflowOutcome{}

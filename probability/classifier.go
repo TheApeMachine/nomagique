@@ -6,6 +6,7 @@ import (
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/nomagique/statistic"
 )
 
 /*
@@ -54,6 +55,16 @@ func (classifier *Classifier) Read(payload []byte) (int, error) {
 		))
 	}
 
+	scoreRoot := configString(classifier.config, state, "scoreRoot")
+
+	if scoreRoot == "" {
+		scoreRoot = configString(classifier.config, state, "root")
+	}
+
+	if scoreRoot == "" {
+		scoreRoot = "output"
+	}
+
 	scores := make([]float64, len(inputs))
 
 	for index, input := range inputs {
@@ -65,7 +76,11 @@ func (classifier *Classifier) Read(payload []byte) (int, error) {
 			))
 		}
 
-		score := datura.Peek[float64](state, "output", input)
+		score, err := statistic.WireScalarAt(classifier.config, state, scoreRoot, input)
+
+		if err != nil {
+			return 0, err
+		}
 
 		if math.IsNaN(score) || math.IsInf(score, 0) {
 			return 0, errnie.Error(errnie.Err(
@@ -100,7 +115,11 @@ func (classifier *Classifier) Read(payload []byte) (int, error) {
 		))
 	}
 
-	strength := datura.Peek[float64](state, "output", "strength")
+	strength, err := statistic.WireScalarAt(classifier.config, state, scoreRoot, "strength")
+
+	if err != nil {
+		return 0, err
+	}
 
 	if strength <= 0 || math.IsNaN(strength) || math.IsInf(strength, 0) {
 		return 0, errnie.Error(errnie.Err(

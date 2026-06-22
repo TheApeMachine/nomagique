@@ -11,20 +11,26 @@ import (
 
 /*
 Depth ranks quote volume against peer quartiles with optional baseline scaling.
-
-Payload layout: scaledQuoteVol, peerCount, peer volumes, relativeVolume,
-baselineReady (0/1).
+The constructor artifact holds schema inputs; Write buffers inbound wire on its payload.
 */
 type Depth struct {
 	artifact *datura.Artifact
 }
 
 /*
-NewDepth returns a cross-section liquidity depth stage.
+NewDepth returns a cross-section liquidity depth stage wired from config attributes.
 */
-func NewDepth() io.ReadWriteCloser {
+func NewDepth(artifact *datura.Artifact) io.ReadWriteCloser {
+	if artifact == nil {
+		artifact = datura.Acquire("depth", datura.APPJSON)
+	}
+
+	if len(datura.Peek[[]string](artifact, "inputs")) == 0 {
+		artifact.Poke(DepthInputKeys, "inputs")
+	}
+
 	return &Depth{
-		artifact: datura.Acquire("depth", datura.APPJSON),
+		artifact: artifact,
 	}
 }
 
@@ -40,22 +46,36 @@ func (depth *Depth) Read(p []byte) (int, error) {
 		return 0, err
 	}
 
-	batch := Features(state)
+	inputKeys := ensureFeatureSchema(state, depth.artifact, DepthInputKeys)
 
-	if len(batch) < 2 {
+	fields, err := featureFields(state, inputKeys)
+
+	if err != nil || len(fields) < len(DepthInputKeys) {
 		return rejectStage(state, "equation: invalid stage input")
 	}
 
-	scaledQuoteVol := batch[0]
-	peerCount := int(batch[1])
+	scaledQuoteVol := fields[0]
+	peerCount := int(fields[1])
+	headerLen := len(inputKeys)
 
-	if peerCount < 2 || len(batch) < 2+peerCount+2 {
+	peers, err := featureSlice(state, headerLen, peerCount)
+
+	if err != nil {
 		return rejectStage(state, "equation: invalid stage input")
 	}
 
-	peers := append([]float64(nil), batch[2:2+peerCount]...)
-	relativeVolume := batch[2+peerCount]
-	baselineReady := batch[3+peerCount] > 0
+	trailer, err := featureSlice(state, headerLen+peerCount, 2)
+
+	if err != nil {
+		return rejectStage(state, "equation: invalid stage input")
+	}
+
+	relativeVolume := trailer[0]
+	baselineReady := trailer[1] > 0
+
+	if peerCount < 2 {
+		return rejectStage(state, "equation: invalid stage input")
+	}
 
 	sortedPeers := append([]float64(nil), peers...)
 	sort.Float64s(sortedPeers)

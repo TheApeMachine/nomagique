@@ -63,7 +63,6 @@ func (featureSample *FeatureSample) Read(payload []byte) (int, error) {
 	state.MergeOutput("value", sample)
 	state.Merge("root", "output")
 	state.Merge("inputs", []string{"value"})
-	state.Merge("sample", sample)
 
 	return state.Read(payload)
 }

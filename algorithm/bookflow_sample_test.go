@@ -13,7 +13,7 @@ import (
 func TestBookflowSample_Read(t *testing.T) {
 	Convey("Given repeated bid-heavy book frames", t, func() {
 		encoder := NewBookflowSample(datura.Acquire("bookflow-sample", datura.APPJSON))
-		bookflow := equation.NewBookflow()
+		bookflow := equation.NewBookflow(nil)
 		classifier := probability.NewClassifier(
 			datura.Acquire("depthflow-classifier", datura.APPJSON).WithAttributes(datura.Map[any]{
 				"inputs": []string{"loadedScore", "spoofScore", "thinScore", "neutralScore"},

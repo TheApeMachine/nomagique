@@ -19,6 +19,13 @@ const (
 	hawkesFitCooldownMult   = 50
 )
 
+var ExcitationSampleInputKeys = []string{
+	"horizonSeconds",
+	"fitCooldownSeconds",
+	"buyCount",
+	"sellCount",
+}
+
 /*
 ExcitationOutcome holds Hawkes thermal scores from a bivariate fit.
 */

@@ -11,7 +11,7 @@ import (
 
 func TestFlowEvaluate(testingTB *testing.T) {
 	Convey("Given aggressive buy flow with rising price", testingTB, func() {
-		flow := equation.NewFlow()
+		flow := equation.NewFlow(nil)
 		writeErr := tests.WriteSamples(flow,
 			500, 0, 5, 0, 100,
 			100, 100.01, 100.02, 100.03, 100.04,
@@ -19,7 +19,9 @@ func TestFlowEvaluate(testingTB *testing.T) {
 
 		So(writeErr, ShouldBeNil)
 
-		outbound := readOutbound(flow)
+		outbound, err := readOutbound(flow)
+
+		So(err, ShouldBeNil)
 
 		Convey("It should favor aggressive drive", func() {
 			drive := datura.Peek[float64](outbound, "output", "drive")
@@ -31,7 +33,7 @@ func TestFlowEvaluate(testingTB *testing.T) {
 	})
 
 	Convey("Given aggressive buy flow with flat price", testingTB, func() {
-		flow := equation.NewFlow()
+		flow := equation.NewFlow(nil)
 		writeErr := tests.WriteSamples(flow,
 			200, 0, 4, 0, 50,
 			50, 50.001, 50, 50.001,
@@ -39,7 +41,9 @@ func TestFlowEvaluate(testingTB *testing.T) {
 
 		So(writeErr, ShouldBeNil)
 
-		outbound := readOutbound(flow)
+		outbound, err := readOutbound(flow)
+
+		So(err, ShouldBeNil)
 
 		Convey("It should favor hidden absorption", func() {
 			So(datura.Peek[float64](outbound, "output", "absorption"), ShouldBeGreaterThan, 0)
@@ -48,7 +52,7 @@ func TestFlowEvaluate(testingTB *testing.T) {
 }
 
 func BenchmarkFlowRead(b *testing.B) {
-	flow := equation.NewFlow()
+	flow := equation.NewFlow(nil)
 	samples := []float64{
 		500, 0, 5, 0, 100,
 		100, 100.01, 100.02, 100.03, 100.04,

@@ -4,6 +4,7 @@ import (
 	"math"
 
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/nomagique/equation"
 	"github.com/theapemachine/nomagique/statistic"
 )
 
@@ -90,7 +91,7 @@ func (bookflowSample *BookflowSample) Read(payload []byte) (int, error) {
 	state.WithScope(symbol)
 	state.Merge("features", features)
 	state.Merge("root", "features")
-	state.Merge("inputs", []string{"features"})
+	state.Merge("inputs", equation.BookflowInputKeys)
 
 	return state.Read(payload)
 }

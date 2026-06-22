@@ -8,29 +8,31 @@ import (
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/equation"
+	"github.com/theapemachine/nomagique/statistic"
 	"gonum.org/v1/gonum/stat"
 )
 
 /*
 Moment validates bivariate exponential-kernel parameters through empirical moments.
+The constructor artifact holds config; Write buffers inbound wire on its payload.
 */
 type Moment struct {
 	artifact *datura.Artifact
-	params   BivariateParams
-	momentR  float64
-	momentS  float64
 }
 
 /*
-NewMoment creates a Hawkes moment-confidence stage.
-momentR and momentS select the mixed moment used for fit diagnostics.
+NewMoment creates a Hawkes moment-confidence stage wired from config attributes.
+momentR and momentS on the artifact select the mixed moment used for fit diagnostics.
 */
-func NewMoment(params BivariateParams, momentR, momentS float64) *Moment {
+func NewMoment(artifact *datura.Artifact) *Moment {
+	if artifact == nil {
+		artifact = datura.Acquire("hawkes-moment", datura.APPJSON)
+	}
+
+	artifact.Inspect("hawkes", "moment", "NewMoment()")
+
 	return &Moment{
-		artifact: datura.Acquire("hawkes-moment", datura.APPJSON),
-		params:   params,
-		momentR:  momentR,
-		momentS:  momentS,
+		artifact: artifact,
 	}
 }
 
@@ -60,8 +62,21 @@ func (moment *Moment) Read(p []byte) (int, error) {
 		))
 	}
 
-	empirical := stat.BivariateMoment(moment.momentR, moment.momentS, xValues, yValues, weights)
-	theoretical, theoreticalOK := TheoreticalCentralMoment(moment.params, moment.momentR, moment.momentS)
+	params := bivariateParamsFromArtifact(moment.artifact)
+	momentR := datura.Peek[float64](moment.artifact, "config", "momentR")
+
+	if momentR == 0 {
+		momentR = 1
+	}
+
+	momentS := datura.Peek[float64](moment.artifact, "config", "momentS")
+
+	if momentS == 0 {
+		momentS = 1
+	}
+
+	empirical := stat.BivariateMoment(momentR, momentS, xValues, yValues, weights)
+	theoretical, theoreticalOK := TheoreticalCentralMoment(params, momentR, momentS)
 	confidence := 0.0
 
 	if theoreticalOK {
@@ -94,24 +109,25 @@ func (moment *Moment) Close() error {
 
 /*
 Fit estimates bivariate Hawkes parameters from timestamp arrival streams.
+The constructor artifact holds config; Write buffers inbound wire on its payload.
 */
 type Fit struct {
-	artifact  *datura.Artifact
-	horizon   int64
-	prior     BivariateFit
-	estimator *BivariateEstimator
+	artifact *datura.Artifact
 }
 
 /*
-NewFit creates a timestamp-stream Hawkes fit stage.
-horizonUnixNano is the observation horizon in Unix nanoseconds.
+NewFit creates a timestamp-stream Hawkes fit stage wired from config attributes.
+horizonUnixNano on the artifact is the observation horizon in Unix nanoseconds.
 */
-func NewFit(horizonUnixNano int64, prior BivariateFit) *Fit {
+func NewFit(artifact *datura.Artifact) *Fit {
+	if artifact == nil {
+		artifact = datura.Acquire("hawkes-fit", datura.APPJSON)
+	}
+
+	artifact.Inspect("hawkes", "fit", "NewFit()")
+
 	return &Fit{
-		artifact:  datura.Acquire("hawkes-fit", datura.APPJSON),
-		horizon:   horizonUnixNano,
-		prior:     prior,
-		estimator: NewBivariateEstimator(prior),
+		artifact: artifact,
 	}
 }
 
@@ -142,8 +158,9 @@ func (fit *Fit) Read(p []byte) (int, error) {
 	}
 
 	stream := NewArrivalStream(fitTimesToTime(xTimes), fitTimesToTime(yTimes))
-	horizon := fitHorizon(fit)
-	fitted := fit.estimator.Fit(stream, horizon)
+	horizon := fitHorizon(fit.artifact)
+	prior := bivariateFitFromArtifact(fit.artifact)
+	fitted := NewBivariateEstimator(prior).Fit(stream, horizon)
 
 	if !fitted.Valid() {
 		state.Release()
@@ -181,23 +198,25 @@ func (fit *Fit) Close() error {
 }
 
 func momentSamples(wire, config *datura.Artifact) (xValues, yValues, weights []float64, ok bool) {
-	batch := equation.Features(wire)
+	features := streamFeatures(wire)
 
-	if len(batch) == 0 {
-		batch = fitFloatBatch(wire)
-	}
-
-	if len(batch) == 0 {
-		batch = datura.Peek[[]float64](wire, "batch")
-	}
-
-	if len(batch) < 4 || len(batch)%2 != 0 {
+	if len(features) == 0 {
 		return nil, nil, nil, false
 	}
 
-	half := len(batch) / 2
-	xValues = batch[:half]
-	yValues = batch[half:]
+	xCount, yCount := streamCounts(wire, config, features)
+
+	if xCount > 0 && yCount > 0 && len(features) >= xCount+yCount {
+		xValues = append([]float64(nil), features[:xCount]...)
+		yValues = append([]float64(nil), features[xCount:xCount+yCount]...)
+	} else if len(features) < 4 || len(features)%2 != 0 {
+		return nil, nil, nil, false
+	} else {
+		half := len(features) / 2
+		xValues = append([]float64(nil), features[:half]...)
+		yValues = append([]float64(nil), features[half:]...)
+	}
+
 	weights = datura.Peek[[]float64](wire, "config", "weights")
 
 	if len(weights) == 0 {
@@ -218,8 +237,57 @@ func momentSamples(wire, config *datura.Artifact) (xValues, yValues, weights []f
 }
 
 func fitTimes(wire, config *datura.Artifact) (xTimes, yTimes []float64, ok bool) {
-	xCount := int(datura.Peek[float64](wire, "config", "xCount"))
-	yCount := int(datura.Peek[float64](wire, "config", "yCount"))
+	features := streamFeatures(wire)
+
+	if len(features) == 0 {
+		return nil, nil, false
+	}
+
+	xCount, yCount := streamCounts(wire, config, features)
+
+	if xCount <= 0 || yCount <= 0 || len(features) < xCount+yCount {
+		return nil, nil, false
+	}
+
+	xTimes = features[:xCount]
+	yTimes = features[xCount : xCount+yCount]
+
+	for _, sample := range append(xTimes, yTimes...) {
+		if math.IsNaN(sample) || math.IsInf(sample, 0) {
+			return nil, nil, false
+		}
+	}
+
+	return xTimes, yTimes, len(xTimes)+len(yTimes) >= 2
+}
+
+func streamFeatures(wire *datura.Artifact) []float64 {
+	features := equation.Features(wire)
+
+	if len(features) > 0 {
+		return features
+	}
+
+	features = fitFloatBatch(wire)
+
+	if len(features) > 0 {
+		return features
+	}
+
+	return datura.Peek[[]float64](wire, "batch")
+}
+
+func streamCounts(wire, config *datura.Artifact, features []float64) (int, int) {
+	xCount := int(countField(wire, "xCount"))
+	yCount := int(countField(wire, "yCount"))
+
+	if xCount <= 0 {
+		xCount = int(datura.Peek[float64](wire, "config", "xCount"))
+	}
+
+	if yCount <= 0 {
+		yCount = int(datura.Peek[float64](wire, "config", "yCount"))
+	}
 
 	if xCount <= 0 {
 		xCount = int(datura.Peek[float64](config, "config", "xCount"))
@@ -229,30 +297,22 @@ func fitTimes(wire, config *datura.Artifact) (xTimes, yTimes []float64, ok bool)
 		yCount = int(datura.Peek[float64](config, "config", "yCount"))
 	}
 
-	batch := equation.Features(wire)
-
-	if len(batch) == 0 {
-		batch = fitFloatBatch(wire)
+	if xCount <= 0 && yCount <= 0 && len(features) >= 4 && len(features)%2 == 0 {
+		xCount = len(features) / 2
+		yCount = len(features) / 2
 	}
 
-	if len(batch) == 0 {
-		batch = datura.Peek[[]float64](wire, "batch")
+	return xCount, yCount
+}
+
+func countField(wire *datura.Artifact, key string) float64 {
+	value, err := statistic.FeatureColumn(wire, key)
+
+	if err != nil {
+		return 0
 	}
 
-	if xCount <= 0 || yCount <= 0 || len(batch) < xCount+yCount {
-		return nil, nil, false
-	}
-
-	xTimes = batch[:xCount]
-	yTimes = batch[xCount : xCount+yCount]
-
-	for _, sample := range append(xTimes, yTimes...) {
-		if math.IsNaN(sample) || math.IsInf(sample, 0) {
-			return nil, nil, false
-		}
-	}
-
-	return xTimes, yTimes, len(xTimes)+len(yTimes) >= 2
+	return value
 }
 
 func fitFloatBatch(artifact *datura.Artifact) []float64 {
@@ -282,14 +342,37 @@ func fitFloatBatch(artifact *datura.Artifact) []float64 {
 	return samples
 }
 
-func fitHorizon(fit *Fit) time.Time {
-	horizonNano := fit.horizon
-
-	if horizonNano <= 0 {
-		horizonNano = int64(datura.Peek[float64](fit.artifact, "config", "horizonUnixNano"))
-	}
+func fitHorizon(artifact *datura.Artifact) time.Time {
+	horizonNano := int64(datura.Peek[float64](artifact, "config", "horizonUnixNano"))
 
 	return time.Unix(0, horizonNano)
+}
+
+func bivariateParamsFromArtifact(artifact *datura.Artifact) BivariateParams {
+	return BivariateParams{
+		MuX:     datura.Peek[float64](artifact, "config", "muX"),
+		MuY:     datura.Peek[float64](artifact, "config", "muY"),
+		AlphaXX: datura.Peek[float64](artifact, "config", "alphaXX"),
+		AlphaXY: datura.Peek[float64](artifact, "config", "alphaXY"),
+		AlphaYX: datura.Peek[float64](artifact, "config", "alphaYX"),
+		AlphaYY: datura.Peek[float64](artifact, "config", "alphaYY"),
+		Beta:    datura.Peek[float64](artifact, "config", "beta"),
+	}
+}
+
+func bivariateFitFromArtifact(artifact *datura.Artifact) BivariateFit {
+	return BivariateFit{
+		MuX:            datura.Peek[float64](artifact, "config", "muX"),
+		MuY:            datura.Peek[float64](artifact, "config", "muY"),
+		AlphaXX:        datura.Peek[float64](artifact, "config", "alphaXX"),
+		AlphaXY:        datura.Peek[float64](artifact, "config", "alphaXY"),
+		AlphaYX:        datura.Peek[float64](artifact, "config", "alphaYX"),
+		AlphaYY:        datura.Peek[float64](artifact, "config", "alphaYY"),
+		Beta:           datura.Peek[float64](artifact, "config", "beta"),
+		IntensityX:     datura.Peek[float64](artifact, "config", "intensityX"),
+		IntensityY:     datura.Peek[float64](artifact, "config", "intensityY"),
+		SpectralRadius: datura.Peek[float64](artifact, "config", "spectralRadius"),
+	}
 }
 
 func fitTimesToTime(samples []float64) []time.Time {

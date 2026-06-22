@@ -6,6 +6,7 @@ import (
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/nomagique/equation"
 )
 
 const bookQualityFeatureCount = 13
@@ -106,7 +107,7 @@ func (bookQualitySample *BookQualitySample) Read(payload []byte) (int, error) {
 
 	state.Merge("features", features)
 	state.Merge("root", "features")
-	state.Merge("inputs", []string{"features"})
+	state.Merge("inputs", equation.BookQualityInputKeys)
 
 	return state.Read(payload)
 }

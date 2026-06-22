@@ -52,7 +52,11 @@ func BenchmarkMethodOfMoments(testingTB *testing.B) {
 }
 
 func BenchmarkMomentRead(testingTB *testing.B) {
-	moment := NewMoment(BivariateParams{MuX: 1, MuY: 1, Beta: 1}, 1, 1)
+	moment := NewMoment(momentConfigArtifact(
+		BivariateParams{MuX: 1, MuY: 1, Beta: 1},
+		1,
+		1,
+	))
 	wire := equation.MarshalFeaturesPayload(EncodeMomentBatch([]float64{2, 4, 6, 8}, []float64{1, 2, 3, 4}))
 	response := make([]byte, 4096)
 

@@ -7,24 +7,28 @@ import (
 	"github.com/theapemachine/datura"
 )
 
-const flowPayloadHeader = 5
-
 /*
 Flow classifies signed trade pressure against price response in a rolling window.
-
-Payload layout: buyNotional, sellNotional, tradeCount, grossFloor, medianNotional,
-then every observed price in window order.
+The constructor artifact holds schema inputs; Write buffers inbound wire on its payload.
 */
 type Flow struct {
 	artifact *datura.Artifact
 }
 
 /*
-NewFlow returns a CVD flow stage for io.ReadWriter pipelines.
+NewFlow returns a CVD flow stage wired from config attributes.
 */
-func NewFlow() io.ReadWriteCloser {
+func NewFlow(artifact *datura.Artifact) io.ReadWriteCloser {
+	if artifact == nil {
+		artifact = datura.Acquire("flow", datura.APPJSON)
+	}
+
+	if len(datura.Peek[[]string](artifact, "inputs")) == 0 {
+		artifact.Poke(FlowInputKeys, "inputs")
+	}
+
 	return &Flow{
-		artifact: datura.Acquire("flow", datura.APPJSON),
+		artifact: artifact,
 	}
 }
 
@@ -40,18 +44,25 @@ func (flow *Flow) Read(p []byte) (int, error) {
 		return 0, err
 	}
 
-	batch := Features(state)
+	inputKeys := ensureFeatureSchema(state, flow.artifact, FlowInputKeys)
 
-	if len(batch) < flowPayloadHeader+2 {
+	fields, err := featureFields(state, inputKeys)
+
+	if err != nil || len(fields) < len(FlowInputKeys) {
 		return rejectStage(state, "equation: invalid stage input")
 	}
 
-	buyNotional := batch[0]
-	sellNotional := batch[1]
-	tradeCount := int(batch[2])
-	grossFloor := batch[3]
-	medianNotional := batch[4]
-	prices := batch[flowPayloadHeader:]
+	buyNotional := fields[0]
+	sellNotional := fields[1]
+	tradeCount := int(fields[2])
+	grossFloor := fields[3]
+	medianNotional := fields[4]
+
+	prices, err := featureSlice(state, len(inputKeys), len(Features(state))-len(inputKeys))
+
+	if err != nil {
+		return rejectStage(state, "equation: invalid stage input")
+	}
 
 	gross := buyNotional + sellNotional
 

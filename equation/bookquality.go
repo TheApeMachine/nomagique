@@ -9,25 +9,30 @@ import (
 	"github.com/theapemachine/nomagique/probability"
 )
 
-const bookQualityPayloadFields = 12
-
 /*
 BookQuality classifies toxic bluff, liquidity vacuum, and hard support.
-
-Payload layout: cancelBid, fillBid, cancelAsk, fillAsk, bidDepth, askDepth,
-toxicNear, toxicBluffStrength, fillToCancelThreshold, churnGate, supportGate,
-vacuumStrengthCap, lastPrice.
+The constructor artifact holds schema inputs; Write buffers inbound wire on its payload.
 */
 type BookQuality struct {
 	artifact *datura.Artifact
 }
 
 /*
-NewBookQuality returns a book-flow quality stage.
+NewBookQuality returns a book-flow quality stage wired from config attributes.
 */
-func NewBookQuality() io.ReadWriteCloser {
+func NewBookQuality(artifact *datura.Artifact) io.ReadWriteCloser {
+	if artifact == nil {
+		artifact = datura.Acquire("book-quality", datura.APPJSON)
+	}
+
+	artifact.Inspect("equation", "book-quality", "NewBookQuality()")
+
+	if len(datura.Peek[[]string](artifact, "inputs")) == 0 {
+		artifact.Poke(BookQualityInputKeys, "inputs")
+	}
+
 	return &BookQuality{
-		artifact: datura.Acquire("book-quality", datura.APPJSON),
+		artifact: artifact,
 	}
 }
 
@@ -43,25 +48,31 @@ func (bookQuality *BookQuality) Read(p []byte) (int, error) {
 		return 0, err
 	}
 
-	batch := Features(state)
+	inputKeys := ensureFeatureSchema(state, bookQuality.artifact, BookQualityInputKeys)
 
-	if len(batch) < bookQualityPayloadFields+1 {
+	fields, err := featureFields(state, inputKeys)
+
+	if err != nil {
+		return rejectStage(state, "bookquality: missing feature field")
+	}
+
+	if len(fields) < len(BookQualityInputKeys) {
 		return rejectStage(state, "bookquality: insufficient payload")
 	}
 
-	cancelBid := batch[0]
-	fillBid := batch[1]
-	cancelAsk := batch[2]
-	fillAsk := batch[3]
-	bidDepth := batch[4]
-	askDepth := batch[5]
-	toxicNear := batch[6] > 0
-	toxicBluffStrength := batch[7]
-	threshold := batch[8]
-	churnGate := batch[9]
-	supportGate := batch[10]
-	vacuumStrengthCap := batch[11]
-	lastPrice := batch[12]
+	cancelBid := fields[0]
+	fillBid := fields[1]
+	cancelAsk := fields[2]
+	fillAsk := fields[3]
+	bidDepth := fields[4]
+	askDepth := fields[5]
+	toxicNear := fields[6] > 0
+	toxicBluffStrength := fields[7]
+	threshold := fields[8]
+	churnGate := fields[9]
+	supportGate := fields[10]
+	vacuumStrengthCap := fields[11]
+	lastPrice := fields[12]
 
 	if lastPrice <= 0 {
 		return rejectStage(state, "bookquality: lastPrice must be positive")

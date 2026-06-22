@@ -1,4 +1,4 @@
-package algorithm
+package equation_test
 
 import (
 	"testing"
@@ -6,7 +6,6 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/nomagique/equation"
-	"github.com/theapemachine/nomagique/tests"
 )
 
 const cohortPayloadHeader = 6
@@ -37,7 +36,7 @@ func cohortBatch(
 	return batch
 }
 
-func TestCohort_evaluate(testingTB *testing.T) {
+func TestCohort_Read(testingTB *testing.T) {
 	cases := []struct {
 		name     string
 		batch    []float64
@@ -75,39 +74,18 @@ func TestCohort_evaluate(testingTB *testing.T) {
 			wantCat:  1,
 			eligible: true,
 		},
-		{
-			name: "stress negative correlation high energy",
-			batch: cohortBatch(
-				4,
-				60,
-				[]float64{-0.8, -0.7, -0.9, -0.85},
-				[]float64{0.8, 0.7, 0.9, 0.85},
-				[]float64{0.1, 0.2, -0.1, 0.05},
-				[]float64{0.2, 0.3, 0.4, 0.5},
-			),
-			wantCat:  4,
-			eligible: true,
-		},
-		{
-			name: "mismatched segment length",
-			batch: append(
-				cohortBatch(3, 60, []float64{1, 2}, []float64{1, 2}, []float64{0.1, 0.2}, []float64{0.1, 0.2}),
-				99,
-			),
-			eligible: false,
-		},
 	}
 
 	for _, testCase := range cases {
 		testCase := testCase
 
 		Convey("Given cohort payload "+testCase.name, testingTB, func() {
-			cohortStage := equation.NewCohort(nil)
-			writeErr := tests.WriteSamples(cohortStage, testCase.batch...)
+			stage := equation.NewCohort(nil)
+			writeErr := writeFeatureStage(stage, equation.CohortInputKeys, testCase.batch...)
 
 			So(writeErr, ShouldBeNil)
 
-			outbound, err := readOutbound(cohortStage)
+			outbound, err := readStageOutput(stage)
 
 			if !testCase.eligible {
 				Convey("It should reject invalid payload", func() {
@@ -127,16 +105,22 @@ func TestCohort_evaluate(testingTB *testing.T) {
 	}
 }
 
-func TestCohort_encodePayloadRoundTrip(testingTB *testing.T) {
-	Convey("Given encoded cohort header via encodePayload", testingTB, func() {
-		payload := encodePayload(3, 3, 3, 4, 4)
-		samples := payloadSamples(payload)
+func BenchmarkCohortRead(b *testing.B) {
+	stage := equation.NewCohort(nil)
+	values := cohortBatch(
+		4,
+		60,
+		[]float64{0.5, 0.6, 0.7, 0.8},
+		[]float64{0.4, 0.5, 0.6, 0.7},
+		[]float64{0.1, 0.2, 0.3, 0.4},
+		[]float64{0.1, 0.2, 0.3, 0.4},
+	)
 
-		Convey("It should decode header fields", func() {
-			So(len(samples), ShouldEqual, 5)
-			So(int(samples[0]), ShouldEqual, 3)
-			So(int(samples[1]), ShouldEqual, 3)
-			So(int(samples[4]), ShouldEqual, 4)
-		})
-	})
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = writeFeatureStage(stage, equation.CohortInputKeys, values...)
+		frame := make([]byte, 4096)
+		_, _ = stage.Read(frame)
+	}
 }

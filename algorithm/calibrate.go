@@ -36,15 +36,15 @@ func NewShift(expectedSum, floor float64) io.ReadWriteCloser {
 }
 
 /*
-NewHawkes returns a Hawkes moment-confidence stage.
+NewHawkes returns a Hawkes moment-confidence stage wired from config on the artifact.
 */
-func NewHawkes(params hawkes.BivariateParams, momentR, momentS float64) io.ReadWriteCloser {
-	return hawkes.NewMoment(params, momentR, momentS)
+func NewHawkes(artifact *datura.Artifact) io.ReadWriteCloser {
+	return hawkes.NewMoment(artifact)
 }
 
 /*
-NewHawkesFit returns a timestamp-stream Hawkes fit stage.
+NewHawkesFit returns a timestamp-stream Hawkes fit stage wired from config on the artifact.
 */
-func NewHawkesFit(horizonUnixNano float64, prior hawkes.BivariateFit) io.ReadWriteCloser {
-	return hawkes.NewFit(int64(horizonUnixNano), prior)
+func NewHawkesFit(artifact *datura.Artifact) io.ReadWriteCloser {
+	return hawkes.NewFit(artifact)
 }

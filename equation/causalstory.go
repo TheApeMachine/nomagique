@@ -17,11 +17,15 @@ type CausalStory struct {
 }
 
 /*
-NewCausalStory returns a causal semantic scoring stage.
+NewCausalStory returns a causal semantic scoring stage wired from config attributes.
 */
-func NewCausalStory() io.ReadWriteCloser {
+func NewCausalStory(artifact *datura.Artifact) io.ReadWriteCloser {
+	if artifact == nil {
+		artifact = datura.Acquire("causal-story", datura.APPJSON)
+	}
+
 	return &CausalStory{
-		artifact: datura.Acquire("causal-story", datura.APPJSON),
+		artifact: artifact,
 	}
 }
 

@@ -8,28 +8,30 @@ import (
 	"github.com/theapemachine/nomagique/statistic"
 )
 
-const (
-	bookflowSnapshotHeader = 8
-	bookflowHistoryHeader  = 3
-	minBookGateHistory     = 3
-)
+const minBookGateHistory = 3
 
 /*
 Bookflow classifies weighted book imbalance with touch skew and trade pressure.
-
-Payload layout: weighted, level1, flat, flatOK, mid, spread, touchDepth,
-tradePressure, weightedCount, level1Count, flatCount, then each abs history.
+The constructor artifact holds schema inputs; Write buffers inbound wire on its payload.
 */
 type Bookflow struct {
 	artifact *datura.Artifact
 }
 
 /*
-NewBookflow returns a depth-flow stage.
+NewBookflow returns a depth-flow stage wired from config attributes.
 */
-func NewBookflow() io.ReadWriteCloser {
+func NewBookflow(artifact *datura.Artifact) io.ReadWriteCloser {
+	if artifact == nil {
+		artifact = datura.Acquire("bookflow", datura.APPJSON)
+	}
+
+	if len(datura.Peek[[]string](artifact, "inputs")) == 0 {
+		artifact.Poke(BookflowInputKeys, "inputs")
+	}
+
 	return &Bookflow{
-		artifact: datura.Acquire("bookflow", datura.APPJSON),
+		artifact: artifact,
 	}
 }
 
@@ -45,8 +47,8 @@ func (bookflow *Bookflow) Read(p []byte) (int, error) {
 		return 0, err
 	}
 
-	batch := Features(state)
-	outcome := evaluateBookflow(batch)
+	inputKeys := ensureFeatureSchema(state, bookflow.artifact, BookflowInputKeys)
+	outcome := evaluateBookflow(state, inputKeys)
 
 	if !outcome.eligible || outcome.strength <= 0 {
 		return rejectStage(state, "equation: invalid stage input")
@@ -77,40 +79,41 @@ type bookflowOutcome struct {
 	eligible     bool
 }
 
-func evaluateBookflow(batch []float64) bookflowOutcome {
-	headerEnd := bookflowSnapshotHeader + bookflowHistoryHeader
+func evaluateBookflow(state *datura.Artifact, inputKeys []string) bookflowOutcome {
+	fields, err := featureFields(state, inputKeys)
 
-	if len(batch) < headerEnd {
+	if err != nil || len(fields) < len(BookflowInputKeys) {
 		return bookflowOutcome{}
 	}
 
-	weighted := batch[0]
-	level1 := batch[1]
-	flat := batch[2]
-	flatOK := batch[3] > 0
-	mid := batch[4]
-	spread := batch[5]
-	touchDepth := batch[6]
-	tradePressure := batch[7]
+	weighted := fields[0]
+	level1 := fields[1]
+	flat := fields[2]
+	flatOK := fields[3] > 0
+	mid := fields[4]
+	spread := fields[5]
+	touchDepth := fields[6]
+	tradePressure := fields[7]
+	weightedCount := int(fields[8])
+	level1Count := int(fields[9])
+	flatCount := int(fields[10])
 
-	weightedCount := int(batch[8])
-	level1Count := int(batch[9])
-	flatCount := int(batch[10])
+	offset := len(inputKeys)
+	features := Features(state)
 
-	offset := headerEnd
-	weightedHistory, offset, ok := bookflowSliceSegment(batch, offset, weightedCount)
+	weightedHistory, offset, ok := bookflowHistorySegment(features, offset, weightedCount)
 
 	if !ok {
 		return bookflowOutcome{}
 	}
 
-	level1History, offset, ok := bookflowSliceSegment(batch, offset, level1Count)
+	level1History, offset, ok := bookflowHistorySegment(features, offset, level1Count)
 
 	if !ok {
 		return bookflowOutcome{}
 	}
 
-	flatHistory, _, ok := bookflowSliceSegment(batch, offset, flatCount)
+	flatHistory, _, ok := bookflowHistorySegment(features, offset, flatCount)
 
 	if !ok {
 		return bookflowOutcome{}
@@ -203,12 +206,12 @@ func evaluateBookflow(batch []float64) bookflowOutcome {
 	}
 }
 
-func bookflowSliceSegment(batch []float64, offset, count int) ([]float64, int, bool) {
-	if count < 0 || offset+count > len(batch) {
+func bookflowHistorySegment(features []float64, offset, count int) ([]float64, int, bool) {
+	if count < 0 || offset+count > len(features) {
 		return nil, offset, false
 	}
 
-	segment := append([]float64(nil), batch[offset:offset+count]...)
+	segment := append([]float64(nil), features[offset:offset+count]...)
 
 	return segment, offset + count, true
 }

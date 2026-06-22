@@ -47,7 +47,9 @@ func TestCorrelate_Observe(testingTB *testing.T) {
 		)
 		So(tests.WriteSamples(correlate, batch...), ShouldBeNil)
 
-		outbound := readOutbound(correlate)
+		outbound, err := readOutbound(correlate)
+
+		So(err, ShouldBeNil)
 
 		pearson := datura.Peek[float64](outbound, "output", "pearson")
 		hayashi := datura.Peek[float64](outbound, "output", "hayashi")

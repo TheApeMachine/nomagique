@@ -51,10 +51,10 @@ func (trustWeight *TrustWeight) Read(payload []byte) (int, error) {
 	derived := ObserveWeight(&weightState, predicted, actual)
 	pokeWeightState(trustWeight.artifact, &weightState, derived)
 	state.MergeOutput("value", derived)
-	state.Merge("sample", predicted)
-	state.Merge("paired", actual)
+	state.MergeOutput("predicted", predicted)
+	state.MergeOutput("actual", actual)
 	state.Merge("root", "output")
-	state.Merge("inputs", []string{"value", "sample", "paired"})
+	state.Merge("inputs", []string{"value", "predicted", "actual"})
 	return state.Read(payload)
 }
 

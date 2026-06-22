@@ -1,4 +1,4 @@
-package algorithm
+package equation_test
 
 import (
 	"testing"
@@ -6,13 +6,12 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/nomagique/equation"
-	"github.com/theapemachine/nomagique/tests"
 )
 
-func TestDepthEvaluate(testingTB *testing.T) {
+func TestDepth_Read(testingTB *testing.T) {
 	Convey("Given deep quote volume versus peers", testingTB, func() {
-		depth := equation.NewDepth(nil)
-		writeErr := tests.WriteSamples(depth,
+		stage := equation.NewDepth(nil)
+		writeErr := writeFeatureStage(stage, equation.DepthInputKeys,
 			1200, 4,
 			800, 900, 1000, 1100,
 			1, 0,
@@ -20,19 +19,19 @@ func TestDepthEvaluate(testingTB *testing.T) {
 
 		So(writeErr, ShouldBeNil)
 
-		outbound, err := readOutbound(depth)
+		outbound, err := readStageOutput(stage)
 
 		So(err, ShouldBeNil)
 
 		Convey("It should classify robust liquidity", func() {
-			So(datura.Peek[float64](outbound, "output", "value"), ShouldBeGreaterThan, 0)
 			So(int(datura.Peek[float64](outbound, "output", "category")), ShouldEqual, 3)
+			So(datura.Peek[float64](outbound, "output", "value"), ShouldAlmostEqual, 0.3333333333333333, 0.001)
 		})
 	})
 
 	Convey("Given peak scarcity volume", testingTB, func() {
-		depth := equation.NewDepth(nil)
-		writeErr := tests.WriteSamples(depth,
+		stage := equation.NewDepth(nil)
+		writeErr := writeFeatureStage(stage, equation.DepthInputKeys,
 			50, 3,
 			1100, 950, 50,
 			1, 0,
@@ -40,29 +39,30 @@ func TestDepthEvaluate(testingTB *testing.T) {
 
 		So(writeErr, ShouldBeNil)
 
-		outbound, err := readOutbound(depth)
+		outbound, err := readStageOutput(stage)
 
 		So(err, ShouldBeNil)
 
 		Convey("It should classify extreme scarcity", func() {
 			So(int(datura.Peek[float64](outbound, "output", "category")), ShouldEqual, 1)
+			So(datura.Peek[float64](outbound, "output", "scarcityScore"), ShouldEqual, 1)
 		})
 	})
 }
 
 func BenchmarkDepthRead(b *testing.B) {
-	depth := equation.NewDepth(nil)
-	samples := []float64{
+	stage := equation.NewDepth(nil)
+	values := []float64{
 		1200, 4,
 		800, 900, 1000, 1100,
 		1, 0,
 	}
-	frame := make([]byte, 4096)
 
 	b.ReportAllocs()
 
 	for b.Loop() {
-		_ = tests.WriteSamples(depth, samples...)
-		_, _ = depth.Read(frame)
+		_ = writeFeatureStage(stage, equation.DepthInputKeys, values...)
+		frame := make([]byte, 4096)
+		_, _ = stage.Read(frame)
 	}
 }

@@ -93,7 +93,9 @@ func (tradeExcitationSample *TradeExcitationSample) Read(payload []byte) (int, e
 	state.WithScope(symbol)
 	state.Merge("features", features)
 	state.Merge("root", "features")
-	state.Merge("inputs", []string{"features"})
+	state.Merge("inputs", ExcitationSampleInputKeys)
+	state.Poke(float64(len(window.buySeconds)), "config", "xCount")
+	state.Poke(float64(len(window.sellSeconds)), "config", "yCount")
 
 	return state.Read(payload)
 }

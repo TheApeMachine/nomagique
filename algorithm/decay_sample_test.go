@@ -14,7 +14,7 @@ import (
 func TestDecaySample_Read(t *testing.T) {
 	Convey("Given deteriorating bid depth on repeated book frames", t, func() {
 		encoder := NewDecaySample(datura.Acquire("decay-sample", datura.APPJSON))
-		decay := equation.NewDecay()
+		decay := equation.NewDecay(nil)
 		classifier := probability.NewClassifier(
 			datura.Acquire("exhaust-classifier", datura.APPJSON).WithAttributes(datura.Map[any]{
 				"inputs": []string{"mechanical", "fragile", "thermal", "reversal"},

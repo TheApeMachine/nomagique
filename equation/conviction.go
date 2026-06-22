@@ -10,19 +10,26 @@ import (
 
 /*
 Conviction classifies risk-on breadth versus idiosyncratic leadership.
-
-Payload layout: breadth, change, surgeThreshold, leader (0/1), move.
+The constructor artifact holds schema inputs; Write buffers inbound wire on its payload.
 */
 type Conviction struct {
 	artifact *datura.Artifact
 }
 
 /*
-NewConviction returns a market-breadth conviction stage.
+NewConviction returns a market-breadth conviction stage wired from config attributes.
 */
-func NewConviction() io.ReadWriteCloser {
+func NewConviction(artifact *datura.Artifact) io.ReadWriteCloser {
+	if artifact == nil {
+		artifact = datura.Acquire("conviction", datura.APPJSON)
+	}
+
+	if len(datura.Peek[[]string](artifact, "inputs")) == 0 {
+		artifact.Poke(ConvictionInputKeys, "inputs")
+	}
+
 	return &Conviction{
-		artifact: datura.Acquire("conviction", datura.APPJSON),
+		artifact: artifact,
 	}
 }
 
@@ -38,15 +45,17 @@ func (conviction *Conviction) Read(p []byte) (int, error) {
 		return 0, err
 	}
 
-	batch := Features(state)
+	inputKeys := ensureFeatureSchema(state, conviction.artifact, ConvictionInputKeys)
 
-	if len(batch) < 5 {
+	fields, err := featureFields(state, inputKeys)
+
+	if err != nil || len(fields) < len(ConvictionInputKeys) {
 		return rejectStage(state, "equation: invalid stage input")
 	}
 
-	breadth := batch[0]
-	change := batch[1]
-	surgeThreshold := batch[2]
+	breadth := fields[0]
+	change := fields[1]
+	surgeThreshold := fields[2]
 
 	for _, value := range []float64{breadth, change, surgeThreshold} {
 		if math.IsNaN(value) || math.IsInf(value, 0) {
@@ -66,7 +75,7 @@ func (conviction *Conviction) Read(p []byte) (int, error) {
 		surgeThreshold = 1
 	}
 
-	leader := batch[3] > 0
+	leader := fields[3] > 0
 	surgeScore := breadth
 	divergentScore := math.Abs(change)
 	slumpScore := math.Max(0, surgeThreshold-breadth)

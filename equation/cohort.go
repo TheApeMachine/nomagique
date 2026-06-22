@@ -10,24 +10,28 @@ import (
 	"gonum.org/v1/gonum/stat"
 )
 
-const cohortPayloadHeader = 6
-
 /*
 Cohort classifies how one symbol's returns align with the peer median.
-
-Payload layout: window, symbolReturnCount, marketReturnCount,
-peerCorrelationCount, peerEnergyCount, then each series oldest→newest.
+The constructor artifact holds schema inputs; Write buffers inbound wire on its payload.
 */
 type Cohort struct {
 	artifact *datura.Artifact
 }
 
 /*
-NewCohort returns a cross-section correlation stage.
+NewCohort returns a cross-section correlation stage wired from config attributes.
 */
-func NewCohort() io.ReadWriteCloser {
+func NewCohort(artifact *datura.Artifact) io.ReadWriteCloser {
+	if artifact == nil {
+		artifact = datura.Acquire("cohort", datura.APPJSON)
+	}
+
+	if len(datura.Peek[[]string](artifact, "inputs")) == 0 {
+		artifact.Poke(CohortInputKeys, "inputs")
+	}
+
 	return &Cohort{
-		artifact: datura.Acquire("cohort", datura.APPJSON),
+		artifact: artifact,
 	}
 }
 
@@ -43,8 +47,8 @@ func (cohort *Cohort) Read(p []byte) (int, error) {
 		return 0, err
 	}
 
-	batch := Features(state)
-	outcome := evaluateCohort(batch)
+	inputKeys := ensureFeatureSchema(state, cohort.artifact, CohortInputKeys)
+	outcome := evaluateCohort(state, inputKeys)
 
 	if !outcome.eligible || outcome.strength <= 0 {
 		return rejectStage(state, "equation: invalid stage input")
@@ -78,25 +82,28 @@ type cohortOutcome struct {
 	stressScore float64
 }
 
-func evaluateCohort(batch []float64) cohortOutcome {
-	if len(batch) < cohortPayloadHeader {
+func evaluateCohort(state *datura.Artifact, inputKeys []string) cohortOutcome {
+	fields, err := featureFields(state, inputKeys)
+
+	if err != nil || len(fields) < len(CohortInputKeys) {
 		return cohortOutcome{}
 	}
 
-	window := int(batch[0])
-	barSpacingSeconds := batch[5]
-	counts := batch[1:5]
-	offset := cohortPayloadHeader
+	window := int(fields[0])
+	barSpacingSeconds := fields[5]
+	counts := fields[1:5]
+	offset := len(inputKeys)
+	features := Features(state)
 	series := make([][]float64, len(counts))
 
 	for index, count := range counts {
 		segmentCount := int(count)
 
-		if segmentCount < 0 || offset+segmentCount > len(batch) {
+		if segmentCount < 0 || offset+segmentCount > len(features) {
 			return cohortOutcome{}
 		}
 
-		series[index] = batch[offset : offset+segmentCount]
+		series[index] = features[offset : offset+segmentCount]
 		offset += segmentCount
 	}
 

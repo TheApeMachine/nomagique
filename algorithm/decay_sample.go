@@ -4,6 +4,7 @@ import (
 	"math"
 
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/nomagique/equation"
 	"github.com/theapemachine/nomagique/statistic"
 )
 
@@ -86,7 +87,7 @@ func (decaySample *DecaySample) Read(payload []byte) (int, error) {
 	state.WithScope(symbol)
 	state.Merge("features", features)
 	state.Merge("root", "features")
-	state.Merge("inputs", []string{"features"})
+	state.Merge("inputs", equation.DecayInputKeys)
 
 	return state.Read(payload)
 }

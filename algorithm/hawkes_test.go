@@ -18,12 +18,15 @@ func TestHawkes_Observe(testingTB *testing.T) {
 
 		So(ok, ShouldBeTrue)
 
-		process := NewHawkes(seed, 1, 1)
+		config := hawkesMomentConfig(seed, 1, 1)
+		process := NewHawkes(config)
 		batch := hawkes.EncodeMomentBatch(xStream, yStream)
 
 		So(tests.WriteSamples(process, batch...), ShouldBeNil)
 
-		outbound := readOutbound(process)
+		outbound, err := readOutbound(process)
+
+		So(err, ShouldBeNil)
 
 		Convey("It should report high moment-fit confidence", func() {
 			So(datura.Peek[float64](outbound, "output", "confidence"), ShouldBeGreaterThan, 0.5)
@@ -41,7 +44,7 @@ func BenchmarkHawkes_Observe(testingTB *testing.B) {
 		AlphaYY: 0.1,
 		Beta:    1,
 	}
-	process := NewHawkes(params, 1, 1)
+	process := NewHawkes(hawkesMomentConfig(params, 1, 1))
 	batch := hawkes.EncodeMomentBatch(xStream, yStream)
 	frame := make([]byte, 4096)
 

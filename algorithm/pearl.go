@@ -28,7 +28,7 @@ func NewPearl(config *datura.Artifact) io.ReadWriteCloser {
 		statistic.NewMedian(datura.Acquire("median-config", datura.APPJSON)),
 		causal.NewContagion(config),
 		equation.NewRegimeLadder(config),
-		equation.NewCausalStory(),
+		equation.NewCausalStory(nil),
 		classifier,
 	)
 }

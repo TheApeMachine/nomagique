@@ -7,23 +7,28 @@ import (
 	"github.com/theapemachine/datura"
 )
 
-const manifoldstatePayloadFields = 5
-
 /*
 Manifoldstate classifies systemic herd, liquidity shock, synchronized drift, and stochastic noise.
-
-Payload layout: pressureGradNorm, coherenceMag2, guidanceSpeed, viscosityProxy, price.
+The constructor artifact holds schema inputs; Write buffers inbound wire on its payload.
 */
 type Manifoldstate struct {
 	artifact *datura.Artifact
 }
 
 /*
-NewManifoldstate returns a manifold-state stage.
+NewManifoldstate returns a manifold-state stage wired from config attributes.
 */
-func NewManifoldstate() io.ReadWriteCloser {
+func NewManifoldstate(artifact *datura.Artifact) io.ReadWriteCloser {
+	if artifact == nil {
+		artifact = datura.Acquire("manifoldstate", datura.APPJSON)
+	}
+
+	if len(datura.Peek[[]string](artifact, "inputs")) == 0 {
+		artifact.Poke(ManifoldInputKeys, "inputs")
+	}
+
 	return &Manifoldstate{
-		artifact: datura.Acquire("manifoldstate", datura.APPJSON),
+		artifact: artifact,
 	}
 }
 
@@ -39,8 +44,8 @@ func (manifoldstate *Manifoldstate) Read(p []byte) (int, error) {
 		return 0, err
 	}
 
-	batch := Features(state)
-	outcome := evaluateManifoldstate(batch)
+	inputKeys := ensureFeatureSchema(state, manifoldstate.artifact, ManifoldInputKeys)
+	outcome := evaluateManifoldstate(state, inputKeys)
 
 	if !outcome.eligible || outcome.strength <= 0 {
 		return rejectStage(state, "equation: invalid stage input")
@@ -70,16 +75,18 @@ type manifoldstateOutcome struct {
 	eligible   bool
 }
 
-func evaluateManifoldstate(batch []float64) manifoldstateOutcome {
-	if len(batch) < manifoldstatePayloadFields {
+func evaluateManifoldstate(state *datura.Artifact, inputKeys []string) manifoldstateOutcome {
+	fields, err := featureFields(state, inputKeys)
+
+	if err != nil || len(fields) < len(ManifoldInputKeys) {
 		return manifoldstateOutcome{}
 	}
 
-	pressureGradNorm := batch[0]
-	coherenceMag2 := batch[1]
-	guidanceSpeed := batch[2]
-	viscosityProxy := batch[3]
-	price := batch[4]
+	pressureGradNorm := fields[0]
+	coherenceMag2 := fields[1]
+	guidanceSpeed := fields[2]
+	viscosityProxy := fields[3]
+	price := fields[4]
 
 	if price <= 0 {
 		return manifoldstateOutcome{}

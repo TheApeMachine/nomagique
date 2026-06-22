@@ -1,4 +1,4 @@
-package algorithm
+package equation_test
 
 import (
 	"testing"
@@ -6,13 +6,12 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/nomagique/equation"
-	"github.com/theapemachine/nomagique/tests"
 )
 
-func TestBookflowEvaluate(testingTB *testing.T) {
+func TestBookflow_Read(testingTB *testing.T) {
 	Convey("Given a bid-heavy book snapshot", testingTB, func() {
-		bookflow := equation.NewBookflow(nil)
-		writeErr := tests.WriteSamples(bookflow,
+		stage := equation.NewBookflow(nil)
+		writeErr := writeFeatureStage(stage, equation.BookflowInputKeys,
 			0.85, 0.80, 0.86, 1,
 			100, 2, 12,
 			0.8,
@@ -24,19 +23,19 @@ func TestBookflowEvaluate(testingTB *testing.T) {
 
 		So(writeErr, ShouldBeNil)
 
-		outbound, err := readOutbound(bookflow)
+		outbound, err := readStageOutput(stage)
 
 		So(err, ShouldBeNil)
 
 		Convey("It should classify loaded imbalance", func() {
-			So(datura.Peek[float64](outbound, "output", "value"), ShouldBeGreaterThan, 0)
 			So(int(datura.Peek[float64](outbound, "output", "category")), ShouldEqual, 1)
+			So(datura.Peek[float64](outbound, "output", "value"), ShouldBeGreaterThan, 0)
 		})
 	})
 
 	Convey("Given deep bid wall with bearish touch", testingTB, func() {
-		bookflow := equation.NewBookflow(nil)
-		writeErr := tests.WriteSamples(bookflow,
+		stage := equation.NewBookflow(nil)
+		writeErr := writeFeatureStage(stage, equation.BookflowInputKeys,
 			0.6, -0.4, 0.5, 1,
 			50, 2, 3,
 			-0.5,
@@ -48,7 +47,7 @@ func TestBookflowEvaluate(testingTB *testing.T) {
 
 		So(writeErr, ShouldBeNil)
 
-		outbound, err := readOutbound(bookflow)
+		outbound, err := readStageOutput(stage)
 
 		So(err, ShouldBeNil)
 
@@ -59,8 +58,8 @@ func TestBookflowEvaluate(testingTB *testing.T) {
 }
 
 func BenchmarkBookflowRead(b *testing.B) {
-	bookflow := equation.NewBookflow(nil)
-	samples := []float64{
+	stage := equation.NewBookflow(nil)
+	values := []float64{
 		0.85, 0.80, 0.86, 1,
 		100, 2, 12,
 		0.8,
@@ -69,12 +68,12 @@ func BenchmarkBookflowRead(b *testing.B) {
 		0.78, 0.79, 0.80, 0.81,
 		0.80, 0.82, 0.83, 0.84,
 	}
-	frame := make([]byte, 4096)
 
 	b.ReportAllocs()
 
 	for b.Loop() {
-		_ = tests.WriteSamples(bookflow, samples...)
-		_, _ = bookflow.Read(frame)
+		_ = writeFeatureStage(stage, equation.BookflowInputKeys, values...)
+		frame := make([]byte, 4096)
+		_, _ = stage.Read(frame)
 	}
 }

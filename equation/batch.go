@@ -1,7 +1,6 @@
 package equation
 
 import (
-	"github.com/bytedance/sonic"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 )
@@ -34,22 +33,26 @@ func rejectStage(state *datura.Artifact, message string) (int, error) {
 func emitOutput(state *datura.Artifact, payload []byte, fields datura.Map[float64]) (int, error) {
 	defer state.Release()
 
+	outputInputs := make([]string, 0, len(fields))
+
+	for key := range fields {
+		outputInputs = append(outputInputs, key)
+	}
+
 	for key, value := range fields {
 		state.MergeOutput(key, value)
 	}
+
+	state.Merge("root", "output")
+	state.Merge("inputs", outputInputs)
 
 	return state.Read(payload)
 }
 
 /*
 MarshalFeaturesPayload encodes a feature vector as JSON payload bytes.
+Prefer MarshalFeatureSchema with explicit input keys for new tests.
 */
 func MarshalFeaturesPayload(samples []float64) []byte {
-	payload := errnie.Does(func() ([]byte, error) {
-		return sonic.Marshal(datura.Map[[]float64]{"features": samples})
-	}).Or(func(err error) {
-		errnie.Error(errnie.Err(errnie.IO, "equation: marshal features payload", err))
-	}).Value()
-
-	return payload
+	return MarshalFeatureSchema(nil, samples)
 }

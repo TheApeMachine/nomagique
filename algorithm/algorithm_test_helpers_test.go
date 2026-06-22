@@ -4,7 +4,9 @@ import (
 	"io"
 
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/equation"
+	"github.com/theapemachine/nomagique/hawkes"
 )
 
 type fixedScore struct {
@@ -34,20 +36,48 @@ func (fixedScore *fixedScore) Close() error {
 	return nil
 }
 
-func readOutbound(stage io.Reader) *datura.Artifact {
+func hawkesMomentConfig(params hawkes.BivariateParams, momentR, momentS float64) *datura.Artifact {
+	return datura.Acquire("hawkes-moment-config", datura.APPJSON).
+		Poke(params.MuX, "config", "muX").
+		Poke(params.MuY, "config", "muY").
+		Poke(params.AlphaXX, "config", "alphaXX").
+		Poke(params.AlphaXY, "config", "alphaXY").
+		Poke(params.AlphaYX, "config", "alphaYX").
+		Poke(params.AlphaYY, "config", "alphaYY").
+		Poke(params.Beta, "config", "beta").
+		Poke(momentR, "config", "momentR").
+		Poke(momentS, "config", "momentS")
+}
+
+func hawkesFitConfig(horizonUnixNano float64) *datura.Artifact {
+	return datura.Acquire("hawkes-fit-config", datura.APPJSON).
+		Poke(horizonUnixNano, "config", "horizonUnixNano")
+}
+
+func readOutbound(stage io.Reader) (*datura.Artifact, error) {
 	chunk := make([]byte, 262144)
 	readCount, readErr := stage.Read(chunk)
 
 	if readErr != nil && readErr != io.EOF && readErr != io.ErrShortBuffer {
-		outbound := datura.Acquire("test-out", datura.Artifact_Type_json)
-
-		return outbound
+		return nil, errnie.Error(errnie.Err(errnie.IO, "readOutbound: stage read failed", readErr))
 	}
 
 	outbound := datura.Acquire("test-out", datura.Artifact_Type_json)
-	_, _ = outbound.Write(chunk[:readCount])
+	_, writeErr := outbound.Write(chunk[:readCount])
 
-	return outbound
+	if writeErr != nil {
+		outbound.Release()
+
+		return nil, errnie.Error(errnie.Err(errnie.IO, "readOutbound: outbound write failed", writeErr))
+	}
+
+	if !outbound.HasEncryptedPayload() {
+		outbound.Release()
+
+		return nil, errnie.Error(errnie.Err(errnie.Validation, "readOutbound: stage produced no output", nil))
+	}
+
+	return outbound, nil
 }
 
 func readScalar(stage io.ReadWriter, samples ...float64) float64 {
@@ -61,11 +91,13 @@ func readScalar(stage io.ReadWriter, samples ...float64) float64 {
 
 	_, _ = stage.Write(buf)
 
-	outbound := readOutbound(stage)
+	outbound, err := readOutbound(stage)
 
-	if !outbound.HasEncryptedPayload() {
+	if err != nil {
 		return 0
 	}
+
+	defer outbound.Release()
 
 	return datura.Peek[float64](outbound, "output", "value")
 }

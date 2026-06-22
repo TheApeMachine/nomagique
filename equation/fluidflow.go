@@ -7,25 +7,28 @@ import (
 	"github.com/theapemachine/datura"
 )
 
-const fluidflowPayloadFields = 16
-
 /*
 Fluidflow classifies laminar, turbulent, inertial, and viscous book-flow regimes.
-
-Payload layout: reynolds, absDivergence, viscosity, midAddRate, midExecuteRate,
-laminarCeiling, turbulentFloor, turbulentReady, divergenceEdge, icebergScore,
-vorticity, turbulence, price, spreadBPS, changePct, volume.
+The constructor artifact holds schema inputs; Write buffers inbound wire on its payload.
 */
 type Fluidflow struct {
 	artifact *datura.Artifact
 }
 
 /*
-NewFluidflow returns a fluid-dynamics stage for io.ReadWriter pipelines.
+NewFluidflow returns a fluid-dynamics stage wired from config attributes.
 */
-func NewFluidflow() io.ReadWriteCloser {
+func NewFluidflow(artifact *datura.Artifact) io.ReadWriteCloser {
+	if artifact == nil {
+		artifact = datura.Acquire("fluidflow", datura.APPJSON)
+	}
+
+	if len(datura.Peek[[]string](artifact, "inputs")) == 0 {
+		artifact.Poke(FluidflowInputKeys, "inputs")
+	}
+
 	return &Fluidflow{
-		artifact: datura.Acquire("fluidflow", datura.APPJSON),
+		artifact: artifact,
 	}
 }
 
@@ -41,26 +44,30 @@ func (fluidflow *Fluidflow) Read(p []byte) (int, error) {
 		return 0, err
 	}
 
-	batch := Features(state)
+	inputKeys := ensureFeatureSchema(state, fluidflow.artifact, FluidflowInputKeys)
 
-	if len(batch) < fluidflowPayloadFields {
+	fields, err := featureFields(state, inputKeys)
+
+	if err != nil || len(fields) < len(FluidflowInputKeys) {
 		return rejectStage(state, "equation: invalid stage input")
 	}
 
-	reynolds := batch[0]
-	divergence := batch[1]
-	viscosity := batch[2]
-	laminarCeiling := batch[5]
-	turbulentFloor := batch[6]
-	turbulentReady := batch[7] > 0
-	divergenceEdge := batch[8]
-	icebergScore := batch[9]
-	vorticity := batch[10]
-	turbulence := batch[11]
-	price := batch[12]
-	spreadBPS := batch[13]
-	changePct := batch[14]
-	volume := batch[15]
+	reynolds := fields[0]
+	divergence := fields[1]
+	viscosity := fields[2]
+	midAddRate := fields[3]
+	midExecuteRate := fields[4]
+	laminarCeiling := fields[5]
+	turbulentFloor := fields[6]
+	turbulentReady := fields[7] > 0
+	divergenceEdge := fields[8]
+	icebergScore := fields[9]
+	vorticity := fields[10]
+	turbulence := fields[11]
+	price := fields[12]
+	spreadBPS := fields[13]
+	changePct := fields[14]
+	volume := fields[15]
 
 	if price <= 0 || spreadBPS <= 0 || changePct <= 0 || volume <= 0 {
 		return rejectStage(state, "equation: invalid stage input")
@@ -103,7 +110,6 @@ func (fluidflow *Fluidflow) Read(p []byte) (int, error) {
 	}
 
 	inertialScore := divergence
-
 	viscousScore := 0.0
 
 	if viscosity > 0 {
@@ -112,6 +118,23 @@ func (fluidflow *Fluidflow) Read(p []byte) (int, error) {
 
 	if icebergScore > 0 {
 		viscousScore = math.Max(viscousScore, icebergScore)
+	}
+
+	midActivity := midAddRate + midExecuteRate
+
+	if midActivity > 0 {
+		executeShare := midExecuteRate / midActivity
+		addShare := midAddRate / midActivity
+
+		inertialScore = math.Max(inertialScore, executeShare*divergence)
+
+		if addShare > executeShare {
+			viscousScore = math.Max(viscousScore, addShare*viscosity)
+		}
+
+		if turbulentReady && executeShare > 0 {
+			turbulentScore = math.Max(turbulentScore, executeShare*reynolds)
+		}
 	}
 
 	category := 1

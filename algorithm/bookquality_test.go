@@ -11,7 +11,7 @@ import (
 
 func TestBookQualityToxicBluff(testingTB *testing.T) {
 	Convey("Given near-touch toxic churn above gate", testingTB, func() {
-		bookQuality := equation.NewBookQuality()
+		bookQuality := equation.NewBookQuality(nil)
 		writeErr := tests.WriteSamples(bookQuality,
 			0, 0.1, 0, 0.1,
 			80, 80,
@@ -22,7 +22,9 @@ func TestBookQualityToxicBluff(testingTB *testing.T) {
 
 		So(writeErr, ShouldBeNil)
 
-		outbound := readOutbound(bookQuality)
+		outbound, err := readOutbound(bookQuality)
+
+		So(err, ShouldBeNil)
 
 		Convey("It should classify toxic bluff", func() {
 			So(int(datura.Peek[float64](outbound, "output", "category")), ShouldEqual, 1)
@@ -33,7 +35,7 @@ func TestBookQualityToxicBluff(testingTB *testing.T) {
 
 func TestBookQualityLiquidityVacuum(testingTB *testing.T) {
 	Convey("Given cancel/fill asymmetry with fill flow", testingTB, func() {
-		bookQuality := equation.NewBookQuality()
+		bookQuality := equation.NewBookQuality(nil)
 		writeErr := tests.WriteSamples(bookQuality,
 			0.3, 0.1, 0, 0,
 			10, 10,
@@ -44,7 +46,9 @@ func TestBookQualityLiquidityVacuum(testingTB *testing.T) {
 
 		So(writeErr, ShouldBeNil)
 
-		outbound := readOutbound(bookQuality)
+		outbound, err := readOutbound(bookQuality)
+
+		So(err, ShouldBeNil)
 
 		Convey("It should classify liquidity vacuum", func() {
 			So(int(datura.Peek[float64](outbound, "output", "category")), ShouldEqual, 2)
@@ -55,7 +59,7 @@ func TestBookQualityLiquidityVacuum(testingTB *testing.T) {
 
 func TestBookQualityHardSupport(testingTB *testing.T) {
 	Convey("Given balanced depth with fills and no cancels", testingTB, func() {
-		bookQuality := equation.NewBookQuality()
+		bookQuality := equation.NewBookQuality(nil)
 		writeErr := tests.WriteSamples(bookQuality,
 			0, 0.1, 0, 0.1,
 			80, 80,
@@ -66,7 +70,9 @@ func TestBookQualityHardSupport(testingTB *testing.T) {
 
 		So(writeErr, ShouldBeNil)
 
-		outbound := readOutbound(bookQuality)
+		outbound, err := readOutbound(bookQuality)
+
+		So(err, ShouldBeNil)
 
 		Convey("It should classify hard support", func() {
 			So(int(datura.Peek[float64](outbound, "output", "category")), ShouldEqual, 3)
@@ -76,7 +82,7 @@ func TestBookQualityHardSupport(testingTB *testing.T) {
 }
 
 func BenchmarkBookQualityRead(b *testing.B) {
-	bookQuality := equation.NewBookQuality()
+	bookQuality := equation.NewBookQuality(nil)
 	samples := []float64{
 		0.3, 0.1, 0, 0,
 		10, 10,

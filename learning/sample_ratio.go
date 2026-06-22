@@ -51,8 +51,10 @@ func (calibrator *Calibrator) Read(payload []byte) (int, error) {
 	derived := ObserveSampleRatio(&ratioState, predicted, actual)
 	pokeSampleRatioState(calibrator.artifact, &ratioState, derived)
 	state.MergeOutput("value", derived)
+	state.MergeOutput("predicted", predicted)
+	state.MergeOutput("actual", actual)
 	state.Merge("root", "output")
-	state.Merge("inputs", []string{"value"})
+	state.Merge("inputs", []string{"value", "predicted", "actual"})
 	return state.Read(payload)
 }
 

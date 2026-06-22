@@ -7,7 +7,6 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/nomagique/equation"
-	"github.com/theapemachine/nomagique/hawkes"
 )
 
 func TestHawkesFit_Observe(testingTB *testing.T) {
@@ -26,7 +25,7 @@ func TestHawkesFit_Observe(testingTB *testing.T) {
 		}
 
 		horizon := float64(start.Add(4 * time.Second).UnixNano())
-		fitProcess := NewHawkesFit(horizon, hawkes.BivariateFit{})
+		fitProcess := NewHawkesFit(hawkesFitConfig(horizon))
 		inbound := datura.Acquire("hawkes-fit-test", datura.APPJSON).
 			Poke(float64(len(xTimes)), "config", "xCount").
 			Poke(float64(len(yTimes)), "config", "yCount").
@@ -39,7 +38,9 @@ func TestHawkesFit_Observe(testingTB *testing.T) {
 
 		So(writeErr, ShouldBeNil)
 
-		outbound := readOutbound(fitProcess)
+		outbound, err := readOutbound(fitProcess)
+
+		So(err, ShouldBeNil)
 
 		Convey("It should fit and return a positive excitation ratio", func() {
 			So(datura.Peek[float64](outbound, "output", "value"), ShouldBeGreaterThan, 0)
@@ -58,7 +59,7 @@ func BenchmarkHawkesFit_Observe(testingTB *testing.B) {
 	}
 
 	horizon := float64(start.Add(4 * time.Second).UnixNano())
-	fitProcess := NewHawkesFit(horizon, hawkes.BivariateFit{})
+	fitProcess := NewHawkesFit(hawkesFitConfig(horizon))
 	inbound := datura.Acquire("hawkes-fit-bench", datura.APPJSON).
 		Poke(float64(len(xTimes)), "config", "xCount").
 		Poke(float64(len(yTimes)), "config", "yCount").

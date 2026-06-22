@@ -10,24 +10,28 @@ import (
 	"gonum.org/v1/gonum/stat"
 )
 
-const decayPayloadHeader = 7
-
 /*
 Decay classifies book thinning, spread widening, pressure fade, and imbalance flip.
-
-Payload layout: lastPrice, bidDepthCount, askDepthCount, densityCount,
-spreadCount, pressureCount, imbalanceCount, then each series oldest→newest.
+The constructor artifact holds schema inputs; Write buffers inbound wire on its payload.
 */
 type Decay struct {
 	artifact *datura.Artifact
 }
 
 /*
-NewDecay returns a microstructure decay stage for io.ReadWriter pipelines.
+NewDecay returns a microstructure decay stage wired from config attributes.
 */
-func NewDecay() io.ReadWriteCloser {
+func NewDecay(artifact *datura.Artifact) io.ReadWriteCloser {
+	if artifact == nil {
+		artifact = datura.Acquire("decay", datura.APPJSON)
+	}
+
+	if len(datura.Peek[[]string](artifact, "inputs")) == 0 {
+		artifact.Poke(DecayInputKeys, "inputs")
+	}
+
 	return &Decay{
-		artifact: datura.Acquire("decay", datura.APPJSON),
+		artifact: artifact,
 	}
 }
 
@@ -43,30 +47,33 @@ func (decay *Decay) Read(p []byte) (int, error) {
 		return 0, err
 	}
 
-	batch := Features(state)
+	inputKeys := ensureFeatureSchema(state, decay.artifact, DecayInputKeys)
 
-	if len(batch) < decayPayloadHeader {
+	fields, err := featureFields(state, inputKeys)
+
+	if err != nil || len(fields) < len(DecayInputKeys) {
 		return rejectStage(state, "equation: invalid stage input")
 	}
 
-	lastPrice := batch[0]
+	lastPrice := fields[0]
 
 	if lastPrice <= 0 {
 		return rejectStage(state, "equation: invalid stage input")
 	}
 
-	counts := batch[1:decayPayloadHeader]
-	offset := decayPayloadHeader
+	counts := fields[1:]
+	offset := len(inputKeys)
+	features := Features(state)
 	series := make([][]float64, len(counts))
 
 	for index, count := range counts {
 		segmentCount := int(count)
 
-		if segmentCount < 0 || offset+segmentCount > len(batch) {
+		if segmentCount < 0 || offset+segmentCount > len(features) {
 			return rejectStage(state, "equation: invalid stage input")
 		}
 
-		series[index] = batch[offset : offset+segmentCount]
+		series[index] = features[offset : offset+segmentCount]
 		offset += segmentCount
 	}
 

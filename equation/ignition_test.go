@@ -16,7 +16,7 @@ func ignitionReplayConfig() *datura.Artifact {
 		Poke([]string{"rvol", "precursor", "compression", "spread", "ignition", "value", "rvolDecline"}, "inputs").
 		Poke(0.0, "stageIndex").
 		Poke([]string{"rvol", "precursor", "compression"}, "order").
-		Poke([]string{"ignition", "trend", "exhaustion"}, "outputs").
+		Poke([]string{"ignition", "compression", "trend", "exhaustion"}, "outputs").
 		Poke(0.01, "threshold").
 		Poke(map[string]any{
 			"input":       "volume",
@@ -42,6 +42,8 @@ func ignitionReplayConfig() *datura.Artifact {
 			"input":     "spread",
 			"outputKey": "compression",
 			"scale":     0.0,
+			"source":    "compression",
+			"terms":     []string{"compression"},
 		}, "compression").
 		Poke(map[string]any{
 			"terms":   []string{"rvol", "precursor"},

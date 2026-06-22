@@ -11,7 +11,7 @@ import (
 
 func TestCausalStory_Read(testingTB *testing.T) {
 	Convey("Given Pearl ladder outputs with endogenous uplift", testingTB, func() {
-		stage := equation.NewCausalStory()
+		stage := equation.NewCausalStory(nil)
 		inbound := datura.Acquire("causal-story-in", datura.APPJSON)
 		inbound.MergeOutput("association", 0.2)
 		inbound.MergeOutput("intervention", 0.6)
@@ -32,7 +32,7 @@ func TestCausalStory_Read(testingTB *testing.T) {
 }
 
 func BenchmarkCausalStoryRead(b *testing.B) {
-	stage := equation.NewCausalStory()
+	stage := equation.NewCausalStory(nil)
 	inbound := datura.Acquire("causal-story-bench", datura.APPJSON)
 	inbound.MergeOutput("association", 0.2)
 	inbound.MergeOutput("intervention", 0.6)

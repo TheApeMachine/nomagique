@@ -100,6 +100,7 @@ func (excitation *Excitation) Read(payload []byte) (int, error) {
 	state.MergeOutput("saturation", excitation.outcome.Saturation)
 	state.MergeOutput("organic", excitation.outcome.Organic)
 	state.MergeOutput("exhaustion", excitation.outcome.Exhaustion)
+	state.MergeOutput("strength", excitation.outcome.Strength)
 	state.MergeOutput("branchingRatio", excitation.outcome.BranchingRatio)
 	state.MergeOutput("spectralRadius", excitation.outcome.BranchingRatio)
 	state.MergeOutput("stationarityMargin", excitation.outcome.StationarityMargin)

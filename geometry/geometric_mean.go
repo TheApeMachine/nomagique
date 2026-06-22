@@ -60,12 +60,30 @@ func (geometricMean *GeometricMean) Read(p []byte) (int, error) {
 	left := datura.Peek[float64](state, "output", leftKey)
 	right := datura.Peek[float64](state, "output", rightKey)
 
-	if left <= 0 || right <= 0 {
+	if math.IsNaN(left) || math.IsInf(left, 0) ||
+		math.IsNaN(right) || math.IsInf(right, 0) {
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
-			"geometric-mean: operands must be positive",
+			"geometric-mean: operands are non-finite",
 			nil,
 		))
+	}
+
+	if left < 0 || right < 0 {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"geometric-mean: operands must be non-negative",
+			nil,
+		))
+	}
+
+	if left == 0 || right == 0 {
+		state.MergeOutput(destinationKey, 0.0)
+		features.Restore(state)
+		state.Merge("root", "output")
+		state.Merge("inputs", []string{destinationKey})
+
+		return state.Read(p)
 	}
 
 	mean := math.Sqrt(left * right)

@@ -31,7 +31,7 @@ func TestGeometricMeanRead(testingTB *testing.T) {
 		})
 	})
 
-	Convey("Given a non-positive operand", testingTB, func() {
+	Convey("Given a zero operand", testingTB, func() {
 		config := datura.Acquire("geometric-mean-config", datura.APPJSON).
 			Poke(map[string]any{
 				"leftKey":        "left",
@@ -43,6 +43,28 @@ func TestGeometricMeanRead(testingTB *testing.T) {
 		artifact := datura.Acquire("geometric-mean-test", datura.APPJSON)
 		artifact.Poke(4.0, "output", "left")
 		artifact.Poke(0.0, "output", "right")
+
+		err := transport.NewFlipFlop(artifact, stage)
+
+		So(err, ShouldBeNil)
+
+		Convey("It should publish zero joint score", func() {
+			So(datura.Peek[float64](artifact, "output", "joint"), ShouldEqual, 0)
+		})
+	})
+
+	Convey("Given a negative operand", testingTB, func() {
+		config := datura.Acquire("geometric-mean-config", datura.APPJSON).
+			Poke(map[string]any{
+				"leftKey":        "left",
+				"rightKey":       "right",
+				"destinationKey": "joint",
+			}, "joint")
+
+		stage := NewGeometricMean(config)
+		artifact := datura.Acquire("geometric-mean-test", datura.APPJSON)
+		artifact.Poke(4.0, "output", "left")
+		artifact.Poke(-1.0, "output", "right")
 
 		err := transport.NewFlipFlop(artifact, stage)
 

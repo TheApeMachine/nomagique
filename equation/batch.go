@@ -33,7 +33,7 @@ func rejectStage(state *datura.Artifact, message string) (int, error) {
 func emitOutput(state *datura.Artifact, payload []byte, fields datura.Map[float64]) (int, error) {
 	defer state.Release()
 
-	outputInputs := make([]string, 0, len(fields))
+	outputInputs := make([]string, 0, len(fields)+1)
 
 	for key := range fields {
 		outputInputs = append(outputInputs, key)
@@ -41,6 +41,13 @@ func emitOutput(state *datura.Artifact, payload []byte, fields datura.Map[float6
 
 	for key, value := range fields {
 		state.MergeOutput(key, value)
+	}
+
+	if _, hasStrength := fields["strength"]; !hasStrength {
+		if value, ok := fields["value"]; ok {
+			state.MergeOutput("strength", value)
+			outputInputs = append(outputInputs, "strength")
+		}
 	}
 
 	state.Merge("root", "output")

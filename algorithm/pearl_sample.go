@@ -27,8 +27,8 @@ NewPearlSample returns a causal node encoder wired from a config artifact.
 func NewPearlSample(config *datura.Artifact) *PearlSample {
 	nodeRing := causal.NewNodeRing(
 		datura.Acquire("pearl-node-ring", datura.APPJSON).
-			Poke(float64(pearlSampleNodeCount), "config", "nodeCount").
-			Poke(datura.Peek[float64](config, "config", "minHistory"), "config", "capacity"),
+			Poke(float64(pearlSampleNodeCount), "nodeCount").
+			Poke(datura.Peek[float64](config, "minHistory"), "capacity"),
 	)
 
 	return &PearlSample{

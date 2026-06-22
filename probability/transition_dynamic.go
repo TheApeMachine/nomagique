@@ -35,7 +35,11 @@ func (transition *Transition) Read(payload []byte) (int, error) {
 	if len(wire) == 0 {
 		state.Release()
 
-		return 0, errnie.Err(errnie.Validation, "transition stage missing inbound wire", nil)
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"transition stage missing inbound wire",
+			nil,
+		))
 	}
 
 	if _, err := state.Write(wire); err != nil {
@@ -67,13 +71,21 @@ func (transition *Transition) Read(payload []byte) (int, error) {
 	}
 
 	if numStates <= 0 || alpha <= 0 {
-		return state.Read(payload)
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"transition: numStates and alpha must be positive",
+			nil,
+		))
 	}
 
 	probabilities := transitionProbabilities(state)
 
 	if len(probabilities) == 0 {
-		return state.Read(payload)
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"transition: probabilities required",
+			nil,
+		))
 	}
 
 	matrix := transitionMatrixFromPayload(transition.artifact, numStates, alpha)
@@ -81,7 +93,7 @@ func (transition *Transition) Read(payload []byte) (int, error) {
 	surprise, surpriseErr := matrix.Surprise(observed)
 
 	if surpriseErr != nil {
-		return state.Read(payload)
+		return 0, surpriseErr
 	}
 
 	categoryIndex := transitionCategory(state)

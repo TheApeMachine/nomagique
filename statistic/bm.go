@@ -45,11 +45,19 @@ func (bivariateMoment *BivariateMoment) Read(payload []byte) (int, error) {
 	paired := datura.Peek[float64](state, "paired")
 
 	if math.IsNaN(sample) || math.IsInf(sample, 0) {
-		return state.Read(payload)
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"unable to compute bivariate moment",
+			BivariateMomentError(BivariateMomentErrorInvalidStreams),
+		))
 	}
 
 	if math.IsNaN(paired) || math.IsInf(paired, 0) {
-		return state.Read(payload)
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"unable to compute bivariate moment",
+			BivariateMomentError(BivariateMomentErrorInvalidStreams),
+		))
 	}
 
 	xValues := datura.Peek[[]float64](bivariateMoment.artifact, "history")
@@ -61,15 +69,11 @@ func (bivariateMoment *BivariateMoment) Read(payload []byte) (int, error) {
 	bivariateMoment.artifact.Poke(yValues, "pairedHistory")
 
 	if len(xValues) != len(yValues) || len(xValues) < 2 {
-		errnie.Error(errnie.Err(
-			errnie.Validation, "unable to compute bivariate moment",
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"unable to compute bivariate moment",
 			BivariateMomentError(BivariateMomentErrorInvalidStreams),
 		))
-
-		state.MergeOutput("value", 0.0)
-		state.Merge("root", "output")
-		state.Merge("inputs", []string{"value"})
-		return state.Read(payload)
 	}
 
 	exponentR := datura.Peek[float64](bivariateMoment.artifact, "config", "r")

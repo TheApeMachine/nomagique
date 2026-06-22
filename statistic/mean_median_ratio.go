@@ -55,19 +55,23 @@ func (meanMedianRatio *MeanMedianRatio) Read(payload []byte) (int, error) {
 		return state.Read(payload)
 	}
 
-	sourceKey := datura.Peek[string](meanMedianRatio.artifact, "inputs", stageKey, "input")
+	sourceKey := datura.Peek[string](meanMedianRatio.artifact, stageKey, "input")
 	sample := meanMedianRatio.sample(state, sourceKey)
 
 	if math.IsNaN(sample) || math.IsInf(sample, 0) {
-		return state.Read(payload)
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"mean-median-ratio: sample is non-finite",
+			nil,
+		))
 	}
 
 	sample = meanMedianRatio.applyTransform(stageKey, sample)
 	meanMedianRatio.trackDecline(stageKey, sample)
 
-	shortHint := int(datura.Peek[float64](meanMedianRatio.artifact, "inputs", stageKey, "shortWindow"))
-	longHint := int(datura.Peek[float64](meanMedianRatio.artifact, "inputs", stageKey, "longWindow"))
-	outputKey := datura.Peek[string](meanMedianRatio.artifact, "inputs", stageKey, "outputKey")
+	shortHint := int(datura.Peek[float64](meanMedianRatio.artifact, stageKey, "shortWindow"))
+	longHint := int(datura.Peek[float64](meanMedianRatio.artifact, stageKey, "longWindow"))
+	outputKey := datura.Peek[string](meanMedianRatio.artifact, stageKey, "outputKey")
 
 	if outputKey == "" {
 		return state.Read(payload)
@@ -90,7 +94,7 @@ func (meanMedianRatio *MeanMedianRatio) Read(payload []byte) (int, error) {
 	if shortHint <= 0 && longHint <= 0 && len(history) < requiredSamples {
 		state.MergeOutput(outputKey, ratio)
 
-		declineOutput := datura.Peek[string](meanMedianRatio.artifact, "inputs", stageKey, "decline", "output")
+		declineOutput := datura.Peek[string](meanMedianRatio.artifact, stageKey, "decline", "output")
 
 		if declineOutput != "" {
 			if decline, ok := meanMedianRatio.declines[declineOutput]; ok {
@@ -109,22 +113,23 @@ func (meanMedianRatio *MeanMedianRatio) Read(payload []byte) (int, error) {
 
 		shortSlice := history[len(history)-shortCount:]
 		shortMean := stat.Mean(shortSlice, nil)
-		longMedian := MedianOf(history)
 
-		baseline := longMedian
+		longSlice := history
 
-		if baseline <= 0 || baseline < math.Abs(shortMean)/1e6 {
-			baseline = math.Abs(shortMean)
+		if len(history) > shortCount {
+			longSlice = history[:len(history)-shortCount]
 		}
 
-		if baseline > 0 {
-			ratio = shortMean / baseline
+		longMedian := MedianOf(longSlice)
+
+		if longMedian > 0 {
+			ratio = shortMean / longMedian
 		}
 	}
 
 	state.MergeOutput(outputKey, ratio)
 
-	declineOutput := datura.Peek[string](meanMedianRatio.artifact, "inputs", stageKey, "decline", "output")
+	declineOutput := datura.Peek[string](meanMedianRatio.artifact, stageKey, "decline", "output")
 
 	if declineOutput != "" {
 		if decline, ok := meanMedianRatio.declines[declineOutput]; ok {
@@ -140,11 +145,7 @@ func (meanMedianRatio *MeanMedianRatio) Read(payload []byte) (int, error) {
 
 func (meanMedianRatio *MeanMedianRatio) stageKey() string {
 	order := datura.Peek[[]string](meanMedianRatio.artifact, "order")
-	stageIndex := int(datura.Peek[float64](meanMedianRatio.artifact, "inputs", "meanMedianRatio", "stageIndex"))
-
-	if stageIndex < 0 {
-		stageIndex = int(datura.Peek[float64](meanMedianRatio.artifact, "stageIndex"))
-	}
+	stageIndex := int(datura.Peek[float64](meanMedianRatio.artifact, "stageIndex"))
 
 	if stageIndex < 0 {
 		stageIndex = 0
@@ -208,7 +209,7 @@ func (meanMedianRatio *MeanMedianRatio) sample(
 }
 
 func (meanMedianRatio *MeanMedianRatio) applyTransform(stageKey string, sample float64) float64 {
-	transform := datura.Peek[string](meanMedianRatio.artifact, "inputs", stageKey, "transform")
+	transform := datura.Peek[string](meanMedianRatio.artifact, stageKey, "transform")
 
 	if transform == "" {
 		return sample
@@ -243,7 +244,7 @@ func (meanMedianRatio *MeanMedianRatio) applyTransform(stageKey string, sample f
 }
 
 func (meanMedianRatio *MeanMedianRatio) trackDecline(stageKey string, sample float64) {
-	declineOutput := datura.Peek[string](meanMedianRatio.artifact, "inputs", stageKey, "decline", "output")
+	declineOutput := datura.Peek[string](meanMedianRatio.artifact, stageKey, "decline", "output")
 
 	if declineOutput == "" {
 		return

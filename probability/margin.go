@@ -5,23 +5,23 @@ import "fmt"
 /*
 CompetitionMargin scores how decisively excess separates from a reference span.
 */
-func CompetitionMargin(excess, span float64) float64 {
+func CompetitionMargin(excess, span float64) (float64, error) {
 	if excess <= 0 || span <= 0 {
-		return 0
+		return 0, fmt.Errorf("probability: competition margin requires positive excess and span")
 	}
 
-	return excess / (excess + span)
+	return excess / (excess + span), nil
 }
 
 /*
 MagnitudeMargin maps a positive magnitude into (0, 1).
 */
-func MagnitudeMargin(value float64) float64 {
+func MagnitudeMargin(value float64) (float64, error) {
 	if value <= 0 {
-		return 0
+		return 0, fmt.Errorf("probability: magnitude margin requires positive value")
 	}
 
-	return value / (1 + value)
+	return value / (1 + value), nil
 }
 
 /*
@@ -48,7 +48,7 @@ func CategoryShareConfidence(scores []float64, categoryIndex int) (float64, erro
 	selected := scores[index]
 
 	if selected <= 0 {
-		return 0, nil
+		return 0, fmt.Errorf("probability: category share confidence requires positive selected evidence")
 	}
 
 	evidenceSum := 0.0

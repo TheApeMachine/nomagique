@@ -34,10 +34,8 @@ func TestHayashiYoshida_Observe(testingTB *testing.T) {
 		artifact := datura.Acquire("test", datura.APPJSON)
 		err := transport.NewFlipFlop(artifact, hayashi)
 
-		So(err, ShouldBeNil)
-
-		Convey("It should return zero output", func() {
-			So(datura.Peek[float64](artifact, "output", "value"), ShouldEqual, 0)
+		Convey("It should return a validation error", func() {
+			So(err, ShouldNotBeNil)
 		})
 	})
 
@@ -46,12 +44,8 @@ func TestHayashiYoshida_Observe(testingTB *testing.T) {
 		artifact := datura.Acquire("test", datura.APPJSON).Poke(1, "sample")
 		err := transport.NewFlipFlop(artifact, hayashi)
 
-		So(err, ShouldBeNil)
-
-		got := datura.Peek[float64](artifact, "output", "value")
-
-		Convey("It should return zero", func() {
-			So(got, ShouldEqual, 0)
+		Convey("It should return a validation error", func() {
+			So(err, ShouldNotBeNil)
 		})
 	})
 
@@ -60,12 +54,8 @@ func TestHayashiYoshida_Observe(testingTB *testing.T) {
 		artifact := datura.Acquire("test", datura.APPJSON).Poke([]float64{0, 100, 1}, "batch")
 		err := transport.NewFlipFlop(artifact, hayashi)
 
-		So(err, ShouldBeNil)
-
-		got := datura.Peek[float64](artifact, "output", "value")
-
-		Convey("It should return zero", func() {
-			So(got, ShouldEqual, 0)
+		Convey("It should return a validation error", func() {
+			So(err, ShouldNotBeNil)
 		})
 	})
 
@@ -75,12 +65,8 @@ func TestHayashiYoshida_Observe(testingTB *testing.T) {
 			Poke([]float64{0, 100, 0, 50, 1, 55}, "batch")
 		err := transport.NewFlipFlop(artifact, hayashi)
 
-		So(err, ShouldBeNil)
-
-		got := datura.Peek[float64](artifact, "output", "value")
-
-		Convey("It should return zero", func() {
-			So(got, ShouldEqual, 0)
+		Convey("It should return a validation error", func() {
+			So(err, ShouldNotBeNil)
 		})
 	})
 }
@@ -97,15 +83,13 @@ func TestHayashiYoshida_Reset(testingTB *testing.T) {
 		resetArtifact := datura.Acquire("test", datura.APPJSON).Poke(1, "reset")
 		err = transport.NewFlipFlop(resetArtifact, hayashi)
 
-		So(err, ShouldBeNil)
+		So(err, ShouldNotBeNil)
 
 		fresh := datura.Acquire("test", datura.APPJSON)
 		err = transport.NewFlipFlop(fresh, hayashi)
 
-		So(err, ShouldBeNil)
-
-		Convey("It should clear output", func() {
-			So(datura.Peek[float64](fresh, "output", "value"), ShouldEqual, 0)
+		Convey("It should return a validation error", func() {
+			So(err, ShouldNotBeNil)
 		})
 	})
 }

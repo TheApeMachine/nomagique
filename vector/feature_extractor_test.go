@@ -3,6 +3,7 @@ package vector
 import (
 	"bytes"
 	"io"
+	"math"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
@@ -117,6 +118,26 @@ func TestFeatureExtractor_Read(t *testing.T) {
 				decoded.Release()
 				replayed.Release()
 			})
+		})
+	})
+
+	Convey("Given a non-finite sample field", t, func() {
+		extractor := NewFeatureExtractor(
+			datura.Acquire("feature-extractor-test", datura.APPJSON).
+				Poke("data", "root").
+				Poke([]string{"volume"}, "inputs"),
+		)
+		inbound := datura.Acquire("test", datura.APPJSON).
+			Poke("ticker", "channel").
+			Poke(math.NaN(), "data", 0, "volume")
+		_, err := io.Copy(extractor, inbound)
+
+		So(err, ShouldBeNil)
+
+		Convey("When Read is called", func() {
+			_, readErr := extractor.Read(make([]byte, 65536))
+
+			So(readErr, ShouldNotBeNil)
 		})
 	})
 }

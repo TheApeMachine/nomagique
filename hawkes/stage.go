@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/equation"
 	"gonum.org/v1/gonum/stat"
 )
@@ -50,10 +51,13 @@ func (moment *Moment) Read(p []byte) (int, error) {
 	xValues, yValues, weights, ok := momentSamples(state, moment.artifact)
 
 	if !ok {
-		state.MergeOutput("value", 0.0)
-		state.Merge("root", "output")
-		state.Merge("inputs", []string{"value"})
-		return state.Read(p)
+		state.Release()
+
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"hawkes-moment: require aligned sample streams of at least two observations",
+			nil,
+		))
 	}
 
 	empirical := stat.BivariateMoment(moment.momentR, moment.momentS, xValues, yValues, weights)
@@ -61,7 +65,17 @@ func (moment *Moment) Read(p []byte) (int, error) {
 	confidence := 0.0
 
 	if theoreticalOK {
-		confidence = MomentConfidence(empirical, theoretical)
+		var confidenceOK bool
+
+		confidence, confidenceOK = MomentConfidence(empirical, theoretical)
+
+		if !confidenceOK {
+			return 0, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"hawkes-moment: confidence could not be derived",
+				nil,
+			))
+		}
 	}
 
 	state.MergeOutput("value", confidence)
@@ -118,10 +132,13 @@ func (fit *Fit) Read(p []byte) (int, error) {
 	xTimes, yTimes, ok := fitTimes(state, fit.artifact)
 
 	if !ok {
-		state.MergeOutput("value", 0.0)
-		state.Merge("root", "output")
-		state.Merge("inputs", []string{"value"})
-		return state.Read(p)
+		state.Release()
+
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"hawkes-fit: require aligned arrival timestamp streams",
+			nil,
+		))
 	}
 
 	stream := NewArrivalStream(fitTimesToTime(xTimes), fitTimesToTime(yTimes))
@@ -129,10 +146,13 @@ func (fit *Fit) Read(p []byte) (int, error) {
 	fitted := fit.estimator.Fit(stream, horizon)
 
 	if !fitted.Valid() {
-		state.MergeOutput("value", 0.0)
-		state.Merge("root", "output")
-		state.Merge("inputs", []string{"value"})
-		return state.Read(p)
+		state.Release()
+
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"hawkes-fit: fit did not converge to valid parameters",
+			nil,
+		))
 	}
 
 	asymmetry := fitted.Asymmetry(false)

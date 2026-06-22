@@ -4,6 +4,7 @@ import (
 	"math"
 
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/errnie"
 	"gonum.org/v1/gonum/stat"
 )
 
@@ -51,19 +52,28 @@ func (fastSlow *FastSlow) Read(payload []byte) (int, error) {
 	sample := datura.Peek[float64](state, "sample")
 
 	if math.IsNaN(sample) || math.IsInf(sample, 0) || sample < 0 {
-		return state.Read(payload)
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"fast-slow: sample must be finite and non-negative",
+			nil,
+		))
 	}
 
 	history := datura.Peek[[]float64](fastSlow.artifact, "history")
 	history = append(history, sample)
 	fastSlow.artifact.Poke(history, "history")
 
-	fastWindow := int(datura.Peek[float64](fastSlow.artifact, "config", "fastWindow"))
+	fastHint := int(datura.Peek[float64](fastSlow.artifact, "config", "fastWindow"))
 	epsilon := datura.Peek[float64](fastSlow.artifact, "config", "epsilon")
 	invert := datura.Peek[float64](fastSlow.artifact, "config", "invert") > 0
+	fastWindow, _ := RollingWindows(history, fastHint, 0)
 
-	if fastWindow <= 0 {
-		fastWindow = 3
+	if len(history) <= fastWindow {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"fast-slow: insufficient history",
+			nil,
+		))
 	}
 
 	value := 1.0
@@ -90,18 +100,18 @@ func fastSlowRate(samples []float64, fastWindow int, epsilon float64) float64 {
 	sampleCount := len(samples)
 
 	if fastWindow <= 0 {
-		fastWindow = 3
+		fastWindow, _ = RollingWindows(samples, 0, 0)
 	}
 
 	if sampleCount <= fastWindow {
-		return 1.0
+		return 0
 	}
 
 	slowCount := sampleCount - fastWindow
 	recentRate := stat.Mean(samples[sampleCount-fastWindow:], nil)
 
 	if slowCount <= 0 {
-		return 1.0
+		return 0
 	}
 
 	olderRate := stat.Mean(samples[:slowCount], nil)
@@ -110,7 +120,7 @@ func fastSlowRate(samples []float64, fastWindow int, epsilon float64) float64 {
 		olderRate = recentRate * epsilon
 
 		if olderRate <= 0 {
-			return 1.0
+			return 0
 		}
 	}
 
@@ -121,7 +131,7 @@ func invertedFastSlowRate(samples []float64, fastWindow int, epsilon float64) fl
 	sampleCount := len(samples)
 
 	if fastWindow <= 0 {
-		fastWindow = 3
+		fastWindow, _ = RollingWindows(samples, 0, 0)
 	}
 
 	if sampleCount <= fastWindow {

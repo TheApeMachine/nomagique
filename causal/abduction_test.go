@@ -10,14 +10,14 @@ import (
 
 func abductionConfig(linear bool, treatment int, intervention float64) *datura.Artifact {
 	config := datura.Acquire("abduction-config", datura.APPJSON).
-		Poke(float64(3), "config", "target").
-		Poke(float64(treatment), "config", "treatment").
-		Poke(intervention, "config", "intervention").
-		Poke(float64(12), "config", "minHistory").
-		Poke([]float64{0, 1, 2}, "config", "features")
+		Poke(float64(3), "target").
+		Poke(float64(treatment), "treatment").
+		Poke(intervention, "intervention").
+		Poke(float64(12), "minHistory").
+		Poke([]float64{0, 1, 2}, "features")
 
 	if linear {
-		config.Poke(float64(1), "config", "linear")
+		config.Poke(float64(1), "linear")
 	}
 
 	return config
@@ -57,13 +57,13 @@ func lastRowTarget(config *datura.Artifact, table *datura.Artifact) float64 {
 	flat := datura.Peek[[]float64](table, "table", "rows")
 	nodeCount := int(datura.Peek[float64](table, "table", "nodeCount"))
 
-	return flat[len(flat)-nodeCount+int(datura.Peek[float64](config, "config", "target"))]
+	return flat[len(flat)-nodeCount+int(datura.Peek[float64](config, "target"))]
 }
 
 func lastRowTreatment(config *datura.Artifact, table *datura.Artifact) float64 {
 	flat := datura.Peek[[]float64](table, "table", "rows")
 	nodeCount := int(datura.Peek[float64](table, "table", "nodeCount"))
-	treatment := int(datura.Peek[float64](config, "config", "treatment"))
+	treatment := int(datura.Peek[float64](config, "treatment"))
 
 	return flat[len(flat)-nodeCount+treatment]
 }
@@ -90,6 +90,14 @@ func TestAbduction_Read_Linear(testingTB *testing.T) {
 				lastRowTarget(restoreConfig, restoreTable),
 				1e-9,
 			)
+		})
+
+		Convey("It should satisfy uplift + observed == counterfactual", func() {
+			observedTarget := lastRowTarget(config, table)
+			uplift := datura.Peek[float64](table, "output", "uplift")
+			counterfactual := datura.Peek[float64](table, "output", "counterfactual")
+
+			So(counterfactual, ShouldAlmostEqual, observedTarget+uplift, 1e-9)
 		})
 
 		Convey("It should move the counterfactual when treatment changes", func() {

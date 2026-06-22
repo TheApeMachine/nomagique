@@ -21,6 +21,49 @@ func TestNewResonanceManifold(testingTB *testing.T) {
 			So(manifold.streamAdvanceTemporal, ShouldBeTrue)
 		})
 	})
+
+	Convey("Given invalid alpha", testingTB, func() {
+		_, err := NewResonanceManifold([]int{4, 8, 4}, 2, 0)
+
+		Convey("It should return an error", func() {
+			So(err, ShouldNotBeNil)
+		})
+	})
+}
+
+func TestAdaptiveResonanceConfig(testingTB *testing.T) {
+	Convey("Given alpha and depth", testingTB, func() {
+		architecture := []int{4, 8, 4}
+		derived := AdaptiveResonanceConfig(0.01, architecture, nil)
+
+		Convey("It should derive mix, patience, and clip from alpha and depth", func() {
+			So(derived.TemporalWeight, ShouldNotEqual, 0.45)
+			So(derived.TopDownInitMix, ShouldNotEqual, 0.55)
+			So(derived.EarlyStopPatience, ShouldNotEqual, 3)
+			So(derived.GradClip, ShouldNotEqual, 1.0)
+			So(derived.StateClip, ShouldNotEqual, 3.0)
+			So(derived.TemporalWeight, ShouldBeGreaterThan, 0)
+			So(derived.TopDownInitMix, ShouldBeGreaterThan, 0)
+		})
+	})
+
+	Convey("Given resonance attribute overrides", testingTB, func() {
+		config := datura.Acquire("resonance-config", datura.APPJSON).
+			Poke(0.33, "resonance", "temporalWeight").
+			Poke(0.67, "resonance", "topDownInitMix").
+			Poke(float64(5), "resonance", "earlyStopPatience").
+			Poke(0.5, "resonance", "gradClip").
+			Poke(2.5, "resonance", "stateClip")
+		derived := AdaptiveResonanceConfig(0.01, []int{4, 8, 4}, config)
+
+		Convey("It should honor artifact attributes", func() {
+			So(derived.TemporalWeight, ShouldEqual, 0.33)
+			So(derived.TopDownInitMix, ShouldEqual, 0.67)
+			So(derived.EarlyStopPatience, ShouldEqual, 5)
+			So(derived.GradClip, ShouldEqual, 0.5)
+			So(derived.StateClip, ShouldEqual, 2.5)
+		})
+	})
 }
 
 func TestResonanceManifold_SettleAdvanceTemporal(testingTB *testing.T) {

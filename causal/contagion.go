@@ -62,8 +62,8 @@ func (contagion *Contagion) peakFromTable(state *datura.Artifact) float64 {
 	}
 
 	latestRow := rows[rowCount-1]
-	skip := intSlice(datura.Peek[[]float64](contagion.artifact, "config", "contagionSkip"))
-	target := int(datura.Peek[float64](contagion.artifact, "config", "target"))
+	skip := intSlice(datura.Peek[[]float64](contagion.artifact, "contagionSkip"))
+	target := int(datura.Peek[float64](contagion.artifact, "target"))
 	peak := 0.0
 
 	for nodeIndex, sample := range latestRow {

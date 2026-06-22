@@ -11,10 +11,10 @@ import (
 
 func backdoorConfig() *datura.Artifact {
 	return datura.Acquire("backdoor-config", datura.APPJSON).
-		Poke(float64(3), "config", "target").
-		Poke(float64(2), "config", "treatment").
-		Poke([]float64{0, 1}, "config", "controls").
-		Poke(float64(12), "config", "minHistory")
+		Poke(float64(3), "target").
+		Poke(float64(2), "treatment").
+		Poke([]float64{0, 1}, "controls").
+		Poke(float64(12), "minHistory")
 }
 
 func backdoorTable(rowCount int) *datura.Artifact {

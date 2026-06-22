@@ -50,7 +50,7 @@ func (priceRing *PriceRing) Read(payload []byte) (int, error) {
 		return state.Read(payload)
 	}
 
-	sourceKey := datura.Peek[string](priceRing.artifact, "inputs", stageKey, "input")
+	sourceKey := datura.Peek[string](priceRing.artifact, stageKey, "input")
 	sample := FeatureColumn(state, sourceKey)
 
 	if math.IsNaN(sample) || math.IsInf(sample, 0) {
@@ -67,8 +67,8 @@ func (priceRing *PriceRing) Read(payload []byte) (int, error) {
 		return state.Read(payload)
 	}
 
-	returnLag := int(datura.Peek[float64](priceRing.artifact, "inputs", stageKey, "returnLag"))
-	longHint := int(datura.Peek[float64](priceRing.artifact, "inputs", stageKey, "longWindow"))
+	returnLag := int(datura.Peek[float64](priceRing.artifact, stageKey, "returnLag"))
+	longHint := int(datura.Peek[float64](priceRing.artifact, stageKey, "longWindow"))
 
 	if returnLag <= 0 {
 		returnLag = 1
@@ -99,7 +99,7 @@ func (priceRing *PriceRing) stageKey() string {
 	}
 
 	order := datura.Peek[[]string](priceRing.artifact, "order")
-	stageIndex := int(datura.Peek[float64](priceRing.artifact, "inputs", "precursor", "stageIndex"))
+	stageIndex := int(datura.Peek[float64](priceRing.artifact, "precursor", "stageIndex"))
 
 	if stageIndex <= 0 {
 		stageIndex = int(datura.Peek[float64](priceRing.artifact, "stageIndex"))

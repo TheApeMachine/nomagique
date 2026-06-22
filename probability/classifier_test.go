@@ -44,10 +44,11 @@ func TestClassifier_Read(testingTB *testing.T) {
 		So(classifier, ShouldNotBeNil)
 
 		artifact := artifactWithScores(map[string]float64{
-			"s0": 0.2,
-			"s1": 0.1,
-			"s2": 0.9,
-			"s3": 0.05,
+			"s0":       0.2,
+			"s1":       0.1,
+			"s2":       0.9,
+			"s3":       0.05,
+			"strength": 0.9,
 		})
 		err := transport.NewFlipFlop(artifact, classifier)
 
@@ -76,10 +77,8 @@ func TestClassifier_Read(testingTB *testing.T) {
 		})
 		err := transport.NewFlipFlop(artifact, classifier)
 
-		So(err, ShouldBeNil)
-
-		Convey("It should leave output unchanged", func() {
-			So(datura.Peek[float64](artifact, "output", "value"), ShouldEqual, 0)
+		Convey("It should return a validation error", func() {
+			So(err, ShouldNotBeNil)
 		})
 	})
 }
@@ -91,9 +90,10 @@ func TestClassifier_Number(testingTB *testing.T) {
 		So(classifier, ShouldNotBeNil)
 
 		artifact := artifactWithScores(map[string]float64{
-			"s0": 0.1,
-			"s1": 0.8,
-			"s2": 0.2,
+			"s0":       0.1,
+			"s1":       0.8,
+			"s2":       0.2,
+			"strength": 0.8,
 		})
 		pipeline := nomagique.Number(classifier)
 		err := transport.NewFlipFlop(artifact, pipeline)
@@ -114,10 +114,11 @@ func BenchmarkClassifier_Read(b *testing.B) {
 	}
 
 	artifact := artifactWithScores(map[string]float64{
-		"s0": 0.2,
-		"s1": 0.4,
-		"s2": 0.7,
-		"s3": 0.1,
+		"s0":       0.2,
+		"s1":       0.4,
+		"s2":       0.7,
+		"s3":       0.1,
+		"strength": 0.7,
 	})
 
 	b.ReportAllocs()

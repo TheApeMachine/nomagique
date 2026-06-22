@@ -10,10 +10,10 @@ import (
 
 func backdoorConfig() *datura.Artifact {
 	return datura.Acquire("backdoor-config", datura.APPJSON).
-		Poke(float64(3), "config", "target").
-		Poke(float64(1), "config", "treatment").
-		Poke([]float64{0}, "config", "controls").
-		Poke(float64(12), "config", "minHistory")
+		Poke(float64(3), "target").
+		Poke(float64(1), "treatment").
+		Poke([]float64{0}, "controls").
+		Poke(float64(12), "minHistory")
 }
 
 func TestBackdoor_Read(testingTB *testing.T) {
@@ -33,7 +33,7 @@ func TestBackdoor_Read(testingTB *testing.T) {
 func TestLadder_Read_KernelBackdoor(testingTB *testing.T) {
 	Convey("Given enough history rows", testingTB, func() {
 		config := causalPipelineConfig(0.8)
-		config.Poke(0.35, "config", "kernelBandwidth")
+		config.Poke(0.35, "kernelBandwidth")
 		stage := NewLadder(config)
 		artifact := tableInbound(16, 1.0)
 		err := transport.NewFlipFlop(artifact, stage)

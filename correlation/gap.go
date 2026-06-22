@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/errnie"
 	"gonum.org/v1/gonum/stat"
 )
 
@@ -46,13 +47,40 @@ func (gap *Gap) Read(p []byte) (int, error) {
 	}
 
 	batch := gapBatch(state)
+
+	if len(batch) < gapPayloadHeader {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation, "unable to compute correlation gap",
+			GapError(GapErrorRequireBatch),
+		))
+	}
+
 	weights := datura.Peek[[]float64](gap.artifact, "config", "weights")
-	pearsonValue := gapPearson(batch, weights)
-	hayashiValue := gapHayashi(batch, gap.maxIntervalFromArtifact())
+	pearsonValue, pearsonOK := gapPearson(batch, weights)
+
+	if !pearsonOK {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation, "unable to compute correlation gap",
+			GapError(GapErrorRequireSyncSegments),
+		))
+	}
+
+	hayashiValue, hayashiOK := gapHayashi(batch, gap.maxIntervalFromArtifact())
+
+	if !hayashiOK {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation, "unable to compute correlation gap",
+			GapError(GapErrorRequireAsyncSegments),
+		))
+	}
+
 	divergence := hayashiValue - pearsonValue
 
 	if math.IsNaN(divergence) || math.IsInf(divergence, 0) {
-		divergence = 0
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation, "unable to compute correlation gap",
+			GapError(GapErrorNonFiniteGap),
+		))
 	}
 
 	state.MergeOutput("value", divergence)
@@ -152,17 +180,17 @@ func gapSegments(batch []float64) (syncLeft, syncRight, asyncLeft, asyncRight []
 	return syncLeft, syncRight, asyncLeft, asyncRight, true
 }
 
-func gapPearson(batch []float64, weights []float64) float64 {
+func gapPearson(batch []float64, weights []float64) (float64, bool) {
 	syncLeft, syncRight, _, _, ok := gapSegments(batch)
 
 	if !ok || len(syncLeft) < 2 || len(syncLeft) != len(syncRight) {
-		return 0
+		return 0, false
 	}
 
 	weightsOK := len(weights) == 0 || len(weights) == len(syncLeft)
 
 	if !weightsOK {
-		return 0
+		return 0, false
 	}
 
 	sampleWeights := weights
@@ -174,31 +202,40 @@ func gapPearson(batch []float64, weights []float64) float64 {
 	correlationValue := stat.Correlation(syncLeft, syncRight, sampleWeights)
 
 	if math.IsNaN(correlationValue) || math.IsInf(correlationValue, 0) {
-		return 0
+		return 0, false
 	}
 
-	return correlationValue
+	return correlationValue, true
 }
 
-func gapHayashi(batch []float64, maxInterval time.Duration) float64 {
+func gapHayashi(batch []float64, maxInterval time.Duration) (float64, bool) {
 	_, _, asyncLeft, asyncRight, ok := gapSegments(batch)
 
 	if !ok {
-		return 0
+		return 0, false
 	}
 
 	left, leftOK := samplesFromScalars(asyncLeft)
 	right, rightOK := samplesFromScalars(asyncRight)
 
 	if !leftOK || !rightOK {
-		return 0
+		return 0, false
 	}
 
-	correlationValue, hayashiOK := hayashiYoshidaCorrelation(left, right, maxInterval)
+	return hayashiYoshidaCorrelation(left, right, maxInterval)
+}
 
-	if !hayashiOK {
-		return 0
-	}
+type GapErrorType string
 
-	return correlationValue
+const (
+	GapErrorRequireBatch         GapErrorType = "require gap batch payload"
+	GapErrorRequireSyncSegments  GapErrorType = "require valid synchronous segments"
+	GapErrorRequireAsyncSegments GapErrorType = "require valid asynchronous segments"
+	GapErrorNonFiniteGap         GapErrorType = "require finite gap"
+)
+
+type GapError string
+
+func (gapError GapError) Error() string {
+	return string(gapError)
 }

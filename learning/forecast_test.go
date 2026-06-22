@@ -25,10 +25,8 @@ func TestForecaster_Observe(testingTB *testing.T) {
 		artifact := datura.Acquire("test", datura.APPJSON)
 		err := transport.NewFlipFlop(artifact, forecaster)
 
-		So(err, ShouldBeNil)
-
-		Convey("It should return zero output", func() {
-			So(datura.Peek[float64](artifact, "output", "value"), ShouldEqual, 0)
+		Convey("It should return a validation error", func() {
+			So(err, ShouldNotBeNil)
 		})
 	})
 
@@ -97,14 +95,16 @@ func TestForecaster_Reset(testingTB *testing.T) {
 		So(err, ShouldBeNil)
 		So(forecaster.Reset(), ShouldBeNil)
 
-		fresh := datura.Acquire("test", datura.APPJSON)
+		fresh := datura.Acquire("test", datura.APPJSON).
+			Poke(10, "sample").
+			Poke(10, "paired")
 		err = transport.NewFlipFlop(fresh, forecaster)
 
 		So(err, ShouldBeNil)
 
 		Convey("It should clear derived state", func() {
-			So(forecaster.state.Ready, ShouldBeFalse)
-			So(datura.Peek[float64](fresh, "output", "value"), ShouldEqual, 0)
+			So(forecaster.Scale(), ShouldEqual, 1)
+			So(datura.Peek[float64](fresh, "output", "value"), ShouldEqual, 1)
 		})
 	})
 }
@@ -143,6 +143,30 @@ func TestForecaster_learningComposition(testingTB *testing.T) {
 
 		Convey("It should raise learned scale", func() {
 			So(forecaster.Scale(), ShouldBeGreaterThan, 1)
+		})
+	})
+
+	Convey("Given zero actual with non-zero predicted", testingTB, func() {
+		forecaster := Forecast(datura.Acquire("forecast-config", datura.APPJSON))
+		artifact := datura.Acquire("test", datura.APPJSON).
+			Poke(10, "sample").
+			Poke(0, "paired")
+		err := transport.NewFlipFlop(artifact, forecaster)
+
+		Convey("It should return a validation error", func() {
+			So(err, ShouldNotBeNil)
+		})
+	})
+
+	Convey("Given zero predicted", testingTB, func() {
+		forecaster := Forecast(datura.Acquire("forecast-config", datura.APPJSON))
+		artifact := datura.Acquire("test", datura.APPJSON).
+			Poke(0, "sample").
+			Poke(10, "paired")
+		err := transport.NewFlipFlop(artifact, forecaster)
+
+		Convey("It should return a parse error", func() {
+			So(err, ShouldNotBeNil)
 		})
 	})
 }

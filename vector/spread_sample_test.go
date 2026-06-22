@@ -14,17 +14,15 @@ func ignitionSpreadConfig() *datura.Artifact {
 		Poke(0.0, "stageIndex").
 		Poke([]string{"rvol", "precursor", "compression"}, "order").
 		Poke(map[string]any{
-			"rvol": map[string]any{
-				"input":       "volume",
-				"transform":   "deltaPositive",
-				"shortWindow": 0.0,
-				"longWindow":  0.0,
-				"outputKey":   "rvol",
-			},
-			"spread": map[string]any{
-				"inputs": []string{"bid", "ask"},
-			},
-		}, "inputs")
+			"input":       "volume",
+			"transform":   "deltaPositive",
+			"shortWindow": 0.0,
+			"longWindow":  0.0,
+			"outputKey":   "rvol",
+		}, "rvol").
+		Poke(map[string]any{
+			"inputs": []string{"bid", "ask"},
+		}, "spread")
 }
 
 func TestSpreadSampleAfterMeanMedianRatio(testingTB *testing.T) {
@@ -49,7 +47,7 @@ func TestSpreadSampleAfterMeanMedianRatio(testingTB *testing.T) {
 func TestSpreadSampleRead(testingTB *testing.T) {
 	Convey("Given bid and ask feature columns", testingTB, func() {
 		config := datura.Acquire("spread-sample-config", datura.APPJSON).
-			Poke([]string{"bid", "ask"}, "inputs", "spread", "inputs")
+			Poke([]string{"bid", "ask"}, "spread", "inputs")
 
 		stage := NewSpreadSample(config)
 		frame := datura.Acquire("spread-sample-frame", datura.APPJSON)

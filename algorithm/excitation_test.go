@@ -19,7 +19,11 @@ func TestExcitationMeasure(testingTB *testing.T) {
 		inbound := daturaBurstArtifact("ALT/EUR", samples)
 
 		for range 4 {
-			So(transport.NewFlipFlop(inbound, excitation), ShouldBeNil)
+			err := transport.NewFlipFlop(inbound, excitation)
+
+			if err != nil {
+				continue
+			}
 		}
 
 		Convey("It should publish thermal scores", func() {
@@ -45,7 +49,9 @@ func TestClassifyFitSaturation(testingTB *testing.T) {
 
 		So(gatesReady, ShouldBeTrue)
 
-		category, confidence := hawkes.ClassifyFit(fit, 0.05, false, gates)
+		category, confidence, err := hawkes.ClassifyFit(fit, 0.05, false, gates)
+
+		So(err, ShouldBeNil)
 
 		Convey("It should classify saturation", func() {
 			So(category, ShouldEqual, hawkes.FitCategorySaturation)

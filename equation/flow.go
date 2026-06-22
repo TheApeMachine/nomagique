@@ -43,7 +43,7 @@ func (flow *Flow) Read(p []byte) (int, error) {
 	batch := Features(state)
 
 	if len(batch) < flowPayloadHeader+2 {
-		return emitZero(state, p)
+		return rejectStage(state, "equation: invalid stage input")
 	}
 
 	buyNotional := batch[0]
@@ -56,7 +56,7 @@ func (flow *Flow) Read(p []byte) (int, error) {
 	gross := buyNotional + sellNotional
 
 	if gross <= 0 || tradeCount < 2 || len(prices) < 2 {
-		return emitZero(state, p)
+		return rejectStage(state, "equation: invalid stage input")
 	}
 
 	net := buyNotional - sellNotional
@@ -65,12 +65,21 @@ func (flow *Flow) Read(p []byte) (int, error) {
 	lastPrice := prices[len(prices)-1]
 
 	if firstPrice <= 0 || lastPrice <= 0 {
-		return emitZero(state, p)
+		return rejectStage(state, "equation: invalid stage input")
+	}
+
+	if medianNotional <= 0 || math.IsNaN(medianNotional) || math.IsInf(medianNotional, 0) {
+		return rejectStage(state, "equation: medianNotional must be positive")
 	}
 
 	priceResponseBps := math.Abs(lastPrice/firstPrice-1) * basisPointsPerUnit
-	flowPressure := gross / positiveFloor(medianNotional)
-	impactEfficiency := priceResponseBps / positiveFloor(flowPressure)
+	flowPressure := gross / medianNotional
+
+	if flowPressure <= 0 || math.IsNaN(flowPressure) || math.IsInf(flowPressure, 0) {
+		return rejectStage(state, "equation: invalid stage input")
+	}
+
+	impactEfficiency := priceResponseBps / flowPressure
 	priceDrift := lastPrice - firstPrice
 	flatThreshold := medianAbsoluteMove(prices)
 	driveThreshold := 1 / math.Sqrt(float64(tradeCount))
@@ -135,14 +144,6 @@ const (
 	flowCategoryStarvation = 4
 	basisPointsPerUnit     = 10000
 )
-
-func positiveFloor(value float64) float64 {
-	if value > 0 && !math.IsNaN(value) && !math.IsInf(value, 0) {
-		return value
-	}
-
-	return math.SmallestNonzeroFloat64
-}
 
 func medianAbsoluteMove(prices []float64) float64 {
 	moves := priceMoves(prices)

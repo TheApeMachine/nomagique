@@ -30,12 +30,13 @@ func TestZip_Read(testingTB *testing.T) {
 	cases := []struct {
 		name      string
 		streams   [][]float64
+		wantErr   bool
 		wantRows  float64
 		wantTable bool
 	}{
-		{name: "empty", streams: nil, wantRows: 0},
-		{name: "empty row", streams: [][]float64{{}}, wantRows: 0},
-		{name: "mismatched", streams: [][]float64{{1, 2}, {1}}, wantRows: 0},
+		{name: "empty", streams: nil, wantErr: true},
+		{name: "empty row", streams: [][]float64{{}}, wantErr: true},
+		{name: "mismatched", streams: [][]float64{{1, 2}, {1}}, wantErr: true},
 		{name: "valid", streams: [][]float64{{1, 2}, {3, 4}}, wantRows: 2, wantTable: true},
 	}
 
@@ -46,6 +47,11 @@ func TestZip_Read(testingTB *testing.T) {
 			zipStage := NewZip(datura.Acquire("zip-config", datura.APPJSON))
 			artifact := zipInbound(testCase.streams)
 			err := transport.NewFlipFlop(artifact, zipStage)
+
+			if testCase.wantErr {
+				So(err, ShouldNotBeNil)
+				return
+			}
 
 			So(err, ShouldBeNil)
 			So(datura.Peek[float64](artifact, "output", "value"), ShouldEqual, testCase.wantRows)
@@ -62,8 +68,8 @@ func TestZip_Read(testingTB *testing.T) {
 func TestNodeRingZip_Read(testingTB *testing.T) {
 	Convey("Given aligned node observations through NodeRing and Zip", testingTB, func() {
 		config := datura.Acquire("node-ring-config", datura.APPJSON).
-			Poke(4, "config", "nodeCount").
-			Poke(8, "config", "capacity")
+			Poke(4, "nodeCount").
+			Poke(8, "capacity")
 		pipeline := nomagique.Number(
 			NewNodeRing(config),
 			NewZip(datura.Acquire("zip-config", datura.APPJSON)),
@@ -90,8 +96,8 @@ func TestNodeRingZip_Read(testingTB *testing.T) {
 
 	Convey("Given partial node inputs", testingTB, func() {
 		config := datura.Acquire("node-ring-config", datura.APPJSON).
-			Poke(4, "config", "nodeCount").
-			Poke(8, "config", "capacity")
+			Poke(4, "nodeCount").
+			Poke(8, "capacity")
 		nodeRing := NewNodeRing(config)
 		artifact := datura.Acquire("node-ring-inbound", datura.APPJSON).
 			Poke([]float64{1}, "batch")

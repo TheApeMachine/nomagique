@@ -1,11 +1,13 @@
 package causal
 
 import (
+	"fmt"
 	"math"
 	"strconv"
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/structure"
+	"github.com/theapemachine/errnie"
 )
 
 /*
@@ -54,9 +56,11 @@ func (nodeRing *NodeRing) Read(p []byte) (int, error) {
 	if len(row) == nodeCount {
 		for nodeIndex, sample := range row {
 			if math.IsNaN(sample) || math.IsInf(sample, 0) {
-				nodeRing.copyStreamsTo(state)
-				state.MergeOutput("value", 0.0)
-				return state.Read(p)
+				return 0, errnie.Error(errnie.Err(
+					errnie.Validation,
+					"causal node-ring: sample is non-finite",
+					fmt.Errorf("causal: node %d sample is non-finite", nodeIndex),
+				))
 			}
 
 			stream := nodeRing.loadStream(nodeIndex, capacity)
@@ -153,7 +157,7 @@ func (nodeRing *NodeRing) persistStream(nodeIndex int, stream *structure.ListRin
 }
 
 func (nodeRing *NodeRing) nodeCountFromArtifact() int {
-	nodeCount := int(datura.Peek[float64](nodeRing.artifact, "config", "nodeCount"))
+	nodeCount := int(datura.Peek[float64](nodeRing.artifact, "nodeCount"))
 
 	if nodeCount <= 0 {
 		nodeCount = 1
@@ -163,7 +167,7 @@ func (nodeRing *NodeRing) nodeCountFromArtifact() int {
 }
 
 func (nodeRing *NodeRing) capacityFromArtifact() int {
-	capacity := int(datura.Peek[float64](nodeRing.artifact, "config", "capacity"))
+	capacity := int(datura.Peek[float64](nodeRing.artifact, "capacity"))
 
 	if capacity <= 0 {
 		capacity = 1

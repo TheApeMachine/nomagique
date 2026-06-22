@@ -5,6 +5,7 @@ import (
 	"sort"
 
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/errnie"
 )
 
 /*
@@ -57,33 +58,22 @@ func (median *Median) Read(payload []byte) (int, error) {
 			peerSamples = append(peerSamples, peerSample)
 		}
 
-		value := 0.0
-
 		if len(peerSamples) > 0 {
-			value = MedianOf(peerSamples)
+			state.MergeOutput("value", MedianOf(peerSamples))
+			state.Merge("root", "output")
+			state.Merge("inputs", []string{"value"})
+			return state.Read(payload)
 		}
-
-		state.MergeOutput("value", value)
-		state.Merge("root", "output")
-		state.Merge("inputs", []string{"value"})
-		return state.Read(payload)
 	}
 
 	sample := datura.Peek[float64](state, "sample")
 
-	if datura.Peek[float64](median.artifact, "non_finite") != 0 {
-		state.MergeOutput("value", 0)
-		state.Merge("root", "output")
-		state.Merge("inputs", []string{"value"})
-		return state.Read(payload)
-	}
-
 	if math.IsNaN(sample) || math.IsInf(sample, 0) {
-		median.artifact.Poke(float64(1), "non_finite")
-		state.MergeOutput("value", 0)
-		state.Merge("root", "output")
-		state.Merge("inputs", []string{"value"})
-		return state.Read(payload)
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"median: sample is non-finite",
+			nil,
+		))
 	}
 
 	history := datura.Peek[[]float64](median.artifact, "history")

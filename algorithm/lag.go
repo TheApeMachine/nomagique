@@ -7,14 +7,10 @@ import (
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/nomagique/correlation"
-	"gonum.org/v1/gonum/stat"
+	"github.com/theapemachine/nomagique/statistic"
 )
 
-const (
-	lagPayloadFields = 11
-	minLagSamples    = 16
-	maxLagBars       = 12
-)
+const lagPayloadFields = 11
 
 /*
 LagOutcome holds lead-lag classification scores.
@@ -205,9 +201,10 @@ func (lag *Lag) evaluateFollower(
 }
 
 func (lag *Lag) lagOutcome(price float64, lagBars int, corr float64) LagOutcome {
+	maxBars := lagMaxBars()
 	lagMagnitude := math.Abs(float64(lagBars))
-	lagFraction := lagMagnitude / float64(maxLagBars)
-	threshold := minLagFraction()
+	lagFraction := lagMagnitude / float64(maxBars)
+	threshold := minLagFraction(maxBars)
 
 	category := 2
 	inefficientScore := 0.0
@@ -236,7 +233,7 @@ func (lag *Lag) lagOutcome(price float64, lagBars int, corr float64) LagOutcome 
 
 func (lag *Lag) contemporaneousOutcome(price, corr float64, sampleCount int) LagOutcome {
 	if sampleCount <= 0 {
-		sampleCount = minLagSamples
+		return LagOutcome{}
 	}
 
 	significance := 1 / (2 * math.Sqrt(float64(sampleCount)))
@@ -267,8 +264,43 @@ func (lag *Lag) contemporaneousOutcome(price, corr float64, sampleCount int) Lag
 	}
 }
 
-func minLagFraction() float64 {
-	return math.Ceil(float64(maxLagBars)/2) / float64(maxLagBars)
+func minLagFraction(maxBars int) float64 {
+	if maxBars <= 0 {
+		return 1
+	}
+
+	return math.Ceil(float64(maxBars)/2) / float64(maxBars)
+}
+
+func lagMinSamples() int {
+	_, longWindow := statistic.RollingWindows(nil, 0, 0)
+
+	return longWindow
+}
+
+func lagMaxBars() int {
+	_, longWindow := statistic.RollingWindows(nil, 0, 0)
+
+	return longWindow
+}
+
+func maxLagBarsForSeries(sampleCount int) int {
+	if sampleCount <= 0 {
+		return lagMaxBars()
+	}
+
+	_, longWindow := statistic.RollingWindows(make([]float64, sampleCount), 0, 0)
+	halfSeries := sampleCount / 2
+
+	if longWindow > halfSeries {
+		longWindow = halfSeries
+	}
+
+	if longWindow < 1 {
+		longWindow = 1
+	}
+
+	return longWindow
 }
 
 func (lag *Lag) InefficientReading() *LagReading {
@@ -378,7 +410,7 @@ func CrossLagScore(
 	anchorSeries, followerSeries []correlation.Sample,
 	barInterval time.Duration,
 ) (lagBars int, corr float64, ok bool) {
-	if len(anchorSeries) < minLagSamples || len(followerSeries) < minLagSamples {
+	if len(anchorSeries) < lagMinSamples() || len(followerSeries) < lagMinSamples() {
 		return 0, 0, false
 	}
 
@@ -387,6 +419,8 @@ func CrossLagScore(
 	if len(followerSeries) < sampleCount {
 		sampleCount = len(followerSeries)
 	}
+
+	maxLagBars := maxLagBarsForSeries(sampleCount)
 
 	baseline := 0.0
 
@@ -528,7 +562,8 @@ func (baseline *MoveBaseline) pathMoveFloor() float64 {
 
 	sortedMoves := append([]float64(nil), baseline.pathMoves...)
 	sort.Float64s(sortedMoves)
-	floor := stat.Quantile(0.1, stat.LinInterp, sortedMoves, nil)
+	lowerRank := 1 / float64(len(sortedMoves))
+	floor := statistic.QuantileOf(lowerRank, sortedMoves)
 
 	if floor > 0 {
 		return floor

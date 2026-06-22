@@ -68,32 +68,37 @@ func (hayashi *HayashiYoshida) Read(p []byte) (int, error) {
 				state.Merge("inputs", []string{"value"})
 				return state.Read(p)
 			}
+
+			return 0, errnie.Error(errnie.Err(
+				errnie.Validation, "unable to compute Hayashi-Yoshida correlation",
+				HayashiError(HayashiErrorRequirePairedSamples),
+			))
 		}
 
-		errnie.Err(
+		return 0, errnie.Error(errnie.Err(
 			errnie.Validation, "unable to compute Hayashi-Yoshida correlation",
 			HayashiError(HayashiErrorRequirePairedSamples),
-		)
+		))
 	}
 
 	if count > 0 && count < 2 {
-		errnie.Err(
+		return 0, errnie.Error(errnie.Err(
 			errnie.Validation, "unable to compute Hayashi-Yoshida correlation",
 			HayashiError(HayashiErrorRequireAtLeastTwoInputs),
-		)
+		))
 	}
 
 	if count%2 != 0 && count > 0 {
-		errnie.Err(
+		return 0, errnie.Error(errnie.Err(
 			errnie.Validation, "unable to compute Hayashi-Yoshida correlation",
 			HayashiError(HayashiErrorRequireEqualLength),
-		)
+		))
 	}
 
-	state.MergeOutput("value", 0.0)
-	state.Merge("root", "output")
-	state.Merge("inputs", []string{"value"})
-	return state.Read(p)
+	return 0, errnie.Error(errnie.Err(
+		errnie.Validation, "unable to compute Hayashi-Yoshida correlation",
+		HayashiError(HayashiErrorRequireAtLeastTwoInputs),
+	))
 }
 
 func (hayashi *HayashiYoshida) Close() error {

@@ -14,13 +14,11 @@ func TestLogReturnRead(t *testing.T) {
 			Poke([]string{"rvol", "precursor"}, "order").
 			Poke(1.0, "stageIndex").
 			Poke(map[string]any{
-				"precursor": map[string]any{
-					"input":      "last",
-					"returnLag":  1.0,
-					"longWindow": 5.0,
-					"outputKey":  "precursor",
-				},
-			}, "inputs")
+				"input":      "last",
+				"returnLag":  1.0,
+				"longWindow": 5.0,
+				"outputKey":  "precursor",
+			}, "precursor")
 
 		stage := NewLogReturn(config)
 		var lastArtifact *datura.Artifact
@@ -53,11 +51,9 @@ func BenchmarkLogReturnRead(b *testing.B) {
 	config := datura.Acquire("log-return-bench", datura.APPJSON).
 		Poke([]string{"rvol", "precursor"}, "order").
 		Poke(map[string]any{
-			"precursor": map[string]any{
-				"returnLag":  1.0,
-				"longWindow": 5.0,
-			},
-		}, "inputs")
+			"returnLag":  1.0,
+			"longWindow": 5.0,
+		}, "precursor")
 
 	stage := NewLogReturn(config)
 

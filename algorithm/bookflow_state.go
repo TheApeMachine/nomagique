@@ -1,6 +1,7 @@
 package algorithm
 
 import (
+	"fmt"
 	"io"
 	"math"
 	"time"
@@ -40,20 +41,34 @@ func ToxicCancelEvidence(
 	proximityPct float64,
 	age time.Duration,
 	maxAge time.Duration,
-) float64 {
+) (float64, error) {
 	if sizeThreshold <= 0 || qty < sizeThreshold {
-		return 0
+		return 0, fmt.Errorf("algorithm: toxic cancel qty below size threshold")
 	}
 
 	if proximityPct <= 0 || distancePct > proximityPct || maxAge <= 0 || age > maxAge {
-		return 0
+		return 0, fmt.Errorf("algorithm: toxic cancel proximity or age gate failed")
 	}
 
-	sizeEvidence := probability.CompetitionMargin(qty-sizeThreshold, sizeThreshold)
-	proximityEvidence := probability.CompetitionMargin(proximityPct-distancePct, proximityPct)
-	ageEvidence := probability.CompetitionMargin(float64(maxAge-age), float64(maxAge))
+	sizeEvidence, err := probability.CompetitionMargin(qty-sizeThreshold, sizeThreshold)
 
-	return probability.EvidenceGeomean(sizeEvidence, proximityEvidence, ageEvidence)
+	if err != nil {
+		return 0, err
+	}
+
+	proximityEvidence, err := probability.CompetitionMargin(proximityPct-distancePct, proximityPct)
+
+	if err != nil {
+		return 0, err
+	}
+
+	ageEvidence, err := probability.CompetitionMargin(float64(maxAge-age), float64(maxAge))
+
+	if err != nil {
+		return 0, err
+	}
+
+	return probability.EvidenceGeomean(sizeEvidence, proximityEvidence, ageEvidence), nil
 }
 
 /*
@@ -66,20 +81,34 @@ func ToxicChurnEvidence(
 	sizeThreshold float64,
 	distancePct float64,
 	proximityPct float64,
-) float64 {
+) (float64, error) {
 	if ratio <= churnGate || sizeThreshold <= 0 || addVol < sizeThreshold {
-		return 0
+		return 0, fmt.Errorf("algorithm: toxic churn ratio or size gate failed")
 	}
 
 	if proximityPct <= 0 || distancePct > proximityPct {
-		return 0
+		return 0, fmt.Errorf("algorithm: toxic churn proximity gate failed")
 	}
 
-	ratioEvidence := probability.CompetitionMargin(ratio-churnGate, churnGate)
-	sizeEvidence := probability.CompetitionMargin(addVol-sizeThreshold, sizeThreshold)
-	proximityEvidence := probability.CompetitionMargin(proximityPct-distancePct, proximityPct)
+	ratioEvidence, err := probability.CompetitionMargin(ratio-churnGate, churnGate)
 
-	return probability.EvidenceGeomean(ratioEvidence, sizeEvidence, proximityEvidence)
+	if err != nil {
+		return 0, err
+	}
+
+	sizeEvidence, err := probability.CompetitionMargin(addVol-sizeThreshold, sizeThreshold)
+
+	if err != nil {
+		return 0, err
+	}
+
+	proximityEvidence, err := probability.CompetitionMargin(proximityPct-distancePct, proximityPct)
+
+	if err != nil {
+		return 0, err
+	}
+
+	return probability.EvidenceGeomean(ratioEvidence, sizeEvidence, proximityEvidence), nil
 }
 
 /*

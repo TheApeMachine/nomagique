@@ -6,8 +6,6 @@ import (
 	"github.com/theapemachine/nomagique/statistic"
 )
 
-const minFitGateHistory = 4
-
 /*
 FitGates carries series-local saturation and frenzy thresholds derived from fit history.
 */
@@ -27,11 +25,15 @@ func (gates FitGates) Ready() bool {
 FitGatesFromHistory derives saturation and frenzy gates from observed fit statistics.
 */
 func FitGatesFromHistory(spectralRadii, asymmetries []float64) (FitGates, bool) {
-	if len(spectralRadii) < minFitGateHistory || len(asymmetries) < minFitGateHistory {
+	_, longWindow := statistic.RollingWindows(make([]float64, len(spectralRadii)), 0, 0)
+
+	if len(spectralRadii) < longWindow || len(asymmetries) < longWindow {
 		return FitGates{}, false
 	}
 
-	saturationRadius := quantileFromHistory(spectralRadii, 0.9)
+	upperRank := 1 - 1/float64(longWindow)
+	lowerRank := 1 / float64(longWindow)
+	saturationRadius := quantileFromHistory(spectralRadii, upperRank)
 
 	absAsymmetries := make([]float64, len(asymmetries))
 
@@ -39,7 +41,7 @@ func FitGatesFromHistory(spectralRadii, asymmetries []float64) (FitGates, bool) 
 		absAsymmetries[index] = math.Abs(asymmetry)
 	}
 
-	frenzyAsymmetry := quantileFromHistory(absAsymmetries, 0.25)
+	frenzyAsymmetry := quantileFromHistory(absAsymmetries, lowerRank)
 
 	if saturationRadius <= 0 || frenzyAsymmetry <= 0 {
 		return FitGates{}, false

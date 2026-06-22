@@ -1,7 +1,10 @@
 package causal
 
 import (
+	"errors"
+
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/errnie"
 )
 
 /*
@@ -39,15 +42,18 @@ func (doStage *Do) Read(p []byte) (int, error) {
 	rows, ok := tableRows(state)
 
 	if !ok {
-		state.MergeOutput("value", 0.0)
-		return state.Read(p)
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"causal do: missing table rows",
+			errors.New("causal: table rows missing"),
+		))
 	}
 
-	target := int(datura.Peek[float64](doStage.artifact, "config", "target"))
-	treatment := int(datura.Peek[float64](doStage.artifact, "config", "treatment"))
-	level := datura.Peek[float64](doStage.artifact, "config", "level")
-	controls := intSlice(datura.Peek[[]float64](doStage.artifact, "config", "controls"))
-	minRows := int(datura.Peek[float64](doStage.artifact, "config", "minHistory"))
+	target := int(datura.Peek[float64](doStage.artifact, "target"))
+	treatment := int(datura.Peek[float64](doStage.artifact, "treatment"))
+	level := datura.Peek[float64](doStage.artifact, "level")
+	controls := intSlice(datura.Peek[[]float64](doStage.artifact, "controls"))
+	minRows := int(datura.Peek[float64](doStage.artifact, "minHistory"))
 
 	if minRows <= 0 {
 		minRows = len(rows)
@@ -56,15 +62,21 @@ func (doStage *Do) Read(p []byte) (int, error) {
 	table, err := newNodeTable(rows, target, minRows)
 
 	if err != nil {
-		state.MergeOutput("value", 0.0)
-		return state.Read(p)
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"causal do: table construction failed",
+			err,
+		))
 	}
 
 	expectation, err := doExpectation(table, treatment, level, controls...)
 
 	if err != nil {
-		state.MergeOutput("value", 0.0)
-		return state.Read(p)
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"causal do: interventional expectation failed",
+			err,
+		))
 	}
 
 	state.MergeOutput("value", expectation)

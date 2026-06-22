@@ -38,7 +38,7 @@ func observeCUSUMReady(state *CUSUMState, sample float64) float64 {
 
 	delta := absExact(sample - state.Prev)
 	state.Rate = delta / span
-	drift := 1 / span
+	drift := state.Rate * span / 2
 	excess := sample - state.Target - drift
 
 	if excess > 0 {

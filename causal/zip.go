@@ -1,9 +1,11 @@
 package causal
 
 import (
+	"errors"
 	"strconv"
 
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/errnie"
 )
 
 /*
@@ -45,18 +47,29 @@ func (zipStage *Zip) Read(p []byte) (int, error) {
 		return 0, err
 	}
 
+	if rows, tableOK := tableRows(state); tableOK {
+		state.MergeOutput("value", float64(len(rows)))
+		return state.Read(p)
+	}
+
 	streams, ok := zipStage.streamsFromPayload(state)
 
 	if !ok {
-		state.MergeOutput("value", 0.0)
-		return state.Read(p)
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"causal zip: missing node streams",
+			errors.New("causal: node streams missing"),
+		))
 	}
 
 	rows, rowsOK := zipStage.transpose(streams)
 
 	if !rowsOK {
-		state.MergeOutput("value", 0.0)
-		return state.Read(p)
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"causal zip: stream transpose failed",
+			errors.New("causal: aligned stream transpose failed"),
+		))
 	}
 
 	rowCount := len(rows)

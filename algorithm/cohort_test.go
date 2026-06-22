@@ -9,10 +9,11 @@ import (
 	"github.com/theapemachine/nomagique/tests"
 )
 
-const cohortPayloadHeader = 5
+const cohortPayloadHeader = 6
 
 func cohortBatch(
 	window int,
+	barSpacingSeconds float64,
 	symbolReturns, marketReturns, peerCorrelations, peerEnergies []float64,
 ) []float64 {
 	batch := make(
@@ -27,6 +28,7 @@ func cohortBatch(
 		float64(len(peerCorrelations)),
 		float64(len(peerEnergies)),
 	)
+	batch = append(batch, barSpacingSeconds)
 	batch = append(batch, symbolReturns...)
 	batch = append(batch, marketReturns...)
 	batch = append(batch, peerCorrelations...)
@@ -51,6 +53,7 @@ func TestCohort_evaluate(testingTB *testing.T) {
 			name: "noise low energy",
 			batch: cohortBatch(
 				3,
+				60,
 				[]float64{0.01, 0.02, 0.01},
 				[]float64{0.01, 0.02, 0.01},
 				[]float64{0.5, 0.6, 0.7, 0.8},
@@ -63,6 +66,7 @@ func TestCohort_evaluate(testingTB *testing.T) {
 			name: "herd high correlation and energy",
 			batch: cohortBatch(
 				4,
+				60,
 				[]float64{0.5, 0.6, 0.7, 0.8},
 				[]float64{0.4, 0.5, 0.6, 0.7},
 				[]float64{0.1, 0.2, 0.3, 0.4},
@@ -75,6 +79,7 @@ func TestCohort_evaluate(testingTB *testing.T) {
 			name: "stress negative correlation high energy",
 			batch: cohortBatch(
 				4,
+				60,
 				[]float64{-0.8, -0.7, -0.9, -0.85},
 				[]float64{0.8, 0.7, 0.9, 0.85},
 				[]float64{0.1, 0.2, -0.1, 0.05},
@@ -86,7 +91,7 @@ func TestCohort_evaluate(testingTB *testing.T) {
 		{
 			name: "mismatched segment length",
 			batch: append(
-				cohortBatch(3, []float64{1, 2}, []float64{1, 2}, []float64{0.1, 0.2}, []float64{0.1, 0.2}),
+				cohortBatch(3, 60, []float64{1, 2}, []float64{1, 2}, []float64{0.1, 0.2}, []float64{0.1, 0.2}),
 				99,
 			),
 			eligible: false,

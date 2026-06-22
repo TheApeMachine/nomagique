@@ -58,8 +58,8 @@ func (logReturn *LogReturn) Read(payload []byte) (int, error) {
 		return state.Read(payload)
 	}
 
-	returnLag := int(datura.Peek[float64](logReturn.artifact, "inputs", stageKey, "returnLag"))
-	longHint := int(datura.Peek[float64](logReturn.artifact, "inputs", stageKey, "longWindow"))
+	returnLag := int(datura.Peek[float64](logReturn.artifact, stageKey, "returnLag"))
+	longHint := int(datura.Peek[float64](logReturn.artifact, stageKey, "longWindow"))
 
 	if returnLag <= 0 {
 		returnLag = 1
@@ -100,7 +100,7 @@ func (logReturn *LogReturn) stageKey() string {
 	}
 
 	order := datura.Peek[[]string](logReturn.artifact, "order")
-	stageIndex := int(datura.Peek[float64](logReturn.artifact, "inputs", "precursor", "stageIndex"))
+	stageIndex := int(datura.Peek[float64](logReturn.artifact, "precursor", "stageIndex"))
 
 	if stageIndex <= 0 {
 		stageIndex = int(datura.Peek[float64](logReturn.artifact, "stageIndex"))

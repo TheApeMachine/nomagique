@@ -4,6 +4,7 @@ import (
 	"math"
 
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/errnie"
 )
 
 /*
@@ -49,13 +50,21 @@ func (rank *Rank) Read(payload []byte) (int, error) {
 	}
 
 	if !attributeKeyPresent(state, "sample") {
-		return state.Read(payload)
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"rank: sample required",
+			nil,
+		))
 	}
 
 	sample := datura.Peek[float64](state, "sample")
 
 	if math.IsNaN(sample) || math.IsInf(sample, 0) {
-		return state.Read(payload)
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"rank: sample is non-finite",
+			nil,
+		))
 	}
 
 	rankState := RankState{

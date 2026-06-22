@@ -16,9 +16,9 @@ func graphConfig(
 	controls []int,
 ) *datura.Artifact {
 	config := datura.Acquire("graph-config", datura.APPJSON).
-		Poke(float64(len(parents)), "config", "graphNodeCount").
-		Poke(float64(treatment), "config", "treatment").
-		Poke(float64(target), "config", "target")
+		Poke(float64(len(parents)), "graphNodeCount").
+		Poke(float64(treatment), "treatment").
+		Poke(float64(target), "target")
 
 	for node, parentList := range parents {
 		parentValues := make([]float64, len(parentList))
@@ -27,7 +27,7 @@ func graphConfig(
 			parentValues[index] = float64(parent)
 		}
 
-		config.Poke(parentValues, "config", "graphParent", strconv.Itoa(node))
+		config.Poke(parentValues, "graphParent", strconv.Itoa(node))
 	}
 
 	if len(controls) > 0 {
@@ -37,7 +37,7 @@ func graphConfig(
 			controlValues[index] = float64(control)
 		}
 
-		config.Poke(controlValues, "config", "controls")
+		config.Poke(controlValues, "controls")
 	}
 
 	return config

@@ -45,10 +45,8 @@ func TestCoupling_Observe(testingTB *testing.T) {
 		artifact := datura.Acquire("test", datura.APPJSON)
 		err := transport.NewFlipFlop(artifact, stage)
 
-		So(err, ShouldBeNil)
-
-		Convey("It should return zero output", func() {
-			So(datura.Peek[float64](artifact, "output", "value"), ShouldEqual, 0)
+		Convey("It should return a validation error", func() {
+			So(err, ShouldNotBeNil)
 		})
 	})
 
@@ -61,15 +59,15 @@ func TestCoupling_Observe(testingTB *testing.T) {
 
 		So(err, ShouldBeNil)
 
-		before := datura.Peek[float64](artifact, "output", "value")
+		_ = datura.Peek[float64](artifact, "output", "value")
 
 		fresh := datura.Acquire("test", datura.APPJSON)
 		err = transport.NewFlipFlop(fresh, stage)
 
-		So(err, ShouldBeNil)
+		So(err, ShouldNotBeNil)
 
-		Convey("It should leave output unchanged", func() {
-			So(datura.Peek[float64](fresh, "output", "value"), ShouldEqual, before)
+		Convey("It should not publish output on empty input", func() {
+			So(datura.Peek[float64](fresh, "output", "value"), ShouldEqual, 0)
 		})
 	})
 }
@@ -85,13 +83,15 @@ func TestCoupling_Reset(testingTB *testing.T) {
 		So(err, ShouldBeNil)
 		So(stage.Reset(), ShouldBeNil)
 
-		fresh := datura.Acquire("test", datura.APPJSON)
+		fresh := datura.Acquire("test", datura.APPJSON).
+			Poke(2, "sample").
+			Poke(2, "paired")
 		err = transport.NewFlipFlop(fresh, stage)
 
 		So(err, ShouldBeNil)
 
-		Convey("It should clear output", func() {
-			So(datura.Peek[float64](fresh, "output", "value"), ShouldEqual, 0)
+		Convey("It should compute fresh coupling after reset", func() {
+			So(datura.Peek[float64](fresh, "output", "value"), ShouldEqual, 1)
 		})
 	})
 }
@@ -194,13 +194,13 @@ func TestVelocity_Reset(testingTB *testing.T) {
 		So(err, ShouldBeNil)
 		So(stage.Reset(), ShouldBeNil)
 
-		fresh := datura.Acquire("test", datura.APPJSON)
+		fresh := datura.Acquire("test", datura.APPJSON).Poke(1, "sample")
 		err = transport.NewFlipFlop(fresh, stage)
 
 		So(err, ShouldBeNil)
 
 		Convey("It should clear derived state", func() {
-			So(stage.ready, ShouldBeFalse)
+			So(stage.ready, ShouldBeTrue)
 			So(datura.Peek[float64](fresh, "output", "value"), ShouldEqual, 0)
 		})
 	})

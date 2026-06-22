@@ -45,11 +45,17 @@ func (kl *KLDivergence) Read(payload []byte) (int, error) {
 	expectedSample := datura.Peek[float64](state, "paired")
 
 	if math.IsNaN(observedSample) || math.IsInf(observedSample, 0) {
-		return state.Read(payload)
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation, "unable to compute KL divergence",
+			KLError(KLErrorNonFiniteObserved),
+		))
 	}
 
 	if math.IsNaN(expectedSample) || math.IsInf(expectedSample, 0) {
-		return state.Read(payload)
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation, "unable to compute KL divergence",
+			KLError(KLErrorNonFiniteExpected),
+		))
 	}
 
 	observed := datura.Peek[[]float64](kl.artifact, "history")
@@ -61,41 +67,29 @@ func (kl *KLDivergence) Read(payload []byte) (int, error) {
 	kl.artifact.Poke(expected, "pairedHistory")
 
 	if len(observed) < 2 || len(expected) < 2 {
-		errnie.Error(errnie.Err(
+		return 0, errnie.Error(errnie.Err(
 			errnie.Validation, "unable to compute KL divergence",
 			KLError(KLErrorRequireAtLeastTwoInputs),
 		))
-
-		state.MergeOutput("value", 0.0)
-		state.Merge("root", "output")
-		state.Merge("inputs", []string{"value"})
-		return state.Read(payload)
 	}
 
 	if len(observed) != len(expected) {
-		errnie.Error(errnie.Err(
+		return 0, errnie.Error(errnie.Err(
 			errnie.Validation, "unable to compute KL divergence",
 			KLError(KLErrorRequireEqualLength),
 		))
-
-		state.MergeOutput("value", 0.0)
-		state.Merge("root", "output")
-		state.Merge("inputs", []string{"value"})
-		return state.Read(payload)
 	}
 
-	divergence, ok := kl.divergence(observed, expected)
+	divergence, err := kl.divergence(observed, expected)
 
-	if !ok {
-		state.MergeOutput("value", 0.0)
-		state.Merge("root", "output")
-		state.Merge("inputs", []string{"value"})
-		return state.Read(payload)
+	if err != nil {
+		return 0, err
 	}
 
 	state.MergeOutput("value", divergence)
 	state.Merge("root", "output")
 	state.Merge("inputs", []string{"value"})
+
 	return state.Read(payload)
 }
 
@@ -103,30 +97,26 @@ func (kl *KLDivergence) Close() error {
 	return nil
 }
 
-func (kl *KLDivergence) divergence(observed, expected []float64) (float64, bool) {
+func (kl *KLDivergence) divergence(observed, expected []float64) (float64, error) {
 	for _, value := range observed {
 		if math.IsNaN(value) || math.IsInf(value, 0) {
-			errnie.Error(errnie.Err(
+			return 0, errnie.Error(errnie.Err(
 				errnie.Validation, "unable to compute KL divergence",
 				KLError(KLErrorNonFiniteObserved),
 			))
-
-			return 0, false
 		}
 	}
 
 	for _, value := range expected {
 		if math.IsNaN(value) || math.IsInf(value, 0) {
-			errnie.Error(errnie.Err(
+			return 0, errnie.Error(errnie.Err(
 				errnie.Validation, "unable to compute KL divergence",
 				KLError(KLErrorNonFiniteExpected),
 			))
-
-			return 0, false
 		}
 	}
 
-	expectedSum := datura.Peek[float64](kl.artifact, "config", "expectedSum")
+	expectedSum := datura.Peek[float64](kl.artifact, "expectedSum")
 
 	if expectedSum <= 0 || math.IsNaN(expectedSum) || math.IsInf(expectedSum, 0) {
 		for index := range expected {
@@ -138,7 +128,10 @@ func (kl *KLDivergence) divergence(observed, expected []float64) (float64, bool)
 	floor := kl.probabilityFloor(observed, expected, width)
 
 	if expectedSum <= 0 {
-		expectedSum = floor
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation, "unable to compute KL divergence",
+			KLError(KLErrorNonFiniteExpected),
+		))
 	}
 
 	observedSum := 0.0
@@ -148,16 +141,17 @@ func (kl *KLDivergence) divergence(observed, expected []float64) (float64, bool)
 	}
 
 	if math.IsNaN(observedSum) || math.IsInf(observedSum, 0) {
-		errnie.Error(errnie.Err(
+		return 0, errnie.Error(errnie.Err(
 			errnie.Validation, "unable to compute KL divergence",
 			KLError(KLErrorNonFiniteObservedSum),
 		))
-
-		return 0, false
 	}
 
 	if observedSum <= 0 {
-		observedSum = floor
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation, "unable to compute KL divergence",
+			KLError(KLErrorNonFiniteObservedSum),
+		))
 	}
 
 	observedProbabilities := make([]float64, width)
@@ -191,24 +185,42 @@ func (kl *KLDivergence) divergence(observed, expected []float64) (float64, bool)
 		expectedProbabilities[index] = expectedProbability
 	}
 
-	divergence := stat.KullbackLeibler(observedProbabilities, expectedProbabilities)
+	observedTotal := 0.0
+	expectedTotal := 0.0
 
-	if math.IsNaN(divergence) || math.IsInf(divergence, 0) {
-		errnie.Error(errnie.Err(
+	for index := range width {
+		observedTotal += observedProbabilities[index]
+		expectedTotal += expectedProbabilities[index]
+	}
+
+	if observedTotal <= 0 || expectedTotal <= 0 {
+		return 0, errnie.Error(errnie.Err(
 			errnie.Validation, "unable to compute KL divergence",
 			KLError(KLErrorNonFiniteResult),
 		))
-
-		return 0, false
 	}
 
-	return divergence, true
+	for index := range width {
+		observedProbabilities[index] /= observedTotal
+		expectedProbabilities[index] /= expectedTotal
+	}
+
+	divergence := stat.KullbackLeibler(observedProbabilities, expectedProbabilities)
+
+	if math.IsNaN(divergence) || math.IsInf(divergence, 0) {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation, "unable to compute KL divergence",
+			KLError(KLErrorNonFiniteResult),
+		))
+	}
+
+	return divergence, nil
 }
 
 func (kl *KLDivergence) probabilityFloor(
 	observed, expected []float64, width int,
 ) float64 {
-	floor := datura.Peek[float64](kl.artifact, "config", "floor")
+	floor := datura.Peek[float64](kl.artifact, "floor")
 
 	if floor > 0 {
 		return floor
@@ -229,7 +241,7 @@ func (kl *KLDivergence) probabilityFloor(
 	scale := math.Max(observedSum, expectedSum) / float64(width)
 
 	if scale <= 0 || math.IsNaN(scale) || math.IsInf(scale, 0) {
-		return math.SmallestNonzeroFloat64
+		return 0
 	}
 
 	return math.Nextafter(0, scale)

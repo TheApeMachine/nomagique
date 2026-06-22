@@ -1,5 +1,7 @@
 package manifold
 
+import "math"
+
 /*
 Config holds the predictive-coding resonance hyperparameters for the GPU solver.
 
@@ -42,18 +44,21 @@ learning pace (alpha) and the physical depth of the network, identically to
 learning.AdaptiveResonanceConfig.
 */
 func AdaptiveConfig(alpha float64, arch []int) Config {
-	if alpha <= 0 || alpha > 1 {
-		alpha = 0.010
-	}
-
 	depth := len(arch)
+	depthFloat := float64(depth)
+
+	topDownInitMix := (depthFloat - 1.0) / depthFloat
+	temporalWeight := alpha / (alpha + 1.0/depthFloat)
+	earlyStopPatience := int(math.Max(1, math.Ceil(math.Sqrt(depthFloat))))
+	gradClip := alpha * depthFloat
+	stateClip := depthFloat / alpha
 
 	return Config{
 		MaxInferenceSteps:  depth * 8,
 		MinInferenceSteps:  depth * 2,
 		LrState:            alpha * 10.0,
 		EarlyStopTol:       1e-5,
-		EarlyStopPatience:  3,
+		EarlyStopPatience:  earlyStopPatience,
 		MonotoneStateSteps: true,
 		LineSearchHalvings: 3,
 
@@ -61,8 +66,8 @@ func AdaptiveConfig(alpha float64, arch []int) Config {
 		LrTemporal:    alpha * 2.0,
 		LrRecognition: alpha * 0.6,
 
-		TemporalWeight: 0.45,
-		TopDownInitMix: 0.55,
+		TemporalWeight: temporalWeight,
+		TopDownInitMix: topDownInitMix,
 
 		UsePrecision:  true,
 		PrecisionBeta: alpha,
@@ -73,7 +78,7 @@ func AdaptiveConfig(alpha float64, arch []int) Config {
 		LatentDecay: alpha * 1e-1,
 		Sparsity:    alpha * 1e-2,
 		WeightDecay: alpha * 1e-3,
-		GradClip:    1.0,
-		StateClip:   3.0,
+		GradClip:    gradClip,
+		StateClip:   stateClip,
 	}
 }

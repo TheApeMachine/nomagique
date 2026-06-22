@@ -64,3 +64,37 @@ func TestFitTimesFromBinaryPayload(testingTB *testing.T) {
 		})
 	})
 }
+
+func TestMomentReadRequiresAlignedSamples(testingTB *testing.T) {
+	Convey("Given insufficient moment samples", testingTB, func() {
+		moment := NewMoment(BivariateParams{MuX: 1, MuY: 1, Beta: 1}, 1, 1)
+		payload := make([]byte, 0)
+		_, writeErr := moment.Write(payload)
+
+		So(writeErr, ShouldBeNil)
+
+		response := make([]byte, 4096)
+		_, readErr := moment.Read(response)
+
+		Convey("It should return a validation error", func() {
+			So(readErr, ShouldNotBeNil)
+		})
+	})
+}
+
+func TestFitReadRequiresAlignedTimestamps(testingTB *testing.T) {
+	Convey("Given insufficient fit timestamps", testingTB, func() {
+		fitStage := NewFit(time.Now().UnixNano(), BivariateFit{})
+		payload := make([]byte, 0)
+		_, writeErr := fitStage.Write(payload)
+
+		So(writeErr, ShouldBeNil)
+
+		response := make([]byte, 4096)
+		_, readErr := fitStage.Read(response)
+
+		Convey("It should return a validation error", func() {
+			So(readErr, ShouldNotBeNil)
+		})
+	})
+}

@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/errnie"
 	"gonum.org/v1/gonum/mat"
 )
 
@@ -74,10 +75,12 @@ func (procrustes *Procrustes) Read(payload []byte) (int, error) {
 
 	if procrustes.err != nil {
 		procrustes.output = 0
-		state.MergeOutput("value", 0)
-		state.Merge("root", "output")
-		state.Merge("inputs", []string{"value"})
-		return state.Read(payload)
+
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"procrustes: alignment failed",
+			procrustes.err,
+		))
 	}
 
 	procrustes.output = procrustes.result.Residual

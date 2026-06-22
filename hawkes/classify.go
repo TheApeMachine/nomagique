@@ -1,6 +1,10 @@
 package hawkes
 
-import "github.com/theapemachine/nomagique/probability"
+import (
+	"fmt"
+
+	"github.com/theapemachine/nomagique/probability"
+)
 
 /*
 FitCategory names the dominant Hawkes regime for a fitted process.
@@ -25,9 +29,9 @@ func ClassifyFit(
 	asymmetry float64,
 	preferY bool,
 	gates FitGates,
-) (category FitCategory, confidence float64) {
+) (category FitCategory, confidence float64, err error) {
 	if !gates.Ready() {
-		return FitCategoryOrganic, 0
+		return FitCategoryOrganic, 0, fmt.Errorf("hawkes: fit gates are not ready")
 	}
 
 	return classifyFitWithGates(fit, asymmetry, preferY, gates)
@@ -38,7 +42,7 @@ func classifyFitWithGates(
 	asymmetry float64,
 	preferY bool,
 	gates FitGates,
-) (category FitCategory, confidence float64) {
+) (category FitCategory, confidence float64, err error) {
 	saturationRadius := gates.SaturationRadius
 	frenzyAsymmetry := gates.FrenzyAsymmetry
 	intensity, baseline := fit.IntensityX, fit.MuX
@@ -53,33 +57,55 @@ func classifyFitWithGates(
 		span := 1 - saturationRadius
 
 		if margin <= 0 || span <= 0 {
-			return FitCategorySaturation, uniformFitConfidence
+			return FitCategorySaturation, uniformFitConfidence, nil
 		}
 
-		return FitCategorySaturation, probability.CompetitionMargin(margin, span)
+		confidence, err = probability.CompetitionMargin(margin, span)
+
+		if err != nil {
+			return FitCategoryOrganic, 0, err
+		}
+
+		return FitCategorySaturation, confidence, nil
 	case baseline > 0 && intensity < baseline:
 		margin := baseline - intensity
 
 		if margin <= 0 {
-			return FitCategoryExhaustion, uniformFitConfidence
+			return FitCategoryExhaustion, uniformFitConfidence, nil
 		}
 
-		return FitCategoryExhaustion, probability.CompetitionMargin(margin, baseline)
+		confidence, err = probability.CompetitionMargin(margin, baseline)
+
+		if err != nil {
+			return FitCategoryOrganic, 0, err
+		}
+
+		return FitCategoryExhaustion, confidence, nil
 	case asymmetry >= frenzyAsymmetry:
 		margin := asymmetry - frenzyAsymmetry
 		span := 1 - frenzyAsymmetry
 
 		if margin <= 0 || span <= 0 {
-			return FitCategoryFrenzy, uniformFitConfidence
+			return FitCategoryFrenzy, uniformFitConfidence, nil
 		}
 
-		return FitCategoryFrenzy, probability.CompetitionMargin(margin, span)
+		confidence, err = probability.CompetitionMargin(margin, span)
+
+		if err != nil {
+			return FitCategoryOrganic, 0, err
+		}
+
+		return FitCategoryFrenzy, confidence, nil
 	default:
 		headroom := -1.0
 
 		if fit.SpectralRadius < saturationRadius {
 			margin := saturationRadius - fit.SpectralRadius
-			saturationHead := probability.CompetitionMargin(margin, saturationRadius)
+			saturationHead, marginErr := probability.CompetitionMargin(margin, saturationRadius)
+
+			if marginErr != nil {
+				return FitCategoryOrganic, 0, marginErr
+			}
 
 			if saturationHead > headroom {
 				headroom = saturationHead
@@ -97,7 +123,11 @@ func classifyFitWithGates(
 
 		if asymmetry < frenzyAsymmetry {
 			margin := frenzyAsymmetry - asymmetry
-			frenzyHead := probability.CompetitionMargin(margin, frenzyAsymmetry)
+			frenzyHead, marginErr := probability.CompetitionMargin(margin, frenzyAsymmetry)
+
+			if marginErr != nil {
+				return FitCategoryOrganic, 0, marginErr
+			}
 
 			if frenzyHead > headroom {
 				headroom = frenzyHead
@@ -105,9 +135,9 @@ func classifyFitWithGates(
 		}
 
 		if headroom < 0 {
-			return FitCategoryOrganic, uniformFitConfidence
+			return FitCategoryOrganic, uniformFitConfidence, nil
 		}
 
-		return FitCategoryOrganic, headroom
+		return FitCategoryOrganic, headroom, nil
 	}
 }

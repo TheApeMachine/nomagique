@@ -24,10 +24,8 @@ func TestChangeSum_Observe(testingTB *testing.T) {
 		artifact := datura.Acquire("test", datura.APPJSON)
 		err := transport.NewFlipFlop(artifact, changeSum)
 
-		So(err, ShouldBeNil)
-
-		Convey("It should return zero output", func() {
-			So(datura.Peek[float64](artifact, "output", "value"), ShouldEqual, 0)
+		Convey("It should return a validation error", func() {
+			So(err, ShouldNotBeNil)
 		})
 	})
 
@@ -38,7 +36,7 @@ func TestChangeSum_Observe(testingTB *testing.T) {
 		artifact.Poke(10, "sample")
 		err := transport.NewFlipFlop(artifact, changeSum)
 
-		So(err, ShouldBeNil)
+		So(err, ShouldNotBeNil)
 
 		artifact.Poke(25, "sample")
 		err = transport.NewFlipFlop(artifact, changeSum)
@@ -59,7 +57,7 @@ func TestChangeSum_Observe(testingTB *testing.T) {
 		artifact.Poke(10, "sample")
 		err := transport.NewFlipFlop(artifact, changeSum)
 
-		So(err, ShouldBeNil)
+		So(err, ShouldNotBeNil)
 
 		artifact.Poke(8, "sample")
 		err = transport.NewFlipFlop(artifact, changeSum)
@@ -74,7 +72,7 @@ func TestChangeSum_Observe(testingTB *testing.T) {
 		reference.Poke(10, "sample")
 		err = transport.NewFlipFlop(reference, combined)
 
-		So(err, ShouldBeNil)
+		So(err, ShouldNotBeNil)
 
 		reference.Poke(8, "sample")
 		err = transport.NewFlipFlop(reference, combined)
@@ -97,7 +95,7 @@ func TestChangeSum_Reset(testingTB *testing.T) {
 
 		err := transport.NewFlipFlop(artifact, changeSum)
 
-		So(err, ShouldBeNil)
+		So(err, ShouldNotBeNil)
 
 		resetArtifact := datura.Acquire("test", datura.APPJSON).Poke(1, "reset")
 		err = transport.NewFlipFlop(resetArtifact, changeSum)
@@ -116,6 +114,8 @@ func BenchmarkCUSUM_Observe(testingTB *testing.B) {
 	artifact := datura.Acquire("test", datura.APPJSON)
 
 	artifact.Poke(10, "sample")
+	_ = transport.NewFlipFlop(artifact, changeSum)
+	artifact.Poke(10.5, "sample")
 	_ = transport.NewFlipFlop(artifact, changeSum)
 
 	testingTB.ReportAllocs()

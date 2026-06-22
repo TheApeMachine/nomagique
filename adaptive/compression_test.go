@@ -6,11 +6,31 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/datura/transport"
 )
 
 var compressionInput = datura.Acquire("test", datura.APPJSON).Poke(10, "sample")
 
 var compressionConfig = datura.Acquire("compression-config", datura.APPJSON)
+
+func TestCompressionZeroOutput(t *testing.T) {
+	Convey("Given a legitimate zero spread in output", t, func() {
+		config := datura.Acquire("compression-config-zero", datura.APPJSON).
+			Poke(map[string]any{
+				"input":     "spread",
+				"outputKey": "compression",
+			}, "compression")
+		compression := NewCompression(config)
+		frame := datura.Acquire("compression-zero-frame", datura.APPJSON)
+		frame.Merge("root", "output")
+		frame.Merge("output", map[string]any{"spread": 0.0})
+
+		err := transport.NewFlipFlop(frame, compression)
+
+		So(err, ShouldBeNil)
+		So(datura.Peek[float64](frame, "output", "compression"), ShouldEqual, 0)
+	})
+}
 
 func TestCompressionRead(t *testing.T) {
 	Convey("Given a Compression", t, func() {

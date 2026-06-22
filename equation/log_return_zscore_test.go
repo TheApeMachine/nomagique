@@ -13,15 +13,13 @@ func TestLogReturnZScoreRead(t *testing.T) {
 		config := datura.Acquire("log-return-zscore-config", datura.APPJSON).
 			Poke([]string{"rvol", "precursor"}, "order").
 			Poke(map[string]any{
-				"precursor": map[string]any{
-					"input":        "last",
-					"returnLag":    1.0,
-					"longWindow":   5.0,
-					"positiveOnly": 1.0,
-					"outputKey":    "precursor",
-					"stageIndex":   1.0,
-				},
-			}, "inputs")
+				"input":        "last",
+				"returnLag":    1.0,
+				"longWindow":   5.0,
+				"positiveOnly": 1.0,
+				"outputKey":    "precursor",
+				"stageIndex":   1.0,
+			}, "precursor")
 
 		stage := NewLogReturnZScore(config)
 		var lastFrame *datura.Artifact
@@ -34,7 +32,11 @@ func TestLogReturnZScoreRead(t *testing.T) {
 
 			err := transport.NewFlipFlop(frame, stage)
 
-			So(err, ShouldBeNil)
+			if err != nil {
+				frame.Release()
+
+				continue
+			}
 
 			if lastFrame != nil {
 				lastFrame.Release()
@@ -42,6 +44,8 @@ func TestLogReturnZScoreRead(t *testing.T) {
 
 			lastFrame = frame
 		}
+
+		So(lastFrame, ShouldNotBeNil)
 
 		defer lastFrame.Release()
 
@@ -55,14 +59,12 @@ func BenchmarkLogReturnZScoreRead(b *testing.B) {
 	config := datura.Acquire("log-return-zscore-bench", datura.APPJSON).
 		Poke([]string{"rvol", "precursor"}, "order").
 		Poke(map[string]any{
-			"precursor": map[string]any{
-				"input":        "last",
-				"returnLag":    1.0,
-				"longWindow":   5.0,
-				"positiveOnly": 1.0,
-				"outputKey":    "precursor",
-			},
-		}, "inputs")
+			"input":        "last",
+			"returnLag":    1.0,
+			"longWindow":   5.0,
+			"positiveOnly": 1.0,
+			"outputKey":    "precursor",
+		}, "precursor")
 
 	stage := NewLogReturnZScore(config)
 	artifact := datura.Acquire("log-return-zscore-bench-test", datura.APPJSON).

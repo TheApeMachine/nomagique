@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/errnie"
 )
 
 /*
@@ -42,11 +43,19 @@ func (timeElastic *TimeElastic) Read(payload []byte) (int, error) {
 	sample := datura.Peek[float64](state, "sample")
 
 	if math.IsNaN(sample) || math.IsInf(sample, 0) {
-		return state.Read(payload)
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"time-elastic: sample is non-finite",
+			nil,
+		))
 	}
 
 	if sample < 0 {
-		return state.Read(payload)
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"time-elastic: sample must be non-negative",
+			nil,
+		))
 	}
 
 	eventAt := time.Unix(0, int64(datura.Peek[float64](state, "at")))
@@ -74,7 +83,11 @@ func (timeElastic *TimeElastic) Read(payload []byte) (int, error) {
 	}
 
 	if halflife <= 0 || eventAt.IsZero() {
-		return state.Read(payload)
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"time-elastic: halflife must be positive and event timestamp required",
+			nil,
+		))
 	}
 
 	lastAt := time.Unix(0, int64(output["lastAt"]))

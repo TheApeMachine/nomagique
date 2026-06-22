@@ -33,10 +33,8 @@ func TestCovariance_Observe(testingTB *testing.T) {
 		artifact := datura.Acquire("test", datura.APPJSON)
 		err := transport.NewFlipFlop(artifact, covariance)
 
-		So(err, ShouldBeNil)
-
-		Convey("It should return zero output", func() {
-			So(datura.Peek[float64](artifact, "output", "value"), ShouldEqual, 0)
+		Convey("It should return a validation error", func() {
+			So(err, ShouldNotBeNil)
 		})
 	})
 }
@@ -53,15 +51,13 @@ func TestCovariance_Reset(testingTB *testing.T) {
 		resetArtifact := datura.Acquire("test", datura.APPJSON).Poke(1, "reset")
 		err = transport.NewFlipFlop(resetArtifact, covariance)
 
-		So(err, ShouldBeNil)
+		So(err, ShouldNotBeNil)
 
 		fresh := datura.Acquire("test", datura.APPJSON)
 		err = transport.NewFlipFlop(fresh, covariance)
 
-		So(err, ShouldBeNil)
-
-		Convey("It should clear output", func() {
-			So(datura.Peek[float64](fresh, "output", "value"), ShouldEqual, 0)
+		Convey("It should return a validation error", func() {
+			So(err, ShouldNotBeNil)
 		})
 	})
 }

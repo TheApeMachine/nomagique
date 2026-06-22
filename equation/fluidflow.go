@@ -44,7 +44,7 @@ func (fluidflow *Fluidflow) Read(p []byte) (int, error) {
 	batch := Features(state)
 
 	if len(batch) < fluidflowPayloadFields {
-		return emitZero(state, p)
+		return rejectStage(state, "equation: invalid stage input")
 	}
 
 	reynolds := batch[0]
@@ -63,11 +63,11 @@ func (fluidflow *Fluidflow) Read(p []byte) (int, error) {
 	volume := batch[15]
 
 	if price <= 0 || spreadBPS <= 0 || changePct <= 0 || volume <= 0 {
-		return emitZero(state, p)
+		return rejectStage(state, "equation: invalid stage input")
 	}
 
 	if viscosity <= 0 || math.IsNaN(reynolds) || math.IsInf(reynolds, 0) {
-		return emitZero(state, p)
+		return rejectStage(state, "equation: invalid stage input")
 	}
 
 	if divergenceEdge <= 0 && divergence > 0 {
@@ -148,7 +148,7 @@ func (fluidflow *Fluidflow) Read(p []byte) (int, error) {
 	}
 
 	if strength <= 0 || math.IsNaN(strength) || math.IsInf(strength, 0) {
-		return emitZero(state, p)
+		return rejectStage(state, "equation: invalid stage input")
 	}
 
 	return emitOutput(state, p, datura.Map[float64]{

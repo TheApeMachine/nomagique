@@ -4,6 +4,7 @@ import (
 	"math"
 
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/errnie"
 )
 
 /*
@@ -11,7 +12,8 @@ Variance tracks an adaptive mean and variance from the observed sample stream.
 The constructor artifact holds config; Write buffers inbound wire on its payload.
 */
 type Variance struct {
-	artifact *datura.Artifact
+	artifact     *datura.Artifact
+	bootstrapped bool
 }
 
 /*
@@ -41,27 +43,40 @@ func (variance *Variance) Read(payload []byte) (int, error) {
 	sample := datura.Peek[float64](state, "sample")
 
 	if math.IsNaN(sample) || math.IsInf(sample, 0) {
-		return state.Read(payload)
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"variance: sample is non-finite",
+			nil,
+		))
 	}
 
-	output := datura.Peek[datura.Map[float64]](variance.artifact, "output")
+	output := datura.Map[float64]{
+		"mean": datura.Peek[float64](variance.artifact, "output", "mean"),
+		"var":  datura.Peek[float64](variance.artifact, "output", "var"),
+		"prev": datura.Peek[float64](variance.artifact, "output", "prev"),
+		"min":  datura.Peek[float64](variance.artifact, "output", "min"),
+		"max":  datura.Peek[float64](variance.artifact, "output", "max"),
+		"rate": datura.Peek[float64](variance.artifact, "output", "rate"),
+	}
 
-	if output == nil {
+	if !variance.bootstrapped {
 		output = datura.Map[float64]{
-			"mean":  sample,
-			"var":   0,
-			"prev":  sample,
-			"min":   sample,
-			"max":   sample,
-			"rate":  0,
-			"value": 0,
+			"mean": sample,
+			"var":  0,
+			"prev": sample,
+			"min":  sample,
+			"max":  sample,
+			"rate": 0,
 		}
 
+		variance.bootstrapped = true
 		variance.artifact.Poke(output, "output")
-		state.MergeOutput("value", output["value"])
-		state.Merge("root", "output")
-		state.Merge("inputs", []string{"value"})
-		return state.Read(payload)
+
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"variance: insufficient samples",
+			nil,
+		))
 	}
 
 	output["min"] = math.Min(output["min"], sample)
@@ -72,10 +87,12 @@ func (variance *Variance) Read(payload []byte) (int, error) {
 	if span == 0 {
 		output["prev"] = sample
 		variance.artifact.Poke(output, "output")
-		state.MergeOutput("value", output["value"])
-		state.Merge("root", "output")
-		state.Merge("inputs", []string{"value"})
-		return state.Read(payload)
+
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"variance: sample span is zero",
+			nil,
+		))
 	}
 
 	delta := math.Abs(sample - output["prev"])
@@ -84,6 +101,17 @@ func (variance *Variance) Read(payload []byte) (int, error) {
 	output["mean"] += output["rate"] * (sample - output["mean"])
 	output["var"] += output["rate"] * (deviation*deviation - output["var"])
 	output["prev"] = sample
+
+	if output["var"] <= 0 {
+		variance.artifact.Poke(output, "output")
+
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"variance: variance is not positive",
+			nil,
+		))
+	}
+
 	output["value"] = output["var"]
 
 	variance.artifact.Poke(output, "output")

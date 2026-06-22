@@ -5,6 +5,7 @@ import (
 	"strconv"
 
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/statistic"
 )
 
@@ -78,7 +79,10 @@ func (contagion *Contagion) Write(p []byte) (int, error) {
 
 func (contagion *Contagion) Read(p []byte) (int, error) {
 	if contagion == nil {
-		return 0, nil
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation, "unable to compute contagion",
+			ContagionError(ContagionErrorNilReceiver),
+		))
 	}
 
 	state := datura.Acquire("contagion-state", datura.APPJSON)
@@ -105,10 +109,10 @@ func (contagion *Contagion) Read(p []byte) (int, error) {
 	snapshots := contagion.snapshots()
 
 	if len(snapshots) == 0 {
-		state.MergeOutput("value", 0.0)
-		state.Merge("root", "output")
-		state.Merge("inputs", []string{"value", "tier.fast", "tier.medium", "tier.slow"})
-		return state.Read(p)
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation, "unable to compute contagion",
+			ContagionError(ContagionErrorInsufficientSnapshots),
+		))
 	}
 
 	output, readings := contagion.observeSnapshots(snapshots)
@@ -150,36 +154,70 @@ func (contagion *Contagion) tiersFromArtifact() tierWindows {
 		slow:   int(datura.Peek[float64](contagion.artifact, "config", "tier", "slow")),
 	}
 
-	if tiers.fast <= 0 {
-		tiers.fast = 4
+	if tiers.fast > 0 && tiers.medium > 0 && tiers.slow > 0 {
+		return tiers
 	}
 
-	if tiers.medium <= 0 {
-		tiers.medium = 8
+	maxLen := contagion.maxMemberRetLength()
+	fast, slow := statistic.RollingWindows(make([]float64, maxLen), tiers.fast, tiers.slow)
+	medium := (fast + slow) / 2
+
+	if medium <= fast {
+		medium = fast + 1
 	}
 
-	if tiers.slow <= 0 {
-		tiers.slow = 16
+	if slow <= medium {
+		slow = medium + 1
 	}
 
-	return tiers
+	return tierWindows{fast: fast, medium: medium, slow: slow}
+}
+
+func (contagion *Contagion) maxMemberRetLength() int {
+	maxLen := 0
+
+	for _, member := range contagion.memberIDsFromConfig() {
+		rets := datura.Peek[[]float64](
+			contagion.artifact,
+			append(contagion.branchPath(contagion.memberSegment(member)), "rets")...,
+		)
+
+		if len(rets) > maxLen {
+			maxLen = len(rets)
+		}
+	}
+
+	return maxLen
 }
 
 func (contagion *Contagion) minSamplesFromArtifact() int {
 	minSamples := int(datura.Peek[float64](contagion.artifact, "config", "minSamples"))
 
-	if minSamples <= 0 {
-		minSamples = 16
+	if minSamples > 0 {
+		return minSamples
 	}
 
-	return minSamples
+	tiers := contagion.tiersFromArtifact()
+	derived := tiers.slow / 2
+
+	if derived < 2 {
+		derived = 2
+	}
+
+	return derived
 }
 
 func (contagion *Contagion) memberCapFromArtifact() int {
 	memberCap := int(datura.Peek[float64](contagion.artifact, "config", "memberCap"))
 
+	if memberCap > 0 {
+		return memberCap
+	}
+
+	memberCap = len(contagion.memberIDsFromConfig())
+
 	if memberCap <= 0 {
-		memberCap = 16
+		memberCap = 1
 	}
 
 	return memberCap
@@ -188,18 +226,55 @@ func (contagion *Contagion) memberCapFromArtifact() int {
 func (contagion *Contagion) adaptiveSigmaFromArtifact() float64 {
 	sigma := datura.Peek[float64](contagion.artifact, "config", "adaptiveSigma")
 
-	if sigma <= 0 {
-		sigma = 2
+	if sigma > 0 {
+		return sigma
 	}
 
-	return sigma
+	count := spreadLength(contagion.artifact)
+
+	if count < 2 {
+		return 1
+	}
+
+	mean := 0.0
+
+	for index := 0; index < count; index++ {
+		mean += spreadAt(contagion.artifact, index)
+	}
+
+	mean /= float64(count)
+
+	if mean == 0 {
+		return 1
+	}
+
+	variance := 0.0
+
+	for index := 0; index < count; index++ {
+		delta := spreadAt(contagion.artifact, index) - mean
+		variance += delta * delta
+	}
+
+	stddev := math.Sqrt(variance / float64(count-1))
+
+	if stddev <= 0 {
+		return 1
+	}
+
+	return stddev / math.Abs(mean)
 }
 
 func (contagion *Contagion) spreadCapacityFromArtifact() int {
 	capacity := int(datura.Peek[float64](contagion.artifact, "config", "spreadCapacity"))
 
-	if capacity <= 0 {
-		capacity = 64
+	if capacity > 0 {
+		return capacity
+	}
+
+	capacity = contagion.memberCapFromArtifact() * 4
+
+	if capacity < 8 {
+		capacity = 8
 	}
 
 	return capacity
@@ -208,8 +283,14 @@ func (contagion *Contagion) spreadCapacityFromArtifact() int {
 func (contagion *Contagion) memberCapacityFromArtifact() int {
 	capacity := int(datura.Peek[float64](contagion.artifact, "config", "capacity"))
 
-	if capacity <= 0 {
-		capacity = 16
+	if capacity > 0 {
+		return capacity
+	}
+
+	capacity = contagion.maxMemberRetLength() * 2
+
+	if capacity < 8 {
+		capacity = 8
 	}
 
 	return capacity
@@ -280,12 +361,8 @@ func collectTierSeries(
 	minSamples int,
 	memberCap int,
 ) (fastSeries, mediumSeries, slowSeries []intervalSlices) {
-	if minSamples <= 0 {
-		minSamples = 1
-	}
-
-	if memberCap <= 0 {
-		memberCap = 1
+	if minSamples <= 0 || memberCap <= 0 {
+		return nil, nil, nil
 	}
 
 	fastSeries = make([]intervalSlices, 0, memberCap)
@@ -531,7 +608,7 @@ func (contagion *Contagion) restoreBranch(preserved contagionBranch) {
 
 func (contagion *Contagion) ingest(capacity int, epoch int64, level float64, member string) {
 	if capacity <= 0 {
-		capacity = 16
+		capacity = contagion.memberCapacityFromArtifact()
 	}
 
 	if level <= 0 {
@@ -629,4 +706,17 @@ func (contagion *Contagion) memberIDsFromConfig() []int {
 	}
 
 	return memberIDs
+}
+
+type ContagionErrorType string
+
+const (
+	ContagionErrorNilReceiver           ContagionErrorType = "require non-nil contagion stage"
+	ContagionErrorInsufficientSnapshots ContagionErrorType = "require member interval snapshots"
+)
+
+type ContagionError string
+
+func (contagionError ContagionError) Error() string {
+	return string(contagionError)
 }

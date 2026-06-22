@@ -1,9 +1,11 @@
 package learning
 
 import (
+	"fmt"
 	"math"
 
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/statistic"
 )
 
@@ -29,9 +31,9 @@ func NewLogitScores(config *datura.Artifact) *LogitScores {
 	}
 }
 
-func (logitScores *LogitScores) Write(p []byte) (int, error) {
-	logitScores.config.WithPayload(p)
-	return len(p), nil
+func (logitScores *LogitScores) Write(payload []byte) (int, error) {
+	logitScores.config.WithPayload(payload)
+	return len(payload), nil
 }
 
 func (logitScores *LogitScores) Read(payload []byte) (int, error) {
@@ -49,37 +51,57 @@ func (logitScores *LogitScores) Read(payload []byte) (int, error) {
 	order := datura.Peek[[]string](logitScores.config, "order")
 	outputs := datura.Peek[[]string](logitScores.config, "outputs")
 
-	if len(order) == 0 || len(outputs) == 0 {
-		return state.Read(payload)
+	if len(order) == 0 {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"logit-scores: config order required",
+			nil,
+		))
 	}
 
-	features := logitScores.featureValues(state, order)
-	threshold := logitScores.resolveThreshold(features)
+	if len(outputs) == 0 {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"logit-scores: config outputs required",
+			nil,
+		))
+	}
 
-	if threshold <= 0 {
-		return state.Read(payload)
+	features, err := logitScores.featureValues(state, order)
+
+	if err != nil {
+		return 0, err
+	}
+
+	threshold, err := logitScores.resolveThreshold(features)
+
+	if err != nil {
+		return 0, err
 	}
 
 	weights, err := logitScores.logitWeights(threshold, order, features)
 
 	if err != nil {
-		return state.Read(payload)
+		return 0, err
 	}
 
 	scores := weights.Scores(features)
-	logitScores.applyDecline(state, logitScores.config, weights, features, scores)
+
+	if err := logitScores.applyDecline(state, logitScores.config, weights, features, scores); err != nil {
+		return 0, err
+	}
 
 	for index, outputKey := range outputs {
-		score := scores[index]
-		score = logitScores.resolveOutputScore(state, outputKey, score)
+		score, err := logitScores.resolveOutputScore(state, outputKey, scores[index])
+
+		if err != nil {
+			return 0, err
+		}
 
 		state.MergeOutput(outputKey, score)
 	}
 
-	if len(scores) > 0 {
-		state.MergeOutput("value", scores[0])
-	}
-
+	state.MergeOutput("value", scores[0])
 	state.Merge("root", "output")
 	state.Merge("inputs", outputs)
 
@@ -89,86 +111,129 @@ func (logitScores *LogitScores) Read(payload []byte) (int, error) {
 func (logitScores *LogitScores) featureValues(
 	state *datura.Artifact,
 	order []string,
-) map[string]float64 {
+) (map[string]float64, error) {
 	features := make(map[string]float64, len(order))
 
 	for _, key := range order {
-		features[key] = logitScores.featureValue(state, key)
+		wireKey := datura.Peek[string](logitScores.config, key, "source")
+
+		if wireKey == "" {
+			wireKey = key
+		}
+
+		value, err := logitScores.wireValue(state, wireKey)
+
+		if err != nil {
+			return nil, err
+		}
+
+		features[key] = value
 	}
 
-	return features
+	return features, nil
 }
 
-func (logitScores *LogitScores) featureValue(state *datura.Artifact, key string) float64 {
-	source := datura.Peek[string](logitScores.config, "inputs", key, "source")
+func (logitScores *LogitScores) wireValue(
+	state *datura.Artifact,
+	wireKey string,
+) (float64, error) {
+	rootKey := datura.Peek[string](logitScores.config, "root")
 
-	if source == "" {
-		source = key
+	if rootKey == "" {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"logit-scores: config root required",
+			nil,
+		))
 	}
 
-	return datura.Peek[float64](state, "output", source)
+	inputKeys := datura.Peek[[]string](logitScores.config, "inputs")
+
+	if len(inputKeys) == 0 {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"logit-scores: config inputs required",
+			nil,
+		))
+	}
+
+	index := inputIndex(inputKeys, wireKey)
+
+	if index < 0 {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			fmt.Sprintf("logit-scores: wire key %q not listed in config inputs", wireKey),
+			nil,
+		))
+	}
+
+	if rootKey == "features" {
+		features := datura.Peek[[]float64](state, "features")
+
+		if index >= len(features) {
+			return 0, errnie.Error(errnie.Err(
+				errnie.Validation,
+				fmt.Sprintf("logit-scores: features index out of range for %q", wireKey),
+				nil,
+			))
+		}
+
+		return features[index], nil
+	}
+
+	return datura.Peek[float64](state, rootKey, wireKey), nil
 }
 
 func (logitScores *LogitScores) resolveOutputScore(
 	state *datura.Artifact,
 	outputKey string,
-	fallback float64,
-) float64 {
-	source := datura.Peek[string](logitScores.config, "inputs", outputKey, "source")
+	computed float64,
+) (float64, error) {
+	source := datura.Peek[string](logitScores.config, outputKey, "source")
 
 	if source == "" {
-		source = datura.Peek[string](logitScores.config, "inputs", "joint", "source")
-
-		if datura.Peek[string](logitScores.config, "inputs", "joint", "output") != outputKey {
-			source = ""
-		}
+		return computed, nil
 	}
 
-	if source == "" {
-		return fallback
+	overrideValue, err := logitScores.wireValue(state, source)
+
+	if err != nil {
+		return 0, err
 	}
 
-	overrideValue := datura.Peek[float64](state, "output", source)
-
-	if overrideValue <= 0 {
-		return fallback
-	}
-
-	combine := datura.Peek[string](logitScores.config, "inputs", outputKey, "combine")
-
-	if combine == "" {
-		combine = datura.Peek[string](logitScores.config, "inputs", "joint", "combine")
-	}
+	combine := datura.Peek[string](logitScores.config, outputKey, "combine")
 
 	if combine == "ratio" {
-		scaleKey := outputKey
-		jointOutput := datura.Peek[string](logitScores.config, "inputs", "joint", "output")
+		scale, err := logitScores.resolveFeatureScale(outputKey, overrideValue)
 
-		if jointOutput != "" && jointOutput == outputKey {
-			scaleKey = "joint"
+		if err != nil {
+			return 0, err
 		}
 
-		scale := logitScores.resolveFeatureScale(scaleKey, overrideValue)
+		ratio := overrideValue / scale
+		minRatio := datura.Peek[float64](logitScores.config, outputKey, "minRatio")
 
-		if scale > 0 {
-			ratio := overrideValue / scale
-			minRatio := datura.Peek[float64](logitScores.config, "inputs", outputKey, "minRatio")
-
-			if minRatio <= 0 {
-				minRatio = datura.Peek[float64](logitScores.config, "inputs", "joint", "minRatio")
-			}
-
-			if minRatio > 0 && ratio < minRatio {
-				return fallback
-			}
-
-			return ratio
+		if minRatio > 0 && ratio < minRatio {
+			return 0, errnie.Error(errnie.Err(
+				errnie.Validation,
+				fmt.Sprintf(
+					"logit-scores: output %q ratio %v below minRatio %v",
+					outputKey, ratio, minRatio,
+				),
+				nil,
+			))
 		}
+
+		return ratio, nil
 	}
 
-	scale := logitScores.resolveFeatureScale(outputKey, overrideValue)
+	scale, err := logitScores.resolveFeatureScale(outputKey, overrideValue)
 
-	return normalizeFeature(overrideValue, scale)
+	if err != nil {
+		return 0, err
+	}
+
+	return normalizeFeature(overrideValue, scale), nil
 }
 
 func (logitScores *LogitScores) applyDecline(
@@ -177,104 +242,112 @@ func (logitScores *LogitScores) applyDecline(
 	weights ClassifierWeights,
 	features map[string]float64,
 	scores []float64,
-) {
-	declineSource := datura.Peek[string](config, "inputs", "decline", "source")
+) error {
+	declineSource := datura.Peek[string](config, "decline", "source")
 
 	if declineSource == "" {
-		return
+		return logitScores.applyGatedOutputs(state, config, scores)
 	}
 
-	declineValue := datura.Peek[float64](state, "output", declineSource)
+	declineValue, err := logitScores.wireValue(state, declineSource)
 
-	if declineValue <= 0 {
-		declineValue = datura.Peek[float64](state, declineSource)
-	}
-
-	if declineValue <= 0 {
-		declineValue = datura.Peek[float64](config, "state", declineSource)
-	}
-
-	if declineValue <= 0 {
-		declineValue = datura.Peek[float64](config, declineSource)
+	if err != nil {
+		return err
 	}
 
 	declineNorm := squashFeature(declineValue)
 
-	if datura.Peek[float64](config, "inputs", "decline", "squash") <= 0 {
+	if datura.Peek[float64](config, "decline", "squash") <= 0 {
 		declineNorm = declineValue
 	}
 
 	if declineNorm <= 0 {
-		logitScores.applyGatedOutputs(state, config, scores)
-
-		return
+		return logitScores.applyGatedOutputs(state, config, scores)
 	}
 
-	outputKey := datura.Peek[string](config, "inputs", "decline", "output")
+	outputKey := datura.Peek[string](config, "decline", "output")
 
-	if outputKey != "" {
-		index := outputIndex(config, outputKey)
+	if outputKey == "" {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"logit-scores: decline output required when decline source is configured",
+			nil,
+		))
+	}
 
-		if index >= 0 {
-			scores[index] = declineNorm * weights.outputScore(outputKey, features)
+	index, err := outputIndex(config, outputKey)
+
+	if err != nil {
+		return err
+	}
+
+	scores[index] = declineNorm * weights.outputScore(outputKey, features)
+
+	for _, attenuateKey := range datura.Peek[[]string](config, "decline", "attenuate") {
+		attenuateIndex, err := outputIndex(config, attenuateKey)
+
+		if err != nil {
+			return err
 		}
+
+		scores[attenuateIndex] *= 1.0 - declineNorm
 	}
 
-	for _, attenuateKey := range datura.Peek[[]string](config, "inputs", "decline", "attenuate") {
-		index := outputIndex(config, attenuateKey)
-
-		if index >= 0 {
-			scores[index] *= 1.0 - declineNorm
-		}
-	}
-
-	logitScores.applyGatedOutputs(state, config, scores)
+	return logitScores.applyGatedOutputs(state, config, scores)
 }
 
 func (logitScores *LogitScores) applyGatedOutputs(
 	state *datura.Artifact,
 	config *datura.Artifact,
 	scores []float64,
-) {
+) error {
 	outputs := datura.Peek[[]string](config, "outputs")
 
 	for index, outputKey := range outputs {
-		gateSource := datura.Peek[string](config, "inputs", outputKey, "gate")
+		gateSource := datura.Peek[string](config, outputKey, "gate")
 
 		if gateSource == "" {
 			continue
 		}
 
-		gateValue := datura.Peek[float64](state, "output", gateSource)
+		gateValue, err := logitScores.wireValue(state, gateSource)
 
-		if gateValue <= 0 {
-			gateValue = datura.Peek[float64](state, gateSource)
-		}
-
-		if gateValue <= 0 {
-			gateValue = datura.Peek[float64](config, "state", gateSource)
-		}
-
-		if gateValue <= 0 {
-			gateValue = datura.Peek[float64](config, gateSource)
+		if err != nil {
+			return err
 		}
 
 		if squashFeature(gateValue) <= 0 {
 			scores[index] = 0
 		}
 	}
+
+	return nil
 }
 
-func outputIndex(config *datura.Artifact, outputKey string) int {
-	outputs := datura.Peek[[]string](config, "outputs")
-
-	for index, key := range outputs {
-		if key == outputKey {
+func inputIndex(inputKeys []string, wireKey string) int {
+	for index, inputKey := range inputKeys {
+		if inputKey == wireKey {
 			return index
 		}
 	}
 
 	return -1
+}
+
+func outputIndex(config *datura.Artifact, outputKey string) (int, error) {
+	outputs := datura.Peek[[]string](config, "outputs")
+
+	for index, key := range outputs {
+		if key == outputKey {
+			return index, nil
+		}
+	}
+
+	return 0, errnie.Error(errnie.Err(
+		errnie.Validation,
+		fmt.Sprintf("logit-scores: output %q not listed in config outputs", outputKey),
+		nil,
+	))
 }
 
 func (logitScores *LogitScores) Close() error {
@@ -289,51 +362,71 @@ func (logitScores *LogitScores) logitWeights(
 	scales := make(map[string]float64, len(order))
 
 	for _, key := range order {
-		scales[key] = logitScores.resolveFeatureScale(key, features[key])
+		scale, err := logitScores.resolveFeatureScale(key, features[key])
+
+		if err != nil {
+			return ClassifierWeights{}, err
+		}
+
+		scales[key] = scale
 	}
 
 	return NewClassifierWeights(logitScores.config, threshold, scales)
 }
 
-func (logitScores *LogitScores) resolveThreshold(features map[string]float64) float64 {
+func (logitScores *LogitScores) resolveThreshold(
+	features map[string]float64,
+) (float64, error) {
 	configured := datura.Peek[float64](logitScores.config, "threshold")
 
 	if configured > 0 {
-		return configured
+		return configured, nil
 	}
 
 	return logitScores.resolveThresholdFromFeatures(features)
 }
 
-func (logitScores *LogitScores) resolveThresholdFromFeatures(features map[string]float64) float64 {
+func (logitScores *LogitScores) resolveThresholdFromFeatures(
+	features map[string]float64,
+) (float64, error) {
 	magnitude := 0.0
 
 	for _, feature := range features {
 		magnitude += math.Abs(feature)
 	}
 
-	derived := 0.0
-
-	if len(logitScores.thresholdSamples) > 0 {
-		derived = statistic.MedianOf(logitScores.thresholdSamples)
-	}
-
+	prior := logitScores.thresholdSamples
 	logitScores.thresholdSamples = append(logitScores.thresholdSamples, magnitude)
 
-	threshold := math.Max(derived, magnitude)
-
-	if threshold <= 0 || math.IsNaN(threshold) || math.IsInf(threshold, 0) {
-		return math.SmallestNonzeroFloat64
+	if len(prior) < 2 {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"logit-scores: insufficient threshold samples",
+			nil,
+		))
 	}
 
-	return threshold
+	threshold := statistic.MedianOf(prior)
+
+	if threshold <= 0 || math.IsNaN(threshold) || math.IsInf(threshold, 0) {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"logit-scores: threshold could not be derived from features",
+			nil,
+		))
+	}
+
+	return threshold, nil
 }
 
-func (logitScores *LogitScores) resolveFeatureScale(stageKey string, feature float64) float64 {
-	configured := datura.Peek[float64](logitScores.config, "inputs", stageKey, "scale")
+func (logitScores *LogitScores) resolveFeatureScale(
+	stageKey string,
+	feature float64,
+) (float64, error) {
+	configured := datura.Peek[float64](logitScores.config, stageKey, "scale")
 
 	if configured > 0 {
-		return configured
+		return configured, nil
 	}
 
 	samples := logitScores.scaleSamples[stageKey]
@@ -347,94 +440,70 @@ func (logitScores *LogitScores) resolveFeatureScale(stageKey string, feature flo
 	logitScores.scaleSamples[stageKey] = samples
 
 	scale := math.Max(derived, math.Abs(feature))
-
-	scaleMode := datura.Peek[string](logitScores.config, "inputs", stageKey, "scaleMode")
+	scaleMode := datura.Peek[string](logitScores.config, stageKey, "scaleMode")
 
 	if scaleMode == "median" && derived > 0 {
 		scale = derived
 	}
 
 	if scaleMode == "median" && derived <= 0 {
-		composite := logitScores.resolveCompositeScale(stageKey)
+		composite, err := logitScores.resolveCompositeScale(stageKey)
 
-		if composite > 0 {
-			scale = composite
+		if err != nil {
+			return 0, err
 		}
+
+		scale = composite
 	}
 
 	if scale <= 0 || math.IsNaN(scale) || math.IsInf(scale, 0) {
-		scale = logitScores.peerScaleFloor(stageKey)
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			fmt.Sprintf("logit-scores: scale for %q could not be derived", stageKey),
+			nil,
+		))
 	}
 
-	return scale
+	return scale, nil
 }
 
-func (logitScores *LogitScores) resolveCompositeScale(stageKey string) float64 {
-	leftKey := datura.Peek[string](logitScores.config, "inputs", stageKey, "leftKey")
-	rightKey := datura.Peek[string](logitScores.config, "inputs", stageKey, "rightKey")
+func (logitScores *LogitScores) resolveCompositeScale(stageKey string) (float64, error) {
+	leftKey := datura.Peek[string](logitScores.config, stageKey, "leftKey")
+	rightKey := datura.Peek[string](logitScores.config, stageKey, "rightKey")
 
 	if leftKey == "" || rightKey == "" {
-		return 0
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			fmt.Sprintf("logit-scores: composite scale for %q requires leftKey and rightKey", stageKey),
+			nil,
+		))
 	}
 
-	leftScale := logitScores.priorMedianScale(leftKey)
-	rightScale := logitScores.priorMedianScale(rightKey)
+	leftScale, err := logitScores.priorMedianScale(leftKey)
 
-	if leftScale <= 0 {
-		return 0
+	if err != nil {
+		return 0, err
 	}
 
-	if rightScale <= 0 {
-		return leftScale
+	rightScale, err := logitScores.priorMedianScale(rightKey)
+
+	if err != nil {
+		return 0, err
 	}
 
-	return math.Sqrt(leftScale * rightScale)
+	return math.Sqrt(leftScale * rightScale), nil
 }
 
-func (logitScores *LogitScores) priorMedianScale(stageKey string) float64 {
+func (logitScores *LogitScores) priorMedianScale(stageKey string) (float64, error) {
 	samples := logitScores.scaleSamples[stageKey]
 
-	if len(samples) == 0 {
-		return 0
+	if len(samples) < 2 {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			fmt.Sprintf("logit-scores: prior median scale for %q requires history", stageKey),
+			nil,
+		))
 	}
 
-	if len(samples) == 1 {
-		return samples[0]
-	}
-
-	return statistic.MedianOf(samples[:len(samples)-1])
-}
-
-func (logitScores *LogitScores) peerScaleFloor(stageKey string) float64 {
-	order := datura.Peek[[]string](logitScores.config, "order")
-
-	if len(order) == 0 {
-		return math.SmallestNonzeroFloat64
-	}
-
-	peer := 0.0
-
-	for _, key := range order {
-		if key == stageKey {
-			continue
-		}
-
-		peerSamples := logitScores.scaleSamples[key]
-
-		if len(peerSamples) == 0 {
-			continue
-		}
-
-		median := statistic.MedianOf(peerSamples)
-
-		if median > peer {
-			peer = median
-		}
-	}
-
-	if peer <= 0 || math.IsNaN(peer) || math.IsInf(peer, 0) {
-		return math.SmallestNonzeroFloat64
-	}
-
-	return peer / float64(len(order))
+	return statistic.MedianOf(samples[:len(samples)-1]), nil
 }

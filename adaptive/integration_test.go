@@ -83,12 +83,16 @@ func TestIntegration(t *testing.T) {
 			)
 			err := transport.NewFlipFlop(artifact, pipeline)
 
-			So(err, ShouldBeNil)
-			So(datura.Peek[float64](artifact, "output", "value"), ShouldEqual, 0)
+			So(err, ShouldNotBeNil)
 
 			Convey("It should warm up then emit finite surprise scores", func() {
 				artifact.Poke(22, "sample")
 				err := transport.NewFlipFlop(artifact, pipeline)
+
+				So(err, ShouldNotBeNil)
+
+				artifact.Poke(30, "sample")
+				err = transport.NewFlipFlop(artifact, pipeline)
 
 				So(err, ShouldBeNil)
 
@@ -96,19 +100,26 @@ func TestIntegration(t *testing.T) {
 
 				So(math.IsNaN(surprise), ShouldBeFalse)
 				So(math.IsInf(surprise, 0), ShouldBeFalse)
-				So(surprise, ShouldBeGreaterThanOrEqualTo, 0)
+				So(surprise, ShouldNotEqual, 0)
 			})
 
 			Convey("It should keep variance on a parallel EMA-Variance path", func() {
-				varianceArtifact := datura.Acquire("test", datura.APPJSON).Poke(22, "sample")
+				parallelEMA := datura.Acquire("ema-parallel-config", datura.APPJSON)
+				parallelVariance := datura.Acquire("variance-parallel-config", datura.APPJSON)
+				varianceArtifact := datura.Acquire("test", datura.APPJSON).Poke(10, "sample")
 				variancePipeline := nomagique.Number(
-					adaptive.NewEMA(datura.Acquire("ema-config", datura.APPJSON)),
-					adaptive.NewVariance(datura.Acquire("variance-config", datura.APPJSON)),
+					adaptive.NewEMA(parallelEMA),
+					adaptive.NewVariance(parallelVariance),
 				)
 				err := transport.NewFlipFlop(varianceArtifact, variancePipeline)
 
+				So(err, ShouldNotBeNil)
+
+				varianceArtifact.Poke(22, "sample")
+				err = transport.NewFlipFlop(varianceArtifact, variancePipeline)
+
 				So(err, ShouldBeNil)
-				So(datura.Peek[float64](varianceArtifact, "output", "value"), ShouldBeGreaterThanOrEqualTo, 0)
+				So(datura.Peek[float64](varianceArtifact, "output", "value"), ShouldBeGreaterThan, 0)
 			})
 		})
 

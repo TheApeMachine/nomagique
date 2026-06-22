@@ -72,16 +72,19 @@ func (covariance *Covariance) Read(p []byte) (int, error) {
 		}
 
 		if !weightsOK {
-			state.MergeOutput("value", 0.0)
-			state.Merge("root", "output")
-			state.Merge("inputs", []string{"value"})
-			return state.Read(p)
+			return 0, errnie.Error(errnie.Err(
+				errnie.Validation, "unable to compute covariance",
+				CovarianceError(CovarianceErrorInvalidWeights),
+			))
 		}
 
 		covarianceValue := stat.Covariance(left, right, weights)
 
 		if math.IsNaN(covarianceValue) || math.IsInf(covarianceValue, 0) {
-			covarianceValue = 0
+			return 0, errnie.Error(errnie.Err(
+				errnie.Validation, "unable to compute covariance",
+				CovarianceError(CovarianceErrorNonFiniteResult),
+			))
 		}
 
 		state.MergeOutput("value", covarianceValue)
@@ -91,23 +94,23 @@ func (covariance *Covariance) Read(p []byte) (int, error) {
 	}
 
 	if count > 0 && count < 2 {
-		errnie.Err(
+		return 0, errnie.Error(errnie.Err(
 			errnie.Validation, "unable to compute covariance",
 			CovarianceError(CovarianceErrorRequireAtLeastTwoInputs),
-		)
+		))
 	}
 
 	if count%2 != 0 && count > 0 {
-		errnie.Err(
+		return 0, errnie.Error(errnie.Err(
 			errnie.Validation, "unable to compute covariance",
 			CovarianceError(CovarianceErrorRequireEqualLength),
-		)
+		))
 	}
 
-	state.MergeOutput("value", 0.0)
-	state.Merge("root", "output")
-	state.Merge("inputs", []string{"value"})
-	return state.Read(p)
+	return 0, errnie.Error(errnie.Err(
+		errnie.Validation, "unable to compute covariance",
+		CovarianceError(CovarianceErrorRequireAtLeastTwoInputs),
+	))
 }
 
 func (covariance *Covariance) Close() error {
@@ -119,6 +122,8 @@ type CovarianceErrorType string
 const (
 	CovarianceErrorRequireAtLeastTwoInputs CovarianceErrorType = "require at least two inputs"
 	CovarianceErrorRequireEqualLength      CovarianceErrorType = "require equal length"
+	CovarianceErrorInvalidWeights          CovarianceErrorType = "require valid weights"
+	CovarianceErrorNonFiniteResult         CovarianceErrorType = "require finite covariance"
 )
 
 type CovarianceError string

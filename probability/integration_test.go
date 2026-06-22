@@ -68,9 +68,10 @@ func TestIntegration(t *testing.T) {
 			)
 			payload, marshalErr := sonic.Marshal(datura.Map[any]{
 				"output": datura.Map[any]{
-					"s0": 0.1,
-					"s1": 0.8,
-					"s2": 0.2,
+					"s0":       0.1,
+					"s1":       0.8,
+					"s2":       0.2,
+					"strength": 0.8,
 				},
 			})
 

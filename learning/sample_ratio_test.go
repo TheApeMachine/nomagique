@@ -76,12 +76,8 @@ func TestCalibrator_Observe(testingTB *testing.T) {
 			Poke(10, "paired")
 		err := transport.NewFlipFlop(artifact, calibrator)
 
-		So(err, ShouldBeNil)
-
-		got := datura.Peek[float64](artifact, "output", "value")
-
-		Convey("It should leave output at zero", func() {
-			So(got, ShouldEqual, 0)
+		Convey("It should return a parse error", func() {
+			So(err, ShouldNotBeNil)
 		})
 	})
 }

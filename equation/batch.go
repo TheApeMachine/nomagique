@@ -25,8 +25,10 @@ func stageState(bytes []byte) (*datura.Artifact, error) {
 	return state, nil
 }
 
-func emitZero(state *datura.Artifact, payload []byte) (int, error) {
-	return emitOutput(state, payload, datura.Map[float64]{"value": 0})
+func rejectStage(state *datura.Artifact, message string) (int, error) {
+	state.Release()
+
+	return 0, errnie.Error(errnie.Err(errnie.Validation, message, nil))
 }
 
 func emitOutput(state *datura.Artifact, payload []byte, fields datura.Map[float64]) (int, error) {

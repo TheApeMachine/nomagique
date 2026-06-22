@@ -11,8 +11,6 @@ import (
 	"gonum.org/v1/gonum/stat"
 )
 
-const minKernelWeight = math.SmallestNonzeroFloat64
-
 type nodeTable struct {
 	rows   [][]float64
 	target int
@@ -70,7 +68,7 @@ func (nodeTable nodeTable) association(treatment int) (float64, error) {
 	association := stat.Correlation(treatmentValues, targetValues, nil)
 
 	if math.IsNaN(association) || math.IsInf(association, 0) {
-		return 0, nil
+		return 0, errors.New("causal: association is non-finite")
 	}
 
 	return association, nil
@@ -107,9 +105,13 @@ func (nodeTable nodeTable) backdoorEffect(treatment int, controls ...int) (float
 		return 0, errors.New("causal: treatment residualization failed")
 	}
 
-	denominator := statistic.BackdoorDenominator(
+	denominator, denominatorOK := statistic.BackdoorDenominator(
 		statistic.Dot(residualTreatment, residualTreatment),
 	)
+
+	if !denominatorOK {
+		return 0, errors.New("causal: backdoor denominator is non-positive")
+	}
 
 	return statistic.Dot(residualTarget, residualTreatment) / denominator, nil
 }
@@ -193,26 +195,58 @@ func (nodeTable nodeTable) kernelBackdoorEffect(
 		return 0, err
 	}
 
-	features := append([]int(nil), controls...)
-	features = append(features, treatment)
+	targetValues, err := nodeTable.column(nodeTable.target)
+
+	if err != nil {
+		return 0, err
+	}
+
+	treatmentValues, err := nodeTable.column(treatment)
+
+	if err != nil {
+		return 0, err
+	}
+
+	controlColumns, err := nodeTable.columns(controls...)
+
+	if err != nil {
+		return 0, err
+	}
+
+	residualTarget, ok := statistic.Residualize(targetValues, controlColumns...)
+
+	if !ok {
+		return 0, errors.New("causal: target residualization failed")
+	}
+
+	residualTreatment, ok := statistic.Residualize(treatmentValues, controlColumns...)
+
+	if !ok {
+		return 0, errors.New("causal: treatment residualization failed")
+	}
+
 	current := nodeTable.rows[len(nodeTable.rows)-1]
 	numerator := 0.0
 	denominator := 0.0
 
-	for _, row := range nodeTable.rows {
-		distance := nodeDistance(current, row, features)
+	for rowIndex, row := range nodeTable.rows {
+		distance := nodeDistance(current, row, controls)
 		weight := math.Exp(-distance * distance / (2 * bandwidth * bandwidth))
 
-		if weight < minKernelWeight {
+		if weight <= 0 || math.IsNaN(weight) || math.IsInf(weight, 0) {
 			continue
 		}
 
-		treatmentValue := row[treatment]
-		numerator += weight * row[nodeTable.target] * treatmentValue
+		treatmentValue := residualTreatment[rowIndex]
+		numerator += weight * residualTarget[rowIndex] * treatmentValue
 		denominator += weight * treatmentValue * treatmentValue
 	}
 
-	denominator = statistic.BackdoorDenominator(denominator)
+	denominator, denominatorOK := statistic.BackdoorDenominator(denominator)
+
+	if !denominatorOK {
+		return 0, errors.New("causal: backdoor denominator is non-positive")
+	}
 
 	return numerator / denominator, nil
 }

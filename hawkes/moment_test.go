@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/nomagique/equation"
 )
 
 func TestBivariateParams_MeanIntensity(testingTB *testing.T) {
@@ -47,5 +48,18 @@ func BenchmarkMethodOfMoments(testingTB *testing.B) {
 
 	for testingTB.Loop() {
 		_, _ = MethodOfMoments(x, y, nil, 1)
+	}
+}
+
+func BenchmarkMomentRead(testingTB *testing.B) {
+	moment := NewMoment(BivariateParams{MuX: 1, MuY: 1, Beta: 1}, 1, 1)
+	wire := equation.MarshalFeaturesPayload(EncodeMomentBatch([]float64{2, 4, 6, 8}, []float64{1, 2, 3, 4}))
+	response := make([]byte, 4096)
+
+	testingTB.ReportAllocs()
+
+	for testingTB.Loop() {
+		_, _ = moment.Write(wire)
+		_, _ = moment.Read(response)
 	}
 }

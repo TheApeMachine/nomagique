@@ -7,7 +7,17 @@ import (
 	"gonum.org/v1/gonum/stat"
 )
 
-const minBackdoorDenominator = math.SmallestNonzeroFloat64
+
+/*
+BackdoorDenominator validates residual norms during backdoor estimation.
+*/
+func BackdoorDenominator(residualNorm float64) (float64, bool) {
+	if !finite(residualNorm) || residualNorm <= 0 {
+		return 0, false
+	}
+
+	return residualNorm, true
+}
 
 /*
 OLS fits target against predictors via ridge-regularized normal equations.
@@ -130,17 +140,6 @@ func PairConditionNumber(left, right []float64) (float64, bool) {
 	}
 
 	return (1 + correlation) / (1 - correlation), true
-}
-
-/*
-BackdoorDenominator floors small residual norms during backdoor estimation.
-*/
-func BackdoorDenominator(residualNorm float64) float64 {
-	if math.IsNaN(residualNorm) || math.IsInf(residualNorm, 0) || residualNorm <= 0 {
-		return minBackdoorDenominator
-	}
-
-	return math.Max(residualNorm, minBackdoorDenominator)
 }
 
 func finite(value float64) bool {

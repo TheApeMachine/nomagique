@@ -47,8 +47,7 @@ func TestModePartition_Observe(t *testing.T) {
 		artifact := datura.Acquire("test", datura.APPJSON)
 		err := transport.NewFlipFlop(artifact, partition)
 
-		So(err, ShouldBeNil)
-		So(datura.Peek[float64](artifact, "output", "value"), ShouldEqual, 0)
+		So(err, ShouldNotBeNil)
 		So(partition.Snap(), ShouldBeNil)
 	})
 
@@ -112,11 +111,7 @@ func TestModePartition_Observe(t *testing.T) {
 		artifact := datura.Acquire("test", datura.APPJSON)
 		err := transport.NewFlipFlop(artifact, partition)
 
-		So(err, ShouldBeNil)
-
-		Convey("It should return zero output", func() {
-			So(datura.Peek[float64](artifact, "output", "value"), ShouldEqual, 0)
-		})
+		So(err, ShouldNotBeNil)
 	})
 }
 

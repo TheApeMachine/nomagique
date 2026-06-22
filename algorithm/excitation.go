@@ -6,17 +6,17 @@ import (
 	"time"
 
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/adaptive"
 	"github.com/theapemachine/nomagique/hawkes"
 	"github.com/theapemachine/nomagique/probability"
+	"github.com/theapemachine/nomagique/statistic"
 )
 
 const (
 	excitationPayloadHeader = 4
 	bivariateParamCount     = 7
-	hawkesGateHistoryCap    = 64
 	hawkesFitCooldownMult   = 50
-	uniformExcitationShare  = 1.0 / 4.0
 )
 
 /*
@@ -81,7 +81,13 @@ func (excitation *Excitation) Read(payload []byte) (int, error) {
 	batch := datura.Peek[[]float64](state, "features")
 
 	if scope != "" && len(batch) > 0 {
-		excitation.outcome = excitation.evaluate(scope, batch)
+		outcome, err := excitation.evaluate(scope, batch)
+
+		if err != nil {
+			return 0, err
+		}
+
+		excitation.outcome = outcome
 	}
 
 	state.MergeOutput("frenzy", excitation.outcome.Frenzy)
@@ -115,11 +121,15 @@ func (excitation *Excitation) Outcome() ExcitationOutcome {
 	return excitation.outcome
 }
 
-func (excitation *Excitation) evaluate(scope string, batch []float64) ExcitationOutcome {
+func (excitation *Excitation) evaluate(scope string, batch []float64) (ExcitationOutcome, error) {
 	buyCount, _, expectedLen, batchOK := excitationBatchBounds(batch)
 
 	if scope == "" || !batchOK {
-		return ExcitationOutcome{}
+		return ExcitationOutcome{}, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"excitation: invalid batch",
+			nil,
+		))
 	}
 
 	horizon := time.Unix(0, int64(batch[0]*float64(time.Second)))
@@ -132,10 +142,14 @@ func (excitation *Excitation) evaluate(scope string, batch []float64) Excitation
 	reading, ok := state.measure(buyTimes, sellTimes, horizon, fitCooldown)
 
 	if !ok {
-		return ExcitationOutcome{}
+		return ExcitationOutcome{}, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"excitation: fit not ready",
+			nil,
+		))
 	}
 
-	return excitationOutcomeFromReading(reading)
+	return excitationOutcomeFromReading(reading), nil
 }
 
 func (excitation *Excitation) loadSymbol(scope string) *excitationSymbol {
@@ -271,20 +285,7 @@ func (symbol *excitationSymbol) measure(
 	context, adaptiveStream, ok := fitContextFromStream(stream, horizon)
 
 	if !ok || !context.EnoughEvents(adaptiveStream) {
-		if !symbol.hasFit {
-			return excitationReading{}, false
-		}
-
-		fallbackStream := hawkes.NewArrivalStream(buyTimes, sellTimes)
-
-		if len(fallbackStream.BuyTimes())+len(fallbackStream.SellTimes()) == 0 {
-			return excitationReading{}, false
-		}
-
-		fallbackFit := symbol.fit.WithIntensitiesAt(fallbackStream, horizon)
-		reading, readingOk := symbol.measureFit(fallbackFit)
-
-		return symbol.enrichReading(reading, readingOk, fallbackFit, fallbackStream, horizon)
+		return excitationReading{}, false
 	}
 
 	fit, fitOk := symbol.fitForEvents(adaptiveStream, horizon)
@@ -404,24 +405,15 @@ func (symbol *excitationSymbol) measureFit(fit hawkes.BivariateFit) (excitationR
 	gates, gatesReady := hawkes.FitGatesFromHistory(symbol.spectralRadii, symbol.asymmetries)
 
 	if !gatesReady {
-		baseline := fit.MuX + fit.MuY
-		intensityRatio := 0.0
-
-		if baseline > 0 {
-			intensityRatio = (fit.IntensityX + fit.IntensityY) / baseline
-		}
-
-		return excitationReading{
-			strength:           raw,
-			organic:            math.Max(raw, uniformExcitationShare),
-			branchingRatio:     fit.SpectralRadius,
-			stationarityMargin: 1 - fit.SpectralRadius,
-			baselineMu:         baseline,
-			intensityRatio:     intensityRatio,
-		}, true
+		return excitationReading{}, false
 	}
 
-	category, confidence := hawkes.ClassifyFit(fit, asymmetry, sellSide, gates)
+	category, confidence, classifyErr := hawkes.ClassifyFit(fit, asymmetry, sellSide, gates)
+
+	if classifyErr != nil {
+		return excitationReading{}, false
+	}
+
 	frenzy, saturation, organic, exhaustion := excitationTransitionScores(
 		fit, asymmetry, sellSide, category, confidence, gates,
 	)
@@ -430,20 +422,24 @@ func (symbol *excitationSymbol) measureFit(fit hawkes.BivariateFit) (excitationR
 	symbol.lastRawNorm = symbol.rawBaseStep(raw)
 
 	if rawNorm > 0 {
-		saturationEvidence := competitionMargin(raw-rawNorm, rawNorm) * (1 - asymmetry)
+		saturationEvidence, marginErr := competitionMargin(raw-rawNorm, rawNorm)
 
-		if saturationEvidence > confidence {
-			category = hawkes.FitCategorySaturation
-			confidence = saturationEvidence
-			saturation = saturationEvidence
+		if marginErr == nil {
+			saturationEvidence *= (1 - asymmetry)
+
+			if saturationEvidence > confidence {
+				category = hawkes.FitCategorySaturation
+				confidence = saturationEvidence
+				saturation = saturationEvidence
+			}
 		}
 	}
 
 	if symbol.lastCategory == hawkes.FitCategoryFrenzy ||
 		symbol.lastCategory == hawkes.FitCategorySaturation {
-		exhaustionEvidence := competitionMargin(rawNorm-raw, rawNorm)
+		exhaustionEvidence, marginErr := competitionMargin(rawNorm-raw, rawNorm)
 
-		if exhaustionEvidence > confidence {
+		if marginErr == nil && exhaustionEvidence > confidence {
 			category = hawkes.FitCategoryExhaustion
 			confidence = exhaustionEvidence
 			exhaustion = exhaustionEvidence
@@ -502,8 +498,14 @@ func (symbol *excitationSymbol) recordFitGates(spectralRadius, asymmetry float64
 		return
 	}
 
-	symbol.spectralRadii = appendRingFloat(symbol.spectralRadii, spectralRadius, hawkesGateHistoryCap)
-	symbol.asymmetries = appendRingFloat(symbol.asymmetries, asymmetry, hawkesGateHistoryCap)
+	symbol.spectralRadii = appendRingFloat(symbol.spectralRadii, spectralRadius, fitGateHistoryCap(symbol.spectralRadii))
+	symbol.asymmetries = appendRingFloat(symbol.asymmetries, asymmetry, fitGateHistoryCap(symbol.asymmetries))
+}
+
+func fitGateHistoryCap(history []float64) int {
+	_, longWindow := statistic.RollingWindows(history, 0, 0)
+
+	return longWindow
 }
 
 func fitContextFromStream(
@@ -622,9 +624,9 @@ func organicHeadroomScores(
 
 	if fit.SpectralRadius < saturationRadius {
 		margin := saturationRadius - fit.SpectralRadius
-		saturation = competitionMargin(margin, saturationRadius)
+		saturation, marginErr := competitionMargin(margin, saturationRadius)
 
-		if saturation > headroom {
+		if marginErr == nil && saturation > headroom {
 			headroom = saturation
 		}
 	}
@@ -640,21 +642,27 @@ func organicHeadroomScores(
 
 	if asymmetry < frenzyAsymmetry {
 		margin := frenzyAsymmetry - asymmetry
-		frenzy = competitionMargin(margin, frenzyAsymmetry)
+		frenzy, marginErr := competitionMargin(margin, frenzyAsymmetry)
 
-		if frenzy > headroom {
+		if marginErr == nil && frenzy > headroom {
 			headroom = frenzy
 		}
 	}
 
 	if headroom < 0 {
-		headroom = uniformExcitationShare
+		if baseline > 0 && intensity >= baseline {
+			headroom = (intensity - baseline) / (intensity + baseline)
+		}
+
+		if headroom < 0 {
+			return 0, 0, 0, 0
+		}
 	}
 
 	return frenzy, saturation, organic, exhaustion
 }
 
-func competitionMargin(excess, span float64) float64 {
+func competitionMargin(excess, span float64) (float64, error) {
 	return probability.CompetitionMargin(excess, span)
 }
 

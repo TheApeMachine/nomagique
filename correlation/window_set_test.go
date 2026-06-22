@@ -18,6 +18,11 @@ func TestWindowSetObserve(testingTB *testing.T) {
 				Poke(100+float64(index), "paired")
 			err := transport.NewFlipFlop(artifact, windowSet)
 
+			if index == 0 {
+				So(err, ShouldNotBeNil)
+				continue
+			}
+
 			So(err, ShouldBeNil)
 		}
 

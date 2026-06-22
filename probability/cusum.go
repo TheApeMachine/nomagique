@@ -4,6 +4,7 @@ import (
 	"math"
 
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/errnie"
 )
 
 /*
@@ -49,13 +50,21 @@ func (cusum *CUSUM) Read(payload []byte) (int, error) {
 	}
 
 	if !attributeKeyPresent(state, "sample") {
-		return state.Read(payload)
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"cusum: sample required",
+			nil,
+		))
 	}
 
 	sample := datura.Peek[float64](state, "sample")
 
 	if math.IsNaN(sample) || math.IsInf(sample, 0) {
-		return state.Read(payload)
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"cusum: sample is non-finite",
+			nil,
+		))
 	}
 
 	cusumState := CUSUMState{
@@ -68,6 +77,7 @@ func (cusum *CUSUM) Read(payload []byte) (int, error) {
 		Ready:    datura.Peek[float64](cusum.artifact, "output", "ready") != 0,
 	}
 
+	wasReady := cusumState.Ready
 	value := ObserveCUSUM(&cusumState, sample)
 
 	ready := 0.0
@@ -84,6 +94,14 @@ func (cusum *CUSUM) Read(payload []byte) (int, error) {
 	cusum.artifact.Poke(cusumState.Rate, "output", "rate")
 	cusum.artifact.Poke(ready, "output", "ready")
 	cusum.artifact.Poke(value, "output", "value")
+
+	if !wasReady {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"cusum: insufficient samples",
+			nil,
+		))
+	}
 	state.MergeOutput("value", value)
 	state.MergeOutput("ready", ready)
 	state.Merge("root", "output")

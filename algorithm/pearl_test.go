@@ -11,17 +11,18 @@ import (
 
 func pearlConfig() *datura.Artifact {
 	return datura.Acquire("pearl-config", datura.APPJSON).
-		Poke(float64(3), "config", "target").
-		Poke(float64(12), "config", "minHistory").
-		Poke(float64(2), "config", "treatmentNormal").
-		Poke([]float64{0, 1}, "config", "controlsNormal").
-		Poke(float64(1), "config", "treatmentInverted").
-		Poke([]float64{0}, "config", "controlsInverted").
-		Poke(float64(1), "config", "conditionLeft").
-		Poke(float64(2), "config", "conditionRight").
-		Poke([]float64{0, 3}, "config", "contagionSkip").
-		Poke(0.35, "config", "kernelBandwidth").
-		Poke(0.8, "config", "contagionBreak")
+		Poke(float64(3), "target").
+		Poke(float64(12), "minHistory").
+		Poke(float64(12), "history").
+		Poke(float64(2), "treatmentNormal").
+		Poke([]float64{0, 1}, "controlsNormal").
+		Poke(float64(1), "treatmentInverted").
+		Poke([]float64{0}, "controlsInverted").
+		Poke(float64(1), "conditionLeft").
+		Poke(float64(2), "conditionRight").
+		Poke([]float64{0, 3}, "contagionSkip").
+		Poke(0.35, "kernelBandwidth").
+		Poke(0.8, "contagionBreak")
 }
 
 func pearlInbound() *datura.Artifact {

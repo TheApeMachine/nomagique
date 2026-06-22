@@ -14,13 +14,11 @@ func TestMeanMedianRatioRead(testingTB *testing.T) {
 			Poke(0.0, "stageIndex").
 			Poke([]string{"rvol"}, "order").
 			Poke(map[string]any{
-				"rvol": map[string]any{
-					"input":       "volume",
-					"shortWindow": 3.0,
-					"longWindow":  5.0,
-					"outputKey":   "rvol",
-				},
-			}, "inputs")
+				"input":       "volume",
+				"shortWindow": 3.0,
+				"longWindow":  5.0,
+				"outputKey":   "rvol",
+			}, "rvol")
 
 		stage := NewMeanMedianRatio(config)
 		var lastFrame *datura.Artifact
@@ -49,20 +47,65 @@ func TestMeanMedianRatioRead(testingTB *testing.T) {
 		})
 	})
 
+	Convey("Given disjoint short and long windows", testingTB, func() {
+		config := datura.Acquire("mean-median-ratio-disjoint-config", datura.APPJSON).
+			Poke(0.0, "stageIndex").
+			Poke([]string{"rvol"}, "order").
+			Poke(map[string]any{
+				"input":       "volume",
+				"shortWindow": 2.0,
+				"longWindow":  5.0,
+				"outputKey":   "rvol",
+			}, "rvol")
+
+		stage := NewMeanMedianRatio(config)
+		samples := []float64{10, 20, 30, 40, 1000}
+		var lastFrame *datura.Artifact
+
+		for _, sample := range samples {
+			frame := datura.Acquire("mean-median-ratio-disjoint-frame", datura.APPJSON)
+			frame.Merge("root", "features")
+			frame.Merge("inputs", []string{"volume"})
+			frame.Merge("features", []float64{sample})
+
+			err := transport.NewFlipFlop(frame, stage)
+
+			So(err, ShouldBeNil)
+
+			if lastFrame != nil {
+				lastFrame.Release()
+			}
+
+			lastFrame = frame
+		}
+
+		defer lastFrame.Release()
+
+		Convey("It should exclude short-window samples from the long median", func() {
+			shortMean := (40.0 + 1000.0) / 2.0
+			longMedian := 20.0
+
+			So(
+				datura.Peek[float64](lastFrame, "output", "rvol"),
+				ShouldAlmostEqual,
+				shortMean/longMedian,
+				1e-9,
+			)
+		})
+	})
+
 	Convey("Given delta transform with decline output configured", testingTB, func() {
 		config := datura.Acquire("mean-median-ratio-decline-config", datura.APPJSON).
 			Poke(0.0, "stageIndex").
 			Poke([]string{"lift"}, "order").
 			Poke(map[string]any{
-				"lift": map[string]any{
-					"input":     "volume",
-					"transform": "deltaPositive",
-					"outputKey": "lift",
-					"decline": map[string]any{
-						"output": "liftDecline",
-					},
+				"input":     "volume",
+				"transform": "deltaPositive",
+				"outputKey": "lift",
+				"decline": map[string]any{
+					"output": "liftDecline",
 				},
-			}, "inputs")
+			}, "lift")
 
 		stage := NewMeanMedianRatio(config)
 		var lastFrame *datura.Artifact
@@ -110,13 +153,11 @@ func TestMeanMedianRatioRead(testingTB *testing.T) {
 			Poke(0.0, "stageIndex").
 			Poke([]string{"rvol"}, "order").
 			Poke(map[string]any{
-				"rvol": map[string]any{
-					"input":       "volume",
-					"shortWindow": 0.0,
-					"longWindow":  0.0,
-					"outputKey":   "rvol",
-				},
-			}, "inputs")
+				"input":       "volume",
+				"shortWindow": 0.0,
+				"longWindow":  0.0,
+				"outputKey":   "rvol",
+			}, "rvol")
 
 		stage := NewMeanMedianRatio(config)
 		artifact := datura.Acquire("mean-median-ratio-dynamic-test", datura.APPJSON)
@@ -136,13 +177,11 @@ func BenchmarkMeanMedianRatioRead(b *testing.B) {
 		Poke(0.0, "stageIndex").
 		Poke([]string{"rvol"}, "order").
 		Poke(map[string]any{
-			"rvol": map[string]any{
-				"input":       "volume",
-				"shortWindow": 3.0,
-				"longWindow":  5.0,
-				"outputKey":   "rvol",
-			},
-		}, "inputs")
+			"input":       "volume",
+			"shortWindow": 3.0,
+			"longWindow":  5.0,
+			"outputKey":   "rvol",
+		}, "rvol")
 
 	stage := NewMeanMedianRatio(config)
 	artifact := datura.Acquire("mean-median-ratio-bench-test", datura.APPJSON)

@@ -26,7 +26,7 @@ func TestMedianPairwiseAbsCorrelation(testingTB *testing.T) {
 		artifact.Poke(1, "member").Poke(float64(1_000), "sample").Poke(100.0, "paired")
 		err := transport.NewFlipFlop(artifact, contagion)
 
-		So(err, ShouldBeNil)
+		So(err, ShouldNotBeNil)
 
 		artifact.Poke(1, "member").Poke(float64(2_000), "sample").Poke(110.0, "paired")
 		err = transport.NewFlipFlop(artifact, contagion)
@@ -58,7 +58,7 @@ func TestContagionObserve(testingTB *testing.T) {
 		artifact.Poke(1, "member").Poke(float64(1_000), "sample").Poke(100.0, "paired")
 		err := transport.NewFlipFlop(artifact, contagion)
 
-		So(err, ShouldBeNil)
+		So(err, ShouldNotBeNil)
 
 		artifact.Poke(1, "member").Poke(float64(2_000), "sample").Poke(110.0, "paired")
 		err = transport.NewFlipFlop(artifact, contagion)

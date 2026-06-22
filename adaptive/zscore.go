@@ -4,6 +4,7 @@ import (
 	"math"
 
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/errnie"
 )
 
 /*
@@ -11,7 +12,8 @@ ZScore tracks adaptive scale for a normalized surprise score.
 The constructor artifact holds config; Write buffers inbound wire on its payload.
 */
 type ZScore struct {
-	artifact *datura.Artifact
+	artifact     *datura.Artifact
+	bootstrapped bool
 }
 
 /*
@@ -41,7 +43,11 @@ func (surprise *ZScore) Read(payload []byte) (int, error) {
 	sample := datura.Peek[float64](state, "sample")
 
 	if math.IsNaN(sample) || math.IsInf(sample, 0) {
-		return state.Read(payload)
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"zscore: sample is non-finite",
+			nil,
+		))
 	}
 
 	anchor := datura.Peek[float64](state, "anchor")
@@ -52,24 +58,33 @@ func (surprise *ZScore) Read(payload []byte) (int, error) {
 
 	hasAnchor := anchor != 0 && !math.IsNaN(anchor) && !math.IsInf(anchor, 0)
 
-	output := datura.Peek[datura.Map[float64]](surprise.artifact, "output")
+	output := datura.Map[float64]{
+		"mean": datura.Peek[float64](surprise.artifact, "output", "mean"),
+		"var":  datura.Peek[float64](surprise.artifact, "output", "var"),
+		"prev": datura.Peek[float64](surprise.artifact, "output", "prev"),
+		"min":  datura.Peek[float64](surprise.artifact, "output", "min"),
+		"max":  datura.Peek[float64](surprise.artifact, "output", "max"),
+		"rate": datura.Peek[float64](surprise.artifact, "output", "rate"),
+	}
 
-	if output == nil {
+	if !surprise.bootstrapped {
 		output = datura.Map[float64]{
-			"mean":  sample,
-			"var":   0,
-			"prev":  sample,
-			"min":   sample,
-			"max":   sample,
-			"rate":  0,
-			"value": 0,
+			"mean": sample,
+			"var":  0,
+			"prev": sample,
+			"min":  sample,
+			"max":  sample,
+			"rate": 0,
 		}
 
+		surprise.bootstrapped = true
 		surprise.artifact.Poke(output, "output")
-		state.MergeOutput("value", output["value"])
-		state.Merge("root", "output")
-		state.Merge("inputs", []string{"value"})
-		return state.Read(payload)
+
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"zscore: insufficient samples",
+			nil,
+		))
 	}
 
 	output["min"] = math.Min(output["min"], sample)
@@ -80,10 +95,12 @@ func (surprise *ZScore) Read(payload []byte) (int, error) {
 	if span == 0 {
 		output["prev"] = sample
 		surprise.artifact.Poke(output, "output")
-		state.MergeOutput("value", output["value"])
-		state.Merge("root", "output")
-		state.Merge("inputs", []string{"value"})
-		return state.Read(payload)
+
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"zscore: sample span is zero",
+			nil,
+		))
 	}
 
 	delta := math.Abs(sample - output["prev"])
@@ -104,12 +121,13 @@ func (surprise *ZScore) Read(payload []byte) (int, error) {
 	output["prev"] = sample
 
 	if output["var"] <= 0 {
-		output["value"] = 0
 		surprise.artifact.Poke(output, "output")
-		state.MergeOutput("value", output["value"])
-		state.Merge("root", "output")
-		state.Merge("inputs", []string{"value"})
-		return state.Read(payload)
+
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"zscore: variance is not positive",
+			nil,
+		))
 	}
 
 	output["value"] = deviation / math.Sqrt(output["var"])

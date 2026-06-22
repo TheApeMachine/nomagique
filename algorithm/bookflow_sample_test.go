@@ -32,13 +32,17 @@ func TestBookflowSample_Read(t *testing.T) {
 
 		var result *datura.Artifact
 
-		for _, frame := range frames {
+		for index, frame := range frames {
 			state := datura.Acquire("measurement", datura.APPJSON).
 				WithRole("measurement").
 				WithScope("update").
 				WithPayload(frame)
 
-			So(transport.NewFlipFlop(state, pipeline), ShouldBeNil)
+			err := transport.NewFlipFlop(state, pipeline)
+
+			if index == len(frames)-1 {
+				So(err, ShouldBeNil)
+			}
 
 			if result != nil {
 				result.Release()

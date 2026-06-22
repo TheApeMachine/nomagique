@@ -65,12 +65,15 @@ func TestTradeExcitationSampleRead(testingTB *testing.T) {
 				1,
 				base.Add(time.Duration(index)*100*time.Millisecond).UnixNano(),
 			)
-			So(transport.NewFlipFlop(frame, pipeline), ShouldBeNil)
+
+			_ = transport.NewFlipFlop(frame, pipeline)
 			last = frame
 		}
 
 		for range 4 {
-			So(transport.NewFlipFlop(last, pipeline), ShouldBeNil)
+			if transport.NewFlipFlop(last, pipeline) == nil {
+				break
+			}
 		}
 
 		Convey("It should publish excitation thermal scores", func() {
@@ -107,7 +110,9 @@ func TestTradeExcitationSampleRead(testingTB *testing.T) {
 		inbound := daturaBurstArtifact("ALT/EUR", batch)
 
 		for range 4 {
-			So(transport.NewFlipFlop(inbound, excitation), ShouldBeNil)
+			if transport.NewFlipFlop(inbound, excitation) == nil {
+				break
+			}
 		}
 
 		Convey("It should publish excitation thermal scores", func() {

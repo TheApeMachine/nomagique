@@ -5,6 +5,7 @@ import (
 	"math"
 
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/errnie"
 )
 
 /*
@@ -46,20 +47,32 @@ func (classifier *Classifier) Read(payload []byte) (int, error) {
 	}
 
 	if len(inputs) == 0 {
-		return state.Read(payload)
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"classifier: inputs required",
+			nil,
+		))
 	}
 
 	scores := make([]float64, len(inputs))
 
 	for index, input := range inputs {
 		if input == "" {
-			return state.Read(payload)
+			return 0, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"classifier: empty input key",
+				nil,
+			))
 		}
 
 		score := datura.Peek[float64](state, "output", input)
 
 		if math.IsNaN(score) || math.IsInf(score, 0) {
-			return state.Read(payload)
+			return 0, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"classifier: score is non-finite",
+				nil,
+			))
 		}
 
 		scores[index] = score
@@ -68,7 +81,11 @@ func (classifier *Classifier) Read(payload []byte) (int, error) {
 	probabilities, err := SoftmaxScoresNormalized(scores)
 
 	if err != nil {
-		return state.Read(payload)
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"classifier: unable to compute softmax probabilities",
+			err,
+		))
 	}
 
 	categoryIndex := ArgmaxIndex(probabilities) + 1
@@ -76,13 +93,21 @@ func (classifier *Classifier) Read(payload []byte) (int, error) {
 	confidence, confidenceErr := CategoryConfidence(probabilities, categoryIndex)
 
 	if confidenceErr != nil {
-		return state.Read(payload)
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"classifier: unable to compute category confidence",
+			confidenceErr,
+		))
 	}
 
 	strength := datura.Peek[float64](state, "output", "strength")
 
 	if strength <= 0 || math.IsNaN(strength) || math.IsInf(strength, 0) {
-		strength = scores[categoryIndex-1]
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"classifier: strength must be positive and finite",
+			nil,
+		))
 	}
 
 	state.MergeOutput("probabilities", probabilities)

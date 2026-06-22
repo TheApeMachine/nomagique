@@ -53,7 +53,7 @@ func TestLagEvaluateAnchorStall(testingTB *testing.T) {
 func TestCrossLagScore(testingTB *testing.T) {
 	Convey("Given a follower that leads the anchor", testingTB, func() {
 		start := time.Date(2026, 6, 11, 12, 0, 0, 0, time.UTC)
-		sampleCount := minLagSamples + maxLagBars + 8
+		sampleCount := lagMinSamples() + lagMaxBars() + 8
 		leadBars := 3
 		followerSeries := make([]correlation.Sample, sampleCount)
 

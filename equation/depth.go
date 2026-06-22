@@ -43,14 +43,14 @@ func (depth *Depth) Read(p []byte) (int, error) {
 	batch := Features(state)
 
 	if len(batch) < 2 {
-		return emitZero(state, p)
+		return rejectStage(state, "equation: invalid stage input")
 	}
 
 	scaledQuoteVol := batch[0]
 	peerCount := int(batch[1])
 
 	if peerCount < 2 || len(batch) < 2+peerCount+2 {
-		return emitZero(state, p)
+		return rejectStage(state, "equation: invalid stage input")
 	}
 
 	peers := append([]float64(nil), batch[2:2+peerCount]...)
@@ -65,7 +65,7 @@ func (depth *Depth) Read(p []byte) (int, error) {
 	median := stat.Quantile(0.5, stat.LinInterp, sortedPeers, nil)
 
 	if median <= 0 {
-		return emitZero(state, p)
+		return rejectStage(state, "equation: invalid stage input")
 	}
 
 	peakScarcity := isPeakScarcity(scaledQuoteVol, peers)
@@ -85,7 +85,7 @@ func (depth *Depth) Read(p []byte) (int, error) {
 	)
 
 	if category == 0 {
-		return emitZero(state, p)
+		return rejectStage(state, "equation: invalid stage input")
 	}
 
 	scarcityRaw := math.Max(0, (median-scaledQuoteVol)/median)
@@ -109,7 +109,7 @@ func (depth *Depth) Read(p []byte) (int, error) {
 	}
 
 	if strength <= 0 && category != 2 {
-		return emitZero(state, p)
+		return rejectStage(state, "equation: invalid stage input")
 	}
 
 	return emitOutput(state, p, datura.Map[float64]{

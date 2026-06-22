@@ -1,7 +1,10 @@
 package causal
 
 import (
+	"errors"
+
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/errnie"
 )
 
 /*
@@ -39,14 +42,17 @@ func (backdoor *Backdoor) Read(p []byte) (int, error) {
 	rows, ok := tableRows(state)
 
 	if !ok {
-		state.MergeOutput("value", 0.0)
-		return state.Read(p)
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"causal backdoor: missing table rows",
+			errors.New("causal: table rows missing"),
+		))
 	}
 
-	target := int(datura.Peek[float64](backdoor.artifact, "config", "target"))
-	treatment := int(datura.Peek[float64](backdoor.artifact, "config", "treatment"))
-	controls := intSlice(datura.Peek[[]float64](backdoor.artifact, "config", "controls"))
-	minRows := int(datura.Peek[float64](backdoor.artifact, "config", "minHistory"))
+	target := int(datura.Peek[float64](backdoor.artifact, "target"))
+	treatment := int(datura.Peek[float64](backdoor.artifact, "treatment"))
+	controls := intSlice(datura.Peek[[]float64](backdoor.artifact, "controls"))
+	minRows := int(datura.Peek[float64](backdoor.artifact, "minHistory"))
 
 	if minRows <= 0 {
 		minRows = len(rows)
@@ -55,26 +61,41 @@ func (backdoor *Backdoor) Read(p []byte) (int, error) {
 	table, err := newNodeTable(rows, target, minRows)
 
 	if err != nil {
-		state.MergeOutput("value", 0.0)
-		return state.Read(p)
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"causal backdoor: table construction failed",
+			err,
+		))
 	}
 
 	association, err := table.association(treatment)
 
 	if err != nil {
-		association = 0
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"causal backdoor: association failed",
+			err,
+		))
 	}
 
 	effect, err := table.backdoorEffect(treatment, controls...)
 
 	if err != nil {
-		effect = 0
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"causal backdoor: effect estimation failed",
+			err,
+		))
 	}
 
 	condition, err := table.pairConditionNumber(treatment, target)
 
 	if err != nil {
-		condition = 0
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"causal backdoor: pair condition failed",
+			err,
+		))
 	}
 
 	state.MergeOutput("value", effect)

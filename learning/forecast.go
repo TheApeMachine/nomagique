@@ -2,6 +2,7 @@ package learning
 
 import (
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/errnie"
 )
 
 /*
@@ -50,25 +51,25 @@ func (forecaster *Forecaster) Read(payload []byte) (int, error) {
 	}
 
 	if predicted == 0 && actual == 0 {
-		value := datura.Peek[float64](forecaster.artifact, "output", "value")
-
-		if forecaster.state.Ready {
-			state.MergeOutput("value", value)
-			state.Merge("root", "output")
-			state.Merge("inputs", []string{"value"})
-		}
-
-		return state.Read(payload)
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"forecast: predicted and actual required",
+			nil,
+		))
 	}
 
 	if actual == 0 {
-		return state.Read(payload)
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"forecast: actual must be non-zero",
+			nil,
+		))
 	}
 
 	parsedPredicted, parsedActual, err := parsePredictedActual(predicted, []float64{actual})
 
 	if err != nil {
-		return state.Read(payload)
+		return 0, err
 	}
 
 	derived := ObserveForecast(&forecaster.state, parsedPredicted, parsedActual)

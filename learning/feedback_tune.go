@@ -63,7 +63,12 @@ func (tuner *FeedbackTuner) Apply(
 		adjustedThreshold += mse * mseGain
 	}
 
-	thresholdSpread := math.Max(mse, math.SmallestNonzeroFloat64)
+	thresholdSpread := mse
+
+	if thresholdSpread <= 0 {
+		thresholdSpread = scale / float64(samples)
+	}
+
 	weights.Threshold = clamp(
 		adjustedThreshold,
 		weights.Threshold/(1.0+thresholdSpread),
@@ -79,7 +84,9 @@ func (tuner *FeedbackTuner) Apply(
 		}
 	}
 
-	weights.clamp()
+	if clampErr := weights.clamp(); clampErr != nil {
+		return false, clampErr
+	}
 
 	return true, nil
 }

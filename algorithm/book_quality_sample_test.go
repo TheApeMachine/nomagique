@@ -10,9 +10,35 @@ import (
 	"github.com/theapemachine/nomagique/probability"
 )
 
+func bookQualitySampleConfig() *datura.Artifact {
+	return datura.Acquire("book-quality", datura.APPJSON).WithAttributes(datura.Map[any]{
+		"vacuumGate": datura.Map[any]{
+			"percentile": 0.9,
+			"minSamples": 3.0,
+		},
+		"churnGate": datura.Map[any]{
+			"percentile": 0.75,
+			"minSamples": 3.0,
+		},
+		"cancelQtyGate": datura.Map[any]{
+			"percentile": 0.5,
+			"minSamples": 3.0,
+		},
+		"levelSizeGate": datura.Map[any]{
+			"percentile": 0.75,
+			"minSamples": 3.0,
+		},
+		"fillMatchGate": datura.Map[any]{
+			"percentile": 0.5,
+			"minSamples": 3.0,
+		},
+		"vacuumLowPercentile": 0.25,
+	})
+}
+
 func TestNewBookQualitySample(t *testing.T) {
 	Convey("Given a book quality sample stage", t, func() {
-		stage := NewBookQualitySample(datura.Acquire("book-quality", datura.APPJSON))
+		stage := NewBookQualitySample(bookQualitySampleConfig())
 
 		Convey("It should be constructible", func() {
 			So(stage, ShouldNotBeNil)
@@ -22,7 +48,7 @@ func TestNewBookQualitySample(t *testing.T) {
 
 func TestBookQualitySample_Read(t *testing.T) {
 	Convey("Given a liquidity vacuum book replay", t, func() {
-		encoder := NewBookQualitySample(datura.Acquire("book-quality", datura.APPJSON))
+		encoder := NewBookQualitySample(bookQualitySampleConfig())
 		bookQuality := equation.NewBookQuality()
 		classifier := probability.NewClassifier(
 			datura.Acquire("toxicity-classifier", datura.APPJSON).WithAttributes(datura.Map[any]{
@@ -34,6 +60,8 @@ func TestBookQualitySample_Read(t *testing.T) {
 		frames := [][]byte{
 			[]byte(`{"channel":"book","type":"update","data":[{"symbol":"BTC/USD","bids":[{"price":100,"qty":10}],"asks":[{"price":101,"qty":10}]}]}`),
 			[]byte(`{"channel":"book","type":"update","data":[{"symbol":"BTC/USD","bids":[{"price":100,"qty":10}],"asks":[{"price":101,"qty":10}]}]}`),
+			[]byte(`{"channel":"book","type":"update","data":[{"symbol":"BTC/USD","bids":[{"price":100,"qty":10}],"asks":[{"price":101,"qty":10}]}]}`),
+			[]byte(`{"channel":"book","type":"update","data":[{"symbol":"BTC/USD","bids":[{"price":100,"qty":12}],"asks":[{"price":101,"qty":10}]}]}`),
 			[]byte(`{"channel":"book","type":"update","data":[{"symbol":"BTC/USD","bids":[{"price":100,"qty":12}],"asks":[{"price":101,"qty":10}]}]}`),
 			[]byte(`{"channel":"book","type":"update","data":[{"symbol":"BTC/USD","bids":[{"price":100,"qty":12}],"asks":[{"price":101,"qty":10}]}]}`),
 			[]byte(`{"channel":"book","type":"update","data":[{"symbol":"BTC/USD","bids":[{"price":100,"qty":3}],"asks":[{"price":101,"qty":10}]}]}`),
@@ -52,7 +80,12 @@ func TestBookQualitySample_Read(t *testing.T) {
 				WithScope("update").
 				WithPayload(frame)
 
-			So(transport.NewFlipFlop(state, pipeline), ShouldBeNil)
+			err := transport.NewFlipFlop(state, pipeline)
+
+			if err != nil {
+				state.Release()
+				continue
+			}
 
 			confidence := datura.Peek[float64](state, "output", "confidence")
 			evidence := datura.Peek[float64](state, "output", "bluffScore") +

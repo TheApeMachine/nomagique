@@ -13,14 +13,12 @@ func precursorConfig() *datura.Artifact {
 		Poke([]string{"rvol", "precursor"}, "order").
 		Poke(1.0, "stageIndex").
 		Poke(map[string]any{
-			"precursor": map[string]any{
-				"input":      "last",
-				"returnLag":  1.0,
-				"longWindow": 5.0,
-				"outputKey":  "precursor",
-				"stageIndex": 1.0,
-			},
-		}, "inputs")
+			"input":      "last",
+			"returnLag":  1.0,
+			"longWindow": 5.0,
+			"outputKey":  "precursor",
+			"stageIndex": 1.0,
+		}, "precursor")
 }
 
 func precursorState(last float64) *datura.Artifact {

@@ -89,7 +89,7 @@ func NewClassifierWeights(
 }
 
 func logitSpec(config *datura.Artifact, outputKey string) (LogitSpec, error) {
-	terms := datura.Peek[[]string](config, "inputs", outputKey, "terms")
+	terms := datura.Peek[[]string](config, outputKey, "terms")
 
 	if len(terms) == 0 {
 		return LogitSpec{}, nil
@@ -97,7 +97,7 @@ func logitSpec(config *datura.Artifact, outputKey string) (LogitSpec, error) {
 
 	inverts := map[string]bool{}
 
-	for _, featureKey := range datura.Peek[[]string](config, "inputs", outputKey, "inverts") {
+	for _, featureKey := range datura.Peek[[]string](config, outputKey, "inverts") {
 		inverts[featureKey] = true
 	}
 
@@ -218,24 +218,30 @@ func normalizeFeature(value, scale float64) float64 {
 }
 
 func squashFeature(value float64) float64 {
-	if value <= 0 || math.IsNaN(value) || math.IsInf(value, 0) {
-		return 0
+	if math.IsNaN(value) || math.IsInf(value, 0) {
+		return math.NaN()
 	}
 
-	return value / (1.0 + value)
+	return value / (1.0 + math.Abs(value))
 }
 
-func (weights *ClassifierWeights) clamp() {
-	floor, ceiling := weightBounds(weights.scales)
+func (weights *ClassifierWeights) clamp() error {
+	floor, ceiling, err := weightBounds(weights.scales)
+
+	if err != nil {
+		return err
+	}
 
 	for outputKey, featureWeights := range weights.termWeights {
 		for featureKey, weight := range featureWeights {
 			weights.termWeights[outputKey][featureKey] = clamp(weight, floor, ceiling)
 		}
 	}
+
+	return nil
 }
 
-func weightBounds(scales map[string]float64) (float64, float64) {
+func weightBounds(scales map[string]float64) (float64, float64, error) {
 	minScale := math.MaxFloat64
 	maxScale := 0.0
 
@@ -249,13 +255,18 @@ func weightBounds(scales map[string]float64) (float64, float64) {
 	}
 
 	if minScale == math.MaxFloat64 || maxScale <= 0 {
-		return math.SmallestNonzeroFloat64, 1.0
+		return 0, 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"classifier-weights: scales must contain positive finite values",
+			nil,
+		))
 	}
 
-	floor := 1.0 / (maxScale * 10.0)
-	ceiling := 10.0 / minScale
+	spreadRatio := maxScale / minScale
+	floor := 1.0 / (maxScale * spreadRatio)
+	ceiling := spreadRatio / minScale
 
-	return floor, ceiling
+	return floor, ceiling, nil
 }
 
 func clamp(value, lower, upper float64) float64 {

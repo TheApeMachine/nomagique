@@ -1,6 +1,7 @@
 package equation
 
 import (
+	"fmt"
 	"io"
 	"math"
 
@@ -43,24 +44,10 @@ func (causalStory *CausalStory) Read(payload []byte) (int, error) {
 	condition := datura.Peek[float64](state, "output", "condition")
 	inverted := datura.Peek[float64](state, "output", "inverted") > 0
 
-	if math.IsNaN(association) || math.IsInf(association, 0) {
-		association = 0
-	}
-
-	if math.IsNaN(intervention) || math.IsInf(intervention, 0) {
-		intervention = 0
-	}
-
-	if math.IsNaN(uplift) || math.IsInf(uplift, 0) {
-		uplift = 0
-	}
-
-	if math.IsNaN(contagion) || math.IsInf(contagion, 0) {
-		contagion = 0
-	}
-
-	if math.IsNaN(condition) || math.IsInf(condition, 0) {
-		condition = 0
+	for _, value := range []float64{association, intervention, uplift, contagion, condition} {
+		if math.IsNaN(value) || math.IsInf(value, 0) {
+			return rejectStage(state, "causalstory: ladder output is non-finite")
+		}
 	}
 
 	association = math.Abs(association)
@@ -72,7 +59,7 @@ func (causalStory *CausalStory) Read(payload []byte) (int, error) {
 	rungTotal := association + intervention + uplift
 
 	if rungTotal <= 0 && !inverted {
-		return emitZero(state, payload)
+		return rejectStage(state, "causalstory: ladder rungs are zero")
 	}
 
 	alphaScore := 0.0
@@ -81,12 +68,24 @@ func (causalStory *CausalStory) Read(payload []byte) (int, error) {
 	noiseScore := 0.0
 
 	if !inverted && uplift > 0 && intervention > 0 {
-		alphaScore = probability.CompetitionMargin(uplift, association+intervention) * uplift
+		margin, marginErr := probability.CompetitionMargin(uplift, association+intervention)
+
+		if marginErr != nil {
+			return rejectStage(state, fmt.Sprintf("causalstory: alpha margin failed: %v", marginErr))
+		}
+
+		alphaScore = margin * uplift
 	}
 
 	if !inverted && association > intervention {
 		margin := association - intervention
-		betaScore = probability.CompetitionMargin(margin, association)
+		score, marginErr := probability.CompetitionMargin(margin, association)
+
+		if marginErr != nil {
+			return rejectStage(state, fmt.Sprintf("causalstory: beta margin failed: %v", marginErr))
+		}
+
+		betaScore = score
 	}
 
 	if inverted {
@@ -108,13 +107,19 @@ func (causalStory *CausalStory) Read(payload []byte) (int, error) {
 	if rungTotal > 0 {
 		dominant := math.Max(association, math.Max(intervention, uplift))
 		residual := rungTotal - dominant
-		noiseScore = probability.CompetitionMargin(residual, rungTotal)
+		score, marginErr := probability.CompetitionMargin(residual, rungTotal)
+
+		if marginErr != nil {
+			return rejectStage(state, fmt.Sprintf("causalstory: noise margin failed: %v", marginErr))
+		}
+
+		noiseScore = score
 	}
 
 	best := math.Max(alphaScore, math.Max(betaScore, math.Max(shockScore, noiseScore)))
 
 	if best <= 0 {
-		return emitZero(state, payload)
+		return rejectStage(state, "causalstory: no positive category evidence")
 	}
 
 	category := 1

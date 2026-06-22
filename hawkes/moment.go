@@ -83,16 +83,16 @@ MomentConfidence returns a fit score in (0, 1] from empirical and theoretical mo
 */
 func MomentConfidence(
 	empirical, theoretical float64,
-) float64 {
+) (float64, bool) {
 	scale := math.Max(math.Abs(theoretical), math.Abs(empirical))
 
 	if scale <= 0 {
-		return 1
+		return 0, false
 	}
 
 	residual := math.Abs(empirical-theoretical) / scale
 
-	return 1 / (1 + residual)
+	return 1 / (1 + residual), true
 }
 
 /*

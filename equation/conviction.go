@@ -5,6 +5,7 @@ import (
 	"math"
 
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/errnie"
 )
 
 /*
@@ -40,15 +41,25 @@ func (conviction *Conviction) Read(p []byte) (int, error) {
 	batch := Features(state)
 
 	if len(batch) < 5 {
-		return emitZero(state, p)
+		return rejectStage(state, "equation: invalid stage input")
 	}
 
-	breadth := finiteScore(batch[0])
-	change := finiteScore(batch[1])
-	surgeThreshold := finiteScore(batch[2])
+	breadth := batch[0]
+	change := batch[1]
+	surgeThreshold := batch[2]
+
+	for _, value := range []float64{breadth, change, surgeThreshold} {
+		if math.IsNaN(value) || math.IsInf(value, 0) {
+			return rejectStage(state, "equation: invalid stage input")
+		}
+	}
 
 	if surgeThreshold <= 0 {
-		surgeThreshold = 0.5
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"conviction: surgeThreshold must be positive",
+			nil,
+		))
 	}
 
 	if surgeThreshold > 1 {
@@ -67,7 +78,7 @@ func (conviction *Conviction) Read(p []byte) (int, error) {
 	}
 
 	if strength <= 0 && category != 3 {
-		return emitZero(state, p)
+		return rejectStage(state, "equation: invalid stage input")
 	}
 
 	return emitOutput(state, p, datura.Map[float64]{
@@ -98,12 +109,4 @@ func classifyConviction(
 	}
 
 	return 3
-}
-
-func finiteScore(value float64) float64 {
-	if math.IsNaN(value) || math.IsInf(value, 0) {
-		return 0
-	}
-
-	return value
 }

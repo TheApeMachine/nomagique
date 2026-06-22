@@ -68,7 +68,7 @@ func (calibrator *Calibrator) Read(payload []byte) (int, error) {
 	parsedPredicted, parsedActual, err := parsePredictedActual(predicted, []float64{actual})
 
 	if err != nil {
-		return state.Read(payload)
+		return 0, err
 	}
 
 	derived := ObserveSampleRatio(&calibrator.state, parsedPredicted, parsedActual)

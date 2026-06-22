@@ -45,26 +45,25 @@ func (entropy *Entropy) Read(payload []byte) (int, error) {
 	sample := datura.Peek[float64](state, "sample")
 
 	if math.IsNaN(sample) || math.IsInf(sample, 0) {
-		return state.Read(payload)
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"entropy: sample is non-finite",
+			nil,
+		))
 	}
 
 	history := datura.Peek[[]float64](entropy.artifact, "history")
 	history = append(history, sample)
 	entropy.artifact.Poke(history, "history")
 
-	if len(history) == 0 {
-		return state.Read(payload)
-	}
-
 	probabilities, ok := entropy.normalizedProbabilities(history)
 
 	if !ok {
-		errnie.Error(errnie.Err(
-			errnie.Validation, "unable to compute entropy",
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"entropy: unable to compute normalized probabilities",
 			EntropyError(EntropyErrorNonFiniteMass),
 		))
-
-		return state.Read(payload)
 	}
 
 	value := stat.Entropy(probabilities)
@@ -80,6 +79,10 @@ func (entropy *Entropy) Close() error {
 
 func (entropy *Entropy) normalizedProbabilities(values []float64) ([]float64, bool) {
 	floor := entropy.probabilityFloor(values)
+
+	if floor < 0 {
+		return nil, false
+	}
 	total := 0.0
 	masses := make([]float64, len(values))
 
@@ -122,7 +125,7 @@ func (entropy *Entropy) probabilityFloor(values []float64) float64 {
 	scale := total / float64(len(values))
 
 	if scale <= 0 || math.IsNaN(scale) || math.IsInf(scale, 0) {
-		return math.SmallestNonzeroFloat64
+		return -1
 	}
 
 	return math.Nextafter(0, scale)

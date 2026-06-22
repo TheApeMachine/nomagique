@@ -14,11 +14,9 @@ func TestPositiveOnlyRead(t *testing.T) {
 			Poke([]string{"rvol", "precursor"}, "order").
 			Poke(1.0, "stageIndex").
 			Poke(map[string]any{
-				"precursor": map[string]any{
-					"outputKey":    "precursor",
-					"positiveOnly": 1.0,
-				},
-			}, "inputs")
+				"outputKey":    "precursor",
+				"positiveOnly": 1.0,
+			}, "precursor")
 
 		stage := NewPositiveOnly(config)
 		artifact := datura.Acquire("positive-only-test", datura.APPJSON).Poke(-2.0, "sample")
@@ -37,11 +35,9 @@ func BenchmarkPositiveOnlyRead(b *testing.B) {
 	config := datura.Acquire("positive-only-bench", datura.APPJSON).
 		Poke([]string{"rvol", "precursor"}, "order").
 		Poke(map[string]any{
-			"precursor": map[string]any{
-				"outputKey":    "precursor",
-				"positiveOnly": 1.0,
-			},
-		}, "inputs")
+			"outputKey":    "precursor",
+			"positiveOnly": 1.0,
+		}, "precursor")
 
 	stage := NewPositiveOnly(config)
 	artifact := datura.Acquire("positive-only-bench-test", datura.APPJSON).Poke(1.5, "sample")

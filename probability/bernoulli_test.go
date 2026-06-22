@@ -68,24 +68,17 @@ func TestPosterior_Observe(testingTB *testing.T) {
 		artifact := datura.Acquire("test", datura.APPJSON)
 		err := transport.NewFlipFlop(artifact, posterior)
 
-		So(err, ShouldBeNil)
-
-		Convey("It should return zero output", func() {
-			So(datura.Peek[float64](artifact, "output", "value"), ShouldEqual, 0)
+		Convey("It should return a validation error", func() {
+			So(err, ShouldNotBeNil)
 		})
 	})
 
 	Convey("Given a predicted and actual pair", testingTB, func() {
 		posterior := NewBernoulli(datura.Acquire("bernoulli-config", datura.APPJSON))
-		artifact := datura.Acquire("test", datura.APPJSON)
-
-		artifact.Poke(10, "sample")
+		artifact := datura.Acquire("test", datura.APPJSON).
+			Poke(10, "sample").
+			Poke(15, "paired")
 		err := transport.NewFlipFlop(artifact, posterior)
-
-		So(err, ShouldBeNil)
-
-		artifact.Poke(10, "sample").Poke(15, "paired")
-		err = transport.NewFlipFlop(artifact, posterior)
 
 		So(err, ShouldBeNil)
 
@@ -102,10 +95,8 @@ func TestPosterior_Observe(testingTB *testing.T) {
 			Poke(2, "sample")
 		err := transport.NewFlipFlop(artifact, posterior)
 
-		So(err, ShouldBeNil)
-
-		Convey("It should leave output at zero", func() {
-			So(datura.Peek[float64](artifact, "output", "value"), ShouldEqual, 0)
+		Convey("It should return a validation error", func() {
+			So(err, ShouldNotBeNil)
 		})
 	})
 }

@@ -4,6 +4,7 @@ import (
 	"math"
 
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/statistic"
 )
 
@@ -44,7 +45,11 @@ func (compression *Compression) Read(payload []byte) (int, error) {
 	sample := compression.sample(state)
 
 	if math.IsNaN(sample) || math.IsInf(sample, 0) {
-		return state.Read(payload)
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"compression: sample is non-finite",
+			nil,
+		))
 	}
 
 	baseline := compression.baseline
@@ -58,7 +63,7 @@ func (compression *Compression) Read(payload []byte) (int, error) {
 	}
 
 	compression.baseline = baseline
-	outputKey := datura.Peek[string](compression.artifact, "inputs", "compression", "outputKey")
+	outputKey := datura.Peek[string](compression.artifact, "compression", "outputKey")
 
 	if outputKey == "" {
 		outputKey = "value"
@@ -77,16 +82,22 @@ func (compression *Compression) Close() error {
 }
 
 func (compression *Compression) sample(state *datura.Artifact) float64 {
-	inputKey := datura.Peek[string](compression.artifact, "inputs", "compression", "input")
+	inputKey := datura.Peek[string](compression.artifact, "compression", "input")
 
 	if inputKey == "" {
 		inputKey = "sample"
 	}
 
-	sample := datura.Peek[float64](state, "output", inputKey)
+	body := datura.As[datura.Map[any]](state)
 
-	if sample != 0 {
-		return sample
+	if body != nil {
+		output, ok := body["output"].(map[string]any)
+
+		if ok {
+			if _, present := output[inputKey]; present {
+				return datura.Peek[float64](state, "output", inputKey)
+			}
+		}
 	}
 
 	return datura.Peek[float64](state, inputKey)

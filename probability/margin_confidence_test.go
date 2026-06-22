@@ -35,10 +35,10 @@ func TestCategoryShareConfidence(t *testing.T) {
 		So(loneWinner, ShouldBeLessThan, 1)
 	})
 
-	Convey("It returns zero when the selected category has no evidence", t, func() {
+	Convey("It returns an error when the selected category has no evidence", t, func() {
 		confidence, err := CategoryShareConfidence([]float64{0.5, 0.3, 0.2, 0}, 4)
 
-		So(err, ShouldBeNil)
+		So(err, ShouldNotBeNil)
 		So(confidence, ShouldEqual, 0)
 	})
 }

@@ -11,13 +11,14 @@ import (
 
 func regimeLadderConfig(contagionBreak float64) *datura.Artifact {
 	return datura.Acquire("regime-ladder-config", datura.APPJSON).
-		Poke(float64(3), "config", "target").
-		Poke(float64(12), "config", "minHistory").
-		Poke(float64(2), "config", "treatmentNormal").
-		Poke([]float64{0, 1}, "config", "controlsNormal").
-		Poke([]float64{0, 3}, "config", "contagionSkip").
-		Poke(0.35, "config", "kernelBandwidth").
-		Poke(contagionBreak, "config", "contagionBreak")
+		Poke(float64(3), "target").
+		Poke(float64(12), "minHistory").
+		Poke(float64(12), "history").
+		Poke(float64(2), "treatmentNormal").
+		Poke([]float64{0, 1}, "controlsNormal").
+		Poke([]float64{0, 3}, "contagionSkip").
+		Poke(0.35, "kernelBandwidth").
+		Poke(contagionBreak, "contagionBreak")
 }
 
 func regimeLadderInbound() *datura.Artifact {

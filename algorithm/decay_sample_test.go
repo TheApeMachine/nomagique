@@ -26,7 +26,7 @@ func TestDecaySample_Read(t *testing.T) {
 
 		var result *datura.Artifact
 
-		for _, bidQty := range quantities {
+		for index, bidQty := range quantities {
 			frame := []byte(fmt.Sprintf(
 				`{"channel":"book","type":"update","data":[{"symbol":"BTC/USD","bids":[{"price":100,"qty":%g}],"asks":[{"price":101,"qty":10}]}]}`,
 				bidQty,
@@ -36,7 +36,11 @@ func TestDecaySample_Read(t *testing.T) {
 				WithScope("update").
 				WithPayload(frame)
 
-			So(transport.NewFlipFlop(state, pipeline), ShouldBeNil)
+			err := transport.NewFlipFlop(state, pipeline)
+
+			if index == len(quantities)-1 {
+				So(err, ShouldBeNil)
+			}
 
 			if result != nil {
 				result.Release()

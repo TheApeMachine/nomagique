@@ -68,13 +68,11 @@ func (extractor *FeatureExtractor) Read(payload []byte) (int, error) {
 		sample := datura.Peek[float64](state, rootKey, 0, input)
 
 		if math.IsNaN(sample) || math.IsInf(sample, 0) {
-			errnie.Error(errnie.Err(
+			return 0, errnie.Error(errnie.Err(
 				errnie.Validation,
-				"feature-extractor: sample is NaN or Inf",
+				"feature-extractor: sample is non-finite",
 				nil,
 			))
-
-			continue
 		}
 
 		transform := datura.Peek[string](extractor.artifact, role, "transforms", input)
@@ -107,6 +105,7 @@ func (extractor *FeatureExtractor) Read(payload []byte) (int, error) {
 	state.Merge("features", features)
 	state.Merge("root", "features")
 	state.Merge("inputs", inputs)
+	state.Inspect("feature-extractor", "Read()", "features")
 
 	return state.Read(payload)
 }

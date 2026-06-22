@@ -4,6 +4,7 @@ import (
 	"math"
 
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/errnie"
 )
 
 /*
@@ -49,7 +50,10 @@ func (windowSet *WindowSet) Write(p []byte) (int, error) {
 
 func (windowSet *WindowSet) Read(p []byte) (int, error) {
 	if windowSet == nil {
-		return 0, nil
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation, "unable to compute window set",
+			WindowSetError(WindowSetErrorNilReceiver),
+		))
 	}
 
 	state := datura.Acquire("window-set-state", datura.APPJSON)
@@ -62,12 +66,25 @@ func (windowSet *WindowSet) Read(p []byte) (int, error) {
 	level := datura.Peek[float64](state, "paired")
 
 	if level <= 0 {
-		return state.Read(p)
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation, "unable to compute window set",
+			WindowSetError(WindowSetErrorRequirePositiveLevel),
+		))
 	}
 
 	epoch := int64(datura.Peek[float64](state, "sample"))
 	windowSet.ingest(windowSet.capacityFromArtifact(), epoch, level)
-	state.MergeOutput("value", windowSet.lastReturnMagnitude())
+
+	magnitude := windowSet.lastReturnMagnitude()
+
+	if magnitude <= 0 {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation, "unable to compute window set",
+			WindowSetError(WindowSetErrorInsufficientIntervals),
+		))
+	}
+
+	state.MergeOutput("value", magnitude)
 	state.Merge("root", "output")
 	state.Merge("inputs", []string{"value"})
 	return state.Read(p)
@@ -177,4 +194,18 @@ func (windowSet *WindowSet) lastReturnMagnitude(root ...any) float64 {
 	}
 
 	return math.Abs(rets[len(rets)-1])
+}
+
+type WindowSetErrorType string
+
+const (
+	WindowSetErrorNilReceiver            WindowSetErrorType = "require non-nil window set stage"
+	WindowSetErrorRequirePositiveLevel   WindowSetErrorType = "require positive paired level"
+	WindowSetErrorInsufficientIntervals  WindowSetErrorType = "require at least one log-return interval"
+)
+
+type WindowSetError string
+
+func (windowSetError WindowSetError) Error() string {
+	return string(windowSetError)
 }

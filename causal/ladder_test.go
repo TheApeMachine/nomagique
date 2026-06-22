@@ -12,7 +12,8 @@ import (
 func TestLadder_Read(testingTB *testing.T) {
 	Convey("Given aligned node rows with causal structure", testingTB, func() {
 		config := causalPipelineConfig(0.8)
-		config.Poke(0.35, "config", "kernelBandwidth")
+		config.Poke(0.35, "kernelBandwidth")
+		config.Poke(float64(12), "history")
 		regime := NewRegime(config)
 		hysteresis := adaptive.NewHysteresis(config)
 		ladder := NewLadder(config)
@@ -37,7 +38,8 @@ func TestLadder_Read(testingTB *testing.T) {
 
 func BenchmarkLadder_Read(testingTB *testing.B) {
 	config := causalPipelineConfig(0.8)
-	config.Poke(0.35, "config", "kernelBandwidth")
+	config.Poke(0.35, "kernelBandwidth")
+	config.Poke(float64(12), "history")
 	regime := NewRegime(config)
 	hysteresis := adaptive.NewHysteresis(config)
 	ladder := NewLadder(config)

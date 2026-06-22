@@ -4,6 +4,7 @@ import (
 	"math"
 
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/errnie"
 )
 
 /*
@@ -59,12 +60,25 @@ func (series *IntervalSeries) Read(p []byte) (int, error) {
 	level := datura.Peek[float64](state, "paired")
 
 	if level <= 0 {
-		return state.Read(p)
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation, "unable to compute interval series",
+			IntervalSeriesError(IntervalSeriesErrorRequirePositiveLevel),
+		))
 	}
 
 	epoch := int64(datura.Peek[float64](state, "sample"))
 	series.ingest(series.capacityFromArtifact(), epoch, level)
-	state.MergeOutput("value", series.lastReturnMagnitude())
+
+	magnitude := series.lastReturnMagnitude()
+
+	if magnitude <= 0 {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation, "unable to compute interval series",
+			IntervalSeriesError(IntervalSeriesErrorInsufficientIntervals),
+		))
+	}
+
+	state.MergeOutput("value", magnitude)
 	state.Merge("root", "output")
 	state.Merge("inputs", []string{"value"})
 	return state.Read(p)
@@ -174,4 +188,17 @@ func (series *IntervalSeries) lastReturnMagnitude(root ...any) float64 {
 	}
 
 	return math.Abs(rets[len(rets)-1])
+}
+
+type IntervalSeriesErrorType string
+
+const (
+	IntervalSeriesErrorRequirePositiveLevel IntervalSeriesErrorType = "require positive paired level"
+	IntervalSeriesErrorInsufficientIntervals IntervalSeriesErrorType = "require at least one log-return interval"
+)
+
+type IntervalSeriesError string
+
+func (intervalSeriesError IntervalSeriesError) Error() string {
+	return string(intervalSeriesError)
 }

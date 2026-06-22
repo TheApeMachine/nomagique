@@ -4,6 +4,7 @@ import (
 	"math"
 
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/statistic"
 )
 
@@ -44,21 +45,30 @@ func (geometricMean *GeometricMean) Read(p []byte) (int, error) {
 	defer state.Release()
 
 	features := statistic.SnapshotFeatures(state)
-	leftKey := datura.Peek[string](geometricMean.artifact, "inputs", "joint", "leftKey")
-	rightKey := datura.Peek[string](geometricMean.artifact, "inputs", "joint", "rightKey")
-	destinationKey := datura.Peek[string](geometricMean.artifact, "inputs", "joint", "destinationKey")
+	leftKey := datura.Peek[string](geometricMean.artifact, "joint", "leftKey")
+	rightKey := datura.Peek[string](geometricMean.artifact, "joint", "rightKey")
+	destinationKey := datura.Peek[string](geometricMean.artifact, "joint", "destinationKey")
 
 	if leftKey == "" || rightKey == "" || destinationKey == "" {
-		return state.Read(p)
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"geometric-mean: joint.leftKey, joint.rightKey, and joint.destinationKey are required",
+			nil,
+		))
 	}
 
 	left := datura.Peek[float64](state, "output", leftKey)
 	right := datura.Peek[float64](state, "output", rightKey)
-	mean := 0.0
 
-	if left > 0 && right > 0 {
-		mean = math.Sqrt(left * right)
+	if left <= 0 || right <= 0 {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"geometric-mean: operands must be positive",
+			nil,
+		))
 	}
+
+	mean := math.Sqrt(left * right)
 
 	state.MergeOutput(destinationKey, mean)
 	features.Restore(state)

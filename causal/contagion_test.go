@@ -10,8 +10,8 @@ import (
 
 func contagionConfig() *datura.Artifact {
 	return datura.Acquire("contagion-config", datura.APPJSON).
-		Poke(float64(3), "config", "target").
-		Poke([]float64{0, 3}, "config", "contagionSkip")
+		Poke(float64(3), "target").
+		Poke([]float64{0, 3}, "contagionSkip")
 }
 
 func TestContagion_Read(testingTB *testing.T) {

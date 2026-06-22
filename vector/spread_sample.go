@@ -42,7 +42,7 @@ func (spreadSample *SpreadSample) Read(p []byte) (int, error) {
 	defer state.Release()
 
 	features := statistic.SnapshotFeatures(state)
-	sourceKeys := datura.Peek[[]string](spreadSample.config, "inputs", "spread", "inputs")
+	sourceKeys := datura.Peek[[]string](spreadSample.config, "spread", "inputs")
 
 	if len(sourceKeys) < 2 {
 		return state.Read(p)

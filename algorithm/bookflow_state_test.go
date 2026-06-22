@@ -32,7 +32,7 @@ func TestToxicCancelEvidence(testingTB *testing.T) {
 		testCase := testCase
 
 		Convey("Given ToxicCancelEvidence "+testCase.name, testingTB, func() {
-			evidence := ToxicCancelEvidence(
+			evidence, err := ToxicCancelEvidence(
 				testCase.qty,
 				testCase.threshold,
 				testCase.distance,
@@ -42,14 +42,15 @@ func TestToxicCancelEvidence(testingTB *testing.T) {
 			)
 
 			if testCase.wantZero {
-				Convey("It should return zero", func() {
-					So(evidence, ShouldEqual, 0)
+				Convey("It should return an error", func() {
+					So(err, ShouldNotBeNil)
 				})
 
 				return
 			}
 
 			Convey("It should return positive evidence", func() {
+				So(err, ShouldBeNil)
 				So(evidence, ShouldBeGreaterThan, 0)
 				So(evidence, ShouldBeLessThanOrEqualTo, 1)
 			})
@@ -78,7 +79,7 @@ func TestToxicChurnEvidence(testingTB *testing.T) {
 		testCase := testCase
 
 		Convey("Given ToxicChurnEvidence "+testCase.name, testingTB, func() {
-			evidence := ToxicChurnEvidence(
+			evidence, err := ToxicChurnEvidence(
 				testCase.ratio,
 				testCase.gate,
 				testCase.addVol,
@@ -88,14 +89,15 @@ func TestToxicChurnEvidence(testingTB *testing.T) {
 			)
 
 			if testCase.wantZero {
-				Convey("It should return zero", func() {
-					So(evidence, ShouldEqual, 0)
+				Convey("It should return an error", func() {
+					So(err, ShouldNotBeNil)
 				})
 
 				return
 			}
 
 			Convey("It should return positive evidence", func() {
+				So(err, ShouldBeNil)
 				So(evidence, ShouldBeGreaterThan, 0)
 			})
 		})

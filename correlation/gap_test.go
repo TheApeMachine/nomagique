@@ -1,13 +1,11 @@
 package correlation
 
 import (
-	"io"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/transport"
-	"github.com/theapemachine/nomagique/tests"
 )
 
 func gapConfig() *datura.Artifact {
@@ -66,28 +64,20 @@ func TestGap_Read(testingTB *testing.T) {
 		})
 	})
 
-	Convey("Given features payload from WriteSamples", testingTB, func() {
+	Convey("Given features payload from a coupled gap batch", testingTB, func() {
 		stage := NewGap(gapConfig())
-		err := tests.WriteSamples(stage, coupledGapBatch()...)
+		artifact := datura.Acquire("gap-inbound", datura.APPJSON).
+			Poke(coupledGapBatch(), "batch")
+		err := transport.NewFlipFlop(artifact, stage)
 
 		So(err, ShouldBeNil)
 
-		frame := make([]byte, 4096)
-		readCount, readErr := stage.Read(frame)
-
-		So(readErr, ShouldEqual, io.EOF)
-
-		outbound := datura.Acquire("gap-outbound", datura.APPJSON)
-		_, writeErr := outbound.Write(frame[:readCount])
-
-		So(writeErr, ShouldBeNil)
-
-		rootKey := datura.Peek[string](outbound, "root")
+		rootKey := datura.Peek[string](artifact, "root")
 
 		Convey("It should resolve pearson via root and inputs", func() {
 			So(rootKey, ShouldEqual, "output")
-			So(datura.Peek[float64](outbound, rootKey, "pearson"), ShouldBeGreaterThan, 0.9)
-			So(datura.Peek[float64](outbound, rootKey, "hayashi"), ShouldAlmostEqual, 1, 1e-6)
+			So(datura.Peek[float64](artifact, rootKey, "pearson"), ShouldBeGreaterThan, 0.9)
+			So(datura.Peek[float64](artifact, rootKey, "hayashi"), ShouldAlmostEqual, 1, 1e-6)
 		})
 	})
 }

@@ -5,6 +5,7 @@ import (
 	"strconv"
 
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/errnie"
 )
 
 /*
@@ -42,18 +43,24 @@ func (graphStage *Graph) Read(p []byte) (int, error) {
 	dag, err := newDAGFromArtifact(graphStage.artifact)
 
 	if err != nil {
-		state.MergeOutput("value", 0.0)
-		return state.Read(p)
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"causal graph: dag construction failed",
+			err,
+		))
 	}
 
-	treatment := int(datura.Peek[float64](graphStage.artifact, "config", "treatment"))
-	target := int(datura.Peek[float64](graphStage.artifact, "config", "target"))
-	controls := intSlice(datura.Peek[[]float64](graphStage.artifact, "config", "controls"))
+	treatment := int(datura.Peek[float64](graphStage.artifact, "treatment"))
+	target := int(datura.Peek[float64](graphStage.artifact, "target"))
+	controls := intSlice(datura.Peek[[]float64](graphStage.artifact, "controls"))
 	admissible, err := dag.backdoorAdmissible(treatment, target, controls)
 
 	if err != nil {
-		state.MergeOutput("value", 0.0)
-		return state.Read(p)
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"causal graph: backdoor admissibility failed",
+			err,
+		))
 	}
 
 	value := 0.0
@@ -83,7 +90,7 @@ type graphVisit struct {
 }
 
 func newDAGFromArtifact(artifact *datura.Artifact) (causalDAG, error) {
-	nodeCount := int(datura.Peek[float64](artifact, "config", "graphNodeCount"))
+	nodeCount := int(datura.Peek[float64](artifact, "graphNodeCount"))
 
 	if nodeCount <= 0 {
 		return causalDAG{}, fmt.Errorf("causal: graph requires at least one node")
@@ -93,7 +100,7 @@ func newDAGFromArtifact(artifact *datura.Artifact) (causalDAG, error) {
 	children := make([][]int, nodeCount)
 
 	for node := range nodeCount {
-		parentList := intSlice(datura.Peek[[]float64](artifact, "config", "graphParent", strconv.Itoa(node)))
+		parentList := intSlice(datura.Peek[[]float64](artifact, "graphParent", strconv.Itoa(node)))
 		parents[node] = append([]int(nil), parentList...)
 
 		for _, parent := range parents[node] {

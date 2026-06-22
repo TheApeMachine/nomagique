@@ -4,6 +4,7 @@ import (
 	"math"
 
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/errnie"
 )
 
 /*
@@ -178,10 +179,12 @@ func (partition *ModePartition) Read(payload []byte) (int, error) {
 	if !ok {
 		partition.snap = nil
 		partition.output = 0
-		state.MergeOutput("value", 0)
-		state.Merge("root", "output")
-		state.Merge("inputs", []string{"value"})
-		return state.Read(payload)
+
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"mode-partition: require aligned origin, energy, and coupling streams",
+			nil,
+		))
 	}
 
 	modes, dominant := partition.partition(participants, couplingFn)
@@ -190,10 +193,12 @@ func (partition *ModePartition) Read(payload []byte) (int, error) {
 	if dominant < 0 {
 		partition.output = 0
 		partition.artifact.Poke(0, "output", "value")
-		state.MergeOutput("value", 0)
-		state.Merge("root", "output")
-		state.Merge("inputs", []string{"value"})
-		return state.Read(payload)
+
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"mode-partition: no eigenmodes detected",
+			nil,
+		))
 	}
 
 	partition.output = modes[dominant].Energy()

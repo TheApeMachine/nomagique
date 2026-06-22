@@ -41,19 +41,48 @@ type ResonanceConfig struct {
 /*
 AdaptiveResonanceConfig derives every single hyperparameter dynamically
 from the system-wide learning pace (alpha) and the physical depth of the network.
+Optional config artifact attributes under "resonance" override derived values.
 */
-func AdaptiveResonanceConfig(alpha float64, arch []int) ResonanceConfig {
-	if alpha <= 0 || alpha > 1 {
-		alpha = 0.010
-	}
+func AdaptiveResonanceConfig(
+	alpha float64, arch []int, config *datura.Artifact,
+) ResonanceConfig {
 	depth := len(arch)
+	depthFloat := float64(depth)
+
+	topDownInitMix := (depthFloat - 1.0) / depthFloat
+	temporalWeight := alpha / (alpha + 1.0/depthFloat)
+	earlyStopPatience := int(math.Max(1, math.Ceil(math.Sqrt(depthFloat))))
+	gradClip := alpha * depthFloat
+	stateClip := depthFloat / alpha
+
+	if config != nil {
+		if override := datura.Peek[float64](config, "resonance", "temporalWeight"); override > 0 {
+			temporalWeight = override
+		}
+
+		if override := datura.Peek[float64](config, "resonance", "topDownInitMix"); override > 0 {
+			topDownInitMix = override
+		}
+
+		if override := int(datura.Peek[float64](config, "resonance", "earlyStopPatience")); override > 0 {
+			earlyStopPatience = override
+		}
+
+		if override := datura.Peek[float64](config, "resonance", "gradClip"); override > 0 {
+			gradClip = override
+		}
+
+		if override := datura.Peek[float64](config, "resonance", "stateClip"); override > 0 {
+			stateClip = override
+		}
+	}
 
 	return ResonanceConfig{
 		MaxInferenceSteps:  depth * 8,
 		MinInferenceSteps:  depth * 2,
 		LrState:            alpha * 10.0,
 		EarlyStopTol:       1e-5,
-		EarlyStopPatience:  3,
+		EarlyStopPatience:  earlyStopPatience,
 		MonotoneStateSteps: true,
 		LineSearchHalvings: 3,
 
@@ -61,8 +90,8 @@ func AdaptiveResonanceConfig(alpha float64, arch []int) ResonanceConfig {
 		LrTemporal:    alpha * 2.0,
 		LrRecognition: alpha * 0.6,
 
-		TemporalWeight: 0.45,
-		TopDownInitMix: 0.55,
+		TemporalWeight: temporalWeight,
+		TopDownInitMix: topDownInitMix,
 
 		UsePrecision:  true,
 		PrecisionBeta: alpha,
@@ -73,8 +102,8 @@ func AdaptiveResonanceConfig(alpha float64, arch []int) ResonanceConfig {
 		LatentDecay: alpha * 1e-1,
 		Sparsity:    alpha * 1e-2,
 		WeightDecay: alpha * 1e-3,
-		GradClip:    1.0,
-		StateClip:   3.0,
+		GradClip:    gradClip,
+		StateClip:   stateClip,
 	}
 }
 
@@ -108,7 +137,11 @@ func NewResonanceManifold(
 		return nil, errors.New("resonance: architecture must contain at least input and one latent layer")
 	}
 
-	cfg := AdaptiveResonanceConfig(alpha, arch)
+	if alpha <= 0 || alpha > 1 || math.IsNaN(alpha) || math.IsInf(alpha, 0) {
+		return nil, errors.New("resonance: alpha must be finite and in (0, 1]")
+	}
+
+	cfg := AdaptiveResonanceConfig(alpha, arch, nil)
 	rng := rand.New(rand.NewSource(42))
 	numLinks := len(arch) - 1
 

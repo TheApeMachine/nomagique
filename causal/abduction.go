@@ -4,6 +4,7 @@ import (
 	"errors"
 
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/errnie"
 )
 
 /*
@@ -41,16 +42,19 @@ func (abduction *Abduction) Read(p []byte) (int, error) {
 	rows, ok := tableRows(state)
 
 	if !ok {
-		state.MergeOutput("value", 0.0)
-		return state.Read(p)
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"causal abduction: missing table rows",
+			errors.New("causal: table rows missing"),
+		))
 	}
 
-	target := int(datura.Peek[float64](abduction.artifact, "config", "target"))
-	treatment := int(datura.Peek[float64](abduction.artifact, "config", "treatment"))
-	intervention := datura.Peek[float64](abduction.artifact, "config", "intervention")
-	minHistory := int(datura.Peek[float64](abduction.artifact, "config", "minHistory"))
-	features := intSlice(datura.Peek[[]float64](abduction.artifact, "config", "features"))
-	linear := datura.Peek[float64](abduction.artifact, "config", "linear") > 0
+	target := int(datura.Peek[float64](abduction.artifact, "target"))
+	treatment := int(datura.Peek[float64](abduction.artifact, "treatment"))
+	intervention := datura.Peek[float64](abduction.artifact, "intervention")
+	minHistory := int(datura.Peek[float64](abduction.artifact, "minHistory"))
+	features := intSlice(datura.Peek[[]float64](abduction.artifact, "features"))
+	linear := datura.Peek[float64](abduction.artifact, "linear") > 0
 
 	if minHistory <= 0 {
 		minHistory = len(rows)
@@ -59,8 +63,11 @@ func (abduction *Abduction) Read(p []byte) (int, error) {
 	table, err := newNodeTable(rows, target, minHistory)
 
 	if err != nil {
-		state.MergeOutput("value", 0.0)
-		return state.Read(p)
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"causal abduction: table construction failed",
+			err,
+		))
 	}
 
 	currentRow := rows[len(rows)-1]
@@ -75,8 +82,11 @@ func (abduction *Abduction) Read(p []byte) (int, error) {
 	)
 
 	if err != nil {
-		state.MergeOutput("value", 0.0)
-		return state.Read(p)
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"causal abduction: counterfactual failed",
+			err,
+		))
 	}
 
 	state.MergeOutput("value", uplift)
@@ -124,13 +134,7 @@ func abductiveCounterfactual(
 			return 0, 0, 0, err
 		}
 
-		uplift, err = model.counterfactualUplift(row, treatment, intervention)
-
-		if err != nil {
-			return 0, 0, 0, err
-		}
-
-		return uplift, counterfactual, noise, nil
+		return counterfactual - observedTarget, counterfactual, noise, nil
 	}
 
 	model, fitOK := fitNonLinearTable(table, features)

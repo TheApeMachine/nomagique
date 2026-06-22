@@ -16,17 +16,17 @@ func TestClassifyFit(testingTB *testing.T) {
 		asymmetry  float64
 		preferY    bool
 		gates      FitGates
+		wantErr    bool
 		wantCat    FitCategory
 		wantConfGt float64
 		wantConfEq float64
 	}{
 		{
-			name:       "gates not ready",
-			fit:        BivariateFit{SpectralRadius: 0.99, IntensityX: 2, MuX: 1},
-			asymmetry:  0.9,
-			gates:      notReadyGates,
-			wantCat:    FitCategoryOrganic,
-			wantConfEq: 0,
+			name:      "gates not ready",
+			fit:       BivariateFit{SpectralRadius: 0.99, IntensityX: 2, MuX: 1},
+			asymmetry: 0.9,
+			gates:     notReadyGates,
+			wantErr:   true,
 		},
 		{
 			name: "saturation at spectral radius",
@@ -105,21 +105,31 @@ func TestClassifyFit(testingTB *testing.T) {
 		testCase := testCase
 
 		Convey("Given "+testCase.name, testingTB, func() {
-			category, confidence := ClassifyFit(
+			category, confidence, err := ClassifyFit(
 				testCase.fit,
 				testCase.asymmetry,
 				testCase.preferY,
 				testCase.gates,
 			)
 
+			if testCase.wantErr {
+				Convey("It should reject until gates are ready", func() {
+					So(err, ShouldNotBeNil)
+				})
+
+				return
+			}
+
+			So(err, ShouldBeNil)
+
 			Convey("It should classify as expected", func() {
 				So(category, ShouldEqual, testCase.wantCat)
 
-				if testCase.wantConfEq > 0 || testCase.name == "gates not ready" {
+				if testCase.wantConfEq > 0 {
 					So(confidence, ShouldEqual, testCase.wantConfEq)
 				}
 
-				if testCase.wantConfGt > 0 || (testCase.wantConfGt == 0 && testCase.wantConfEq == 0 && testCase.name != "gates not ready") {
+				if testCase.wantConfGt > 0 || testCase.wantConfEq == 0 {
 					So(confidence, ShouldBeGreaterThan, testCase.wantConfGt)
 				}
 			})

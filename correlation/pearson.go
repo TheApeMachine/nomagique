@@ -72,16 +72,19 @@ func (pearson *Pearson) Read(p []byte) (int, error) {
 		}
 
 		if !weightsOK {
-			state.MergeOutput("value", 0.0)
-			state.Merge("root", "output")
-			state.Merge("inputs", []string{"value"})
-			return state.Read(p)
+			return 0, errnie.Error(errnie.Err(
+				errnie.Validation, "unable to compute Pearson correlation",
+				PearsonError(PearsonErrorInvalidWeights),
+			))
 		}
 
 		correlation := stat.Correlation(left, right, weights)
 
 		if math.IsNaN(correlation) || math.IsInf(correlation, 0) {
-			correlation = 0
+			return 0, errnie.Error(errnie.Err(
+				errnie.Validation, "unable to compute Pearson correlation",
+				PearsonError(PearsonErrorNonFiniteResult),
+			))
 		}
 
 		state.MergeOutput("value", correlation)
@@ -91,23 +94,23 @@ func (pearson *Pearson) Read(p []byte) (int, error) {
 	}
 
 	if count > 0 && count < 2 {
-		errnie.Err(
+		return 0, errnie.Error(errnie.Err(
 			errnie.Validation, "unable to compute Pearson correlation",
 			PearsonError(PearsonErrorRequireAtLeastTwoInputs),
-		)
+		))
 	}
 
 	if count%2 != 0 && count > 0 {
-		errnie.Err(
+		return 0, errnie.Error(errnie.Err(
 			errnie.Validation, "unable to compute Pearson correlation",
 			PearsonError(PearsonErrorRequireEqualLength),
-		)
+		))
 	}
 
-	state.MergeOutput("value", 0.0)
-	state.Merge("root", "output")
-	state.Merge("inputs", []string{"value"})
-	return state.Read(p)
+	return 0, errnie.Error(errnie.Err(
+		errnie.Validation, "unable to compute Pearson correlation",
+		PearsonError(PearsonErrorRequireAtLeastTwoInputs),
+	))
 }
 
 func (pearson *Pearson) Close() error {
@@ -119,6 +122,8 @@ type PearsonErrorType string
 const (
 	PearsonErrorRequireAtLeastTwoInputs PearsonErrorType = "require at least two inputs"
 	PearsonErrorRequireEqualLength      PearsonErrorType = "require equal length"
+	PearsonErrorInvalidWeights          PearsonErrorType = "require valid weights"
+	PearsonErrorNonFiniteResult         PearsonErrorType = "require finite correlation"
 )
 
 type PearsonError string

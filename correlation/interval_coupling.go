@@ -4,6 +4,7 @@ import (
 	"math"
 
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/errnie"
 )
 
 /*
@@ -46,7 +47,10 @@ func (coupling *IntervalCoupling) Write(p []byte) (int, error) {
 
 func (coupling *IntervalCoupling) Read(p []byte) (int, error) {
 	if coupling == nil {
-		return 0, nil
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation, "unable to compute interval coupling",
+			IntervalCouplingError(IntervalCouplingErrorNilReceiver),
+		))
 	}
 
 	state := datura.Acquire("interval-coupling-state", datura.APPJSON)
@@ -72,10 +76,10 @@ func (coupling *IntervalCoupling) Read(p []byte) (int, error) {
 	value, ok := coupling.correlateSides()
 
 	if !ok {
-		state.MergeOutput("value", 0.0)
-		state.Merge("root", "output")
-		state.Merge("inputs", []string{"value"})
-		return state.Read(p)
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation, "unable to compute interval coupling",
+			IntervalCouplingError(IntervalCouplingErrorInsufficientIntervals),
+		))
 	}
 
 	state.MergeOutput("value", value)
@@ -252,4 +256,17 @@ func intervalCovariance(
 	}
 
 	return covariance
+}
+
+type IntervalCouplingErrorType string
+
+const (
+	IntervalCouplingErrorNilReceiver            IntervalCouplingErrorType = "require non-nil interval coupling stage"
+	IntervalCouplingErrorInsufficientIntervals  IntervalCouplingErrorType = "require overlapping interval histories"
+)
+
+type IntervalCouplingError string
+
+func (intervalCouplingError IntervalCouplingError) Error() string {
+	return string(intervalCouplingError)
 }

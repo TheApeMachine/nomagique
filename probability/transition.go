@@ -3,6 +3,7 @@ package probability
 import (
 	"math"
 
+	"github.com/theapemachine/errnie"
 	"gonum.org/v1/gonum/stat"
 )
 
@@ -51,7 +52,11 @@ func (matrix *TransitionMatrix) Surprise(observed []float64) (float64, error) {
 	}
 
 	if rowSum <= 0 {
-		return 0, nil
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"transition: row sum is non-positive",
+			nil,
+		))
 	}
 
 	expected := make([]float64, len(row))
@@ -60,13 +65,7 @@ func (matrix *TransitionMatrix) Surprise(observed []float64) (float64, error) {
 		expected[index] = count / rowSum
 	}
 
-	divergence, ok := klDivergence(observed, expected, 0, 0)
-
-	if !ok {
-		return 0, nil
-	}
-
-	return divergence, nil
+	return klDivergence(observed, expected, 0, 0)
 }
 
 /*
@@ -134,16 +133,24 @@ func (matrix *TransitionMatrix) Reset() {
 
 func klDivergence(
 	observed, expected []float64, expectedSum, floor float64,
-) (float64, bool) {
+) (float64, error) {
 	for _, value := range observed {
 		if math.IsNaN(value) || math.IsInf(value, 0) {
-			return 0, false
+			return 0, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"unable to compute KL divergence",
+				KLError(KLErrorNonFiniteObserved),
+			))
 		}
 	}
 
 	for _, value := range expected {
 		if math.IsNaN(value) || math.IsInf(value, 0) {
-			return 0, false
+			return 0, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"unable to compute KL divergence",
+				KLError(KLErrorNonFiniteExpected),
+			))
 		}
 	}
 
@@ -156,8 +163,20 @@ func klDivergence(
 	width := max(len(observed), len(expected))
 	probabilityFloor := klProbabilityFloor(observed, expected, width, floor)
 
+	if probabilityFloor <= 0 {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"unable to compute KL divergence",
+			KLError(KLErrorNonFiniteExpected),
+		))
+	}
+
 	if expectedSum <= 0 {
-		expectedSum = probabilityFloor
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"unable to compute KL divergence",
+			KLError(KLErrorNonFiniteExpected),
+		))
 	}
 
 	observedSum := 0.0
@@ -166,8 +185,20 @@ func klDivergence(
 		observedSum += observed[index]
 	}
 
-	if math.IsNaN(observedSum) || math.IsInf(observedSum, 0) || observedSum <= 0 {
-		observedSum = probabilityFloor
+	if math.IsNaN(observedSum) || math.IsInf(observedSum, 0) {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"unable to compute KL divergence",
+			KLError(KLErrorNonFiniteObservedSum),
+		))
+	}
+
+	if observedSum <= 0 {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"unable to compute KL divergence",
+			KLError(KLErrorNonFiniteObservedSum),
+		))
 	}
 
 	observedProbabilities := make([]float64, width)
@@ -201,13 +232,38 @@ func klDivergence(
 		expectedProbabilities[index] = expectedProbability
 	}
 
+	observedTotal := 0.0
+	expectedTotal := 0.0
+
+	for index := range width {
+		observedTotal += observedProbabilities[index]
+		expectedTotal += expectedProbabilities[index]
+	}
+
+	if observedTotal <= 0 || expectedTotal <= 0 {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"unable to compute KL divergence",
+			KLError(KLErrorNonFiniteResult),
+		))
+	}
+
+	for index := range width {
+		observedProbabilities[index] /= observedTotal
+		expectedProbabilities[index] /= expectedTotal
+	}
+
 	divergence := stat.KullbackLeibler(observedProbabilities, expectedProbabilities)
 
 	if math.IsNaN(divergence) || math.IsInf(divergence, 0) {
-		return 0, false
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"unable to compute KL divergence",
+			KLError(KLErrorNonFiniteResult),
+		))
 	}
 
-	return divergence, true
+	return divergence, nil
 }
 
 func klProbabilityFloor(
@@ -232,8 +288,23 @@ func klProbabilityFloor(
 	scale := math.Max(observedSum, expectedSum) / float64(width)
 
 	if scale <= 0 || math.IsNaN(scale) || math.IsInf(scale, 0) {
-		return math.SmallestNonzeroFloat64
+		return 0
 	}
 
 	return math.Nextafter(0, scale)
+}
+
+type KLErrorType string
+
+const (
+	KLErrorNonFiniteObserved    KLErrorType = "observed sample is non-finite"
+	KLErrorNonFiniteExpected    KLErrorType = "expected sample is non-finite"
+	KLErrorNonFiniteObservedSum KLErrorType = "observed sum is non-finite"
+	KLErrorNonFiniteResult      KLErrorType = "kl divergence is non-finite"
+)
+
+type KLError string
+
+func (klError KLError) Error() string {
+	return string(klError)
 }

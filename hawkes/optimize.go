@@ -53,11 +53,13 @@ func (context FitContext) logParamBounds() logParamBounds {
 }
 
 func crossBranchFloorFromContext(context FitContext) float64 {
-	if context.BranchFloor <= 0 {
-		return math.SmallestNonzeroFloat64
+	if context.BranchFloor > 0 {
+		return context.BranchFloor * math.Sqrt(math.Nextafter(1, 2)-1)
 	}
 
-	return context.BranchFloor * math.Sqrt(math.Nextafter(1, 2)-1)
+	minRate := 1 / context.SpanSec
+
+	return minRate / float64(context.TotalEvents)
 }
 
 func selfBranchShareFromContext(context FitContext) float64 {

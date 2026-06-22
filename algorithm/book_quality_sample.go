@@ -5,6 +5,7 @@ import (
 	"math"
 
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/errnie"
 )
 
 const bookQualityFeatureCount = 13
@@ -35,28 +36,28 @@ func NewBookQualitySample(artifact *datura.Artifact) *BookQualitySample {
 		artifact: artifact,
 		vacuumGate: NewGateQuantile(
 			datura.Acquire("vacuum-gate", datura.APPJSON).
-				WithAttribute("percentile", 0.9).
-				WithAttribute("minSamples", 3.0),
+				WithAttribute("percentile", datura.Peek[float64](artifact, "vacuumGate", "percentile")).
+				WithAttribute("minSamples", datura.Peek[float64](artifact, "vacuumGate", "minSamples")),
 		),
 		churnGate: NewGateQuantile(
 			datura.Acquire("churn-gate", datura.APPJSON).
-				WithAttribute("percentile", 0.75).
-				WithAttribute("minSamples", 3.0),
+				WithAttribute("percentile", datura.Peek[float64](artifact, "churnGate", "percentile")).
+				WithAttribute("minSamples", datura.Peek[float64](artifact, "churnGate", "minSamples")),
 		),
 		cancelQtyGate: NewGateQuantile(
 			datura.Acquire("cancel-qty-gate", datura.APPJSON).
-				WithAttribute("percentile", 0.5).
-				WithAttribute("minSamples", 3.0),
+				WithAttribute("percentile", datura.Peek[float64](artifact, "cancelQtyGate", "percentile")).
+				WithAttribute("minSamples", datura.Peek[float64](artifact, "cancelQtyGate", "minSamples")),
 		),
 		levelSizeGate: NewGateQuantile(
 			datura.Acquire("level-size-gate", datura.APPJSON).
-				WithAttribute("percentile", 0.75).
-				WithAttribute("minSamples", 3.0),
+				WithAttribute("percentile", datura.Peek[float64](artifact, "levelSizeGate", "percentile")).
+				WithAttribute("minSamples", datura.Peek[float64](artifact, "levelSizeGate", "minSamples")),
 		),
 		fillMatchGate: NewGateQuantile(
 			datura.Acquire("fill-match-gate", datura.APPJSON).
-				WithAttribute("percentile", 0.5).
-				WithAttribute("minSamples", 3.0),
+				WithAttribute("percentile", datura.Peek[float64](artifact, "fillMatchGate", "percentile")).
+				WithAttribute("minSamples", datura.Peek[float64](artifact, "fillMatchGate", "minSamples")),
 		),
 		bids: map[float64]float64{},
 		asks: map[float64]float64{},
@@ -96,7 +97,11 @@ func (bookQualitySample *BookQualitySample) Read(payload []byte) (int, error) {
 	features := datura.Peek[[]float64](bookQualitySample.artifact, "lastFeatures")
 
 	if len(features) < bookQualityFeatureCount {
-		features = make([]float64, bookQualityFeatureCount)
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"book-quality-sample: insufficient features",
+			nil,
+		))
 	}
 
 	state.Merge("features", features)
@@ -161,7 +166,11 @@ func (bookQualitySample *BookQualitySample) ingestBook(state *datura.Artifact) {
 
 	churnGate := bookQualitySample.runGate(bookQualitySample.churnGate, 0, 0)
 	vacuumPeak := bookQualitySample.runGate(bookQualitySample.vacuumGate, 0, 0)
-	vacuumLow := bookQualitySample.runGate(bookQualitySample.vacuumGate, 0, 0.25)
+	vacuumLow := bookQualitySample.runGate(
+		bookQualitySample.vacuumGate,
+		0,
+		datura.Peek[float64](bookQualitySample.artifact, "vacuumLowPercentile"),
+	)
 	supportGate := supportRatioGate(
 		threshold,
 		vacuumLow,
@@ -199,11 +208,11 @@ func (bookQualitySample *BookQualitySample) ingestBook(state *datura.Artifact) {
 
 		if touchCancelBid > 0 {
 			distance := math.Abs(bestBid-lastPrice) / lastPrice
-			evidence := ToxicChurnEvidence(
+			evidence, evidenceErr := ToxicChurnEvidence(
 				churnRatio, churnGate, frameAddBid, sizeThreshold, distance, proximity,
 			)
 
-			if evidence > 0 {
+			if evidenceErr == nil && evidence > 0 {
 				toxicNear = 1
 				toxicBluffStrength = math.Max(toxicBluffStrength, churnRatio)
 			}
@@ -211,11 +220,11 @@ func (bookQualitySample *BookQualitySample) ingestBook(state *datura.Artifact) {
 
 		if touchCancelAsk > 0 {
 			distance := math.Abs(bestAsk-lastPrice) / lastPrice
-			evidence := ToxicChurnEvidence(
+			evidence, evidenceErr := ToxicChurnEvidence(
 				churnRatio, churnGate, frameAddAsk, sizeThreshold, distance, proximity,
 			)
 
-			if evidence > 0 {
+			if evidenceErr == nil && evidence > 0 {
 				toxicNear = 1
 				toxicBluffStrength = math.Max(toxicBluffStrength, churnRatio)
 			}
@@ -359,10 +368,10 @@ func (bookQualitySample *BookQualitySample) touchProximity(mid float64) float64 
 	spread := (bestAsk - bestBid) / mid
 
 	if spread <= 0 {
-		return 0.01
+		return 0
 	}
 
-	return spread * 2
+	return spread
 }
 
 func (bookQualitySample *BookQualitySample) medianLevelQty(

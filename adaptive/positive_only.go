@@ -45,7 +45,7 @@ func (positiveOnly *PositiveOnly) Read(payload []byte) (int, error) {
 
 	if stageKey == "" {
 		order := datura.Peek[[]string](positiveOnly.artifact, "order")
-		stageIndex := int(datura.Peek[float64](positiveOnly.artifact, "inputs", "precursor", "stageIndex"))
+		stageIndex := int(datura.Peek[float64](positiveOnly.artifact, "precursor", "stageIndex"))
 
 		if stageIndex <= 0 {
 			stageIndex = int(datura.Peek[float64](positiveOnly.artifact, "stageIndex"))
@@ -62,7 +62,7 @@ func (positiveOnly *PositiveOnly) Read(payload []byte) (int, error) {
 		return state.Read(payload)
 	}
 
-	outputKey := datura.Peek[string](positiveOnly.artifact, "inputs", stageKey, "outputKey")
+	outputKey := datura.Peek[string](positiveOnly.artifact, stageKey, "outputKey")
 
 	if outputKey == "" {
 		features.Restore(state)
@@ -80,7 +80,7 @@ func (positiveOnly *PositiveOnly) Read(payload []byte) (int, error) {
 		score = datura.Peek[float64](state, "sample")
 	}
 
-	if datura.Peek[float64](positiveOnly.artifact, "inputs", stageKey, "positiveOnly") > 0 {
+	if datura.Peek[float64](positiveOnly.artifact, stageKey, "positiveOnly") > 0 {
 		score = math.Max(0, score)
 	}
 

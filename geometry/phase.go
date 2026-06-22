@@ -4,6 +4,7 @@ import (
 	"math"
 
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/errnie"
 )
 
 /*
@@ -41,18 +42,6 @@ func (velocity *Velocity) Read(payload []byte) (int, error) {
 	}
 
 	sample := datura.Peek[float64](state, "sample")
-
-	if sample == 0 && !velocity.ready {
-		value := datura.Peek[float64](velocity.artifact, "output", "value")
-
-		if velocity.ready {
-			state.MergeOutput("value", value)
-			state.Merge("root", "output")
-			state.Merge("inputs", []string{"value"})
-		}
-
-		return state.Read(payload)
-	}
 
 	derived := velocity.observe(sample)
 	velocity.artifact.Poke(derived, "output", "value")
@@ -145,32 +134,32 @@ func (coupling *Coupling) Read(payload []byte) (int, error) {
 		}
 
 		if left == 0 && right == 0 {
-			value := datura.Peek[float64](coupling.artifact, "output", "value")
-
-			if value != 0 {
-				state.MergeOutput("value", value)
-				state.Merge("root", "output")
-				state.Merge("inputs", []string{"value"})
-			}
-
-			return state.Read(payload)
-		}
-
-		if right == 0 {
-			return state.Read(payload)
+			return 0, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"coupling: require two growth samples",
+				ErrEmptyInputs,
+			))
 		}
 
 		values = []float64{left, right}
 	}
 
 	if len(values) < 2 {
-		return state.Read(payload)
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"coupling: require two growth samples",
+			ErrEmptyInputs,
+		))
 	}
 
 	leftGrowth, rightGrowth, err := parseGrowthPair(values[0], values[1:])
 
 	if err != nil {
-		return state.Read(payload)
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"coupling: require two growth samples",
+			err,
+		))
 	}
 
 	derived := coupling.align(leftGrowth, rightGrowth)
@@ -200,7 +189,13 @@ func (coupling *Coupling) align(leftGrowth, rightGrowth float64) float64 {
 		return 0
 	}
 
-	relativeFloor := (absLeft * absRight) / (absLeft + absRight + math.SmallestNonzeroFloat64)
+	denominator := absLeft + absRight
+
+	if denominator == 0 {
+		return 0
+	}
+
+	relativeFloor := (absLeft * absRight) / denominator
 
 	if geometricMean*geometricMean < relativeFloor {
 		return 0

@@ -79,7 +79,9 @@ func TestClassifyFit_Saturation(testingTB *testing.T) {
 
 		So(gatesReady, ShouldBeTrue)
 
-		category, confidence := ClassifyFit(fit, 0.05, false, gates)
+		category, confidence, err := ClassifyFit(fit, 0.05, false, gates)
+
+		So(err, ShouldBeNil)
 
 		Convey("It should classify saturation", func() {
 			So(category, ShouldEqual, FitCategorySaturation)

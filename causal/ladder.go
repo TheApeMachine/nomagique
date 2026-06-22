@@ -1,7 +1,10 @@
 package causal
 
 import (
+	"errors"
+
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/errnie"
 )
 
 /*
@@ -39,100 +42,149 @@ func (ladder *Ladder) Read(p []byte) (int, error) {
 	rows, ok := tableRows(state)
 
 	if !ok {
-		return state.Read(p)
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"causal ladder: missing table rows",
+			errors.New("causal: table rows missing"),
+		))
 	}
 
-	target := int(datura.Peek[float64](ladder.artifact, "config", "target"))
-	minHistory := int(datura.Peek[float64](ladder.artifact, "config", "minHistory"))
+	target := int(datura.Peek[float64](ladder.artifact, "target"))
+	minHistory := int(datura.Peek[float64](ladder.artifact, "minHistory"))
 
 	if minHistory <= 0 {
 		minHistory = len(rows)
 	}
 
 	if len(rows) < minHistory {
-		return state.Read(p)
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"causal ladder: insufficient history",
+			errors.New("causal: insufficient table history"),
+		))
 	}
 
 	table, err := newNodeTable(rows, target, minHistory)
 
 	if err != nil {
-		return state.Read(p)
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"causal ladder: table construction failed",
+			err,
+		))
 	}
 
 	inverted := datura.Peek[float64](state, "output", "value") != 0
 	contagion := datura.Peek[float64](state, "paired")
-
-	if contagion == 0 {
-		contagion = datura.Peek[float64](state, "output", "contagion")
-	}
-
 	condition := datura.Peek[float64](state, "output", "condition")
-	treatment := int(datura.Peek[float64](ladder.artifact, "config", "treatmentNormal"))
-	controls := intSlice(datura.Peek[[]float64](ladder.artifact, "config", "controlsNormal"))
+	treatment := int(datura.Peek[float64](ladder.artifact, "treatmentNormal"))
+	controls := intSlice(datura.Peek[[]float64](ladder.artifact, "controlsNormal"))
 
 	if inverted {
-		treatment = int(datura.Peek[float64](ladder.artifact, "config", "treatmentInverted"))
-		controls = intSlice(datura.Peek[[]float64](ladder.artifact, "config", "controlsInverted"))
+		treatment = int(datura.Peek[float64](ladder.artifact, "treatmentInverted"))
+		controls = intSlice(datura.Peek[[]float64](ladder.artifact, "controlsInverted"))
 	}
 
-	bandwidth := datura.Peek[float64](ladder.artifact, "config", "kernelBandwidth")
+	bandwidth := datura.Peek[float64](ladder.artifact, "kernelBandwidth")
 
 	if bandwidth <= 0 {
-		bandwidth = deriveBandwidth(rows, int(datura.Peek[float64](ladder.artifact, "config", "treatmentNormal")))
+		bandwidth = deriveBandwidth(rows, int(datura.Peek[float64](ladder.artifact, "treatmentNormal")))
 	}
 
 	if bandwidth <= 0 {
-		return state.Read(p)
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"causal ladder: kernel bandwidth is invalid",
+			errors.New("causal: kernel bandwidth must be positive"),
+		))
 	}
 
 	association, err := table.association(treatment)
 
 	if err != nil {
-		association = 0
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"causal ladder: association failed",
+			err,
+		))
 	}
 
 	intervention, err := table.kernelBackdoorEffect(treatment, bandwidth, controls...)
 
 	if err != nil {
-		intervention = 0
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"causal ladder: kernel backdoor failed",
+			err,
+		))
 	}
 
-	raw := 0.0
+	raw := intervention
 	uplift := 0.0
 
 	if intervention > 0 {
 		predictors := append(append([]int(nil), controls...), treatment)
-		nonLinear, fitOK := fitNonLinearTable(table, predictors)
-		raw = intervention
 		currentRow := rows[len(rows)-1]
-		interventionLevel := datura.Peek[float64](ladder.artifact, "config", "interventionLevel")
+		interventionLevel := datura.Peek[float64](ladder.artifact, "interventionLevel")
 
 		if interventionLevel <= 0 {
-			level, err := table.percentile(treatment, 0.75)
+			percentile := datura.Peek[float64](ladder.artifact, "interventionPercentile")
 
-			if err == nil {
-				interventionLevel = level
+			if percentile <= 0 {
+				percentile = 1 - 1/float64(len(rows))
 			}
+
+			level, percentileErr := table.percentile(treatment, percentile)
+
+			if percentileErr != nil {
+				return 0, errnie.Error(errnie.Err(
+					errnie.Validation,
+					"causal ladder: intervention level failed",
+					percentileErr,
+				))
+			}
+
+			interventionLevel = level
 		}
 
-		if fitOK {
-			upliftValue, err := nonLinear.counterfactualUplift(currentRow, treatment, interventionLevel)
+		nonLinear, fitOK := fitNonLinearTable(table, predictors)
 
-			if err == nil {
-				uplift = upliftValue
+		if fitOK {
+			upliftValue, upliftErr := nonLinear.counterfactualUplift(currentRow, treatment, interventionLevel)
+
+			if upliftErr != nil {
+				return 0, errnie.Error(errnie.Err(
+					errnie.Validation,
+					"causal ladder: nonlinear uplift failed",
+					upliftErr,
+				))
 			}
+
+			uplift = upliftValue
 		}
 
 		if !fitOK {
-			linear, err := table.fitLinearModel(predictors...)
+			linear, linearErr := table.fitLinearModel(predictors...)
 
-			if err == nil {
-				upliftValue, err := linear.counterfactualUplift(currentRow, treatment, interventionLevel)
-
-				if err == nil {
-					uplift = upliftValue
-				}
+			if linearErr != nil {
+				return 0, errnie.Error(errnie.Err(
+					errnie.Validation,
+					"causal ladder: linear uplift fit failed",
+					linearErr,
+				))
 			}
+
+			upliftValue, upliftErr := linear.counterfactualUplift(currentRow, treatment, interventionLevel)
+
+			if upliftErr != nil {
+				return 0, errnie.Error(errnie.Err(
+					errnie.Validation,
+					"causal ladder: linear uplift failed",
+					upliftErr,
+				))
+			}
+
+			uplift = upliftValue
 		}
 	}
 

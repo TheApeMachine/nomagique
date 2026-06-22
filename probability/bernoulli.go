@@ -4,6 +4,7 @@ import (
 	"math"
 
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/errnie"
 )
 
 /*
@@ -52,7 +53,11 @@ func (bernoulli *Bernoulli) Read(payload []byte) (int, error) {
 	pairedPresent := attributeKeyPresent(state, "paired")
 
 	if !samplePresent && !pairedPresent {
-		return state.Read(payload)
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"bernoulli: sample or paired required",
+			nil,
+		))
 	}
 
 	betaState := BetaState{
@@ -72,21 +77,37 @@ func (bernoulli *Bernoulli) Read(payload []byte) (int, error) {
 		paired := datura.Peek[float64](state, "paired")
 		predicted, actual, parseErr := parsePredictedActual(sample, []float64{paired})
 
-		if parseErr == nil {
-			value = ObserveBetaPair(&betaState, predicted, actual)
+		if parseErr != nil {
+			return 0, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"bernoulli: unable to parse predicted and actual pair",
+				parseErr,
+			))
 		}
+
+		value = ObserveBetaPair(&betaState, predicted, actual)
 	}
 
 	if !pairedPresent {
 		if math.IsNaN(sample) || math.IsInf(sample, 0) {
-			return state.Read(payload)
+			return 0, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"bernoulli: sample is non-finite",
+				nil,
+			))
 		}
 
 		outcome, parseErr := parseBernoulliOutcome(sample, nil)
 
-		if parseErr == nil {
-			value = ObserveBeta(&betaState, outcome)
+		if parseErr != nil {
+			return 0, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"bernoulli: invalid outcome",
+				parseErr,
+			))
 		}
+
+		value = ObserveBeta(&betaState, outcome)
 	}
 
 	ready := 0.0

@@ -4,6 +4,7 @@ import (
 	"math"
 
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/errnie"
 )
 
 /*
@@ -41,29 +42,37 @@ func (hysteresis *Hysteresis) Read(payload []byte) (int, error) {
 	sample := datura.Peek[float64](state, "sample")
 
 	if math.IsNaN(sample) || math.IsInf(sample, 0) {
-		return state.Read(payload)
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"hysteresis: sample is non-finite",
+			nil,
+		))
 	}
 
-	window := int(datura.Peek[float64](state, "config", "window"))
+	window := int(datura.Peek[float64](state, "window"))
 
 	if window <= 0 {
-		window = int(datura.Peek[float64](hysteresis.artifact, "config", "window"))
+		window = int(datura.Peek[float64](hysteresis.artifact, "window"))
 	}
 
 	if window <= 0 {
-		history := int(datura.Peek[float64](hysteresis.artifact, "config", "history"))
-
-		if history <= 0 {
-			window = 2
-		}
+		history := int(datura.Peek[float64](hysteresis.artifact, "history"))
 
 		if history > 0 {
 			window = int(math.Ceil(math.Sqrt(float64(history))))
 
-			if window < 2 {
-				window = 2
+			if window < 1 {
+				window = 1
 			}
 		}
+	}
+
+	if window <= 0 {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"hysteresis: window must be positive",
+			nil,
+		))
 	}
 
 	value := datura.Peek[float64](hysteresis.artifact, "output", "value")

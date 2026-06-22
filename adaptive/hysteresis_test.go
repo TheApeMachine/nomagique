@@ -16,7 +16,7 @@ func TestHysteresis_Read(testingTB *testing.T) {
 			for range 2 {
 				artifact := datura.Acquire("test", datura.APPJSON).
 					Poke(1.0, "sample").
-					Poke(float64(3), "config", "window")
+					Poke(float64(3), "window")
 				err := transport.NewFlipFlop(artifact, stage)
 
 				So(err, ShouldBeNil)
@@ -25,7 +25,7 @@ func TestHysteresis_Read(testingTB *testing.T) {
 
 			artifact := datura.Acquire("test", datura.APPJSON).
 				Poke(1.0, "sample").
-				Poke(float64(3), "config", "window")
+				Poke(float64(3), "window")
 			err := transport.NewFlipFlop(artifact, stage)
 
 			So(err, ShouldBeNil)
@@ -42,7 +42,7 @@ func BenchmarkHysteresis_Read(b *testing.B) {
 	for b.Loop() {
 		artifact := datura.Acquire("test", datura.APPJSON).
 			Poke(1.0, "sample").
-			Poke(float64(2), "config", "window")
+			Poke(float64(2), "window")
 		_ = transport.NewFlipFlop(artifact, stage)
 	}
 }

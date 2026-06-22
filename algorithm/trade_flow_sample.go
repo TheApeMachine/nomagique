@@ -159,7 +159,7 @@ func (tradeFlowSample *TradeFlowSample) features(window *tradeFlowWindow) []floa
 	medianNotional := grossFloor
 
 	if medianNotional <= 0 {
-		medianNotional = math.SmallestNonzeroFloat64
+		return nil
 	}
 
 	features := make([]float64, 0, flowSampleHeader+len(prices))

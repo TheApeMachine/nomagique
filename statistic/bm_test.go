@@ -22,6 +22,11 @@ func TestBivariateMomentSeries(t *testing.T) {
 			artifact.Poke(xValues[index], "sample").Poke(yValues[index], "paired")
 			err := transport.NewFlipFlop(artifact, bivariateMoment)
 
+			if index < 1 {
+				So(err, ShouldNotBeNil)
+				continue
+			}
+
 			So(err, ShouldBeNil)
 		}
 
@@ -31,4 +36,19 @@ func TestBivariateMomentSeries(t *testing.T) {
 			So(got, ShouldBeGreaterThan, 0)
 		})
 	})
+}
+
+func BenchmarkBivariateMomentRead(testingTB *testing.B) {
+	bivariateConfig := datura.Acquire("bm-config-bench", datura.APPJSON).
+		Poke(1.0, "config", "r").
+		Poke(1.0, "config", "s")
+	bivariateMoment := NewBivariateMoment(bivariateConfig)
+	artifact := datura.Acquire("bm-bench", datura.APPJSON)
+
+	testingTB.ReportAllocs()
+
+	for testingTB.Loop() {
+		artifact.Poke(2.0, "sample").Poke(5.0, "paired")
+		_ = transport.NewFlipFlop(artifact, bivariateMoment)
+	}
 }

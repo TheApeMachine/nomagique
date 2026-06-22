@@ -1,9 +1,11 @@
 package causal
 
 import (
+	"errors"
 	"math"
 
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/errnie"
 )
 
 /*
@@ -41,12 +43,15 @@ func (regime *Regime) Read(p []byte) (int, error) {
 	rows, ok := tableRows(state)
 
 	if !ok {
-		state.MergeOutput("value", 0.0)
-		return state.Read(p)
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"causal regime: missing table rows",
+			errors.New("causal: table rows missing"),
+		))
 	}
 
-	target := int(datura.Peek[float64](regime.artifact, "config", "target"))
-	minHistory := int(datura.Peek[float64](regime.artifact, "config", "minHistory"))
+	target := int(datura.Peek[float64](regime.artifact, "target"))
+	minHistory := int(datura.Peek[float64](regime.artifact, "minHistory"))
 
 	if minHistory <= 0 {
 		minHistory = len(rows)
@@ -55,33 +60,37 @@ func (regime *Regime) Read(p []byte) (int, error) {
 	table, err := newNodeTable(rows, target, minHistory)
 
 	if err != nil {
-		state.MergeOutput("value", 0.0)
-		return state.Read(p)
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"causal regime: table construction failed",
+			err,
+		))
 	}
 
 	contagion := datura.Peek[float64](state, "paired")
-
-	if contagion == 0 {
-		contagion = datura.Peek[float64](state, "output", "value")
-	}
-
-	contagionBreak := datura.Peek[float64](regime.artifact, "config", "contagionBreak") > 0 &&
-		contagion >= datura.Peek[float64](regime.artifact, "config", "contagionBreak")
+	contagionBreak := datura.Peek[float64](regime.artifact, "contagionBreak") > 0 &&
+		contagion >= datura.Peek[float64](regime.artifact, "contagionBreak")
 
 	condition := 0.0
 	conditionBreak := false
-	conditionSwitch := datura.Peek[float64](regime.artifact, "config", "conditionSwitch")
+	conditionSwitch := datura.Peek[float64](regime.artifact, "conditionSwitch")
 
 	if conditionSwitch > 0 {
 		pairCondition, err := table.pairConditionNumber(
-			int(datura.Peek[float64](regime.artifact, "config", "conditionLeft")),
-			int(datura.Peek[float64](regime.artifact, "config", "conditionRight")),
+			int(datura.Peek[float64](regime.artifact, "conditionLeft")),
+			int(datura.Peek[float64](regime.artifact, "conditionRight")),
 		)
 
-		if err == nil {
-			condition = pairCondition
-			conditionBreak = math.IsInf(pairCondition, 1) || pairCondition >= conditionSwitch
+		if err != nil {
+			return 0, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"causal regime: pair condition failed",
+				err,
+			))
 		}
+
+		condition = pairCondition
+		conditionBreak = math.IsInf(pairCondition, 1) || pairCondition >= conditionSwitch
 	}
 
 	rawInverted := 0.0

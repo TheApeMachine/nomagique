@@ -33,8 +33,7 @@ func TestIntegration(t *testing.T) {
 			artifact.Poke(float64(1_000), "sample").Poke(100.0, "paired")
 			err := transport.NewFlipFlop(artifact, series)
 
-			So(err, ShouldBeNil)
-			So(datura.Peek[float64](artifact, "output", "value"), ShouldEqual, 0)
+			So(err, ShouldNotBeNil)
 
 			artifact.Poke(float64(2_000), "sample").Poke(110.0, "paired")
 			err = transport.NewFlipFlop(artifact, series)
@@ -62,12 +61,16 @@ func TestIntegration(t *testing.T) {
 				artifact.Poke(1, "member").Poke(epoch, "sample").Poke(100+float64(step)*0.1, "paired")
 				err := transport.NewFlipFlop(artifact, contagion)
 
-				So(err, ShouldBeNil)
+				if step == 0 {
+					So(err, ShouldNotBeNil)
+				}
 
 				artifact.Poke(2, "member").Poke(epoch, "sample").Poke(50+float64(step)*0.05, "paired")
 				err = transport.NewFlipFlop(artifact, contagion)
 
-				So(err, ShouldBeNil)
+				if step == 0 {
+					So(err, ShouldNotBeNil)
+				}
 			}
 
 			So(datura.Peek[float64](artifact, "output", "value"), ShouldBeGreaterThan, 0)

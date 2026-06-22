@@ -10,7 +10,7 @@ import (
 	"gonum.org/v1/gonum/stat"
 )
 
-const cohortPayloadHeader = 5
+const cohortPayloadHeader = 6
 
 /*
 Cohort classifies how one symbol's returns align with the peer median.
@@ -47,7 +47,7 @@ func (cohort *Cohort) Read(p []byte) (int, error) {
 	outcome := evaluateCohort(batch)
 
 	if !outcome.eligible || outcome.strength <= 0 {
-		return emitZero(state, p)
+		return rejectStage(state, "equation: invalid stage input")
 	}
 
 	return emitOutput(state, p, datura.Map[float64]{
@@ -84,7 +84,8 @@ func evaluateCohort(batch []float64) cohortOutcome {
 	}
 
 	window := int(batch[0])
-	counts := batch[1:cohortPayloadHeader]
+	barSpacingSeconds := batch[5]
+	counts := batch[1:5]
 	offset := cohortPayloadHeader
 	series := make([][]float64, len(counts))
 
@@ -114,7 +115,7 @@ func evaluateCohort(batch []float64) cohortOutcome {
 
 	correlation := stat.Correlation(symbolReturns, marketReturns, nil)
 
-	if hyCorrelation, hyOK := cohortHayashiCorrelation(symbolReturns, marketReturns); hyOK {
+	if hyCorrelation, hyOK := cohortHayashiCorrelation(symbolReturns, marketReturns, barSpacingSeconds); hyOK {
 		if math.Abs(correlation) < math.Abs(hyCorrelation) || math.IsNaN(correlation) {
 			correlation = hyCorrelation
 		}
@@ -308,12 +309,16 @@ func cohortMedianAbsoluteValues(values []float64) float64 {
 	return stat.Quantile(0.5, stat.LinInterp, absValues, nil)
 }
 
-func cohortHayashiCorrelation(left, right []float64) (float64, bool) {
+func cohortHayashiCorrelation(left, right []float64, barSpacingSeconds float64) (float64, bool) {
+	if barSpacingSeconds <= 0 || math.IsNaN(barSpacingSeconds) || math.IsInf(barSpacingSeconds, 0) {
+		return 0, false
+	}
+
 	if len(left) < 2 || len(left) != len(right) {
 		return 0, false
 	}
 
-	barSpacing := 10 * time.Second
+	barSpacing := time.Duration(barSpacingSeconds * float64(time.Second))
 	leftSamples := make([]cohortHayashiSample, len(left))
 	rightSamples := make([]cohortHayashiSample, len(right))
 	start := time.Unix(0, 0)

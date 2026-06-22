@@ -10,13 +10,13 @@ import (
 
 func causalPipelineConfig(contagionBreak float64) *datura.Artifact {
 	return datura.Acquire("causal-config", datura.APPJSON).
-		Poke(float64(3), "config", "target").
-		Poke(float64(12), "config", "minHistory").
-		Poke(float64(2), "config", "treatmentNormal").
-		Poke([]float64{0, 1}, "config", "controlsNormal").
-		Poke(float64(1), "config", "treatmentInverted").
-		Poke([]float64{0, 2}, "config", "controlsInverted").
-		Poke(contagionBreak, "config", "contagionBreak")
+		Poke(float64(3), "target").
+		Poke(float64(12), "minHistory").
+		Poke(float64(2), "treatmentNormal").
+		Poke([]float64{0, 1}, "controlsNormal").
+		Poke(float64(1), "treatmentInverted").
+		Poke([]float64{0, 2}, "controlsInverted").
+		Poke(contagionBreak, "contagionBreak")
 }
 
 func tableInbound(rowCount int, step float64) *datura.Artifact {

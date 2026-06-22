@@ -46,13 +46,13 @@ func (decay *Decay) Read(p []byte) (int, error) {
 	batch := Features(state)
 
 	if len(batch) < decayPayloadHeader {
-		return emitZero(state, p)
+		return rejectStage(state, "equation: invalid stage input")
 	}
 
 	lastPrice := batch[0]
 
 	if lastPrice <= 0 {
-		return emitZero(state, p)
+		return rejectStage(state, "equation: invalid stage input")
 	}
 
 	counts := batch[1:decayPayloadHeader]
@@ -63,7 +63,7 @@ func (decay *Decay) Read(p []byte) (int, error) {
 		segmentCount := int(count)
 
 		if segmentCount < 0 || offset+segmentCount > len(batch) {
-			return emitZero(state, p)
+			return rejectStage(state, "equation: invalid stage input")
 		}
 
 		series[index] = batch[offset : offset+segmentCount]
@@ -90,11 +90,12 @@ func (decay *Decay) Read(p []byte) (int, error) {
 	}
 
 	if urgency <= 0 || category == 0 {
-		return emitZero(state, p)
+		return rejectStage(state, "equation: invalid stage input")
 	}
 
 	return emitOutput(state, p, datura.Map[float64]{
 		"value":      urgency,
+		"strength":   urgency,
 		"mechanical": mechanical,
 		"fragile":    fragile,
 		"thermal":    thermal,

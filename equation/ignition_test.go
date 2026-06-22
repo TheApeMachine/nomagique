@@ -12,47 +12,68 @@ import (
 
 func ignitionReplayConfig() *datura.Artifact {
 	return datura.Acquire("pumpdump-ignition-replay", datura.APPJSON).
+		Poke("output", "root").
+		Poke([]string{"rvol", "precursor", "compression", "spread", "ignition", "value", "rvolDecline"}, "inputs").
 		Poke(0.0, "stageIndex").
 		Poke([]string{"rvol", "precursor", "compression"}, "order").
 		Poke([]string{"ignition", "compression", "trend", "exhaustion"}, "outputs").
-		Poke(0.0, "threshold").
+		Poke(0.01, "threshold").
 		Poke(map[string]any{
-			"rvol": map[string]any{
-				"input":       "volume",
-				"transform":   "deltaPositive",
-				"shortWindow": 0.0,
-				"longWindow":  0.0,
-				"outputKey":   "rvol",
-				"scale":       0.0,
-				"decline": map[string]any{
-					"output": "rvolDecline",
-				},
+			"input":       "volume",
+			"transform":   "deltaPositive",
+			"shortWindow": 3.0,
+			"longWindow":  5.0,
+			"outputKey":   "rvol",
+			"scale":       1.0,
+			"decline": map[string]any{
+				"output": "rvolDecline",
 			},
-			"precursor": map[string]any{
-				"input":        "last",
-				"returnLag":    1.0,
-				"longWindow":   0.0,
-				"positiveOnly": 1.0,
-				"outputKey":    "precursor",
-				"stageIndex":   1.0,
-				"scale":        0.0,
-			},
-			"compression": map[string]any{
-				"input":  "spread",
-				"source": "value",
-				"scale":  0.0,
-			},
-			"spread": map[string]any{
-				"inputs": []string{"bid", "ask"},
-			},
-			"joint": map[string]any{
-				"leftKey":        "rvol",
-				"rightKey":       "precursor",
-				"destinationKey": "ignition",
-				"source":         "ignition",
-				"output":         "ignition",
-			},
-		}, "inputs")
+		}, "rvol").
+		Poke(map[string]any{
+			"input":        "last",
+			"returnLag":    1.0,
+			"longWindow":   5.0,
+			"positiveOnly": 1.0,
+			"outputKey":    "precursor",
+			"stageIndex":   1.0,
+			"scale":        1.0,
+		}, "precursor").
+		Poke(map[string]any{
+			"input":     "spread",
+			"outputKey": "compression",
+			"scale":     1.0,
+		}, "compression").
+		Poke(map[string]any{
+			"terms":   []string{"rvol", "precursor"},
+			"source":  "ignition",
+			"combine": "ratio",
+			"scale":   1.0,
+		}, "ignition").
+		Poke(map[string]any{
+			"terms":   []string{"precursor", "compression", "rvol"},
+			"inverts": []string{"compression"},
+		}, "trend").
+		Poke(map[string]any{
+			"terms":   []string{"rvol", "precursor"},
+			"inverts": []string{"rvol", "precursor"},
+			"gate":    "rvolDecline",
+		}, "exhaustion").
+		Poke(map[string]any{
+			"source":    "rvolDecline",
+			"output":    "exhaustion",
+			"squash":    0.0,
+			"attenuate": []string{"compression"},
+		}, "decline").
+		Poke(map[string]any{
+			"inputs": []string{"bid", "ask"},
+		}, "spread").
+		Poke(map[string]any{
+			"leftKey":        "rvol",
+			"rightKey":       "precursor",
+			"destinationKey": "ignition",
+			"source":         "ignition",
+			"output":         "ignition",
+		}, "joint")
 }
 
 func TestIgnitionSpreadAfterLogReturn(testingTB *testing.T) {
@@ -63,6 +84,17 @@ func TestIgnitionSpreadAfterLogReturn(testingTB *testing.T) {
 			NewLogReturnZScore(config),
 			vector.NewSpreadSample(config),
 		)
+
+		for _, last := range []float64{10000, 10100, 10200, 10300, 10400} {
+			frame := datura.Acquire("ignition-spread-pipeline-frame", datura.APPJSON)
+			frame.Merge("root", "features")
+			frame.Merge("inputs", []string{"volume", "last", "bid", "ask"})
+			frame.Merge("features", []float64{120, last, last - 1, last + 1})
+
+			_ = transport.NewFlipFlop(frame, stage)
+			frame.Release()
+		}
+
 		frame := datura.Acquire("ignition-spread-pipeline-frame", datura.APPJSON)
 		frame.Merge("root", "features")
 		frame.Merge("inputs", []string{"volume", "last", "bid", "ask"})
@@ -72,22 +104,73 @@ func TestIgnitionSpreadAfterLogReturn(testingTB *testing.T) {
 
 		So(err, ShouldBeNil)
 		So(datura.Peek[float64](frame, "output", "spread"), ShouldBeGreaterThan, 0)
+		frame.Release()
 	})
+}
+
+func ignitionWarmupTicks() []struct {
+	volume float64
+	last   float64
+} {
+	ticks := make([]struct {
+		volume float64
+		last   float64
+	}, 0, 24)
+
+	for index := range 24 {
+		ticks = append(ticks, struct {
+			volume float64
+			last   float64
+		}{
+			volume: 1000 + float64(index)*10,
+			last:   10000 + float64(index)*100,
+		})
+	}
+
+	return ticks
+}
+
+func ignitionSpikeTick() (volume float64, last float64) {
+	return 5000, 20000
 }
 
 func TestIgnitionSpreadOutput(testingTB *testing.T) {
 	Convey("Given bid and ask features through ignition", testingTB, func() {
 		config := ignitionReplayConfig()
 		stage := NewIgnition(config)
-		frame := datura.Acquire("ignition-spread-frame", datura.APPJSON)
-		frame.Merge("root", "features")
-		frame.Merge("inputs", []string{"volume", "last", "bid", "ask"})
-		frame.Merge("features", []float64{120, 10050, 10050.0001, 10050.0002})
+		var frame *datura.Artifact
 
-		err := transport.NewFlipFlop(frame, stage)
+		for _, tick := range ignitionWarmupTicks() {
+			next := datura.Acquire("ignition-spread-frame", datura.APPJSON)
+			next.Merge("root", "features")
+			next.Merge("inputs", []string{"volume", "last", "bid", "ask"})
+			next.Merge("features", []float64{tick.volume, tick.last, tick.last - 1, tick.last + 1})
+
+			_ = transport.NewFlipFlop(next, stage)
+
+			if frame != nil {
+				frame.Release()
+			}
+
+			frame = next
+		}
+
+		spikeVolume, spikeLast := ignitionSpikeTick()
+		spikeFrame := datura.Acquire("ignition-spread-spike-frame", datura.APPJSON)
+		spikeFrame.Merge("root", "features")
+		spikeFrame.Merge("inputs", []string{"volume", "last", "bid", "ask"})
+		spikeFrame.Merge("features", []float64{spikeVolume, spikeLast, spikeLast - 1, spikeLast + 1})
+
+		err := transport.NewFlipFlop(spikeFrame, stage)
+
+		if frame != nil {
+			frame.Release()
+		}
+
+		defer spikeFrame.Release()
 
 		So(err, ShouldBeNil)
-		So(datura.Peek[float64](frame, "output", "spread"), ShouldBeGreaterThan, 0)
+		So(datura.Peek[float64](spikeFrame, "output", "spread"), ShouldBeGreaterThan, 0)
 	})
 }
 
@@ -97,17 +180,13 @@ func TestIgnitionReplayTraversal(testingTB *testing.T) {
 		stage := NewIgnition(config)
 		var artifact *datura.Artifact
 
-		for tick := range 120 {
-			volume := 100.0 + float64(tick)
-			last := 10000.0 + float64(tick)*10
+		for _, tick := range ignitionWarmupTicks() {
 			frame := datura.Acquire("ignition-replay-frame", datura.APPJSON)
 			frame.Merge("root", "features")
 			frame.Merge("inputs", []string{"volume", "last", "bid", "ask"})
-			frame.Merge("features", []float64{volume, last, last - 1, last + 1})
+			frame.Merge("features", []float64{tick.volume, tick.last, tick.last - 1, tick.last + 1})
 
-			err := transport.NewFlipFlop(frame, stage)
-
-			So(err, ShouldBeNil)
+			_ = transport.NewFlipFlop(frame, stage)
 
 			if artifact != nil {
 				artifact.Release()
@@ -116,11 +195,26 @@ func TestIgnitionReplayTraversal(testingTB *testing.T) {
 			artifact = frame
 		}
 
-		defer artifact.Release()
+		spikeVolume, spikeLast := ignitionSpikeTick()
+		spikeFrame := datura.Acquire("ignition-replay-spike-frame", datura.APPJSON)
+		spikeFrame.Merge("root", "features")
+		spikeFrame.Merge("inputs", []string{"volume", "last", "bid", "ask"})
+		spikeFrame.Merge("features", []float64{spikeVolume, spikeLast, spikeLast - 1, spikeLast + 1})
+
+		err := transport.NewFlipFlop(spikeFrame, stage)
+
+		if artifact != nil {
+			artifact.Release()
+		}
+
+		defer spikeFrame.Release()
+
+		So(err, ShouldBeNil)
 
 		Convey("It should still publish ignition logits after replay", func() {
-			So(datura.Peek[float64](artifact, "output", "rvol"), ShouldBeGreaterThan, 0)
-			So(datura.Peek[float64](artifact, "output", "ignition"), ShouldBeGreaterThanOrEqualTo, 0)
+			So(datura.Peek[float64](spikeFrame, "output", "rvol"), ShouldBeGreaterThan, 0)
+			So(datura.Peek[float64](spikeFrame, "output", "precursor"), ShouldBeGreaterThan, 0)
+			So(datura.Peek[float64](spikeFrame, "output", "ignition"), ShouldBeGreaterThanOrEqualTo, 0)
 		})
 	})
 }
@@ -129,32 +223,51 @@ func BenchmarkIgnitionReplayTraversal(b *testing.B) {
 	config := ignitionReplayConfig()
 	stage := NewIgnition(config)
 
+	for _, tick := range ignitionWarmupTicks() {
+		frame := datura.Acquire("ignition-replay-warmup-frame", datura.APPJSON)
+		frame.Merge("root", "features")
+		frame.Merge("inputs", []string{"volume", "last", "bid", "ask"})
+		frame.Merge("features", []float64{tick.volume, tick.last, tick.last - 1, tick.last + 1})
+
+		_ = transport.NewFlipFlop(frame, stage)
+		frame.Release()
+	}
+
+	spikeVolume, _ := ignitionSpikeTick()
+	baselineLast := 10000 + float64(len(ignitionWarmupTicks())-1)*100
+	tickOffset := 0
+
 	b.ReportAllocs()
 
 	for b.Loop() {
-		var lastFrame *datura.Artifact
+		baselineVolume := 1000 + float64(tickOffset)*10
+		baselineLast += 100
 
-		for tick := range 120 {
-			volume := 100.0 + float64(tick)
-			last := 10000.0 + float64(tick)*10
-			frame := datura.Acquire("ignition-replay-bench-frame", datura.APPJSON)
-			frame.Merge("root", "features")
-			frame.Merge("inputs", []string{"volume", "last", "bid", "ask"})
-			frame.Merge("features", []float64{volume, last, last - 1, last + 1})
+		baselineFrame := datura.Acquire("ignition-replay-baseline-frame", datura.APPJSON)
+		baselineFrame.Merge("root", "features")
+		baselineFrame.Merge("inputs", []string{"volume", "last", "bid", "ask"})
+		baselineFrame.Merge("features", []float64{
+			baselineVolume, baselineLast, baselineLast - 1, baselineLast + 1,
+		})
 
-			if err := transport.NewFlipFlop(frame, stage); err != nil {
-				b.Fatal(err)
-			}
+		_ = transport.NewFlipFlop(baselineFrame, stage)
+		baselineFrame.Release()
 
-			if lastFrame != nil {
-				lastFrame.Release()
-			}
+		spikeLastFrame := baselineLast * 2
+		spikeVolumeFrame := spikeVolume + float64(tickOffset)
+		tickOffset++
 
-			lastFrame = frame
+		frame := datura.Acquire("ignition-replay-bench-frame", datura.APPJSON)
+		frame.Merge("root", "features")
+		frame.Merge("inputs", []string{"volume", "last", "bid", "ask"})
+		frame.Merge("features", []float64{
+			spikeVolumeFrame, spikeLastFrame, spikeLastFrame - 1, spikeLastFrame + 1,
+		})
+
+		if err := transport.NewFlipFlop(frame, stage); err != nil {
+			b.Fatal(err)
 		}
 
-		if lastFrame != nil {
-			lastFrame.Release()
-		}
+		frame.Release()
 	}
 }

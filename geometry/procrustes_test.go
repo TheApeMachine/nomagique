@@ -96,7 +96,7 @@ func TestProcrustes_Observe(t *testing.T) {
 				artifact := datura.Acquire("test", datura.APPJSON)
 				err := transport.NewFlipFlop(artifact, stage)
 
-				So(err, ShouldBeNil)
+				So(err, ShouldNotBeNil)
 				So(stage.Err(), ShouldNotBeNil)
 			})
 
@@ -114,7 +114,7 @@ func TestProcrustes_Observe(t *testing.T) {
 				artifact := datura.Acquire("test", datura.APPJSON)
 				err = transport.NewFlipFlop(artifact, stage)
 
-				So(err, ShouldBeNil)
+				So(err, ShouldNotBeNil)
 				So(stage.Err(), ShouldNotBeNil)
 			})
 		})

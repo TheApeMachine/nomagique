@@ -92,6 +92,28 @@ func TestClassifier_Read(testingTB *testing.T) {
 			So(err, ShouldNotBeNil)
 		})
 	})
+
+	Convey("Given zero category evidence and zero strength", testingTB, func() {
+		classifier := probability.NewClassifier(classifierSchema("s0", "s1", "s2", "s3"))
+
+		So(classifier, ShouldNotBeNil)
+
+		artifact := artifactWithScores(map[string]float64{
+			"s0":       0,
+			"s1":       0,
+			"s2":       0,
+			"s3":       0,
+			"strength": 0,
+		})
+		err := transport.NewFlipFlop(artifact, classifier)
+
+		So(err, ShouldBeNil)
+
+		Convey("It should emit uniform confidence without error", func() {
+			So(datura.Peek[float64](artifact, "output", "confidence"), ShouldAlmostEqual, 0.25, 1e-9)
+			So(datura.Peek[float64](artifact, "output", "strength"), ShouldEqual, 0)
+		})
+	})
 }
 
 func TestClassifier_Number(testingTB *testing.T) {

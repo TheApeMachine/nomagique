@@ -170,7 +170,7 @@ func (bookQualitySample *BookQualitySample) ingestBook(state *datura.Artifact) {
 	vacuumLow := bookQualitySample.runGate(
 		bookQualitySample.vacuumGate,
 		0,
-		datura.Peek[float64](bookQualitySample.artifact, "vacuumLowPercentile"),
+		bookQualitySample.resolvedVacuumLowPercentile(),
 	)
 	supportGate := supportRatioGate(
 		threshold,
@@ -404,11 +404,55 @@ func (bookQualitySample *BookQualitySample) medianLevelQty(
 	return total / float64(len(quantities))
 }
 
+func (bookQualitySample *BookQualitySample) resolvedGatePercentile(configured float64, highSelectivity bool) float64 {
+	if configured > 0 {
+		return configured
+	}
+
+	floor := 0.5
+	ceiling := 0.75
+
+	if highSelectivity {
+		floor = 0.75
+		ceiling = 0.9
+	}
+
+	if bookQualitySample.frameCount < 3 {
+		return floor
+	}
+
+	ramp := math.Min(1, float64(bookQualitySample.frameCount-3)/17)
+
+	return floor + (ceiling-floor)*ramp
+}
+
+func (bookQualitySample *BookQualitySample) resolvedVacuumLowPercentile() float64 {
+	configured := datura.Peek[float64](bookQualitySample.artifact, "vacuumLowPercentile")
+
+	if configured > 0 {
+		return configured
+	}
+
+	highBand := bookQualitySample.resolvedGatePercentile(0, true)
+
+	return math.Max(0.1, highBand*0.25)
+}
+
 func (bookQualitySample *BookQualitySample) runGate(
 	gate *GateQuantile,
 	sample float64,
 	percentile float64,
 ) float64 {
+	if percentile <= 0 {
+		configured := datura.Peek[float64](gate.artifact, "percentile")
+
+		if configured <= 0 {
+			highSelectivity := gate == bookQualitySample.vacuumGate || gate == bookQualitySample.churnGate ||
+				gate == bookQualitySample.levelSizeGate
+			percentile = bookQualitySample.resolvedGatePercentile(0, highSelectivity)
+		}
+	}
+
 	if sample <= 0 {
 		return gate.value(percentile)
 	}

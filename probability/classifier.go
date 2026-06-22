@@ -93,6 +93,16 @@ func (classifier *Classifier) Read(payload []byte) (int, error) {
 		scores[index] = score
 	}
 
+	allZeroEvidence := true
+
+	for _, score := range scores {
+		if score > 0 {
+			allZeroEvidence = false
+
+			break
+		}
+	}
+
 	probabilities, err := SoftmaxScoresNormalized(scores)
 
 	if err != nil {
@@ -122,11 +132,13 @@ func (classifier *Classifier) Read(payload []byte) (int, error) {
 	}
 
 	if strength <= 0 || math.IsNaN(strength) || math.IsInf(strength, 0) {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"classifier: strength must be positive and finite",
-			nil,
-		))
+		if !allZeroEvidence {
+			return 0, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"classifier: strength must be positive and finite",
+				nil,
+			))
+		}
 	}
 
 	state.MergeOutput("probabilities", probabilities)

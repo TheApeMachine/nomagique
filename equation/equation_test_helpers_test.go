@@ -14,49 +14,54 @@ func writeFeatureStage(stage io.Writer, inputKeys []string, values ...float64) e
 	frame, err := inbound.MarshalPacked()
 
 	if err != nil {
-		return err
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"writeFeatureStage: inbound marshalling failed",
+			err,
+		))
 	}
 
 	_, err = stage.Write(frame)
 
-	return err
-}
-
-func writeFeatureStagePayload(stage io.Writer, payload []byte) error {
-	inbound := datura.Acquire("equation-test-in", datura.APPJSON)
-	inbound.WithPayload(payload)
-	frame, err := inbound.MarshalPacked()
-
-	if err != nil {
-		return err
-	}
-
-	_, err = stage.Write(frame)
-
-	return err
+	return errnie.Error(errnie.Err(
+		errnie.IO,
+		"writeFeatureStage: stage write failed",
+		err,
+	))
 }
 
 func readStageOutput(stage io.Reader) (*datura.Artifact, error) {
 	chunk := make([]byte, 262144)
-	readCount, readErr := stage.Read(chunk)
+	readCount, err := stage.Read(chunk)
 
-	if readErr != nil && readErr != io.EOF && readErr != io.ErrShortBuffer {
-		return nil, errnie.Error(errnie.Err(errnie.IO, "readStageOutput: stage read failed", readErr))
+	if err != nil && err != io.EOF && err != io.ErrShortBuffer {
+		return nil, errnie.Error(errnie.Err(
+			errnie.IO,
+			"readStageOutput: stage read failed",
+			err,
+		))
 	}
 
 	outbound := datura.Acquire("equation-test-out", datura.Artifact_Type_json)
-	_, writeErr := outbound.Write(chunk[:readCount])
+	_, err = outbound.Write(chunk[:readCount])
 
-	if writeErr != nil {
+	if err != nil {
 		outbound.Release()
-
-		return nil, errnie.Error(errnie.Err(errnie.IO, "readStageOutput: outbound write failed", writeErr))
+		return nil, errnie.Error(errnie.Err(
+			errnie.IO,
+			"readStageOutput: outbound write failed",
+			err,
+		))
 	}
 
 	if !outbound.HasEncryptedPayload() {
 		outbound.Release()
 
-		return nil, errnie.Error(errnie.Err(errnie.Validation, "readStageOutput: stage produced no output", nil))
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"readStageOutput: stage produced no output",
+			nil,
+		))
 	}
 
 	return outbound, nil

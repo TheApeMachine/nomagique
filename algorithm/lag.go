@@ -92,6 +92,8 @@ func (lag *Lag) Read(payload []byte) (int, error) {
 	state.MergeOutput("sync", lag.outcome.SyncScore)
 	state.MergeOutput("decoupled", lag.outcome.DecoupledScore)
 	state.MergeOutput("stall", lag.outcome.StallScore)
+	state.MergeOutput("strength", lag.outcome.Strength)
+	state.MergeOutput("value", float64(lag.outcome.Category))
 	state.Merge("root", "output")
 	state.Merge("inputs", []string{"inefficient", "sync", "decoupled", "stall"})
 

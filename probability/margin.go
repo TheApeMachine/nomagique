@@ -48,6 +48,18 @@ func CategoryShareConfidence(scores []float64, categoryIndex int) (float64, erro
 	selected := scores[index]
 
 	if selected <= 0 {
+		evidenceSum := 0.0
+
+		for _, score := range scores {
+			if score > 0 {
+				evidenceSum += score
+			}
+		}
+
+		if evidenceSum <= 0 {
+			return 1.0 / float64(len(scores)), nil
+		}
+
 		return 0, fmt.Errorf("probability: category share confidence requires positive selected evidence")
 	}
 

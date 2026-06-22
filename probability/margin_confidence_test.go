@@ -41,6 +41,13 @@ func TestCategoryShareConfidence(t *testing.T) {
 		So(err, ShouldNotBeNil)
 		So(confidence, ShouldEqual, 0)
 	})
+
+	Convey("It yields uniform share when all categories have zero evidence", t, func() {
+		confidence, err := CategoryShareConfidence([]float64{0, 0, 0, 0}, 1)
+
+		So(err, ShouldBeNil)
+		So(confidence, ShouldAlmostEqual, 0.25, 1e-9)
+	})
 }
 
 func BenchmarkCategoryShareConfidence(testingTB *testing.B) {

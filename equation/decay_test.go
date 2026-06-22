@@ -85,6 +85,35 @@ func TestDecay_Read(testingTB *testing.T) {
 			So(int(datura.Peek[float64](outbound, "output", "category")), ShouldEqual, 3)
 		})
 	})
+
+	Convey("Given stable book history without decay signals", testingTB, func() {
+		stage := equation.NewDecay(nil)
+		bidDepths := []float64{10, 10, 10, 10, 10, 10, 10, 10}
+		askDepths := []float64{10, 10, 10, 10, 10, 10, 10, 10}
+		densities := []float64{20, 20, 20, 20, 20, 20, 20, 20}
+		spreads := []float64{4, 4, 4, 4, 4, 4, 4, 4}
+		pressures := []float64{0, 0, 0, 0, 0, 0, 0, 0}
+		imbalances := []float64{0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1}
+
+		writeErr := writeFeatureStage(stage, equation.DecayInputKeys, decayPayload(
+			100, bidDepths, askDepths, densities, spreads, pressures, imbalances,
+		)...)
+
+		So(writeErr, ShouldBeNil)
+
+		outbound, err := readStageOutput(stage)
+
+		So(err, ShouldBeNil)
+
+		Convey("It should emit zero urgency without rejecting the stage", func() {
+			So(int(datura.Peek[float64](outbound, "output", "category")), ShouldEqual, 0)
+			So(datura.Peek[float64](outbound, "output", "urgency"), ShouldEqual, 0)
+			So(datura.Peek[float64](outbound, "output", "mechanical"), ShouldEqual, 0)
+			So(datura.Peek[float64](outbound, "output", "fragile"), ShouldEqual, 0)
+			So(datura.Peek[float64](outbound, "output", "thermal"), ShouldEqual, 0)
+			So(datura.Peek[float64](outbound, "output", "reversal"), ShouldEqual, 0)
+		})
+	})
 }
 
 func BenchmarkDecayRead(b *testing.B) {

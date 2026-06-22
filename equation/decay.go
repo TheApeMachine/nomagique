@@ -96,10 +96,6 @@ func (decay *Decay) Read(p []byte) (int, error) {
 		category = shortOutcome.category
 	}
 
-	if urgency <= 0 || category == 0 {
-		return rejectStage(state, "equation: invalid stage input")
-	}
-
 	return emitOutput(state, p, datura.Map[float64]{
 		"value":      urgency,
 		"strength":   urgency,

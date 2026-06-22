@@ -57,6 +57,35 @@ func TestDecaySample_Read(t *testing.T) {
 			result.Release()
 		})
 	})
+
+	Convey("Given stable bid depth on repeated book frames", t, func() {
+		encoder := NewDecaySample(datura.Acquire("decay-sample", datura.APPJSON))
+		decay := equation.NewDecay(nil)
+		classifier := probability.NewClassifier(
+			datura.Acquire("exhaust-classifier", datura.APPJSON).WithAttributes(datura.Map[any]{
+				"inputs": []string{"mechanical", "fragile", "thermal", "reversal"},
+			}),
+		)
+		pipeline := transport.NewPipeline(encoder, decay, classifier)
+
+		frame := []byte(`{"channel":"book","type":"update","data":[{"symbol":"BTC/USD","bids":[{"price":100,"qty":10}],"asks":[{"price":101,"qty":10}]}]}`)
+
+		var lastErr error
+
+		for range 12 {
+			state := datura.Acquire("measurement", datura.APPJSON).
+				WithRole("measurement").
+				WithScope("update").
+				WithPayload(frame)
+
+			lastErr = transport.NewFlipFlop(state, pipeline)
+			state.Release()
+		}
+
+		Convey("It should complete the pipeline without invalid stage input", func() {
+			So(lastErr, ShouldBeNil)
+		})
+	})
 }
 
 func TestDecaySample_ReadRejectsMissingSymbol(t *testing.T) {

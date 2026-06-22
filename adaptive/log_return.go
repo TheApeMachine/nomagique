@@ -4,6 +4,7 @@ import (
 	"math"
 
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/statistic"
 )
 
@@ -45,49 +46,88 @@ func (logReturn *LogReturn) Read(payload []byte) (int, error) {
 	stageKey := logReturn.stageKey()
 
 	if stageKey == "" {
-		features.Restore(state)
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"log-return: stage config required",
+			nil,
+		))
+	}
 
-		return state.Read(payload)
+	inputKey := datura.Peek[string](logReturn.artifact, stageKey, "input")
+	outputKey := datura.Peek[string](logReturn.artifact, stageKey, "outputKey")
+
+	if outputKey == "" {
+		outputKey = "value"
 	}
 
 	sample := datura.Peek[float64](state, "sample")
 
-	if sample <= 0 || math.IsNaN(sample) || math.IsInf(sample, 0) {
-		features.Restore(state)
+	if datura.Peek[string](state, "root") == "output" && inputKey != "" {
+		sample = datura.Peek[float64](state, "output", inputKey)
+	}
 
-		return state.Read(payload)
+	if sample <= 0 || math.IsNaN(sample) || math.IsInf(sample, 0) {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"log-return: sample is non-positive or non-finite",
+			nil,
+		))
 	}
 
 	returnLag := int(datura.Peek[float64](logReturn.artifact, stageKey, "returnLag"))
 	longHint := int(datura.Peek[float64](logReturn.artifact, stageKey, "longWindow"))
 
 	if returnLag <= 0 {
-		returnLag = 1
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"log-return: returnLag must be positive",
+			nil,
+		))
 	}
 
 	samples := logReturn.samples
 	samples = append(samples, sample)
 
-	_, longWindow := statistic.RollingWindows(samples, 0, longHint)
+	_, longWindow, err := statistic.RollingWindows(samples, 0, longHint)
+
+	if err != nil {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"log-return: rolling windows failed",
+			err,
+		))
+	}
 
 	if longWindow > 0 && len(samples) > longWindow+returnLag {
 		samples = samples[len(samples)-longWindow-returnLag:]
 	}
 
 	logReturn.samples = samples
-	logReturnValue := 0.0
 
-	if longWindow > 0 && len(samples) > returnLag {
-		anchorSample := samples[len(samples)-returnLag-1]
+	if len(samples) <= returnLag {
+		features.Restore(state)
 
-		if anchorSample > 0 {
-			logReturnValue = math.Log(sample / anchorSample)
-		}
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"log-return: insufficient samples",
+			nil,
+		))
 	}
 
-	state.Merge("sample", logReturnValue)
+	anchorSample := samples[len(samples)-returnLag-1]
+
+	if anchorSample <= 0 || math.IsNaN(anchorSample) || math.IsInf(anchorSample, 0) {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"log-return: anchor sample is non-positive or non-finite",
+			nil,
+		))
+	}
+
+	logReturnValue := math.Log(sample / anchorSample)
+	state.MergeOutput(outputKey, logReturnValue)
 	features.Restore(state)
-	state.Merge("root", "sample")
+	state.Merge("root", "output")
 
 	return state.Read(payload)
 }

@@ -87,15 +87,11 @@ func TestTrustWeight_Observe(testingTB *testing.T) {
 
 		So(err, ShouldBeNil)
 
-		before := datura.Peek[float64](artifact, "output", "value")
-
 		fresh := datura.Acquire("test", datura.APPJSON)
 		err = transport.NewFlipFlop(fresh, trustWeight)
 
-		So(err, ShouldBeNil)
-
-		Convey("It should leave output unchanged", func() {
-			So(datura.Peek[float64](fresh, "output", "value"), ShouldEqual, before)
+		Convey("It should return a validation error", func() {
+			So(err, ShouldNotBeNil)
 		})
 	})
 }
@@ -112,7 +108,7 @@ func TestTrustWeight_Reset(testingTB *testing.T) {
 		So(trustWeight.Reset(), ShouldBeNil)
 
 		Convey("It should clear derived state", func() {
-			So(trustWeight.state.Ready, ShouldBeFalse)
+			So(datura.Peek[float64](trustWeight.artifact, "output", "ready"), ShouldEqual, 0)
 		})
 
 		fresh := datura.Acquire("test", datura.APPJSON).
@@ -123,7 +119,7 @@ func TestTrustWeight_Reset(testingTB *testing.T) {
 		So(err, ShouldBeNil)
 
 		Convey("It should observe again after reset", func() {
-			So(trustWeight.state.Ready, ShouldBeTrue)
+			So(datura.Peek[float64](trustWeight.artifact, "output", "ready"), ShouldEqual, 1)
 			So(datura.Peek[float64](fresh, "output", "value"), ShouldEqual, 1)
 		})
 	})
@@ -153,7 +149,7 @@ func BenchmarkWeight_ObserveSamples(testingTB *testing.B) {
 	testingTB.ReportAllocs()
 
 	for testingTB.Loop() {
-		trustWeight.state.Reset()
+		_ = trustWeight.Reset()
 		trustWeight.ObserveSamples(predicted, actual, out)
 	}
 }

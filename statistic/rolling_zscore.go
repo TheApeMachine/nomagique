@@ -43,7 +43,22 @@ func (rollingZScore *RollingZScore) Read(payload []byte) (int, error) {
 	}
 
 	features := SnapshotFeatures(state)
+	stageKey := rollingZScore.stageKey()
+	outputKey := "value"
+
+	if stageKey != "" {
+		configuredKey := datura.Peek[string](rollingZScore.artifact, stageKey, "outputKey")
+
+		if configuredKey != "" {
+			outputKey = configuredKey
+		}
+	}
+
 	sample := datura.Peek[float64](state, "sample")
+
+	if datura.Peek[string](state, "root") == "output" {
+		sample = datura.Peek[float64](state, "output", outputKey)
+	}
 
 	if math.IsNaN(sample) || math.IsInf(sample, 0) {
 		return 0, errnie.Error(errnie.Err(
@@ -57,14 +72,21 @@ func (rollingZScore *RollingZScore) Read(payload []byte) (int, error) {
 
 	if len(prior) < 2 {
 		samples := append(prior, sample)
-		stageKey := rollingZScore.stageKey()
 		longHint := 0
 
 		if stageKey != "" {
 			longHint = int(datura.Peek[float64](rollingZScore.artifact, stageKey, "longWindow"))
 		}
 
-		_, longWindow := RollingWindows(samples, 0, longHint)
+		_, longWindow, err := RollingWindows(samples, 0, longHint)
+
+		if err != nil {
+			return 0, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"rolling-zscore: unable to resolve long window",
+				err,
+			))
+		}
 
 		if longWindow > 0 && len(samples) > longWindow {
 			samples = samples[len(samples)-longWindow:]
@@ -93,31 +115,27 @@ func (rollingZScore *RollingZScore) Read(payload []byte) (int, error) {
 	score := (sample - meanSample) / stdSample
 
 	samples := append(prior, sample)
-	stageKey := rollingZScore.stageKey()
 	longHint := 0
 
 	if stageKey != "" {
 		longHint = int(datura.Peek[float64](rollingZScore.artifact, stageKey, "longWindow"))
 	}
 
-	_, longWindow := RollingWindows(samples, 0, longHint)
+	_, longWindow, err := RollingWindows(samples, 0, longHint)
+
+	if err != nil {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"rolling-zscore: unable to resolve long window",
+			err,
+		))
+	}
 
 	if longWindow > 0 && len(samples) > longWindow {
 		samples = samples[len(samples)-longWindow:]
 	}
 
 	rollingZScore.samples = samples
-
-	outputKey := "value"
-
-	if stageKey != "" {
-		configuredKey := datura.Peek[string](rollingZScore.artifact, stageKey, "outputKey")
-
-		if configuredKey != "" {
-			outputKey = configuredKey
-		}
-	}
-
 	state.MergeOutput(outputKey, score)
 	features.Restore(state)
 	state.Merge("root", "output")

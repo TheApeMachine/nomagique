@@ -59,7 +59,17 @@ func (median *Median) Read(payload []byte) (int, error) {
 		}
 
 		if len(peerSamples) > 0 {
-			state.MergeOutput("value", MedianOf(peerSamples))
+			value, ok := MedianOf(peerSamples)
+
+			if !ok {
+				return 0, errnie.Error(errnie.Err(
+					errnie.Validation,
+					"median: peer samples are invalid",
+					nil,
+				))
+			}
+
+			state.MergeOutput("value", value)
 			state.Merge("root", "output")
 			state.Merge("inputs", []string{"value"})
 			return state.Read(payload)
@@ -80,7 +90,17 @@ func (median *Median) Read(payload []byte) (int, error) {
 	history = append(history, sample)
 	median.artifact.Poke(history, "history")
 
-	state.MergeOutput("value", MedianOf(history))
+	value, ok := MedianOf(history)
+
+	if !ok {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"median: history is invalid",
+			nil,
+		))
+	}
+
+	state.MergeOutput("value", value)
 	state.Merge("root", "output")
 	state.Merge("inputs", []string{"value"})
 	return state.Read(payload)
@@ -93,14 +113,14 @@ func (median *Median) Close() error {
 /*
 MedianOf returns the median of values without weights.
 */
-func MedianOf(values []float64) float64 {
+func MedianOf(values []float64) (float64, bool) {
 	if len(values) == 0 {
-		return 0
+		return 0, false
 	}
 
 	for _, value := range values {
 		if math.IsNaN(value) || math.IsInf(value, 0) {
-			return math.NaN()
+			return 0, false
 		}
 	}
 
@@ -110,8 +130,8 @@ func MedianOf(values []float64) float64 {
 	middle := len(sorted) / 2
 
 	if len(sorted)%2 == 1 {
-		return sorted[middle]
+		return sorted[middle], true
 	}
 
-	return (sorted[middle-1] + sorted[middle]) / 2
+	return (sorted[middle-1] + sorted[middle]) / 2, true
 }

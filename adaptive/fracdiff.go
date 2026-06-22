@@ -4,6 +4,8 @@ import (
 	"math"
 
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/nomagique/statistic"
 )
 
 /*
@@ -38,10 +40,15 @@ func (fractional *FracDiff) Read(payload []byte) (int, error) {
 		return 0, err
 	}
 
+	features := statistic.SnapshotFeatures(state)
 	sample := datura.Peek[float64](state, "sample")
 
 	if math.IsNaN(sample) || math.IsInf(sample, 0) {
-		return state.Read(payload)
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"fracdiff: sample is non-finite",
+			nil,
+		))
 	}
 
 	output := datura.Peek[datura.Map[float64]](fractional.artifact, "output")
@@ -66,8 +73,13 @@ func (fractional *FracDiff) Read(payload []byte) (int, error) {
 		fractional.artifact.Poke(history, "history")
 		fractional.artifact.Poke([]float64{1}, "weights")
 		state.MergeOutput("value", output["value"])
+		features.Restore(state)
 		state.Merge("root", "output")
-		state.Merge("inputs", []string{"value"})
+
+		if len(datura.Peek[[]string](state, "inputs")) == 0 {
+			state.Merge("inputs", []string{"value"})
+		}
+
 		return state.Read(payload)
 	}
 
@@ -79,12 +91,13 @@ func (fractional *FracDiff) Read(payload []byte) (int, error) {
 	if span == 0 {
 		fractional.pushHistory(sample, output)
 		output["prev"] = sample
-		output["value"] = sample
 		fractional.artifact.Poke(output, "output")
-		state.MergeOutput("value", output["value"])
-		state.Merge("root", "output")
-		state.Merge("inputs", []string{"value"})
-		return state.Read(payload)
+
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"fracdiff: sample span is zero",
+			nil,
+		))
 	}
 
 	rate := math.Abs(sample-output["prev"]) / span
@@ -96,8 +109,13 @@ func (fractional *FracDiff) Read(payload []byte) (int, error) {
 
 	fractional.artifact.Poke(output, "output")
 	state.MergeOutput("value", output["value"])
+	features.Restore(state)
 	state.Merge("root", "output")
-	state.Merge("inputs", []string{"value"})
+
+	if len(datura.Peek[[]string](state, "inputs")) == 0 {
+		state.Merge("inputs", []string{"value"})
+	}
+
 	return state.Read(payload)
 }
 

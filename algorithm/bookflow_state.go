@@ -68,7 +68,7 @@ func ToxicCancelEvidence(
 		return 0, err
 	}
 
-	return probability.EvidenceGeomean(sizeEvidence, proximityEvidence, ageEvidence), nil
+	return probability.EvidenceGeomean(sizeEvidence, proximityEvidence, ageEvidence)
 }
 
 /*
@@ -108,7 +108,7 @@ func ToxicChurnEvidence(
 		return 0, err
 	}
 
-	return probability.EvidenceGeomean(ratioEvidence, sizeEvidence, proximityEvidence), nil
+	return probability.EvidenceGeomean(ratioEvidence, sizeEvidence, proximityEvidence)
 }
 
 /*

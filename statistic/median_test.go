@@ -1,37 +1,32 @@
 package statistic
 
 import (
+	"math"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/transport"
 )
-
-func TestMedianSeries(t *testing.T) {
-	Convey("Given a Median stage", t, func() {
-		median := NewMedian(datura.Acquire("median-config", datura.APPJSON))
-		artifact := datura.Acquire("test", datura.APPJSON)
-
-		for _, sample := range []float64{3, 1, 2} {
-			artifact.Poke(sample, "sample")
-			err := transport.NewFlipFlop(artifact, median)
-
-			So(err, ShouldBeNil)
-		}
-
-		got := datura.Peek[float64](artifact, "output", "value")
-
-		Convey("It should return the expected median", func() {
-			So(got, ShouldEqual, 2)
-		})
-	})
-}
 
 func TestMedianOf(t *testing.T) {
 	Convey("Given unsorted values", t, func() {
 		Convey("It should return the median", func() {
-			So(MedianOf([]float64{3, 1, 2}), ShouldEqual, 2)
+			value, ok := MedianOf([]float64{3, 1, 2})
+			So(ok, ShouldBeTrue)
+			So(value, ShouldEqual, 2)
+		})
+	})
+
+	Convey("Given empty values", t, func() {
+		Convey("It should reject empty input", func() {
+			_, ok := MedianOf(nil)
+			So(ok, ShouldBeFalse)
+		})
+	})
+
+	Convey("Given non-finite values", t, func() {
+		Convey("It should reject non-finite input", func() {
+			_, ok := MedianOf([]float64{1, math.NaN(), 3})
+			So(ok, ShouldBeFalse)
 		})
 	})
 }

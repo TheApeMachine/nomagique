@@ -78,12 +78,12 @@ func (matrix *TransitionMatrix) Update(stateIndex int) {
 
 /*
 PadObserved maps an N-category distribution into a numStates vector with a
-leading none-state mass, then normalizes. When leadingMass is zero, smoothingAlpha
+leading none-state mass, then normalizes. When leadingMass is zero, alpha
 supplies the none-state prior.
 */
 func (matrix *TransitionMatrix) PadObserved(
 	distribution []float64, leadingMass float64,
-) []float64 {
+) ([]float64, error) {
 	if leadingMass <= 0 {
 		leadingMass = matrix.smoothingAlpha
 	}
@@ -108,14 +108,18 @@ func (matrix *TransitionMatrix) PadObserved(
 	}
 
 	if sum <= 0 {
-		return padded
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"transition: padded distribution sum is non-positive",
+			nil,
+		))
 	}
 
 	for index := range padded {
 		padded[index] /= sum
 	}
 
-	return padded
+	return padded, nil
 }
 
 /*

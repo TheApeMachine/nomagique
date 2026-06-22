@@ -5,6 +5,7 @@ import (
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/nomagique/statistic"
 )
 
 /*
@@ -39,7 +40,8 @@ func (hysteresis *Hysteresis) Read(payload []byte) (int, error) {
 		return 0, err
 	}
 
-	sample := datura.Peek[float64](state, "sample")
+	features := statistic.SnapshotFeatures(state)
+	sample := hysteresis.sample(state)
 
 	if math.IsNaN(sample) || math.IsInf(sample, 0) {
 		return 0, errnie.Error(errnie.Err(
@@ -75,11 +77,18 @@ func (hysteresis *Hysteresis) Read(payload []byte) (int, error) {
 		))
 	}
 
+	threshold := datura.Peek[float64](hysteresis.artifact, "threshold")
 	value := datura.Peek[float64](hysteresis.artifact, "output", "value")
 	pendingHigh := datura.Peek[float64](hysteresis.artifact, "output", "pendingHigh")
 	pendingLow := datura.Peek[float64](hysteresis.artifact, "output", "pendingLow")
 
-	if sample != 0 {
+	if math.IsNaN(value) || math.IsInf(value, 0) {
+		value = 0
+	}
+
+	isHigh := sample > threshold
+
+	if isHigh {
 		pendingHigh++
 		pendingLow = 0
 
@@ -88,7 +97,7 @@ func (hysteresis *Hysteresis) Read(payload []byte) (int, error) {
 		}
 	}
 
-	if sample == 0 {
+	if !isHigh {
 		pendingLow++
 		pendingHigh = 0
 
@@ -97,13 +106,40 @@ func (hysteresis *Hysteresis) Read(payload []byte) (int, error) {
 		}
 	}
 
+	if math.IsNaN(value) || math.IsInf(value, 0) {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"hysteresis: output value is non-finite",
+			nil,
+		))
+	}
+
 	hysteresis.artifact.Poke(value, "output", "value")
 	hysteresis.artifact.Poke(pendingHigh, "output", "pendingHigh")
 	hysteresis.artifact.Poke(pendingLow, "output", "pendingLow")
 	state.MergeOutput("value", value)
+	features.Restore(state)
 	state.Merge("root", "output")
-	state.Merge("inputs", []string{"value"})
+
+	if len(datura.Peek[[]string](state, "inputs")) == 0 {
+		state.Merge("inputs", []string{"value"})
+	}
+
 	return state.Read(payload)
+}
+
+func (hysteresis *Hysteresis) sample(state *datura.Artifact) float64 {
+	inputKey := datura.Peek[string](hysteresis.artifact, "input")
+
+	if inputKey == "" {
+		inputKey = "sample"
+	}
+
+	if datura.Peek[string](state, "root") == "output" && inputKey != "sample" {
+		return datura.Peek[float64](state, "output", inputKey)
+	}
+
+	return datura.Peek[float64](state, inputKey)
 }
 
 func (hysteresis *Hysteresis) Close() error {

@@ -99,7 +99,6 @@ func (regime *Regime) Read(p []byte) (int, error) {
 		rawInverted = 1
 	}
 
-	state.Merge("sample", rawInverted)
 	state.MergeOutput("value", condition)
 	state.MergeOutput("condition", condition)
 	state.MergeOutput("rawInverted", rawInverted)

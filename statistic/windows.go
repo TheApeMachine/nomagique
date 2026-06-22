@@ -1,6 +1,7 @@
 package statistic
 
 import (
+	"fmt"
 	"math"
 
 	"gonum.org/v1/gonum/stat"
@@ -8,9 +9,10 @@ import (
 
 /*
 RollingWindows resolves short and long lookback counts from history when hints are
-non-positive. Positive hints are returned unchanged so tests can pin windows.
+non-positive. Positive hints are returned unchanged so callers can pin windows.
+When history is empty and a hint is missing, RollingWindows returns an error.
 */
-func RollingWindows(history []float64, shortHint, longHint int) (shortWindow, longWindow int) {
+func RollingWindows(history []float64, shortHint, longHint int) (shortWindow, longWindow int, err error) {
 	if shortHint > 0 {
 		shortWindow = shortHint
 	}
@@ -20,28 +22,20 @@ func RollingWindows(history []float64, shortHint, longHint int) (shortWindow, lo
 	}
 
 	if shortWindow > 0 && longWindow > 0 {
-		return shortWindow, longWindow
+		return shortWindow, longWindow, nil
 	}
 
 	sampleCount := len(history)
 
 	if sampleCount <= 0 {
-		if shortWindow <= 0 {
-			shortWindow = 2
-		}
-
-		if longWindow <= 0 {
-			longWindow = shortWindow + 1
-		}
-
-		return shortWindow, longWindow
+		return 0, 0, fmt.Errorf("statistic: rolling windows require history or explicit hints")
 	}
 
 	if shortWindow <= 0 {
 		shortWindow = int(math.Ceil(math.Sqrt(float64(sampleCount))))
 
-		if shortWindow < 2 {
-			shortWindow = 2
+		if shortWindow < 1 {
+			shortWindow = 1
 		}
 	}
 
@@ -62,24 +56,24 @@ func RollingWindows(history []float64, shortHint, longHint int) (shortWindow, lo
 		}
 	}
 
-	return shortWindow, longWindow
+	return shortWindow, longWindow, nil
 }
 
 /*
 TargetLongWindow returns how many samples are required before a dynamic long-window
 baseline is calibrated. Positive longWindow hints are returned unchanged.
 */
-func TargetLongWindow(history []float64, shortHint, longHint int) int {
+func TargetLongWindow(history []float64, shortHint, longHint int) (int, error) {
 	if longHint > 0 {
-		return longHint
+		return longHint, nil
 	}
 
 	sampleCount := len(history)
 
 	if sampleCount <= 0 {
-		_, longWindow := RollingWindows(nil, shortHint, longHint)
+		_, longWindow, err := RollingWindows(nil, shortHint, longHint)
 
-		return longWindow
+		return longWindow, err
 	}
 
 	shortWindow := shortHint
@@ -87,8 +81,8 @@ func TargetLongWindow(history []float64, shortHint, longHint int) int {
 	if shortWindow <= 0 {
 		shortWindow = int(math.Ceil(math.Sqrt(float64(sampleCount))))
 
-		if shortWindow < 2 {
-			shortWindow = 2
+		if shortWindow < 1 {
+			shortWindow = 1
 		}
 	}
 
@@ -103,7 +97,7 @@ func TargetLongWindow(history []float64, shortHint, longHint int) int {
 		longWindow = shortWindow + 1
 	}
 
-	return longWindow
+	return longWindow, nil
 }
 
 func coefficientOfVariation(values []float64) float64 {

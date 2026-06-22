@@ -66,7 +66,10 @@ func NewClassifierWeights(
 		}
 
 		if len(spec.Terms) == 0 {
-			continue
+			return ClassifierWeights{}, errnie.Error(fmt.Errorf(
+				"learning: output %q requires terms on config",
+				outputKey,
+			))
 		}
 
 		weights, err := balancedTermWeights(spec.Terms, scales)

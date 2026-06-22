@@ -1,6 +1,7 @@
 package statistic
 
 import (
+	"fmt"
 	"math"
 
 	"github.com/theapemachine/datura"
@@ -64,9 +65,16 @@ func (fastSlow *FastSlow) Read(payload []byte) (int, error) {
 	fastSlow.artifact.Poke(history, "history")
 
 	fastHint := int(datura.Peek[float64](fastSlow.artifact, "config", "fastWindow"))
-	epsilon := datura.Peek[float64](fastSlow.artifact, "config", "epsilon")
 	invert := datura.Peek[float64](fastSlow.artifact, "config", "invert") > 0
-	fastWindow, _ := RollingWindows(history, fastHint, 0)
+	fastWindow, _, err := RollingWindows(history, fastHint, 0)
+
+	if err != nil {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"fast-slow: unable to resolve fast window",
+			err,
+		))
+	}
 
 	if len(history) <= fastWindow {
 		return 0, errnie.Error(errnie.Err(
@@ -76,14 +84,14 @@ func (fastSlow *FastSlow) Read(payload []byte) (int, error) {
 		))
 	}
 
-	value := 1.0
+	value, err := fastSlowRate(history, fastWindow, invert)
 
-	if invert {
-		value = invertedFastSlowRate(history, fastWindow, epsilon)
-	}
-
-	if !invert {
-		value = fastSlowRate(history, fastWindow, epsilon)
+	if err != nil {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"fast-slow: unable to compute rate",
+			err,
+		))
 	}
 
 	state.MergeOutput("value", value)
@@ -96,72 +104,59 @@ func (fastSlow *FastSlow) Close() error {
 	return nil
 }
 
-func fastSlowRate(samples []float64, fastWindow int, epsilon float64) float64 {
+func fastSlowRate(samples []float64, fastWindow int, invert bool) (float64, error) {
 	sampleCount := len(samples)
 
 	if fastWindow <= 0 {
-		fastWindow, _ = RollingWindows(samples, 0, 0)
-	}
+		var err error
 
-	if sampleCount <= fastWindow {
-		return 0
-	}
+		fastWindow, _, err = RollingWindows(samples, 0, 0)
 
-	slowCount := sampleCount - fastWindow
-	recentRate := stat.Mean(samples[sampleCount-fastWindow:], nil)
-
-	if slowCount <= 0 {
-		return 0
-	}
-
-	olderRate := stat.Mean(samples[:slowCount], nil)
-
-	if olderRate <= 0 {
-		olderRate = recentRate * epsilon
-
-		if olderRate <= 0 {
-			return 0
+		if err != nil {
+			return 0, err
 		}
 	}
 
-	return recentRate / olderRate
-}
-
-func invertedFastSlowRate(samples []float64, fastWindow int, epsilon float64) float64 {
-	sampleCount := len(samples)
-
-	if fastWindow <= 0 {
-		fastWindow, _ = RollingWindows(samples, 0, 0)
-	}
-
 	if sampleCount <= fastWindow {
-		return 0.0
+		return 0, fmt.Errorf("statistic: insufficient samples for fast window")
 	}
 
 	slowCount := sampleCount - fastWindow
 	recentRate := stat.Mean(samples[sampleCount-fastWindow:], nil)
 
-	if recentRate <= 0 {
-		return 0.0
-	}
-
 	if slowCount <= 0 {
-		return 0.0
+		return 0, fmt.Errorf("statistic: insufficient samples for slow window")
 	}
 
 	olderRate := stat.Mean(samples[:slowCount], nil)
 
-	if olderRate <= 0 {
-		olderRate = recentRate * epsilon
+	if invert {
+		if recentRate <= 0 {
+			return 0, fmt.Errorf("statistic: recent rate is non-positive")
+		}
+
+		if olderRate <= 0 {
+			return 0, fmt.Errorf("statistic: older rate is non-positive")
+		}
+
+		return olderRate / recentRate, nil
 	}
 
-	return olderRate / recentRate
+	if olderRate <= 0 {
+		return 0, fmt.Errorf("statistic: older rate is non-positive")
+	}
+
+	return recentRate / olderRate, nil
 }
 
-func FastSlowRate(samples []float64, fastWindow int, epsilon float64) float64 {
-	return fastSlowRate(samples, fastWindow, epsilon)
+func FastSlowRate(samples []float64, fastWindow int) (float64, bool) {
+	value, err := fastSlowRate(samples, fastWindow, false)
+
+	return value, err == nil
 }
 
-func InvertedFastSlowRate(samples []float64, fastWindow int, epsilon float64) float64 {
-	return invertedFastSlowRate(samples, fastWindow, epsilon)
+func InvertedFastSlowRate(samples []float64, fastWindow int) (float64, bool) {
+	value, err := fastSlowRate(samples, fastWindow, true)
+
+	return value, err == nil
 }

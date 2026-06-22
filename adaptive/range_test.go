@@ -2,6 +2,7 @@ package adaptive
 
 import (
 	"io"
+	"math"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
@@ -11,17 +12,49 @@ import (
 var rangeInput = datura.Acquire("test", datura.APPJSON).Poke(10, "sample")
 
 func TestRangeRead(t *testing.T) {
-	Convey("Given a Range", t, func() {
+	Convey("Given a Range on the first sample", t, func() {
 		extent := NewRange(datura.Acquire("range-config", datura.APPJSON))
-		io.Copy(extent, rangeInput)
+		_, _ = io.Copy(extent, rangeInput)
 
-		Convey("When Read is called", func() {
-			frame := make([]byte, 65536)
-			readCount, err := extent.Read(frame)
-			So(err, ShouldEqual, io.EOF)
-			So(readCount, ShouldBeGreaterThan, 0)
-			So(datura.Peek[float64](extent.artifact, "output", "value"), ShouldEqual, 0)
-		})
+		frame := make([]byte, 65536)
+		readCount, err := extent.Read(frame)
+		So(err, ShouldEqual, io.EOF)
+		So(readCount, ShouldBeGreaterThan, 0)
+		So(datura.Peek[float64](extent.artifact, "output", "value"), ShouldEqual, 0)
+	})
+
+	Convey("Given a repeated span after bootstrap", t, func() {
+		extent := NewRange(datura.Acquire("range-config", datura.APPJSON))
+		_, _ = io.Copy(extent, datura.Acquire("test", datura.APPJSON).Poke(10, "sample"))
+		_, _ = extent.Read(make([]byte, 65536))
+		_, _ = io.Copy(extent, datura.Acquire("test", datura.APPJSON).Poke(10, "sample"))
+
+		_, err := extent.Read(make([]byte, 65536))
+
+		So(err, ShouldNotBeNil)
+	})
+
+	Convey("Given warmed distinct samples", t, func() {
+		extent := NewRange(datura.Acquire("range-config", datura.APPJSON))
+		_, _ = io.Copy(extent, datura.Acquire("test", datura.APPJSON).Poke(10, "sample"))
+		_, _ = extent.Read(make([]byte, 65536))
+		_, _ = io.Copy(extent, datura.Acquire("test", datura.APPJSON).Poke(14, "sample"))
+
+		frame := make([]byte, 65536)
+		_, err := extent.Read(frame)
+
+		So(err, ShouldEqual, io.EOF)
+		So(datura.Peek[float64](extent.artifact, "output", "value"), ShouldEqual, 4)
+	})
+
+	Convey("Given a non-finite sample", t, func() {
+		extent := NewRange(datura.Acquire("range-config", datura.APPJSON))
+		invalid := datura.Acquire("test", datura.APPJSON).Poke(math.NaN(), "sample")
+		_, _ = io.Copy(extent, invalid)
+
+		_, err := extent.Read(make([]byte, 65536))
+
+		So(err, ShouldNotBeNil)
 	})
 }
 

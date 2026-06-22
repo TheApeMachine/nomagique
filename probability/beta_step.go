@@ -28,7 +28,7 @@ func ObserveBetaPair(state *BetaState, predicted float64, actual float64) float6
 
 	if !state.Ready {
 		state.Alpha = 1 + success
-		state.Beta = 2 - success
+		state.Beta = 1 + (1 - success)
 		state.Prev = predicted
 		state.Min = actual - predicted
 		state.Max = actual - predicted

@@ -16,8 +16,18 @@ func TestFeatureColumn(t *testing.T) {
 		state.Merge("root", "output")
 
 		Convey("It should read raw columns by schema key", func() {
-			So(FeatureColumn(state, "last"), ShouldEqual, 42.5)
-			So(FeatureColumn(state, "volume"), ShouldEqual, 1000)
+			last, err := FeatureColumn(state, "last")
+			So(err, ShouldBeNil)
+			So(last, ShouldEqual, 42.5)
+
+			volume, err := FeatureColumn(state, "volume")
+			So(err, ShouldBeNil)
+			So(volume, ShouldEqual, 1000)
+		})
+
+		Convey("It should error on missing keys", func() {
+			_, err := FeatureColumn(state, "missing")
+			So(err, ShouldNotBeNil)
 		})
 	})
 }
@@ -33,8 +43,13 @@ func TestFeatureSnapshotRestore(t *testing.T) {
 		snapshot.Restore(target)
 
 		Convey("It should restore extracted columns", func() {
-			So(FeatureColumn(target, "bid"), ShouldEqual, 1)
-			So(FeatureColumn(target, "ask"), ShouldEqual, 2)
+			bid, err := FeatureColumn(target, "bid")
+			So(err, ShouldBeNil)
+			So(bid, ShouldEqual, 1)
+
+			ask, err := FeatureColumn(target, "ask")
+			So(err, ShouldBeNil)
+			So(ask, ShouldEqual, 2)
 		})
 	})
 }

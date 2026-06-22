@@ -83,6 +83,7 @@ func (entropy *Entropy) normalizedProbabilities(values []float64) ([]float64, bo
 	if floor < 0 {
 		return nil, false
 	}
+
 	total := 0.0
 	masses := make([]float64, len(values))
 
@@ -91,14 +92,12 @@ func (entropy *Entropy) normalizedProbabilities(values []float64) ([]float64, bo
 			return nil, false
 		}
 
-		mass := value
-
-		if mass < floor {
-			mass = floor
+		if value < floor {
+			return nil, false
 		}
 
-		masses[index] = mass
-		total += mass
+		masses[index] = value
+		total += value
 	}
 
 	if total <= 0 || math.IsNaN(total) || math.IsInf(total, 0) {

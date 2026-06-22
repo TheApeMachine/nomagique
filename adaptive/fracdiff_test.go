@@ -2,6 +2,7 @@ package adaptive
 
 import (
 	"io"
+	"math"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
@@ -11,17 +12,36 @@ import (
 var fracDiffInput = datura.Acquire("test", datura.APPJSON).Poke(10, "sample")
 
 func TestFracDiffRead(t *testing.T) {
-	Convey("Given a FracDiff", t, func() {
+	Convey("Given a FracDiff on the first sample", t, func() {
 		fractional := NewFracDiff(datura.Acquire("fracdiff-config", datura.APPJSON))
-		io.Copy(fractional, fracDiffInput)
+		_, _ = io.Copy(fractional, fracDiffInput)
 
-		Convey("When Read is called", func() {
-			frame := make([]byte, 65536)
-			readCount, err := fractional.Read(frame)
-			So(err, ShouldEqual, io.EOF)
-			So(readCount, ShouldBeGreaterThan, 0)
-			So(datura.Peek[float64](fractional.artifact, "output", "value"), ShouldEqual, 10)
-		})
+		frame := make([]byte, 65536)
+		readCount, err := fractional.Read(frame)
+		So(err, ShouldEqual, io.EOF)
+		So(readCount, ShouldBeGreaterThan, 0)
+		So(datura.Peek[float64](fractional.artifact, "output", "value"), ShouldEqual, 10)
+	})
+
+	Convey("Given a repeated span after bootstrap", t, func() {
+		fractional := NewFracDiff(datura.Acquire("fracdiff-config", datura.APPJSON))
+		_, _ = io.Copy(fractional, datura.Acquire("test", datura.APPJSON).Poke(10, "sample"))
+		_, _ = fractional.Read(make([]byte, 65536))
+		_, _ = io.Copy(fractional, datura.Acquire("test", datura.APPJSON).Poke(10, "sample"))
+
+		_, err := fractional.Read(make([]byte, 65536))
+
+		So(err, ShouldNotBeNil)
+	})
+
+	Convey("Given a non-finite sample", t, func() {
+		fractional := NewFracDiff(datura.Acquire("fracdiff-config", datura.APPJSON))
+		invalid := datura.Acquire("test", datura.APPJSON).Poke(math.NaN(), "sample")
+		_, _ = io.Copy(fractional, invalid)
+
+		_, err := fractional.Read(make([]byte, 65536))
+
+		So(err, ShouldNotBeNil)
 	})
 }
 

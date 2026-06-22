@@ -11,7 +11,6 @@ The constructor artifact holds config; Write buffers inbound wire on its payload
 */
 type TrustWeight struct {
 	artifact *datura.Artifact
-	state    WeightState
 }
 
 /*
@@ -35,13 +34,47 @@ func (trustWeight *TrustWeight) Read(payload []byte) (int, error) {
 	state.Inspect("learning", "trust-weight", "Read()", "p")
 
 	if _, err := state.Write(trustWeight.artifact.DecryptPayload()); err != nil {
+		state.Release()
+
 		return 0, err
 	}
 
-	predicted := datura.Peek[float64](state, "sample")
-	actual := datura.Peek[float64](state, "paired")
+	defer state.Release()
 
-	if predicted == 0 && actual == 0 {
+	predicted, actual, err := trustWeight.resolvePair(state)
+
+	if err != nil {
+		return 0, err
+	}
+
+	weightState := weightStateFromArtifact(trustWeight.artifact)
+	derived := ObserveWeight(&weightState, predicted, actual)
+	pokeWeightState(trustWeight.artifact, &weightState, derived)
+	state.MergeOutput("value", derived)
+	state.Merge("sample", predicted)
+	state.Merge("paired", actual)
+	state.Merge("root", "output")
+	state.Merge("inputs", []string{"value", "sample", "paired"})
+	return state.Read(payload)
+}
+
+func (trustWeight *TrustWeight) resolvePair(state *datura.Artifact) (float64, float64, error) {
+	sampleKey := configString(trustWeight.artifact, state, "sampleKey")
+
+	if sampleKey == "" {
+		sampleKey = "sample"
+	}
+
+	pairedKey := configString(trustWeight.artifact, state, "pairedKey")
+
+	if pairedKey == "" {
+		pairedKey = "paired"
+	}
+
+	predicted := datura.Peek[float64](state, sampleKey)
+	actual := datura.Peek[float64](state, pairedKey)
+
+	if !attributeKeyPresent(state, sampleKey) && !attributeKeyPresent(state, pairedKey) {
 		features := datura.Peek[[]float64](state, "features")
 
 		if len(features) >= 2 {
@@ -50,18 +83,10 @@ func (trustWeight *TrustWeight) Read(payload []byte) (int, error) {
 		}
 	}
 
-	if predicted == 0 && actual == 0 {
-		return 0, errnie.Error(errnie.Err(
+	if !attributeKeyPresent(state, sampleKey) && !attributeKeyPresent(state, pairedKey) && len(datura.Peek[[]float64](state, "features")) < 2 {
+		return 0, 0, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"trust-weight: predicted and actual required",
-			nil,
-		))
-	}
-
-	if actual == 0 {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"trust-weight: actual must be non-zero",
 			nil,
 		))
 	}
@@ -69,17 +94,22 @@ func (trustWeight *TrustWeight) Read(payload []byte) (int, error) {
 	parsedPredicted, parsedActual, err := parsePredictedActual(predicted, []float64{actual})
 
 	if err != nil {
-		return 0, err
+		return 0, 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"trust-weight: unable to parse predicted and actual pair",
+			err,
+		))
 	}
 
-	derived := ObserveWeight(&trustWeight.state, parsedPredicted, parsedActual)
-	trustWeight.artifact.Poke(derived, "output", "value")
-	state.MergeOutput("value", derived)
-	state.Merge("sample", parsedPredicted)
-	state.Merge("paired", parsedActual)
-	state.Merge("root", "output")
-	state.Merge("inputs", []string{"value", "sample", "paired"})
-	return state.Read(payload)
+	if parsedActual == 0 {
+		return 0, 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"trust-weight: actual must be non-zero",
+			nil,
+		))
+	}
+
+	return parsedPredicted, parsedActual, nil
 }
 
 func (trustWeight *TrustWeight) Close() error {
@@ -92,15 +122,25 @@ ObserveSamples runs the exact batch kernel over pairs into out.
 func (trustWeight *TrustWeight) ObserveSamples(
 	predicted []float64, actual []float64, out []float64,
 ) {
-	trustWeight.state.ObserveSamples(predicted, actual, out)
+	weightState := weightStateFromArtifact(trustWeight.artifact)
+	observeWeightSamples(&weightState, predicted, actual, out)
+
+	if len(out) > 0 {
+		pokeWeightState(trustWeight.artifact, &weightState, out[len(out)-1])
+	}
 }
 
 /*
 Reset clears derived state.
 */
 func (trustWeight *TrustWeight) Reset() error {
-	trustWeight.state.Reset()
-	trustWeight.artifact.WithAttributes(datura.Map[any]{})
+	trustWeight.artifact.Poke(0.0, "output", "trust")
+	trustWeight.artifact.Poke(0.0, "output", "prev")
+	trustWeight.artifact.Poke(0.0, "output", "min")
+	trustWeight.artifact.Poke(0.0, "output", "max")
+	trustWeight.artifact.Poke(0.0, "output", "rate")
+	trustWeight.artifact.Poke(0.0, "output", "ready")
+	trustWeight.artifact.Poke(0.0, "output", "value")
 
 	return nil
 }

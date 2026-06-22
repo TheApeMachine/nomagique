@@ -218,7 +218,7 @@ func BenchmarkForecast_ObserveSamples(testingTB *testing.B) {
 	testingTB.ReportAllocs()
 
 	for testingTB.Loop() {
-		forecaster.state.Reset()
+		_ = forecaster.Reset()
 		forecaster.ObserveSamples(predicted, actual, out)
 	}
 }

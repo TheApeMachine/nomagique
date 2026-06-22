@@ -5,6 +5,7 @@ import (
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/nomagique/statistic"
 )
 
 /*
@@ -12,7 +13,8 @@ Range tracks the running span of observed samples.
 The constructor artifact holds config; Write buffers inbound wire on its payload.
 */
 type Range struct {
-	artifact *datura.Artifact
+	artifact     *datura.Artifact
+	bootstrapped bool
 }
 
 /*
@@ -39,6 +41,7 @@ func (extent *Range) Read(payload []byte) (int, error) {
 		return 0, err
 	}
 
+	features := statistic.SnapshotFeatures(state)
 	sample := datura.Peek[float64](state, "sample")
 
 	if math.IsNaN(sample) || math.IsInf(sample, 0) {
@@ -49,30 +52,58 @@ func (extent *Range) Read(payload []byte) (int, error) {
 		))
 	}
 
-	output := datura.Peek[datura.Map[float64]](extent.artifact, "output")
+	output := datura.Map[float64]{
+		"min":   datura.Peek[float64](extent.artifact, "output", "min"),
+		"max":   datura.Peek[float64](extent.artifact, "output", "max"),
+		"value": datura.Peek[float64](extent.artifact, "output", "value"),
+	}
 
-	if output == nil {
+	if !extent.bootstrapped {
 		output = datura.Map[float64]{
 			"min":   sample,
 			"max":   sample,
 			"value": 0,
 		}
 
+		extent.bootstrapped = true
 		extent.artifact.Poke(output, "output")
 		state.MergeOutput("value", output["value"])
+		features.Restore(state)
 		state.Merge("root", "output")
-		state.Merge("inputs", []string{"value"})
+
+		if len(datura.Peek[[]string](state, "inputs")) == 0 {
+			state.Merge("inputs", []string{"value"})
+		}
+
 		return state.Read(payload)
 	}
 
 	output["min"] = math.Min(output["min"], sample)
 	output["max"] = math.Max(output["max"], sample)
-	output["value"] = output["max"] - output["min"]
+
+	span := output["max"] - output["min"]
+
+	if span == 0 {
+		extent.artifact.Poke(output, "output")
+
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"range: sample span is zero",
+			nil,
+		))
+	}
+
+	output["value"] = span
 
 	extent.artifact.Poke(output, "output")
 	state.MergeOutput("value", output["value"])
+	features.Restore(state)
 	state.Merge("root", "output")
-	state.Merge("inputs", []string{"value"})
+
+	if len(datura.Peek[[]string](state, "inputs")) == 0 {
+		state.Merge("inputs", []string{"value"})
+	}
+
 	return state.Read(payload)
 }
 

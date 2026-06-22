@@ -1,6 +1,9 @@
 package statistic
 
-import "github.com/theapemachine/datura"
+import (
+	"github.com/theapemachine/datura"
+	"github.com/theapemachine/errnie"
+)
 
 /*
 FeatureSnapshot captures extracted ticker columns that must survive downstream
@@ -37,7 +40,7 @@ func (snapshot FeatureSnapshot) Restore(state *datura.Artifact) {
 /*
 FeatureColumn reads one extracted scalar by its schema key.
 */
-func FeatureColumn(state *datura.Artifact, sourceKey string) float64 {
+func FeatureColumn(state *datura.Artifact, sourceKey string) (float64, error) {
 	snapshot := SnapshotFeatures(state)
 
 	for index, key := range snapshot.inputs {
@@ -45,8 +48,12 @@ func FeatureColumn(state *datura.Artifact, sourceKey string) float64 {
 			continue
 		}
 
-		return snapshot.features[index]
+		return snapshot.features[index], nil
 	}
 
-	return 0
+	return 0, errnie.Error(errnie.Err(
+		errnie.Validation,
+		"feature-column: key not found",
+		nil,
+	))
 }

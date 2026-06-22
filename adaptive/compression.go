@@ -14,7 +14,6 @@ The constructor artifact holds config; Write buffers inbound wire on its payload
 */
 type Compression struct {
 	artifact *datura.Artifact
-	baseline float64
 }
 
 /*
@@ -41,8 +40,19 @@ func (compression *Compression) Read(payload []byte) (int, error) {
 		return 0, err
 	}
 
+	inputKey := datura.Peek[string](compression.artifact, "compression", "input")
+	outputKey := datura.Peek[string](compression.artifact, "compression", "outputKey")
+
+	if inputKey == "" || outputKey == "" {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"compression: input and outputKey required",
+			nil,
+		))
+	}
+
 	features := statistic.SnapshotFeatures(state)
-	sample := compression.sample(state)
+	sample := compression.sample(state, inputKey)
 
 	if math.IsNaN(sample) || math.IsInf(sample, 0) {
 		return 0, errnie.Error(errnie.Err(
@@ -52,27 +62,29 @@ func (compression *Compression) Read(payload []byte) (int, error) {
 		))
 	}
 
-	baseline := compression.baseline
-	value := 0.0
+	baseline := datura.Peek[float64](compression.artifact, "output", "baseline")
 
-	switch {
-	case baseline <= 0 || sample > baseline:
-		baseline = sample
-	default:
-		value = (baseline - sample) / baseline
+	if baseline <= 0 || math.IsNaN(baseline) || math.IsInf(baseline, 0) {
+		compression.artifact.Poke(sample, "output", "baseline")
+
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"compression: insufficient samples",
+			nil,
+		))
 	}
 
-	compression.baseline = baseline
-	outputKey := datura.Peek[string](compression.artifact, "compression", "outputKey")
+	value := 0.0
 
-	if outputKey == "" {
-		outputKey = "value"
+	if sample > baseline {
+		compression.artifact.Poke(sample, "output", "baseline")
+	} else {
+		value = (baseline - sample) / baseline
 	}
 
 	state.MergeOutput(outputKey, value)
 	features.Restore(state)
 	state.Merge("root", "output")
-	state.Merge("inputs", []string{"baseline", outputKey})
 
 	return state.Read(payload)
 }
@@ -81,13 +93,7 @@ func (compression *Compression) Close() error {
 	return nil
 }
 
-func (compression *Compression) sample(state *datura.Artifact) float64 {
-	inputKey := datura.Peek[string](compression.artifact, "compression", "input")
-
-	if inputKey == "" {
-		inputKey = "sample"
-	}
-
+func (compression *Compression) sample(state *datura.Artifact, inputKey string) float64 {
 	body := datura.As[datura.Map[any]](state)
 
 	if body != nil {

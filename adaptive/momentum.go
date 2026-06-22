@@ -5,6 +5,7 @@ import (
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/nomagique/statistic"
 )
 
 /*
@@ -12,7 +13,8 @@ Momentum tracks a signed unit-normalized move relative to the running range.
 The constructor artifact holds config; Write buffers inbound wire on its payload.
 */
 type Momentum struct {
-	artifact *datura.Artifact
+	artifact     *datura.Artifact
+	bootstrapped bool
 }
 
 /*
@@ -39,6 +41,7 @@ func (momentum *Momentum) Read(payload []byte) (int, error) {
 		return 0, err
 	}
 
+	features := statistic.SnapshotFeatures(state)
 	sample := datura.Peek[float64](state, "sample")
 
 	if math.IsNaN(sample) || math.IsInf(sample, 0) {
@@ -49,9 +52,14 @@ func (momentum *Momentum) Read(payload []byte) (int, error) {
 		))
 	}
 
-	output := datura.Peek[datura.Map[float64]](momentum.artifact, "output")
+	output := datura.Map[float64]{
+		"min":   datura.Peek[float64](momentum.artifact, "output", "min"),
+		"max":   datura.Peek[float64](momentum.artifact, "output", "max"),
+		"prev":  datura.Peek[float64](momentum.artifact, "output", "prev"),
+		"value": datura.Peek[float64](momentum.artifact, "output", "value"),
+	}
 
-	if output == nil {
+	if !momentum.bootstrapped {
 		output = datura.Map[float64]{
 			"min":   sample,
 			"max":   sample,
@@ -59,10 +67,16 @@ func (momentum *Momentum) Read(payload []byte) (int, error) {
 			"value": 0,
 		}
 
+		momentum.bootstrapped = true
 		momentum.artifact.Poke(output, "output")
 		state.MergeOutput("value", output["value"])
+		features.Restore(state)
 		state.Merge("root", "output")
-		state.Merge("inputs", []string{"value"})
+
+		if len(datura.Peek[[]string](state, "inputs")) == 0 {
+			state.Merge("inputs", []string{"value"})
+		}
+
 		return state.Read(payload)
 	}
 
@@ -74,10 +88,12 @@ func (momentum *Momentum) Read(payload []byte) (int, error) {
 	if span == 0 {
 		output["prev"] = sample
 		momentum.artifact.Poke(output, "output")
-		state.MergeOutput("value", output["value"])
-		state.Merge("root", "output")
-		state.Merge("inputs", []string{"value"})
-		return state.Read(payload)
+
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"momentum: sample span is zero",
+			nil,
+		))
 	}
 
 	output["value"] = (sample - output["prev"]) / span
@@ -85,8 +101,13 @@ func (momentum *Momentum) Read(payload []byte) (int, error) {
 
 	momentum.artifact.Poke(output, "output")
 	state.MergeOutput("value", output["value"])
+	features.Restore(state)
 	state.Merge("root", "output")
-	state.Merge("inputs", []string{"value"})
+
+	if len(datura.Peek[[]string](state, "inputs")) == 0 {
+		state.Merge("inputs", []string{"value"})
+	}
+
 	return state.Read(payload)
 }
 

@@ -11,7 +11,6 @@ The constructor artifact holds config; Write buffers inbound wire on its payload
 */
 type Forecaster struct {
 	artifact *datura.Artifact
-	state    ForecastState
 }
 
 /*
@@ -35,13 +34,45 @@ func (forecaster *Forecaster) Read(payload []byte) (int, error) {
 	state.Inspect("learning", "forecast", "Read()", "p")
 
 	if _, err := state.Write(forecaster.artifact.DecryptPayload()); err != nil {
+		state.Release()
+
 		return 0, err
 	}
 
-	predicted := datura.Peek[float64](state, "sample")
-	actual := datura.Peek[float64](state, "paired")
+	defer state.Release()
 
-	if predicted == 0 && actual == 0 {
+	predicted, actual, err := forecaster.resolvePair(state)
+
+	if err != nil {
+		return 0, err
+	}
+
+	forecastState := forecastStateFromArtifact(forecaster.artifact)
+	derived := ObserveForecast(&forecastState, predicted, actual)
+	pokeForecastState(forecaster.artifact, &forecastState, derived)
+	state.MergeOutput("value", derived)
+	state.Merge("root", "output")
+	state.Merge("inputs", []string{"value"})
+	return state.Read(payload)
+}
+
+func (forecaster *Forecaster) resolvePair(state *datura.Artifact) (float64, float64, error) {
+	sampleKey := configString(forecaster.artifact, state, "sampleKey")
+
+	if sampleKey == "" {
+		sampleKey = "sample"
+	}
+
+	pairedKey := configString(forecaster.artifact, state, "pairedKey")
+
+	if pairedKey == "" {
+		pairedKey = "paired"
+	}
+
+	predicted := datura.Peek[float64](state, sampleKey)
+	actual := datura.Peek[float64](state, pairedKey)
+
+	if !attributeKeyPresent(state, sampleKey) && !attributeKeyPresent(state, pairedKey) {
 		features := datura.Peek[[]float64](state, "features")
 
 		if len(features) >= 2 {
@@ -50,18 +81,10 @@ func (forecaster *Forecaster) Read(payload []byte) (int, error) {
 		}
 	}
 
-	if predicted == 0 && actual == 0 {
-		return 0, errnie.Error(errnie.Err(
+	if !attributeKeyPresent(state, sampleKey) && !attributeKeyPresent(state, pairedKey) && len(datura.Peek[[]float64](state, "features")) < 2 {
+		return 0, 0, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"forecast: predicted and actual required",
-			nil,
-		))
-	}
-
-	if actual == 0 {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"forecast: actual must be non-zero",
 			nil,
 		))
 	}
@@ -69,15 +92,22 @@ func (forecaster *Forecaster) Read(payload []byte) (int, error) {
 	parsedPredicted, parsedActual, err := parsePredictedActual(predicted, []float64{actual})
 
 	if err != nil {
-		return 0, err
+		return 0, 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"forecast: unable to parse predicted and actual pair",
+			err,
+		))
 	}
 
-	derived := ObserveForecast(&forecaster.state, parsedPredicted, parsedActual)
-	forecaster.artifact.Poke(derived, "output", "value")
-	state.MergeOutput("value", derived)
-	state.Merge("root", "output")
-	state.Merge("inputs", []string{"value"})
-	return state.Read(payload)
+	if parsedActual == 0 {
+		return 0, 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"forecast: actual must be non-zero",
+			nil,
+		))
+	}
+
+	return parsedPredicted, parsedActual, nil
 }
 
 func (forecaster *Forecaster) Close() error {
@@ -88,7 +118,7 @@ func (forecaster *Forecaster) Close() error {
 Scale returns the current multiplicative scale for parameter feedback.
 */
 func (forecaster *Forecaster) Scale() float64 {
-	return forecaster.state.Scale
+	return datura.Peek[float64](forecaster.artifact, "output", "scale")
 }
 
 /*
@@ -97,15 +127,27 @@ ObserveSamples runs the exact batch kernel over pairs into out.
 func (forecaster *Forecaster) ObserveSamples(
 	predicted []float64, actual []float64, out []float64,
 ) {
-	forecaster.state.ObserveSamples(predicted, actual, out)
+	forecastState := forecastStateFromArtifact(forecaster.artifact)
+	observeForecastSamples(&forecastState, predicted, actual, out)
+
+	if len(out) > 0 {
+		pokeForecastState(forecaster.artifact, &forecastState, out[len(out)-1])
+	}
 }
 
 /*
 Reset clears derived state.
 */
 func (forecaster *Forecaster) Reset() error {
-	forecaster.state.Reset()
-	forecaster.artifact.WithAttributes(datura.Map[any]{})
+	forecaster.artifact.Poke(0.0, "output", "scale")
+	forecaster.artifact.Poke(0.0, "output", "trust")
+	forecaster.artifact.Poke(0.0, "output", "prev")
+	forecaster.artifact.Poke(0.0, "output", "min")
+	forecaster.artifact.Poke(0.0, "output", "max")
+	forecaster.artifact.Poke(0.0, "output", "rate")
+	forecaster.artifact.Poke(0.0, "output", "weightReady")
+	forecaster.artifact.Poke(0.0, "output", "ready")
+	forecaster.artifact.Poke(0.0, "output", "value")
 
 	return nil
 }

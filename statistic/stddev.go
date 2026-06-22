@@ -4,6 +4,7 @@ import (
 	"math"
 
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/errnie"
 	"gonum.org/v1/gonum/stat"
 )
 
@@ -42,19 +43,26 @@ func (stdDev *StdDev) Read(payload []byte) (int, error) {
 	sample := datura.Peek[float64](state, "sample")
 
 	if math.IsNaN(sample) || math.IsInf(sample, 0) {
-		return state.Read(payload)
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"stddev: sample is non-finite",
+			nil,
+		))
 	}
 
 	history := datura.Peek[[]float64](stdDev.artifact, "history")
 	history = append(history, sample)
 	stdDev.artifact.Poke(history, "history")
 
-	value := 0.0
-
-	if len(history) >= 2 {
-		value = stat.StdDev(history, nil)
+	if len(history) < 2 {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"stddev: insufficient history",
+			nil,
+		))
 	}
 
+	value := stat.StdDev(history, nil)
 	state.MergeOutput("value", value)
 	state.Merge("root", "output")
 	state.Merge("inputs", []string{"value"})

@@ -4,6 +4,7 @@ import (
 	"math"
 
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/statistic"
 )
 
@@ -40,44 +41,34 @@ func (positiveOnly *PositiveOnly) Read(payload []byte) (int, error) {
 	}
 
 	features := statistic.SnapshotFeatures(state)
-
-	stageKey := datura.Peek[string](positiveOnly.artifact, "stage")
-
-	if stageKey == "" {
-		order := datura.Peek[[]string](positiveOnly.artifact, "order")
-		stageIndex := int(datura.Peek[float64](positiveOnly.artifact, "precursor", "stageIndex"))
-
-		if stageIndex <= 0 {
-			stageIndex = int(datura.Peek[float64](positiveOnly.artifact, "stageIndex"))
-		}
-
-		if stageIndex >= 0 && len(order) > stageIndex {
-			stageKey = order[stageIndex]
-		}
-	}
+	stageKey := positiveOnly.stageKey()
 
 	if stageKey == "" {
-		features.Restore(state)
-
-		return state.Read(payload)
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"positive-only: stage config required",
+			nil,
+		))
 	}
 
 	outputKey := datura.Peek[string](positiveOnly.artifact, stageKey, "outputKey")
 
 	if outputKey == "" {
-		features.Restore(state)
-
-		return state.Read(payload)
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"positive-only: outputKey required",
+			nil,
+		))
 	}
 
-	score := 0.0
-	rootKey := datura.Peek[string](state, "root")
+	score := positiveOnly.score(state, outputKey)
 
-	switch rootKey {
-	case "output":
-		score = datura.Peek[float64](state, "output", outputKey)
-	case "sample":
-		score = datura.Peek[float64](state, "sample")
+	if math.IsNaN(score) || math.IsInf(score, 0) {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"positive-only: score is non-finite",
+			nil,
+		))
 	}
 
 	if datura.Peek[float64](positiveOnly.artifact, stageKey, "positiveOnly") > 0 {
@@ -89,6 +80,40 @@ func (positiveOnly *PositiveOnly) Read(payload []byte) (int, error) {
 	state.Merge("root", "output")
 
 	return state.Read(payload)
+}
+
+func (positiveOnly *PositiveOnly) stageKey() string {
+	stageKey := datura.Peek[string](positiveOnly.artifact, "stage")
+
+	if stageKey != "" {
+		return stageKey
+	}
+
+	order := datura.Peek[[]string](positiveOnly.artifact, "order")
+	stageIndex := int(datura.Peek[float64](positiveOnly.artifact, "precursor", "stageIndex"))
+
+	if stageIndex <= 0 {
+		stageIndex = int(datura.Peek[float64](positiveOnly.artifact, "stageIndex"))
+	}
+
+	if stageIndex >= 0 && len(order) > stageIndex {
+		return order[stageIndex]
+	}
+
+	return ""
+}
+
+func (positiveOnly *PositiveOnly) score(state *datura.Artifact, outputKey string) float64 {
+	rootKey := datura.Peek[string](state, "root")
+
+	switch rootKey {
+	case "output":
+		return datura.Peek[float64](state, "output", outputKey)
+	case "sample":
+		return datura.Peek[float64](state, "sample")
+	default:
+		return datura.Peek[float64](state, "sample")
+	}
 }
 
 func (positiveOnly *PositiveOnly) Close() error {

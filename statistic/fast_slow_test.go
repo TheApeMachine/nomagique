@@ -10,8 +10,7 @@ import (
 
 func fastSlowConfig() *datura.Artifact {
 	return datura.Acquire("fast-slow-config", datura.APPJSON).
-		Poke(float64(3), "config", "fastWindow").
-		Poke(1e-6, "config", "epsilon")
+		Poke(float64(3), "config", "fastWindow")
 }
 
 func TestFastSlowSeries(t *testing.T) {
@@ -20,7 +19,7 @@ func TestFastSlowSeries(t *testing.T) {
 		artifact := datura.Acquire("test", datura.APPJSON)
 		var got float64
 
-		for _, sample := range []float64{0, 0, 0, 10, 10, 10} {
+		for _, sample := range []float64{1, 1, 1, 10, 10, 10} {
 			artifact.Poke(sample, "sample")
 			err := transport.NewFlipFlop(artifact, ratio)
 
@@ -39,7 +38,7 @@ func TestFastSlowSeries(t *testing.T) {
 
 func TestFastSlowRate(t *testing.T) {
 	Convey("Given helper rates", t, func() {
-		stream := []float64{0, 0, 0, 10, 10, 10}
+		stream := []float64{1, 1, 1, 10, 10, 10}
 		ratio := NewFastSlow(fastSlowConfig())
 		artifact := datura.Acquire("test", datura.APPJSON)
 
@@ -59,7 +58,9 @@ func TestFastSlowRate(t *testing.T) {
 		stageOutput := got
 
 		Convey("It should match stage output", func() {
-			So(FastSlowRate(stream, 3, 1e-6), ShouldEqual, stageOutput)
+			helperOutput, ok := FastSlowRate(stream, 3)
+			So(ok, ShouldBeTrue)
+			So(helperOutput, ShouldEqual, stageOutput)
 		})
 	})
 }

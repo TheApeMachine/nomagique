@@ -45,39 +45,60 @@ func (priceRing *PriceRing) Read(payload []byte) (int, error) {
 	stageKey := priceRing.stageKey()
 
 	if stageKey == "" {
-		features.Restore(state)
-
-		return state.Read(payload)
-	}
-
-	sourceKey := datura.Peek[string](priceRing.artifact, stageKey, "input")
-	sample := FeatureColumn(state, sourceKey)
-
-	if math.IsNaN(sample) || math.IsInf(sample, 0) {
-		errnie.Error(errnie.Err(
+		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
-			"price-ring: sample is NaN or Inf",
+			"price-ring: stage config required",
 			nil,
 		))
 	}
 
-	if sample <= 0 || math.IsNaN(sample) || math.IsInf(sample, 0) {
-		features.Restore(state)
+	sourceKey := datura.Peek[string](priceRing.artifact, stageKey, "input")
 
-		return state.Read(payload)
+	if sourceKey == "" {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"price-ring: input key required",
+			nil,
+		))
+	}
+
+	sample, err := FeatureColumn(state, sourceKey)
+
+	if err != nil {
+		return 0, err
+	}
+
+	if sample <= 0 || math.IsNaN(sample) || math.IsInf(sample, 0) {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"price-ring: sample is non-positive or non-finite",
+			nil,
+		))
 	}
 
 	returnLag := int(datura.Peek[float64](priceRing.artifact, stageKey, "returnLag"))
 	longHint := int(datura.Peek[float64](priceRing.artifact, stageKey, "longWindow"))
 
 	if returnLag <= 0 {
-		returnLag = 1
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"price-ring: returnLag must be positive",
+			nil,
+		))
 	}
 
 	samples := priceRing.samples
 	samples = append(samples, sample)
 
-	_, longWindow := RollingWindows(samples, 0, longHint)
+	_, longWindow, err := RollingWindows(samples, 0, longHint)
+
+	if err != nil {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"price-ring: unable to resolve long window",
+			err,
+		))
+	}
 
 	if longWindow > 0 && len(samples) > longWindow+returnLag {
 		samples = samples[len(samples)-longWindow-returnLag:]
@@ -85,8 +106,8 @@ func (priceRing *PriceRing) Read(payload []byte) (int, error) {
 
 	priceRing.samples = samples
 	features.Restore(state)
-	state.Merge("sample", sample)
-	state.Merge("root", "sample")
+	state.MergeOutput(sourceKey, sample)
+	state.Merge("root", "output")
 
 	return state.Read(payload)
 }

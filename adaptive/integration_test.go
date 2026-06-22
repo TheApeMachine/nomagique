@@ -38,23 +38,38 @@ func TestIntegration(t *testing.T) {
 			})
 
 			Convey("It should match a freshly composed reference pipeline", func() {
-				reference := datura.Acquire("test", datura.APPJSON).Poke(10, "sample")
+				mainArtifact := datura.Acquire("test", datura.APPJSON).Poke(10, "sample")
+				referenceArtifact := datura.Acquire("test", datura.APPJSON).Poke(10, "sample")
+				mainPipeline := nomagique.Number(
+					adaptive.NewEMA(datura.Acquire("ema-main-config", datura.APPJSON)),
+					adaptive.NewDelta(datura.Acquire("delta-main-config", datura.APPJSON)),
+				)
 				referencePipeline := nomagique.Number(
 					adaptive.NewEMA(datura.Acquire("ema-ref-config", datura.APPJSON)),
 					adaptive.NewDelta(datura.Acquire("delta-ref-config", datura.APPJSON)),
 				)
-				err := transport.NewFlipFlop(reference, referencePipeline)
+
+				err := transport.NewFlipFlop(mainArtifact, mainPipeline)
 
 				So(err, ShouldNotBeNil)
 
-				reference.Poke(20, "sample")
-				err = transport.NewFlipFlop(reference, referencePipeline)
+				err = transport.NewFlipFlop(referenceArtifact, referencePipeline)
+
+				So(err, ShouldNotBeNil)
+
+				mainArtifact.Poke(20, "sample")
+				referenceArtifact.Poke(20, "sample")
+				err = transport.NewFlipFlop(mainArtifact, mainPipeline)
+
+				So(err, ShouldBeIn, nil, io.EOF)
+
+				err = transport.NewFlipFlop(referenceArtifact, referencePipeline)
 
 				So(err, ShouldBeIn, nil, io.EOF)
 				So(
-					datura.Peek[float64](reference, "output", "value"),
+					datura.Peek[float64](referenceArtifact, "output", "value"),
 					ShouldEqual,
-					datura.Peek[float64](artifact, "output", "value"),
+					datura.Peek[float64](mainArtifact, "output", "value"),
 				)
 			})
 

@@ -4,6 +4,7 @@ import (
 	"math"
 
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/errnie"
 )
 
 /*
@@ -41,8 +42,20 @@ func (ring *ObservationRing) Read(payload []byte) (int, error) {
 
 	sample := datura.Peek[float64](state, "sample")
 
-	if sample <= 0 || math.IsNaN(sample) || math.IsInf(sample, 0) {
-		return state.Read(payload)
+	if math.IsNaN(sample) || math.IsInf(sample, 0) {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"observation-ring: sample is non-finite",
+			nil,
+		))
+	}
+
+	if sample <= 0 {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"observation-ring: sample must be positive",
+			nil,
+		))
 	}
 
 	history := datura.Peek[[]float64](ring.artifact, "history")
@@ -70,14 +83,10 @@ func (ring *ObservationRing) capacityFor(values []float64) int {
 		return 1
 	}
 
-	if len(values) < 3 {
-		return len(values) + 1
-	}
-
 	span := SpanOf(values)
 
 	if span <= 0 {
-		return 3
+		return len(values) + 1
 	}
 
 	return int(span) + 1

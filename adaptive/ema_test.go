@@ -2,6 +2,7 @@ package adaptive
 
 import (
 	"io"
+	"math"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
@@ -14,17 +15,36 @@ var emaInput = datura.Acquire("test", datura.APPJSON).Poke(1, "sample")
 var emaConfig = datura.Acquire("ema-config", datura.APPJSON)
 
 func TestEMARead(t *testing.T) {
-	Convey("Given an EMA", t, func() {
+	Convey("Given an EMA on the first sample", t, func() {
 		ema := NewEMA(emaConfig)
-		io.Copy(ema, emaInput)
+		_, _ = io.Copy(ema, emaInput)
 
-		Convey("When Read is called", func() {
-			frame := make([]byte, 65536)
-			readCount, err := ema.Read(frame)
-			So(err, ShouldEqual, io.EOF)
-			So(readCount, ShouldBeGreaterThan, 0)
-			So(datura.Peek[float64](ema.artifact, "output", "value"), ShouldEqual, 1)
-		})
+		frame := make([]byte, 65536)
+		readCount, err := ema.Read(frame)
+		So(err, ShouldEqual, io.EOF)
+		So(readCount, ShouldBeGreaterThan, 0)
+		So(datura.Peek[float64](ema.artifact, "output", "value"), ShouldEqual, 1)
+	})
+
+	Convey("Given a repeated span after bootstrap", t, func() {
+		ema := NewEMA(datura.Acquire("ema-config", datura.APPJSON))
+		_, _ = io.Copy(ema, datura.Acquire("test", datura.APPJSON).Poke(1, "sample"))
+		_, _ = ema.Read(make([]byte, 65536))
+		_, _ = io.Copy(ema, datura.Acquire("test", datura.APPJSON).Poke(1, "sample"))
+
+		_, err := ema.Read(make([]byte, 65536))
+
+		So(err, ShouldNotBeNil)
+	})
+
+	Convey("Given a non-finite sample", t, func() {
+		ema := NewEMA(datura.Acquire("ema-config", datura.APPJSON))
+		invalid := datura.Acquire("test", datura.APPJSON).Poke(math.NaN(), "sample")
+		_, _ = io.Copy(ema, invalid)
+
+		_, err := ema.Read(make([]byte, 65536))
+
+		So(err, ShouldNotBeNil)
 	})
 }
 

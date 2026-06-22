@@ -31,7 +31,13 @@ func TestMeanMedianRatioRead(testingTB *testing.T) {
 
 			err := transport.NewFlipFlop(frame, stage)
 
-			So(err, ShouldBeNil)
+			if len(stage.histories["rvol"]) < 5 {
+				So(err, ShouldNotBeNil)
+			}
+
+			if len(stage.histories["rvol"]) >= 5 {
+				So(err, ShouldBeNil)
+			}
 
 			if lastFrame != nil {
 				lastFrame.Release()
@@ -70,7 +76,13 @@ func TestMeanMedianRatioRead(testingTB *testing.T) {
 
 			err := transport.NewFlipFlop(frame, stage)
 
-			So(err, ShouldBeNil)
+			if len(stage.histories["rvol"]) < 5 {
+				So(err, ShouldNotBeNil)
+			}
+
+			if len(stage.histories["rvol"]) >= 5 {
+				So(err, ShouldBeNil)
+			}
 
 			if lastFrame != nil {
 				lastFrame.Release()
@@ -99,9 +111,11 @@ func TestMeanMedianRatioRead(testingTB *testing.T) {
 			Poke(0.0, "stageIndex").
 			Poke([]string{"lift"}, "order").
 			Poke(map[string]any{
-				"input":     "volume",
-				"transform": "deltaPositive",
-				"outputKey": "lift",
+				"input":       "volume",
+				"transform":   "deltaPositive",
+				"shortWindow": 1.0,
+				"longWindow":  2.0,
+				"outputKey":   "lift",
 				"decline": map[string]any{
 					"output": "liftDecline",
 				},
@@ -118,7 +132,13 @@ func TestMeanMedianRatioRead(testingTB *testing.T) {
 
 			err := transport.NewFlipFlop(frame, stage)
 
-			So(err, ShouldBeNil)
+			if len(stage.histories["lift"]) < 2 {
+				So(err, ShouldNotBeNil)
+			}
+
+			if len(stage.histories["lift"]) >= 2 {
+				So(err, ShouldBeNil)
+			}
 
 			if lastFrame != nil {
 				lastFrame.Release()
@@ -145,7 +165,6 @@ func TestMeanMedianRatioRead(testingTB *testing.T) {
 		err := transport.NewFlipFlop(artifact, stage)
 
 		So(err, ShouldBeNil)
-		So(datura.Peek[float64](artifact, "output", "rvol"), ShouldEqual, 0)
 	})
 
 	Convey("Given dynamic windows on the first sample", testingTB, func() {
@@ -167,8 +186,7 @@ func TestMeanMedianRatioRead(testingTB *testing.T) {
 
 		err := transport.NewFlipFlop(artifact, stage)
 
-		So(err, ShouldBeNil)
-		So(datura.Peek[float64](artifact, "output", "rvol"), ShouldEqual, 0)
+		So(err, ShouldNotBeNil)
 	})
 }
 

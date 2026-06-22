@@ -29,6 +29,29 @@ func TestPositiveOnlyRead(t *testing.T) {
 			So(datura.Peek[float64](artifact, "output", "precursor"), ShouldEqual, 0)
 		})
 	})
+
+	Convey("Given missing stage config", t, func() {
+		stage := NewPositiveOnly(datura.Acquire("positive-only-missing", datura.APPJSON))
+		artifact := datura.Acquire("positive-only-test", datura.APPJSON).Poke(1.0, "sample")
+
+		err := transport.NewFlipFlop(artifact, stage)
+
+		So(err, ShouldNotBeNil)
+	})
+
+	Convey("Given missing outputKey config", t, func() {
+		config := datura.Acquire("positive-only-no-output", datura.APPJSON).
+			Poke("precursor", "stage").
+			Poke(map[string]any{
+				"positiveOnly": 1.0,
+			}, "precursor")
+		stage := NewPositiveOnly(config)
+		artifact := datura.Acquire("positive-only-test", datura.APPJSON).Poke(1.0, "sample")
+
+		err := transport.NewFlipFlop(artifact, stage)
+
+		So(err, ShouldNotBeNil)
+	})
 }
 
 func BenchmarkPositiveOnlyRead(b *testing.B) {

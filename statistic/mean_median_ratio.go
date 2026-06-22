@@ -56,7 +56,11 @@ func (meanMedianRatio *MeanMedianRatio) Read(payload []byte) (int, error) {
 	}
 
 	sourceKey := datura.Peek[string](meanMedianRatio.artifact, stageKey, "input")
-	sample := meanMedianRatio.sample(state, sourceKey)
+	sample, err := meanMedianRatio.sample(state, sourceKey)
+
+	if err != nil {
+		return 0, err
+	}
 
 	if math.IsNaN(sample) || math.IsInf(sample, 0) {
 		return 0, errnie.Error(errnie.Err(
@@ -80,8 +84,25 @@ func (meanMedianRatio *MeanMedianRatio) Read(payload []byte) (int, error) {
 	history := meanMedianRatio.histories[stageKey]
 	history = append(history, sample)
 
-	shortWindow, longWindow := RollingWindows(history, shortHint, longHint)
-	requiredSamples := TargetLongWindow(history, shortHint, longHint)
+	shortWindow, longWindow, err := RollingWindows(history, shortHint, longHint)
+
+	if err != nil {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"mean-median-ratio: unable to resolve windows",
+			err,
+		))
+	}
+
+	requiredSamples, err := TargetLongWindow(history, shortHint, longHint)
+
+	if err != nil {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"mean-median-ratio: unable to resolve target window",
+			err,
+		))
+	}
 
 	if longWindow > 0 && len(history) > longWindow {
 		history = history[len(history)-longWindow:]
@@ -89,43 +110,43 @@ func (meanMedianRatio *MeanMedianRatio) Read(payload []byte) (int, error) {
 
 	meanMedianRatio.histories[stageKey] = history
 
-	ratio := 0.0
-
 	if shortHint <= 0 && longHint <= 0 && len(history) < requiredSamples {
-		state.MergeOutput(outputKey, ratio)
-
-		declineOutput := datura.Peek[string](meanMedianRatio.artifact, stageKey, "decline", "output")
-
-		if declineOutput != "" {
-			if decline, ok := meanMedianRatio.declines[declineOutput]; ok {
-				state.MergeOutput(declineOutput, decline)
-			}
-		}
-
-		features.Restore(state)
-		state.Merge("root", "output")
-
-		return state.Read(payload)
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"mean-median-ratio: insufficient history for dynamic windows",
+			nil,
+		))
 	}
 
-	if longWindow > 0 && len(history) >= longWindow {
-		shortCount := min(shortWindow, len(history))
-
-		shortSlice := history[len(history)-shortCount:]
-		shortMean := stat.Mean(shortSlice, nil)
-
-		longSlice := history
-
-		if len(history) > shortCount {
-			longSlice = history[:len(history)-shortCount]
-		}
-
-		longMedian := MedianOf(longSlice)
-
-		if longMedian > 0 {
-			ratio = shortMean / longMedian
-		}
+	if longWindow <= 0 || len(history) < longWindow {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"mean-median-ratio: insufficient history",
+			nil,
+		))
 	}
+
+	shortCount := min(shortWindow, len(history))
+	shortSlice := history[len(history)-shortCount:]
+	shortMean := stat.Mean(shortSlice, nil)
+
+	longSlice := history
+
+	if len(history) > shortCount {
+		longSlice = history[:len(history)-shortCount]
+	}
+
+	longMedian, ok := MedianOf(longSlice)
+
+	if !ok || longMedian <= 0 {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"mean-median-ratio: long median is invalid",
+			nil,
+		))
+	}
+
+	ratio := shortMean / longMedian
 
 	state.MergeOutput(outputKey, ratio)
 
@@ -161,30 +182,34 @@ func (meanMedianRatio *MeanMedianRatio) stageKey() string {
 func (meanMedianRatio *MeanMedianRatio) sample(
 	artifact *datura.Artifact,
 	sourceKey string,
-) float64 {
+) (float64, error) {
 	if sourceKey == "" {
-		return 0
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"mean-median-ratio: input key required",
+			nil,
+		))
 	}
 
-	sample := FeatureColumn(artifact, sourceKey)
+	sample, err := FeatureColumn(artifact, sourceKey)
 
-	if sample != 0 || len(datura.Peek[[]float64](artifact, "features")) > 0 {
+	if err == nil {
 		if math.IsNaN(sample) || math.IsInf(sample, 0) {
-			errnie.Error(errnie.Err(
+			return 0, errnie.Error(errnie.Err(
 				errnie.Validation,
 				"mean-median-ratio: sample is NaN or Inf",
 				nil,
 			))
 		}
 
-		return sample
+		return sample, nil
 	}
 
 	rootKey := datura.Peek[string](artifact, "root")
 	channelKeys := datura.Peek[[]string](artifact, "inputs")
 
 	if rootKey == "" || len(channelKeys) == 0 {
-		return 0
+		return 0, err
 	}
 
 	for index, channelKey := range channelKeys {
@@ -195,17 +220,17 @@ func (meanMedianRatio *MeanMedianRatio) sample(
 		sample = datura.Peek[float64](artifact, rootKey, index)
 
 		if math.IsNaN(sample) || math.IsInf(sample, 0) {
-			errnie.Error(errnie.Err(
+			return 0, errnie.Error(errnie.Err(
 				errnie.Validation,
 				"mean-median-ratio: sample is NaN or Inf",
 				nil,
 			))
 		}
 
-		return sample
+		return sample, nil
 	}
 
-	return 0
+	return 0, err
 }
 
 func (meanMedianRatio *MeanMedianRatio) applyTransform(stageKey string, sample float64) float64 {

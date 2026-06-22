@@ -6,6 +6,7 @@ import (
 	"math/rand"
 
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/errnie"
 	"gonum.org/v1/gonum/mat"
 )
 
@@ -306,7 +307,11 @@ func (rm *ResonanceManifold) Read(payload []byte) (int, error) {
 	values := datura.Peek[[]float64](state, "batch")
 
 	if len(values) < rm.arch[0] {
-		return state.Read(payload)
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"resonance: batch shorter than input dimension",
+			nil,
+		))
 	}
 
 	input := values[:rm.arch[0]]
@@ -341,12 +346,28 @@ func (rm *ResonanceManifold) SettleFromBatchOptions(
 	advanceTemporal bool,
 ) float64 {
 	if len(input) != rm.arch[0] {
-		padded := make([]float64, rm.arch[0])
-		copy(padded, input)
-		input = padded
+		rm.output = 0
+		errnie.Error(errnie.Err(
+			errnie.Validation,
+			"resonance: input dimension mismatch",
+			errors.New("resonance: input dimension mismatch"),
+		))
+
+		return rm.output
 	}
 
-	_ = rm.Settle(input, advanceTemporal)
+	settleErr := rm.Settle(input, advanceTemporal)
+
+	if settleErr != nil {
+		rm.output = 0
+		errnie.Error(errnie.Err(
+			errnie.Validation,
+			"resonance: settle failed",
+			settleErr,
+		))
+
+		return rm.output
+	}
 
 	if learn {
 		rm.Learn(target)

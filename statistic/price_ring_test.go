@@ -44,8 +44,8 @@ func TestPriceRingRead(t *testing.T) {
 		}
 
 		Convey("It should publish the current sample on the outbound wire", func() {
-			So(datura.Peek[string](lastArtifact, "root"), ShouldEqual, "sample")
-			So(datura.Peek[float64](lastArtifact, "sample"), ShouldEqual, 102)
+			So(datura.Peek[string](lastArtifact, "root"), ShouldEqual, "output")
+			So(datura.Peek[float64](lastArtifact, "output", "last"), ShouldEqual, 102)
 		})
 	})
 }

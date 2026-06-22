@@ -72,7 +72,7 @@ func Quartiles(values []float64) (lower float64, upper float64) {
 
 /*
 SpanOf returns the count of distinct sample levels in values.
-Identical samples yield zero so callers can apply a minimal retention floor.
+Identical samples yield zero; ring capacity callers should use len(values)+1 in that case.
 */
 func SpanOf(values []float64) float64 {
 	if len(values) == 0 {

@@ -64,10 +64,10 @@ func TestObservationRingObserve(t *testing.T) {
 			artifact.Poke(value, "sample")
 			err := transport.NewFlipFlop(artifact, ring)
 
-			So(err, ShouldBeNil)
+			So(err, ShouldNotBeNil)
 		}
 
-		Convey("It should ignore invalid samples", func() {
+		Convey("It should reject invalid samples", func() {
 			So(len(datura.Peek[[]float64](ringConfig, "history")), ShouldEqual, 0)
 		})
 	})

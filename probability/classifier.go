@@ -40,7 +40,7 @@ func (classifier *Classifier) Read(payload []byte) (int, error) {
 
 	defer state.Release()
 
-	inputs := datura.Peek[[]string](classifier.config, "inputs")
+	inputs := configStringSlice(classifier.config, state, "inputs")
 
 	if len(inputs) == 0 {
 		inputs = datura.Peek[[]string](state, "inputs")

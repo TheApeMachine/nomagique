@@ -11,12 +11,10 @@ import (
 
 /*
 LogitScores maps configured feature outputs to classifier logits on the artifact.
-Runtime scale and threshold history live on the stage instance, not the config artifact.
+Runtime scale and threshold history live on the config artifact output keys.
 */
 type LogitScores struct {
-	config           *datura.Artifact
-	scaleSamples     map[string][]float64
-	thresholdSamples []float64
+	config *datura.Artifact
 }
 
 /*
@@ -26,8 +24,7 @@ func NewLogitScores(config *datura.Artifact) *LogitScores {
 	config.Inspect("learning", "logit-scores", "NewLogitScores()")
 
 	return &LogitScores{
-		config:       config,
-		scaleSamples: map[string][]float64{},
+		config: config,
 	}
 }
 
@@ -48,8 +45,8 @@ func (logitScores *LogitScores) Read(payload []byte) (int, error) {
 
 	defer state.Release()
 
-	order := datura.Peek[[]string](logitScores.config, "order")
-	outputs := datura.Peek[[]string](logitScores.config, "outputs")
+	order := configStringSlice(logitScores.config, state, "order")
+	outputs := configStringSlice(logitScores.config, state, "outputs")
 
 	if len(order) == 0 {
 		return 0, errnie.Error(errnie.Err(
@@ -137,7 +134,7 @@ func (logitScores *LogitScores) wireValue(
 	state *datura.Artifact,
 	wireKey string,
 ) (float64, error) {
-	rootKey := datura.Peek[string](logitScores.config, "root")
+	rootKey := configString(logitScores.config, state, "root")
 
 	if rootKey == "" {
 		return 0, errnie.Error(errnie.Err(
@@ -147,7 +144,7 @@ func (logitScores *LogitScores) wireValue(
 		))
 	}
 
-	inputKeys := datura.Peek[[]string](logitScores.config, "inputs")
+	inputKeys := configStringSlice(logitScores.config, state, "inputs")
 
 	if len(inputKeys) == 0 {
 		return 0, errnie.Error(errnie.Err(
@@ -395,8 +392,8 @@ func (logitScores *LogitScores) resolveThresholdFromFeatures(
 		magnitude += math.Abs(feature)
 	}
 
-	prior := logitScores.thresholdSamples
-	logitScores.thresholdSamples = append(logitScores.thresholdSamples, magnitude)
+	prior := datura.Peek[[]float64](logitScores.config, "output", "thresholdSamples")
+	logitScores.config.Poke(append(prior, magnitude), "output", "thresholdSamples")
 
 	if len(prior) < 2 {
 		return 0, errnie.Error(errnie.Err(
@@ -406,9 +403,9 @@ func (logitScores *LogitScores) resolveThresholdFromFeatures(
 		))
 	}
 
-	threshold := statistic.MedianOf(prior)
+	threshold, ok := statistic.MedianOf(prior)
 
-	if threshold <= 0 || math.IsNaN(threshold) || math.IsInf(threshold, 0) {
+	if !ok || threshold <= 0 || math.IsNaN(threshold) || math.IsInf(threshold, 0) {
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"logit-scores: threshold could not be derived from features",
@@ -429,15 +426,19 @@ func (logitScores *LogitScores) resolveFeatureScale(
 		return configured, nil
 	}
 
-	samples := logitScores.scaleSamples[stageKey]
+	samples := datura.Peek[[]float64](logitScores.config, "output", "scaleSamples", stageKey)
 	derived := 0.0
 
 	if len(samples) > 0 {
-		derived = statistic.MedianOf(samples)
+		median, ok := statistic.MedianOf(samples)
+
+		if ok {
+			derived = median
+		}
 	}
 
 	samples = append(samples, math.Abs(feature))
-	logitScores.scaleSamples[stageKey] = samples
+	logitScores.config.Poke(samples, "output", "scaleSamples", stageKey)
 
 	scale := math.Max(derived, math.Abs(feature))
 	scaleMode := datura.Peek[string](logitScores.config, stageKey, "scaleMode")
@@ -495,7 +496,7 @@ func (logitScores *LogitScores) resolveCompositeScale(stageKey string) (float64,
 }
 
 func (logitScores *LogitScores) priorMedianScale(stageKey string) (float64, error) {
-	samples := logitScores.scaleSamples[stageKey]
+	samples := datura.Peek[[]float64](logitScores.config, "output", "scaleSamples", stageKey)
 
 	if len(samples) < 2 {
 		return 0, errnie.Error(errnie.Err(
@@ -505,5 +506,15 @@ func (logitScores *LogitScores) priorMedianScale(stageKey string) (float64, erro
 		))
 	}
 
-	return statistic.MedianOf(samples[:len(samples)-1]), nil
+	median, ok := statistic.MedianOf(samples[:len(samples)-1])
+
+	if !ok {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			fmt.Sprintf("logit-scores: prior median scale for %q could not be derived", stageKey),
+			nil,
+		))
+	}
+
+	return median, nil
 }

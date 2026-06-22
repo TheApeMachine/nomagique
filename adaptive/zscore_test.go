@@ -54,6 +54,28 @@ func TestZScoreRead(t *testing.T) {
 			So(err, ShouldNotBeNil)
 		})
 	})
+
+	Convey("Given an explicit zero anchor", t, func() {
+		surprise := NewZScore(datura.Acquire("zscore-config", datura.APPJSON).
+			Poke("explicit", "anchorMode").
+			Poke(0.0, "anchor"))
+		_, _ = io.Copy(surprise, datura.Acquire("test", datura.APPJSON).Poke(10, "sample"))
+		_, _ = surprise.Read(make([]byte, 65536))
+		_, _ = io.Copy(surprise, datura.Acquire("test", datura.APPJSON).Poke(22, "sample"))
+		_, _ = surprise.Read(make([]byte, 65536))
+		_, _ = io.Copy(surprise, datura.Acquire("test", datura.APPJSON).Poke(30, "sample"))
+		_, _ = surprise.Read(make([]byte, 65536))
+		_, _ = io.Copy(surprise, datura.Acquire("test", datura.APPJSON).Poke(40, "sample"))
+
+		frame := make([]byte, 65536)
+		readCount, err := surprise.Read(frame)
+
+		Convey("It should anchor at zero without treating it as missing", func() {
+			So(err, ShouldBeIn, nil, io.EOF)
+			So(readCount, ShouldBeGreaterThan, 0)
+			So(datura.Peek[float64](surprise.artifact, "output", "value"), ShouldNotEqual, 0)
+		})
+	})
 }
 
 func TestZScoreWrite(t *testing.T) {

@@ -5,6 +5,7 @@ import (
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/nomagique/statistic"
 )
 
 /*
@@ -39,6 +40,7 @@ func (ema *EMA) Read(payload []byte) (int, error) {
 		return 0, err
 	}
 
+	features := statistic.SnapshotFeatures(state)
 	sample := datura.Peek[float64](state, "sample")
 
 	if math.IsNaN(sample) || math.IsInf(sample, 0) {
@@ -68,18 +70,30 @@ func (ema *EMA) Read(payload []byte) (int, error) {
 
 		if span == 0 {
 			output["prev"] = sample
-		} else {
-			delta := math.Abs(sample - output["prev"])
-			output["rate"] = delta / span
-			output["value"] += output["rate"] * (sample - output["value"])
-			output["prev"] = sample
+			ema.artifact.Poke(output, "output")
+
+			return 0, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"ema: sample span is zero",
+				nil,
+			))
 		}
+
+		delta := math.Abs(sample - output["prev"])
+		output["rate"] = delta / span
+		output["value"] += output["rate"] * (sample - output["value"])
+		output["prev"] = sample
 	}
 
 	ema.artifact.Poke(output, "output")
 	state.MergeOutput("value", output["value"])
+	features.Restore(state)
 	state.Merge("root", "output")
-	state.Merge("inputs", []string{"value"})
+
+	if len(datura.Peek[[]string](state, "inputs")) == 0 {
+		state.Merge("inputs", []string{"value"})
+	}
+
 	return state.Read(payload)
 }
 

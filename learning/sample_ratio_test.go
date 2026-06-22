@@ -109,7 +109,7 @@ func TestCalibrator_Reset(testingTB *testing.T) {
 		So(calibrator.Reset(), ShouldBeNil)
 
 		Convey("It should clear derived state", func() {
-			So(calibrator.state.Ready, ShouldBeFalse)
+			So(datura.Peek[float64](calibrator.artifact, "output", "ready"), ShouldEqual, 0)
 		})
 
 		fresh := datura.Acquire("test", datura.APPJSON).
@@ -120,7 +120,7 @@ func TestCalibrator_Reset(testingTB *testing.T) {
 		So(err, ShouldBeNil)
 
 		Convey("It should observe again after reset", func() {
-			So(calibrator.state.Ready, ShouldBeTrue)
+			So(datura.Peek[float64](calibrator.artifact, "output", "ready"), ShouldEqual, 1)
 			So(datura.Peek[float64](fresh, "output", "value"), ShouldEqual, 1)
 		})
 	})
@@ -150,7 +150,7 @@ func BenchmarkSampleRatio_ObserveSamples(testingTB *testing.B) {
 	testingTB.ReportAllocs()
 
 	for testingTB.Loop() {
-		calibrator.state.Reset()
+		_ = calibrator.Reset()
 		calibrator.ObserveSamples(predicted, actual, out)
 	}
 }

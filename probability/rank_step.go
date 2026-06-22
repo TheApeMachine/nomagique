@@ -40,7 +40,7 @@ func observeRankReady(state *RankState, sample float64) float64 {
 }
 
 func rankCapacity(span float64) int {
-	if span < 1 {
+	if span <= 0 {
 		return 1
 	}
 

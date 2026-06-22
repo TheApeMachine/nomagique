@@ -4,6 +4,7 @@ import (
 	"math"
 
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/errnie"
 )
 
 /*
@@ -41,14 +42,27 @@ func (medianAbsolute *MedianAbsolute) Read(payload []byte) (int, error) {
 	sample := datura.Peek[float64](state, "sample")
 
 	if math.IsNaN(sample) || math.IsInf(sample, 0) {
-		return state.Read(payload)
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"median-absolute: sample is non-finite",
+			nil,
+		))
 	}
 
 	history := datura.Peek[[]float64](medianAbsolute.artifact, "history")
 	history = append(history, sample)
 	medianAbsolute.artifact.Poke(history, "history")
 
-	value := MedianAbsoluteOf(history)
+	value, ok := MedianAbsoluteOf(history)
+
+	if !ok {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"median-absolute: history is invalid",
+			nil,
+		))
+	}
+
 	state.MergeOutput("value", value)
 	state.Merge("root", "output")
 	state.Merge("inputs", []string{"value"})
@@ -62,9 +76,9 @@ func (medianAbsolute *MedianAbsolute) Close() error {
 /*
 MedianAbsoluteOf returns the median of absolute values.
 */
-func MedianAbsoluteOf(values []float64) float64 {
+func MedianAbsoluteOf(values []float64) (float64, bool) {
 	if len(values) == 0 {
-		return 0
+		return 0, false
 	}
 
 	absoluteValues := make([]float64, len(values))

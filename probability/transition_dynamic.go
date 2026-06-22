@@ -50,8 +50,8 @@ func (transition *Transition) Read(payload []byte) (int, error) {
 
 	defer state.Release()
 
-	numStates := int(datura.Peek[float64](transition.artifact, "numStates"))
-	alpha := datura.Peek[float64](transition.artifact, "alpha")
+	numStates := int(configFloat64(transition.artifact, state, "numStates"))
+	alpha := configFloat64(transition.artifact, state, "alpha")
 	inboundAlpha := datura.Peek[float64](state, "alpha")
 
 	if inboundAlpha > 0 {
@@ -88,8 +88,17 @@ func (transition *Transition) Read(payload []byte) (int, error) {
 		))
 	}
 
-	matrix := transitionMatrixFromPayload(transition.artifact, numStates, alpha)
-	observed := matrix.PadObserved(probabilities, 0)
+	matrix, matrixErr := transitionMatrixFromPayload(transition.artifact, numStates, alpha)
+
+	if matrixErr != nil {
+		return 0, matrixErr
+	}
+
+	observed, padErr := matrix.PadObserved(probabilities, alpha)
+
+	if padErr != nil {
+		return 0, padErr
+	}
 	surprise, surpriseErr := matrix.Surprise(observed)
 
 	if surpriseErr != nil {
@@ -119,24 +128,36 @@ func transitionMatrixFromPayload(
 	artifact *datura.Artifact,
 	numStates int,
 	alpha float64,
-) *TransitionMatrix {
+) (*TransitionMatrix, error) {
 	matrix := NewTransitionMatrix(numStates, alpha)
 	rawAttributes, err := artifact.Attributes()
 
 	if err != nil || len(rawAttributes) == 0 {
-		return matrix
+		return matrix, nil
 	}
 
 	countsNode, err := sonic.Get(rawAttributes, "transition", "counts")
 
 	if err != nil || !countsNode.Exists() {
-		return matrix
+		return matrix, nil
 	}
 
 	rawCounts, err := countsNode.ArrayUseNode()
 
-	if err != nil || len(rawCounts) != numStates*numStates {
-		return matrix
+	if err != nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"transition: unable to read counts",
+			err,
+		))
+	}
+
+	if len(rawCounts) != numStates*numStates {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"transition: counts length mismatch",
+			nil,
+		))
 	}
 
 	for row := range numStates {
@@ -145,7 +166,11 @@ func transitionMatrixFromPayload(
 			sample, sampleErr := rawCounts[index].Float64()
 
 			if sampleErr != nil {
-				return matrix
+				return nil, errnie.Error(errnie.Err(
+					errnie.Validation,
+					"transition: counts entry is non-numeric",
+					sampleErr,
+				))
 			}
 
 			matrix.counts[row][column] = sample
@@ -155,18 +180,22 @@ func transitionMatrixFromPayload(
 	lastCategoryNode, err := sonic.Get(rawAttributes, "transition", "lastCategory")
 
 	if err != nil || !lastCategoryNode.Exists() {
-		return matrix
+		return matrix, nil
 	}
 
 	lastCategory, err := lastCategoryNode.Float64()
 
 	if err != nil {
-		return matrix
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"transition: lastCategory is non-numeric",
+			err,
+		))
 	}
 
 	matrix.lastCategory = int(lastCategory)
 
-	return matrix
+	return matrix, nil
 }
 
 func pokeTransitionMatrix(artifact *datura.Artifact, matrix *TransitionMatrix) {

@@ -47,6 +47,17 @@ func SoftmaxScores(scores []float64) ([]float64, error) {
 	return probabilities, nil
 }
 
+func uniformProbabilities(count int) []float64 {
+	probabilities := make([]float64, count)
+	share := 1.0 / float64(count)
+
+	for index := range probabilities {
+		probabilities[index] = share
+	}
+
+	return probabilities
+}
+
 /*
 SoftmaxScoresNormalized standardizes scores by their own spread before applying
 softmax, so the resulting probabilities reflect how decisively the winning score
@@ -56,13 +67,12 @@ Plain SoftmaxScores saturates to a one-hot vector whenever one raw score is much
 larger than the others — which happens routinely when an input is an unbounded
 physical quantity (relative volume, divergence, a 1/spread ratio): the winner's
 confidence pins to ~1.0 and surprise collapses to 0, regardless of how genuinely
-distinct the state is. Dividing the centered scores by their standard deviation
-makes the margin scale-invariant: a 2x and a 50x volume spike that both clearly
-mean "ignition" yield comparable, sub-unity confidence instead of both pinning to
-exactly 1.0.
+distinct the state is. Dividing the centered scores by their sample standard
+deviation makes the margin scale-invariant: a 2x and a 50x volume spike that both
+clearly mean "ignition" yield comparable, sub-unity confidence instead of both
+pinning to exactly 1.0.
 
-When every score is equal (zero spread) the result is the uniform distribution,
-matching SoftmaxScores on uniform input.
+When every score is equal (zero spread) the result is the uniform distribution.
 */
 func SoftmaxScoresNormalized(scores []float64) ([]float64, error) {
 	if len(scores) == 0 {
@@ -73,6 +83,10 @@ func SoftmaxScoresNormalized(scores []float64) ([]float64, error) {
 		if math.IsNaN(score) || math.IsInf(score, 0) {
 			return nil, fmt.Errorf("probability: softmax score[%d] is non-finite", index)
 		}
+	}
+
+	if len(scores) == 1 {
+		return uniformProbabilities(1), nil
 	}
 
 	mean := 0.0
@@ -90,11 +104,11 @@ func SoftmaxScoresNormalized(scores []float64) ([]float64, error) {
 		variance += deviation * deviation
 	}
 
-	variance /= float64(len(scores))
+	variance /= float64(len(scores) - 1)
 	stddev := math.Sqrt(variance)
 
 	if stddev <= 0 {
-		return SoftmaxScores(scores)
+		return uniformProbabilities(len(scores)), nil
 	}
 
 	standardized := make([]float64, len(scores))

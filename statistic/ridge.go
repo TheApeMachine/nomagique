@@ -7,12 +7,6 @@ import (
 	"gonum.org/v1/gonum/mat"
 )
 
-const (
-	minConditionRatio = 100.0
-	ridgeScaleFactor  = 0.01
-	solverPivotFloor  = 1e-12
-)
-
 /*
 RidgeSolver solves regularized normal equations with Gonum LAPACK backends.
 
@@ -128,13 +122,15 @@ func (solver *RidgeSolver) ridgeLambda(normal [][]float64) float64 {
 
 	base := trace / size
 	condition := solver.conditionEstimate(normal)
+	machineEpsilon := machineSqrtEpsilon()
+	conditionLimit := 1 / machineEpsilon
 	extra := 0.0
 
-	if condition > minConditionRatio || math.IsInf(condition, 0) {
-		extra = base * ridgeScaleFactor
+	if condition > conditionLimit || math.IsInf(condition, 0) {
+		extra = base * machineEpsilon
 	}
 
-	return base*machineSqrtEpsilon() + extra
+	return base*machineEpsilon + extra
 }
 
 func machineSqrtEpsilon() float64 {
@@ -164,6 +160,7 @@ func (solver *RidgeSolver) conditionEstimate(normal [][]float64) float64 {
 
 	maxEigenBound := 0.0
 	minEigenBound := math.Inf(1)
+	pivotFloor := machineSqrtEpsilon()
 
 	for row := 0; row < size; row++ {
 		radius := 0.0
@@ -194,7 +191,7 @@ func (solver *RidgeSolver) conditionEstimate(normal [][]float64) float64 {
 		}
 	}
 
-	if minEigenBound <= solverPivotFloor {
+	if minEigenBound <= pivotFloor {
 		return math.Inf(1)
 	}
 

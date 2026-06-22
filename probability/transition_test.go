@@ -19,7 +19,9 @@ func transitionSchema(numStates int, alpha float64) *datura.Artifact {
 func TestTransitionMatrixSurprise(testingTB *testing.T) {
 	Convey("Given a transition matrix and padded observation", testingTB, func() {
 		matrix := NewTransitionMatrix(5, 0.1)
-		observed := matrix.PadObserved([]float64{0.25, 0.25, 0.25, 0.25}, 0)
+		observed, padErr := matrix.PadObserved([]float64{0.25, 0.25, 0.25, 0.25}, 0.1)
+
+		So(padErr, ShouldBeNil)
 
 		surprise, err := matrix.Surprise(observed)
 
@@ -33,7 +35,9 @@ func TestTransitionMatrixSurprise(testingTB *testing.T) {
 func TestTransitionMatrixPadObserved(testingTB *testing.T) {
 	Convey("Given a four-class distribution", testingTB, func() {
 		matrix := NewTransitionMatrix(5, 0.1)
-		padded := matrix.PadObserved([]float64{0.4, 0.3, 0.2, 0.1}, 0)
+		padded, err := matrix.PadObserved([]float64{0.4, 0.3, 0.2, 0.1}, 0.1)
+
+		So(err, ShouldBeNil)
 
 		Convey("It should produce five normalized masses", func() {
 			So(len(padded), ShouldEqual, 5)
@@ -128,7 +132,10 @@ func TestTransitionSurprise_Read(testingTB *testing.T) {
 	Convey("Given a padded observation through TransitionSurprise", testingTB, func() {
 		stage := NewTransitionSurprise(transitionSchema(5, 0.1))
 		matrix := NewTransitionMatrix(5, 0.1)
-		observed := matrix.PadObserved([]float64{0.25, 0.25, 0.25, 0.25}, 0)
+		observed, padErr := matrix.PadObserved([]float64{0.25, 0.25, 0.25, 0.25}, 0.1)
+
+		So(padErr, ShouldBeNil)
+
 		artifact := transitionInboundArtifact(observed, 1)
 
 		err := transport.NewFlipFlop(artifact, stage)
@@ -147,7 +154,10 @@ func TestTransitionSurprise_Reset(testingTB *testing.T) {
 	Convey("Given a transition stage with accumulated state", testingTB, func() {
 		stage := NewTransitionSurprise(transitionSchema(5, 0.1))
 		matrix := NewTransitionMatrix(5, 0.1)
-		observed := matrix.PadObserved([]float64{0.25, 0.25, 0.25, 0.25}, 0)
+		observed, padErr := matrix.PadObserved([]float64{0.25, 0.25, 0.25, 0.25}, 0.1)
+
+		So(padErr, ShouldBeNil)
+
 		artifact := transitionInboundArtifact(observed, 2)
 
 		err := transport.NewFlipFlop(artifact, stage)
@@ -174,7 +184,12 @@ func TestTransitionSurprise_Reset(testingTB *testing.T) {
 func BenchmarkTransitionSurprise_Read(testingTB *testing.B) {
 	stage := NewTransitionSurprise(transitionSchema(5, 0.1))
 	matrix := NewTransitionMatrix(5, 0.1)
-	observed := matrix.PadObserved([]float64{0.4, 0.3, 0.2, 0.1}, 0)
+	observed, padErr := matrix.PadObserved([]float64{0.4, 0.3, 0.2, 0.1}, 0.1)
+
+	if padErr != nil {
+		testingTB.Fatal(padErr)
+	}
+
 	artifact := transitionInboundArtifact(observed, 2)
 
 	testingTB.ReportAllocs()
@@ -186,7 +201,11 @@ func BenchmarkTransitionSurprise_Read(testingTB *testing.B) {
 
 func BenchmarkTransitionMatrixSurprise(testingTB *testing.B) {
 	matrix := NewTransitionMatrix(5, 0.1)
-	observed := matrix.PadObserved([]float64{0.4, 0.3, 0.2, 0.1}, 0)
+	observed, err := matrix.PadObserved([]float64{0.4, 0.3, 0.2, 0.1}, 0.1)
+
+	if err != nil {
+		testingTB.Fatal(err)
+	}
 
 	testingTB.ReportAllocs()
 

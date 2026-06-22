@@ -124,9 +124,6 @@ func (kl *KLDivergence) divergence(observed, expected []float64) (float64, error
 		}
 	}
 
-	width := max(len(observed), len(expected))
-	floor := kl.probabilityFloor(observed, expected, width)
-
 	if expectedSum <= 0 {
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation, "unable to compute KL divergence",
@@ -154,55 +151,41 @@ func (kl *KLDivergence) divergence(observed, expected []float64) (float64, error
 		))
 	}
 
-	observedProbabilities := make([]float64, width)
-	expectedProbabilities := make([]float64, width)
+	width := len(observed)
+	floor := kl.probabilityFloor(observed, expected, width)
 
-	for index := range width {
-		observedProbability := floor
-
-		if index < len(observed) {
-			observedProbability = observed[index] / observedSum
-		}
-
-		if observedProbability < floor {
-			observedProbability = floor
-		}
-
-		observedProbabilities[index] = observedProbability
-
-		expectedMass := floor
-
-		if index < len(expected) {
-			expectedMass = expected[index]
-		}
-
-		expectedProbability := expectedMass / expectedSum
-
-		if expectedProbability < floor {
-			expectedProbability = floor
-		}
-
-		expectedProbabilities[index] = expectedProbability
-	}
-
-	observedTotal := 0.0
-	expectedTotal := 0.0
-
-	for index := range width {
-		observedTotal += observedProbabilities[index]
-		expectedTotal += expectedProbabilities[index]
-	}
-
-	if observedTotal <= 0 || expectedTotal <= 0 {
+	if floor < 0 {
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation, "unable to compute KL divergence",
 			KLError(KLErrorNonFiniteResult),
 		))
 	}
 
+	observedProbabilities := make([]float64, width)
+	expectedProbabilities := make([]float64, width)
+
 	for index := range width {
-		observedProbabilities[index] /= observedTotal
-		expectedProbabilities[index] /= expectedTotal
+		observedProbability := observed[index] / observedSum
+
+		if observedProbability < floor {
+			return 0, errnie.Error(errnie.Err(
+				errnie.Validation, "unable to compute KL divergence",
+				KLError(KLErrorNonFiniteObserved),
+			))
+		}
+
+		observedProbabilities[index] = observedProbability
+
+		expectedProbability := expected[index] / expectedSum
+
+		if expectedProbability < floor {
+			return 0, errnie.Error(errnie.Err(
+				errnie.Validation, "unable to compute KL divergence",
+				KLError(KLErrorNonFiniteExpected),
+			))
+		}
+
+		expectedProbabilities[index] = expectedProbability
 	}
 
 	divergence := stat.KullbackLeibler(observedProbabilities, expectedProbabilities)
@@ -241,7 +224,7 @@ func (kl *KLDivergence) probabilityFloor(
 	scale := math.Max(observedSum, expectedSum) / float64(width)
 
 	if scale <= 0 || math.IsNaN(scale) || math.IsInf(scale, 0) {
-		return 0
+		return -1
 	}
 
 	return math.Nextafter(0, scale)

@@ -5,6 +5,7 @@ import (
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/nomagique/statistic"
 )
 
 /*
@@ -40,6 +41,7 @@ func (surprise *ZScore) Read(payload []byte) (int, error) {
 		return 0, err
 	}
 
+	features := statistic.SnapshotFeatures(state)
 	sample := datura.Peek[float64](state, "sample")
 
 	if math.IsNaN(sample) || math.IsInf(sample, 0) {
@@ -50,13 +52,7 @@ func (surprise *ZScore) Read(payload []byte) (int, error) {
 		))
 	}
 
-	anchor := datura.Peek[float64](state, "anchor")
-
-	if anchor == 0 {
-		anchor = datura.Peek[float64](surprise.artifact, "anchor")
-	}
-
-	hasAnchor := anchor != 0 && !math.IsNaN(anchor) && !math.IsInf(anchor, 0)
+	anchor, hasAnchor := surprise.anchor(state)
 
 	output := datura.Map[float64]{
 		"mean": datura.Peek[float64](surprise.artifact, "output", "mean"),
@@ -132,11 +128,66 @@ func (surprise *ZScore) Read(payload []byte) (int, error) {
 
 	output["value"] = deviation / math.Sqrt(output["var"])
 
+	if math.IsNaN(output["value"]) || math.IsInf(output["value"], 0) {
+		surprise.artifact.Poke(output, "output")
+
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"zscore: output value is non-finite",
+			nil,
+		))
+	}
+
 	surprise.artifact.Poke(output, "output")
 	state.MergeOutput("value", output["value"])
+	features.Restore(state)
 	state.Merge("root", "output")
-	state.Merge("inputs", []string{"value"})
+
+	if len(datura.Peek[[]string](state, "inputs")) == 0 {
+		state.Merge("inputs", []string{"value"})
+	}
+
 	return state.Read(payload)
+}
+
+func (surprise *ZScore) anchor(state *datura.Artifact) (float64, bool) {
+	anchorMode := datura.Peek[string](surprise.artifact, "anchorMode")
+
+	if anchorMode == "explicit" || anchorMode == "fixed" {
+		anchor := datura.Peek[float64](state, "anchor")
+
+		if anchor == 0 {
+			anchor = datura.Peek[float64](surprise.artifact, "anchor")
+		}
+
+		if math.IsNaN(anchor) || math.IsInf(anchor, 0) {
+			return 0, false
+		}
+
+		return anchor, true
+	}
+
+	body := datura.As[datura.Map[any]](state)
+
+	if body != nil {
+		if _, present := body["anchor"]; present {
+			anchor := datura.Peek[float64](state, "anchor")
+
+			if math.IsNaN(anchor) || math.IsInf(anchor, 0) {
+				return 0, false
+			}
+
+			return anchor, true
+		}
+	}
+
+	anchor := datura.Peek[float64](surprise.artifact, "anchor")
+
+	if anchor != 0 && !math.IsNaN(anchor) && !math.IsInf(anchor, 0) {
+		return anchor, true
+	}
+
+	return 0, false
 }
 
 func (surprise *ZScore) Close() error {

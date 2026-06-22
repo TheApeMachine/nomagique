@@ -5,6 +5,7 @@ import (
 	"sort"
 
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/errnie"
 	"gonum.org/v1/gonum/stat"
 )
 
@@ -42,15 +43,25 @@ func (quantile *Quantile) Read(payload []byte) (int, error) {
 	}
 
 	sample := datura.Peek[float64](state, "sample")
-	history := datura.Peek[[]float64](quantile.artifact, "history")
 
-	if !math.IsNaN(sample) && !math.IsInf(sample, 0) {
-		history = append(history, sample)
-		quantile.artifact.Poke(history, "history")
+	if math.IsNaN(sample) || math.IsInf(sample, 0) {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"quantile: sample is non-finite",
+			nil,
+		))
 	}
 
+	history := datura.Peek[[]float64](quantile.artifact, "history")
+	history = append(history, sample)
+	quantile.artifact.Poke(history, "history")
+
 	if len(history) == 0 {
-		return state.Read(payload)
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"quantile: insufficient history",
+			nil,
+		))
 	}
 
 	sorted := append([]float64(nil), history...)
@@ -58,7 +69,15 @@ func (quantile *Quantile) Read(payload []byte) (int, error) {
 
 	percentile := datura.Peek[float64](quantile.artifact, "config", "percentile")
 	kind := stat.CumulantKind(int(datura.Peek[float64](quantile.artifact, "config", "kind")))
-	value := quantileValue(sorted, nil, percentile, kind)
+	value, ok := quantileValue(sorted, nil, percentile, kind)
+
+	if !ok {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"quantile: history contains non-finite values",
+			nil,
+		))
+	}
 
 	state.MergeOutput("value", value)
 	state.Merge("root", "output")
@@ -73,40 +92,50 @@ func (quantile *Quantile) Close() error {
 func quantileValue(
 	sorted []float64, weights []float64,
 	percentile float64, kind stat.CumulantKind,
-) float64 {
+) (float64, bool) {
+	if len(sorted) == 0 {
+		return 0, false
+	}
+
 	if percentile <= 0 {
-		return sorted[0]
+		return sorted[0], true
 	}
 
 	if percentile >= 1 {
-		return sorted[len(sorted)-1]
+		return sorted[len(sorted)-1], true
 	}
 
 	if weights == nil {
 		for _, value := range sorted {
 			if math.IsNaN(value) || math.IsInf(value, 0) {
-				return math.NaN()
+				return 0, false
 			}
 		}
 
-		return stat.Quantile(percentile, kind, sorted, nil)
+		return stat.Quantile(percentile, kind, sorted, nil), true
 	}
 
-	return stat.Quantile(percentile, kind, sorted, weights)
+	return stat.Quantile(percentile, kind, sorted, weights), true
 }
 
 /*
 QuantileOf returns the sample quantile with linear interpolation.
 */
-func QuantileOf(percentile float64, values []float64) float64 {
+func QuantileOf(percentile float64, values []float64) (float64, bool) {
 	if len(values) == 0 {
-		return 0
+		return 0, false
 	}
 
 	sorted := append([]float64(nil), values...)
 	sort.Float64s(sorted)
 
-	return stat.Quantile(percentile, stat.LinInterp, sorted, nil)
+	for _, value := range sorted {
+		if math.IsNaN(value) || math.IsInf(value, 0) {
+			return 0, false
+		}
+	}
+
+	return stat.Quantile(percentile, stat.LinInterp, sorted, nil), true
 }
 
 type QuantileErrorType string

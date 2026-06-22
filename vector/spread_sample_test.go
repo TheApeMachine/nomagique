@@ -32,6 +32,18 @@ func TestSpreadSampleAfterMeanMedianRatio(testingTB *testing.T) {
 			statistic.NewMeanMedianRatio(config),
 			NewSpreadSample(config),
 		)
+
+		for index := range 24 {
+			frame := datura.Acquire("spread-pipeline-warmup-frame", datura.APPJSON)
+			last := 10000 + float64(index)*100
+			frame.Merge("root", "features")
+			frame.Merge("inputs", []string{"volume", "last", "bid", "ask"})
+			frame.Merge("features", []float64{1000 + float64(index)*10, last, last - 1, last + 1})
+
+			_ = transport.NewFlipFlop(frame, stage)
+			frame.Release()
+		}
+
 		frame := datura.Acquire("spread-pipeline-frame", datura.APPJSON)
 		frame.Merge("root", "features")
 		frame.Merge("inputs", []string{"volume", "last", "bid", "ask"})

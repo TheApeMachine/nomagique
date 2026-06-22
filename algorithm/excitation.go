@@ -506,7 +506,11 @@ func fitGateHistoryCap(history []float64) int {
 	_, longWindow, err := statistic.RollingWindows(history, 0, 0)
 
 	if err != nil {
-		return len(history)
+		return 1
+	}
+
+	if longWindow < 1 {
+		return 1
 	}
 
 	return longWindow

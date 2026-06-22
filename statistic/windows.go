@@ -97,6 +97,10 @@ func TargetLongWindow(history []float64, shortHint, longHint int) (int, error) {
 		longWindow = shortWindow + 1
 	}
 
+	if longWindow > sampleCount && sampleCount > shortWindow {
+		longWindow = sampleCount
+	}
+
 	return longWindow, nil
 }
 

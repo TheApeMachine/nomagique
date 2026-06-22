@@ -16,15 +16,15 @@ func ignitionReplayConfig() *datura.Artifact {
 		Poke([]string{"rvol", "precursor", "compression", "spread", "ignition", "value", "rvolDecline"}, "inputs").
 		Poke(0.0, "stageIndex").
 		Poke([]string{"rvol", "precursor", "compression"}, "order").
-		Poke([]string{"ignition", "compression", "trend", "exhaustion"}, "outputs").
+		Poke([]string{"ignition", "trend", "exhaustion"}, "outputs").
 		Poke(0.01, "threshold").
 		Poke(map[string]any{
 			"input":       "volume",
 			"transform":   "deltaPositive",
-			"shortWindow": 3.0,
-			"longWindow":  5.0,
+			"shortWindow": 0.0,
+			"longWindow":  0.0,
 			"outputKey":   "rvol",
-			"scale":       1.0,
+			"scale":       0.0,
 			"decline": map[string]any{
 				"output": "rvolDecline",
 			},
@@ -32,22 +32,22 @@ func ignitionReplayConfig() *datura.Artifact {
 		Poke(map[string]any{
 			"input":        "last",
 			"returnLag":    1.0,
-			"longWindow":   5.0,
+			"longWindow":   0.0,
 			"positiveOnly": 1.0,
 			"outputKey":    "precursor",
 			"stageIndex":   1.0,
-			"scale":        1.0,
+			"scale":        0.0,
 		}, "precursor").
 		Poke(map[string]any{
 			"input":     "spread",
 			"outputKey": "compression",
-			"scale":     1.0,
+			"scale":     0.0,
 		}, "compression").
 		Poke(map[string]any{
 			"terms":   []string{"rvol", "precursor"},
 			"source":  "ignition",
 			"combine": "ratio",
-			"scale":   1.0,
+			"scale":   0.0,
 		}, "ignition").
 		Poke(map[string]any{
 			"terms":   []string{"precursor", "compression", "rvol"},
@@ -85,11 +85,11 @@ func TestIgnitionSpreadAfterLogReturn(testingTB *testing.T) {
 			vector.NewSpreadSample(config),
 		)
 
-		for _, last := range []float64{10000, 10100, 10200, 10300, 10400} {
+		for _, tick := range ignitionWarmupTicks() {
 			frame := datura.Acquire("ignition-spread-pipeline-frame", datura.APPJSON)
 			frame.Merge("root", "features")
 			frame.Merge("inputs", []string{"volume", "last", "bid", "ask"})
-			frame.Merge("features", []float64{120, last, last - 1, last + 1})
+			frame.Merge("features", []float64{tick.volume, tick.last, tick.last - 1, tick.last + 1})
 
 			_ = transport.NewFlipFlop(frame, stage)
 			frame.Release()

@@ -121,7 +121,7 @@ func (fluidflow *Fluidflow) Read(p []byte) (int, error) {
 		viscousScore = math.Max(viscousScore, icebergScore)
 	}
 
-	if memory > 0 {
+	if !math.IsNaN(memory) && !math.IsInf(memory, 0) && memory > 0 {
 		viscousScore = math.Max(viscousScore, memory*viscosity)
 	}
 

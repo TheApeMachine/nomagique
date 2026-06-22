@@ -22,6 +22,20 @@ func writeFeatureStage(stage io.Writer, inputKeys []string, values ...float64) e
 	return err
 }
 
+func writeFeatureStagePayload(stage io.Writer, payload []byte) error {
+	inbound := datura.Acquire("equation-test-in", datura.APPJSON)
+	inbound.WithPayload(payload)
+	frame, err := inbound.MarshalPacked()
+
+	if err != nil {
+		return err
+	}
+
+	_, err = stage.Write(frame)
+
+	return err
+}
+
 func readStageOutput(stage io.Reader) (*datura.Artifact, error) {
 	chunk := make([]byte, 262144)
 	readCount, readErr := stage.Read(chunk)

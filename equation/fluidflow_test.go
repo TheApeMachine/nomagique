@@ -1,6 +1,7 @@
 package equation_test
 
 import (
+	"math"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
@@ -27,6 +28,28 @@ func TestFluidflow_Read(testingTB *testing.T) {
 			So(int(datura.Peek[float64](outbound, "output", "category")), ShouldEqual, 1)
 			So(datura.Peek[float64](outbound, "output", "value"), ShouldEqual, 0.5)
 			So(datura.Peek[float64](outbound, "output", "laminarScore"), ShouldAlmostEqual, 0.64, 0.01)
+		})
+	})
+
+	Convey("Given non-finite memory", testingTB, func() {
+		stage := equation.NewFluidflow(nil)
+		writeErr := writeFeatureStage(stage, equation.FluidflowInputKeys,
+			0.5, 0.01, 0.8, 1, 1,
+			2, 4, 0, 0.05, 0, 0, 0, math.Inf(1),
+			100, 2, 0.01, 1000,
+		)
+
+		So(writeErr, ShouldBeNil)
+
+		outbound, err := readStageOutput(stage)
+
+		So(err, ShouldBeNil)
+
+		Convey("It should ignore memory for viscousScore", func() {
+			viscousScore := datura.Peek[float64](outbound, "output", "viscousScore")
+
+			So(math.IsInf(viscousScore, 0), ShouldBeFalse)
+			So(math.IsNaN(viscousScore), ShouldBeFalse)
 		})
 	})
 

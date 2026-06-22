@@ -4,6 +4,7 @@ import (
 	"math"
 
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/statistic"
 )
 
@@ -36,6 +37,7 @@ func (spreadSample *SpreadSample) Read(p []byte) (int, error) {
 
 	if _, err := state.Write(spreadSample.config.DecryptPayload()); err != nil {
 		state.Release()
+
 		return 0, err
 	}
 
@@ -45,21 +47,42 @@ func (spreadSample *SpreadSample) Read(p []byte) (int, error) {
 	sourceKeys := datura.Peek[[]string](spreadSample.config, "spread", "inputs")
 
 	if len(sourceKeys) < 2 {
-		return state.Read(p)
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"spread-sample: spread.inputs requires two feature keys",
+			nil,
+		))
 	}
 
 	left := statistic.FeatureColumn(state, sourceKeys[0])
 	right := statistic.FeatureColumn(state, sourceKeys[1])
-	mid := (left + right) / 2
-	spread := 0.0
 
-	if mid > 0 {
-		spread = math.Abs(right-left) / mid
+	if math.IsNaN(left) || math.IsInf(left, 0) ||
+		math.IsNaN(right) || math.IsInf(right, 0) {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"spread-sample: spread inputs are non-finite",
+			nil,
+		))
 	}
+
+	mid := (left + right) / 2
+
+	if mid <= 0 {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"spread-sample: mid price must be positive",
+			nil,
+		))
+	}
+
+	spread := math.Abs(right-left) / mid
 
 	features.Restore(state)
 	state.MergeOutput("spread", spread)
-	state.Merge("sample", spread)
+	state.MergeOutput("value", spread)
+	state.Merge("root", "output")
+	state.Merge("inputs", []string{"spread", "value"})
 
 	return state.Read(p)
 }

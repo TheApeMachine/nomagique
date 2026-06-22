@@ -102,6 +102,8 @@ func (backdoor *Backdoor) Read(p []byte) (int, error) {
 	state.MergeOutput("association", association)
 	state.MergeOutput("effect", effect)
 	state.MergeOutput("condition", condition)
+	state.Merge("root", "output")
+	state.Merge("inputs", []string{"value", "association", "effect", "condition"})
 	return state.Read(p)
 }
 

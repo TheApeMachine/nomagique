@@ -41,7 +41,14 @@ func (cusum *CUSUM) Read(payload []byte) (int, error) {
 	defer state.Release()
 
 	if datura.Peek[float64](state, "reset") != 0 {
-		cusum.artifact.WithAttributes(datura.Map[any]{})
+		cusum.artifact.Poke(0.0, "output", "target")
+		cusum.artifact.Poke(0.0, "output", "positive")
+		cusum.artifact.Poke(0.0, "output", "prev")
+		cusum.artifact.Poke(0.0, "output", "min")
+		cusum.artifact.Poke(0.0, "output", "max")
+		cusum.artifact.Poke(0.0, "output", "rate")
+		cusum.artifact.Poke(0.0, "output", "ready")
+		cusum.artifact.Poke(0.0, "output", "value")
 		state.MergeOutput("ready", 0)
 		state.MergeOutput("value", 0)
 		state.Merge("root", "output")

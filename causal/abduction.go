@@ -93,6 +93,8 @@ func (abduction *Abduction) Read(p []byte) (int, error) {
 	state.MergeOutput("uplift", uplift)
 	state.MergeOutput("counterfactual", counterfactual)
 	state.MergeOutput("noise", noise)
+	state.Merge("root", "output")
+	state.Merge("inputs", []string{"value", "uplift", "counterfactual", "noise"})
 	return state.Read(p)
 }
 

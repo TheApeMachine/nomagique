@@ -201,6 +201,10 @@ func (ladder *Ladder) Read(p []byte) (int, error) {
 	state.MergeOutput("contagion", contagion)
 	state.MergeOutput("condition", condition)
 	state.MergeOutput("inverted", invertedValue)
+	state.Merge("root", "output")
+	state.Merge("inputs", []string{
+		"value", "association", "intervention", "uplift", "contagion", "condition", "inverted",
+	})
 	return state.Read(p)
 }
 

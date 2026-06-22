@@ -1,8 +1,6 @@
 package algorithm
 
 import (
-	"math"
-
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/nomagique/causal"
 )
@@ -139,16 +137,10 @@ func (pearlSample *PearlSample) ingestTicker(state *datura.Artifact) []float64 {
 	pearlSample.lastMacro = changePct / 100
 	pearlSample.lastLiquidity = liquidity
 
-	target := last
-
-	if pearlSample.lastFlow != 0 {
-		target = math.Abs(pearlSample.lastFlow) * last
-	}
-
 	return []float64{
 		pearlSample.lastMacro,
 		liquidity,
 		pearlSample.lastFlow,
-		target,
+		last,
 	}
 }

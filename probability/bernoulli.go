@@ -41,7 +41,14 @@ func (bernoulli *Bernoulli) Read(payload []byte) (int, error) {
 	defer state.Release()
 
 	if datura.Peek[float64](state, "reset") != 0 {
-		bernoulli.artifact.WithAttributes(datura.Map[any]{})
+		bernoulli.artifact.Poke(0.0, "output", "alpha")
+		bernoulli.artifact.Poke(0.0, "output", "beta")
+		bernoulli.artifact.Poke(0.0, "output", "prev")
+		bernoulli.artifact.Poke(0.0, "output", "min")
+		bernoulli.artifact.Poke(0.0, "output", "max")
+		bernoulli.artifact.Poke(0.0, "output", "rate")
+		bernoulli.artifact.Poke(0.0, "output", "ready")
+		bernoulli.artifact.Poke(0.0, "output", "value")
 		state.MergeOutput("ready", 0)
 		state.MergeOutput("value", 0)
 		state.Merge("root", "output")

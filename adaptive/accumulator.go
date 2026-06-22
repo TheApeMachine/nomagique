@@ -4,6 +4,7 @@ import (
 	"math"
 
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/errnie"
 )
 
 /*
@@ -41,23 +42,18 @@ func (accumulator *Accumulator) Read(payload []byte) (int, error) {
 	sample := datura.Peek[float64](state, "sample")
 
 	if math.IsNaN(sample) || math.IsInf(sample, 0) {
-		return state.Read(payload)
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"accumulator: sample is non-finite",
+			nil,
+		))
 	}
 
-	output := datura.Peek[datura.Map[float64]](accumulator.artifact, "output")
+	value := datura.Peek[float64](accumulator.artifact, "output", "value")
+	value += sample
 
-	if output == nil {
-		output = datura.Map[float64]{
-			"value": 0,
-		}
-	}
-
-	if sample != 0 {
-		output["value"] += sample
-	}
-
-	accumulator.artifact.Poke(output, "output")
-	state.MergeOutput("value", output["value"])
+	accumulator.artifact.Poke(value, "output", "value")
+	state.MergeOutput("value", value)
 	state.Merge("root", "output")
 	state.Merge("inputs", []string{"value"})
 	return state.Read(payload)

@@ -41,6 +41,8 @@ func (contagion *Contagion) Read(p []byte) (int, error) {
 	peak := contagion.peakFromTable(state)
 	state.Merge("paired", peak)
 	state.MergeOutput("value", peak)
+	state.Merge("root", "output")
+	state.Merge("inputs", []string{"value"})
 	return state.Read(p)
 }
 

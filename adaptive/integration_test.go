@@ -1,6 +1,7 @@
 package adaptive_test
 
 import (
+	"io"
 	"math"
 	"testing"
 	"time"
@@ -22,14 +23,13 @@ func TestIntegration(t *testing.T) {
 			pipeline := nomagique.Number(adaptive.NewEMA(emaConfig), adaptive.NewDelta(deltaConfig))
 			err := transport.NewFlipFlop(artifact, pipeline)
 
-			So(err, ShouldBeNil)
-			So(datura.Peek[float64](artifact, "output", "value"), ShouldEqual, 0)
+			So(err, ShouldNotBeNil)
 
 			Convey("It should bootstrap then emit unit-normalized deltas", func() {
 				artifact.Poke(20, "sample")
 				err := transport.NewFlipFlop(artifact, pipeline)
 
-				So(err, ShouldBeNil)
+				So(err, ShouldBeIn, nil, io.EOF)
 
 				delta := datura.Peek[float64](artifact, "output", "value")
 
@@ -40,12 +40,17 @@ func TestIntegration(t *testing.T) {
 			Convey("It should match a freshly composed reference pipeline", func() {
 				reference := datura.Acquire("test", datura.APPJSON).Poke(10, "sample")
 				referencePipeline := nomagique.Number(
-					adaptive.NewEMA(datura.Acquire("ema-config", datura.APPJSON)),
-					adaptive.NewDelta(datura.Acquire("delta-config", datura.APPJSON)),
+					adaptive.NewEMA(datura.Acquire("ema-ref-config", datura.APPJSON)),
+					adaptive.NewDelta(datura.Acquire("delta-ref-config", datura.APPJSON)),
 				)
 				err := transport.NewFlipFlop(reference, referencePipeline)
 
-				So(err, ShouldBeNil)
+				So(err, ShouldNotBeNil)
+
+				reference.Poke(20, "sample")
+				err = transport.NewFlipFlop(reference, referencePipeline)
+
+				So(err, ShouldBeIn, nil, io.EOF)
 				So(
 					datura.Peek[float64](reference, "output", "value"),
 					ShouldEqual,

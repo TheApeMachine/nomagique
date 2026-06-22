@@ -80,6 +80,8 @@ func (doStage *Do) Read(p []byte) (int, error) {
 	}
 
 	state.MergeOutput("value", expectation)
+	state.Merge("root", "output")
+	state.Merge("inputs", []string{"value"})
 	return state.Read(p)
 }
 

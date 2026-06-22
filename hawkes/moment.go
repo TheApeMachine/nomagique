@@ -23,18 +23,20 @@ func MethodOfMoments(
 		return BivariateParams{}, false
 	}
 
-	varianceX := stat.BivariateMoment(2, 0, x, y, weights)
-	varianceY := stat.BivariateMoment(0, 2, x, y, weights)
+	secondMomentX := stat.BivariateMoment(2, 0, x, y, weights)
+	secondMomentY := stat.BivariateMoment(0, 2, x, y, weights)
+	centralVarianceX := secondMomentX - meanX*meanX
+	centralVarianceY := secondMomentY - meanY*meanY
 	covariance := stat.BivariateMoment(1, 1, x, y, weights)
 
 	params := BivariateParams{Beta: beta}
 
-	if varianceX > meanX {
-		params.AlphaXX = (varianceX - meanX) * beta / (2 * meanX)
+	if centralVarianceX > meanX {
+		params.AlphaXX = (centralVarianceX - meanX) * beta / (2 * meanX)
 	}
 
-	if varianceY > meanY {
-		params.AlphaYY = (varianceY - meanY) * beta / (2 * meanY)
+	if centralVarianceY > meanY {
+		params.AlphaYY = (centralVarianceY - meanY) * beta / (2 * meanY)
 	}
 
 	if covariance > 0 {

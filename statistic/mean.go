@@ -4,6 +4,7 @@ import (
 	"math"
 
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/errnie"
 )
 
 /*
@@ -41,7 +42,11 @@ func (mean *Mean) Read(payload []byte) (int, error) {
 	sample := datura.Peek[float64](state, "sample")
 
 	if math.IsNaN(sample) || math.IsInf(sample, 0) {
-		return state.Read(payload)
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"mean: sample is non-finite",
+			nil,
+		))
 	}
 
 	count := datura.Peek[float64](mean.artifact, "output", "count")

@@ -41,7 +41,14 @@ func (rank *Rank) Read(payload []byte) (int, error) {
 	defer state.Release()
 
 	if datura.Peek[float64](state, "reset") != 0 {
-		rank.artifact.WithAttributes(datura.Map[any]{})
+		rank.artifact.Poke([]float64{}, "history")
+		rank.artifact.Poke(0.0, "output", "prev")
+		rank.artifact.Poke(0.0, "output", "min")
+		rank.artifact.Poke(0.0, "output", "max")
+		rank.artifact.Poke(0.0, "output", "head")
+		rank.artifact.Poke(0.0, "output", "count")
+		rank.artifact.Poke(0.0, "output", "ready")
+		rank.artifact.Poke(0.0, "output", "value")
 		state.MergeOutput("ready", 0)
 		state.MergeOutput("value", 0)
 		state.Merge("root", "output")

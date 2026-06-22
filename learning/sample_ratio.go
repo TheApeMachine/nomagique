@@ -2,6 +2,7 @@ package learning
 
 import (
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/errnie"
 )
 
 /*
@@ -50,19 +51,19 @@ func (calibrator *Calibrator) Read(payload []byte) (int, error) {
 	}
 
 	if predicted == 0 && actual == 0 {
-		value := datura.Peek[float64](calibrator.artifact, "output", "value")
-
-		if calibrator.state.Ready {
-			state.MergeOutput("value", value)
-			state.Merge("root", "output")
-			state.Merge("inputs", []string{"value"})
-		}
-
-		return state.Read(payload)
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"sample-ratio: predicted and actual required",
+			nil,
+		))
 	}
 
 	if actual == 0 {
-		return state.Read(payload)
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"sample-ratio: actual must be non-zero",
+			nil,
+		))
 	}
 
 	parsedPredicted, parsedActual, err := parsePredictedActual(predicted, []float64{actual})

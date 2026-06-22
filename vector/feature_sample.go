@@ -1,7 +1,11 @@
 package vector
 
 import (
+	"fmt"
+	"math"
+
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/errnie"
 )
 
 /*
@@ -15,6 +19,8 @@ type FeatureSample struct {
 NewFeatureSample returns a feature-index selector configured on the artifact.
 */
 func NewFeatureSample(config *datura.Artifact) *FeatureSample {
+	config.Inspect("vector", "feature-sample", "NewFeatureSample()")
+
 	return &FeatureSample{
 		config: config,
 	}
@@ -27,6 +33,7 @@ func (featureSample *FeatureSample) Write(payload []byte) (int, error) {
 
 func (featureSample *FeatureSample) Read(payload []byte) (int, error) {
 	state := datura.Acquire("feature-sample-state", datura.APPJSON)
+	state.Inspect("vector", "feature-sample", "Read()", "p")
 
 	if _, err := state.Write(featureSample.config.DecryptPayload()); err != nil {
 		return 0, err
@@ -36,10 +43,27 @@ func (featureSample *FeatureSample) Read(payload []byte) (int, error) {
 	featureIndex := int(datura.Peek[float64](featureSample.config, "featureIndex"))
 
 	if featureIndex < 0 || len(features) <= featureIndex {
-		return state.Read(payload)
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			fmt.Sprintf("feature-sample: feature index %d out of range for %d features", featureIndex, len(features)),
+			nil,
+		))
 	}
 
-	state.Poke(features[featureIndex], "sample")
+	sample := features[featureIndex]
+
+	if math.IsNaN(sample) || math.IsInf(sample, 0) {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"feature-sample: sample is non-finite",
+			nil,
+		))
+	}
+
+	state.MergeOutput("value", sample)
+	state.Merge("root", "output")
+	state.Merge("inputs", []string{"value"})
+	state.Merge("sample", sample)
 
 	return state.Read(payload)
 }

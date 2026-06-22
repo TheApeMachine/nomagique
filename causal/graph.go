@@ -71,6 +71,8 @@ func (graphStage *Graph) Read(p []byte) (int, error) {
 
 	state.MergeOutput("value", value)
 	state.MergeOutput("admissible", value)
+	state.Merge("root", "output")
+	state.Merge("inputs", []string{"value", "admissible"})
 	return state.Read(p)
 }
 

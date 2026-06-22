@@ -90,7 +90,7 @@ func (classifier *Classifier) Read(payload []byte) (int, error) {
 
 	categoryIndex := ArgmaxIndex(probabilities) + 1
 
-	confidence, confidenceErr := CategoryConfidence(probabilities, categoryIndex)
+	confidence, confidenceErr := CategoryShareConfidence(scores, categoryIndex)
 
 	if confidenceErr != nil {
 		return 0, errnie.Error(errnie.Err(

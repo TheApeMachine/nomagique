@@ -4,6 +4,7 @@ import (
 	"math"
 
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/errnie"
 )
 
 /*
@@ -11,7 +12,8 @@ Delta tracks a unit-normalized change relative to the running sample range.
 The constructor artifact holds config; Write buffers inbound wire on its payload.
 */
 type Delta struct {
-	artifact *datura.Artifact
+	artifact     *datura.Artifact
+	bootstrapped bool
 }
 
 /*
@@ -41,12 +43,21 @@ func (delta *Delta) Read(payload []byte) (int, error) {
 	sample := datura.Peek[float64](state, "sample")
 
 	if math.IsNaN(sample) || math.IsInf(sample, 0) {
-		return state.Read(payload)
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"delta: sample is non-finite",
+			nil,
+		))
 	}
 
-	output := datura.Peek[datura.Map[float64]](delta.artifact, "output")
+	output := datura.Map[float64]{
+		"min":   datura.Peek[float64](delta.artifact, "output", "min"),
+		"max":   datura.Peek[float64](delta.artifact, "output", "max"),
+		"prev":  datura.Peek[float64](delta.artifact, "output", "prev"),
+		"value": datura.Peek[float64](delta.artifact, "output", "value"),
+	}
 
-	if output == nil {
+	if !delta.bootstrapped {
 		output = datura.Map[float64]{
 			"min":   sample,
 			"max":   sample,
@@ -54,11 +65,14 @@ func (delta *Delta) Read(payload []byte) (int, error) {
 			"value": 0,
 		}
 
+		delta.bootstrapped = true
 		delta.artifact.Poke(output, "output")
-		state.MergeOutput("value", output["value"])
-		state.Merge("root", "output")
-		state.Merge("inputs", []string{"value"})
-		return state.Read(payload)
+
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"delta: insufficient samples",
+			nil,
+		))
 	}
 
 	output["min"] = math.Min(output["min"], sample)
@@ -69,10 +83,12 @@ func (delta *Delta) Read(payload []byte) (int, error) {
 	if span == 0 {
 		output["prev"] = sample
 		delta.artifact.Poke(output, "output")
-		state.MergeOutput("value", output["value"])
-		state.Merge("root", "output")
-		state.Merge("inputs", []string{"value"})
-		return state.Read(payload)
+
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"delta: sample span is zero",
+			nil,
+		))
 	}
 
 	output["value"] = math.Abs(sample-output["prev"]) / span

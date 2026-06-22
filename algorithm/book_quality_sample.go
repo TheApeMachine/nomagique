@@ -23,6 +23,8 @@ type BookQualitySample struct {
 	cancelQtyGate *GateQuantile
 	levelSizeGate *GateQuantile
 	fillMatchGate *GateQuantile
+	prevTouchAddBid float64
+	prevTouchAddAsk float64
 	bids          map[float64]float64
 	asks          map[float64]float64
 	frameCount    int
@@ -160,18 +162,18 @@ func (bookQualitySample *BookQualitySample) ingestBook(state *datura.Artifact) {
 
 	lastPrice := bookQualitySample.midPrice()
 	threshold := bookQualitySample.runGate(bookQualitySample.vacuumGate, 0, 0)
-
-	if threshold <= 0 && maxRatio > 0 {
-		threshold = maxRatio
-	}
-
-	churnGate := bookQualitySample.runGate(bookQualitySample.churnGate, 0, 0)
-	vacuumPeak := bookQualitySample.runGate(bookQualitySample.vacuumGate, 0, 0)
 	vacuumLow := bookQualitySample.runGate(
 		bookQualitySample.vacuumGate,
 		0,
 		bookQualitySample.resolvedVacuumLowPercentile(),
 	)
+
+	if threshold <= 0 && vacuumLow > 0 && maxRatio > vacuumLow {
+		threshold = vacuumLow
+	}
+
+	churnGate := bookQualitySample.runGate(bookQualitySample.churnGate, 0, 0)
+	vacuumPeak := bookQualitySample.runGate(bookQualitySample.vacuumGate, 0, 0)
 	supportGate := supportRatioGate(
 		threshold,
 		vacuumLow,
@@ -183,6 +185,24 @@ func (bookQualitySample *BookQualitySample) ingestBook(state *datura.Artifact) {
 		vacuumPeak,
 		gateReady(bookQualitySample.vacuumGate.artifact),
 	)
+
+	if churnRatio <= 0 && churnGate > 0 {
+		if frameAddBid <= 0 && touchCancelBid > 0 && bookQualitySample.prevTouchAddBid > 0 {
+			churnRatio = touchCancelBid / bookQualitySample.prevTouchAddBid
+		}
+
+		if frameAddAsk <= 0 && touchCancelAsk > 0 && bookQualitySample.prevTouchAddAsk > 0 {
+			churnRatio = math.Max(churnRatio, touchCancelAsk/bookQualitySample.prevTouchAddAsk)
+		}
+	}
+
+	if frameAddBid > 0 {
+		bookQualitySample.prevTouchAddBid = frameAddBid
+	}
+
+	if frameAddAsk > 0 {
+		bookQualitySample.prevTouchAddAsk = frameAddAsk
+	}
 
 	if maxRatio > 0 {
 		bookQualitySample.runGate(bookQualitySample.vacuumGate, maxRatio, 0)
@@ -209,8 +229,14 @@ func (bookQualitySample *BookQualitySample) ingestBook(state *datura.Artifact) {
 
 		if touchCancelBid > 0 {
 			distance := math.Abs(bestBid-lastPrice) / lastPrice
+			addVolume := frameAddBid
+
+			if addVolume <= 0 {
+				addVolume = bookQualitySample.prevTouchAddBid
+			}
+
 			evidence, evidenceErr := ToxicChurnEvidence(
-				churnRatio, churnGate, frameAddBid, sizeThreshold, distance, proximity,
+				churnRatio, churnGate, addVolume, sizeThreshold, distance, proximity,
 			)
 
 			if evidenceErr == nil && evidence > 0 {
@@ -221,8 +247,14 @@ func (bookQualitySample *BookQualitySample) ingestBook(state *datura.Artifact) {
 
 		if touchCancelAsk > 0 {
 			distance := math.Abs(bestAsk-lastPrice) / lastPrice
+			addVolume := frameAddAsk
+
+			if addVolume <= 0 {
+				addVolume = bookQualitySample.prevTouchAddAsk
+			}
+
 			evidence, evidenceErr := ToxicChurnEvidence(
-				churnRatio, churnGate, frameAddAsk, sizeThreshold, distance, proximity,
+				churnRatio, churnGate, addVolume, sizeThreshold, distance, proximity,
 			)
 
 			if evidenceErr == nil && evidence > 0 {

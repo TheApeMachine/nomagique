@@ -129,7 +129,10 @@ func (flow *Flow) Read(p []byte) (int, error) {
 		}
 
 		if tradeCount < 3 && !highNet {
-			starvation = 1 - float64(tradeCount)/3
+			starvation = math.Max(starvation, 1-float64(tradeCount)/3)
+			absorption = 0
+			drive = 0
+			balance = 0
 		}
 	}
 

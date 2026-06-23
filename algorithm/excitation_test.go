@@ -74,6 +74,61 @@ func TestClassifyFitSaturation(testingTB *testing.T) {
 	})
 }
 
+func TestMeasureFitFrenzy(testingTB *testing.T) {
+	Convey("Given symbol-local gates from low-asymmetry history", testingTB, func() {
+		symbolState := newExcitationSymbol()
+
+		for _, sample := range []struct {
+			radius, asymmetry float64
+		}{
+			{0.45, 0.04}, {0.48, 0.05}, {0.44, 0.06}, {0.46, 0.05},
+			{0.47, 0.04}, {0.45, 0.05}, {0.48, 0.06}, {0.46, 0.05},
+			{0.44, 0.04}, {0.47, 0.05}, {0.45, 0.06}, {0.46, 0.04},
+			{0.48, 0.05}, {0.44, 0.05},
+		} {
+			symbolState.recordFitGates(sample.radius, sample.asymmetry)
+		}
+
+		gates, gatesReady := hawkes.FitGatesFromHistory(
+			symbolState.spectralRadii,
+			symbolState.asymmetries,
+		)
+
+		So(gatesReady, ShouldBeTrue)
+
+		symbolState.bookTouchImbalance = bookTouchImbalance(
+			bookTouchFrame("ALT/EUR", 1000, 200),
+		)
+
+		fit := hawkes.BivariateFit{
+			MuX:            1,
+			MuY:            1,
+			IntensityX:     2,
+			IntensityY:     0.5,
+			SpectralRadius: gates.SaturationRadius * 0.9,
+		}
+
+		reading, ok := symbolState.measureFit(fit)
+
+		So(ok, ShouldBeTrue)
+
+		fitAsymmetry := confirmAsymmetryWithBook(
+			fit.Asymmetry(false),
+			false,
+			symbolState.bookTouchImbalance,
+		)
+		category, _, classifyErr := hawkes.ClassifyFit(fit, fitAsymmetry, false, gates)
+
+		So(classifyErr, ShouldBeNil)
+
+		Convey("It should classify above the symbol frenzy gate", func() {
+			So(fitAsymmetry, ShouldBeGreaterThan, gates.FrenzyAsymmetry)
+			So(category, ShouldEqual, hawkes.FitCategoryFrenzy)
+			So(reading.frenzy, ShouldBeGreaterThan, reading.organic)
+		})
+	})
+}
+
 func TestRevisionKey(testingTB *testing.T) {
 	Convey("Given an arrival stream", testingTB, func() {
 		start := time.Unix(1_700_000_000, 0)

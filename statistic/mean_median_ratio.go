@@ -13,7 +13,11 @@ MeanMedianRatio compares a short-window mean to a long-window median on streamed
 The constructor artifact holds config; runtime history lives on the stage instance.
 */
 type MeanMedianRatio struct {
-	artifact *datura.Artifact
+	artifact        *datura.Artifact
+	histories       map[string][]float64
+	previousSamples map[string]float64
+	previousDeltas  map[string]float64
+	declines        map[string]float64
 }
 
 /*
@@ -23,7 +27,11 @@ func NewMeanMedianRatio(artifact *datura.Artifact) *MeanMedianRatio {
 	artifact.Inspect("statistic", "mean-median-ratio", "NewMeanMedianRatio()")
 
 	return &MeanMedianRatio{
-		artifact: artifact,
+		artifact:        artifact,
+		histories:       map[string][]float64{},
+		previousSamples: map[string]float64{},
+		previousDeltas:  map[string]float64{},
+		declines:        map[string]float64{},
 	}
 }
 
@@ -81,7 +89,7 @@ func (meanMedianRatio *MeanMedianRatio) Read(payload []byte) (int, error) {
 		))
 	}
 
-	history := datura.Peek[[]float64](meanMedianRatio.artifact, "output", "histories", stageKey)
+	history := meanMedianRatio.histories[stageKey]
 	history = append(history, sample)
 
 	shortWindow, longWindow, err := RollingWindows(history, shortHint, longHint)
@@ -108,12 +116,12 @@ func (meanMedianRatio *MeanMedianRatio) Read(payload []byte) (int, error) {
 		history = history[len(history)-longWindow:]
 	}
 
-	meanMedianRatio.artifact.Poke(history, "output", "histories", stageKey)
+	meanMedianRatio.histories[stageKey] = history
 
 	if shortHint <= 0 && longHint <= 0 && len(history) < requiredSamples {
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
-			"mean-median-ratio: insufficient history for dynamic windows",
+			"mean-median-ratio: insufficient samples",
 			nil,
 		))
 	}
@@ -121,7 +129,7 @@ func (meanMedianRatio *MeanMedianRatio) Read(payload []byte) (int, error) {
 	if longWindow <= 0 || len(history) < longWindow {
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
-			"mean-median-ratio: insufficient history",
+			"mean-median-ratio: insufficient samples",
 			nil,
 		))
 	}
@@ -166,12 +174,10 @@ func (meanMedianRatio *MeanMedianRatio) Read(payload []byte) (int, error) {
 	declineOutput := datura.Peek[string](meanMedianRatio.artifact, stageKey, "decline", "output")
 
 	if declineOutput != "" {
-		decline := datura.Peek[float64](meanMedianRatio.artifact, "output", "declines", declineOutput)
-		state.MergeOutput(declineOutput, decline)
+		state.MergeOutput(declineOutput, meanMedianRatio.declines[declineOutput])
 	}
 
 	features.Restore(state)
-	state.Merge("root", "output")
 
 	return state.Read(payload)
 }
@@ -252,9 +258,9 @@ func (meanMedianRatio *MeanMedianRatio) applyTransform(stageKey string, sample f
 		return sample
 	}
 
-	previousSample := datura.Peek[float64](meanMedianRatio.artifact, "output", "previousSamples", stageKey)
+	previousSample := meanMedianRatio.previousSamples[stageKey]
 
-	meanMedianRatio.artifact.Poke(sample, "output", "previousSamples", stageKey)
+	meanMedianRatio.previousSamples[stageKey] = sample
 
 	switch transform {
 	case "delta":
@@ -287,15 +293,15 @@ func (meanMedianRatio *MeanMedianRatio) trackDecline(stageKey string, sample flo
 		return
 	}
 
-	previousDelta := datura.Peek[float64](meanMedianRatio.artifact, "output", "previousDeltas", stageKey)
+	previousDelta := meanMedianRatio.previousDeltas[stageKey]
 	decline := 0.0
 
 	if previousDelta > 0 && sample < previousDelta {
 		decline = (previousDelta - sample) / previousDelta
 	}
 
-	meanMedianRatio.artifact.Poke(sample, "output", "previousDeltas", stageKey)
-	meanMedianRatio.artifact.Poke(decline, "output", "declines", declineOutput)
+	meanMedianRatio.previousDeltas[stageKey] = sample
+	meanMedianRatio.declines[declineOutput] = decline
 }
 
 func (meanMedianRatio *MeanMedianRatio) Close() error {

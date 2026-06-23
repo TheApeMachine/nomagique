@@ -5,15 +5,16 @@ import (
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/nomagique/statistic"
 )
 
 /*
 Compression scores how far below the running baseline the current sample sits.
-The constructor artifact holds config; Write buffers inbound wire on its payload.
+The constructor artifact holds config; Write buffers inbound payload.
 */
 type Compression struct {
 	artifact *datura.Artifact
+	baseline float64
+	ready    bool
 }
 
 /*
@@ -27,9 +28,9 @@ func NewCompression(artifact *datura.Artifact) *Compression {
 	}
 }
 
-func (compression *Compression) Write(payload []byte) (int, error) {
-	compression.artifact.WithPayload(payload)
-	return len(payload), nil
+func (compression *Compression) Write(p []byte) (int, error) {
+	compression.artifact.WithPayload(p)
+	return len(p), nil
 }
 
 func (compression *Compression) Read(payload []byte) (int, error) {
@@ -37,7 +38,11 @@ func (compression *Compression) Read(payload []byte) (int, error) {
 	state.Inspect("adaptive", "compression", "Read()", "p")
 
 	if _, err := state.Write(compression.artifact.DecryptPayload()); err != nil {
-		return 0, err
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"compression: state write failed",
+			err,
+		))
 	}
 
 	inputKey := datura.Peek[string](compression.artifact, "compression", "input")
@@ -51,11 +56,11 @@ func (compression *Compression) Read(payload []byte) (int, error) {
 		))
 	}
 
-	features := statistic.SnapshotFeatures(state)
-	sample, err := statistic.WireScalar(compression.artifact, state, inputKey)
+	root := datura.Peek[string](state, "root")
+	sample := datura.Peek[float64](state, root, inputKey)
 
-	if err != nil {
-		return 0, err
+	if root == "" {
+		sample = datura.Peek[float64](state, inputKey)
 	}
 
 	if math.IsNaN(sample) || math.IsInf(sample, 0) {
@@ -66,10 +71,9 @@ func (compression *Compression) Read(payload []byte) (int, error) {
 		))
 	}
 
-	baseline := datura.Peek[float64](compression.artifact, "output", "baseline")
-
-	if baseline <= 0 || math.IsNaN(baseline) || math.IsInf(baseline, 0) {
-		compression.artifact.Poke(sample, "output", "baseline")
+	if !compression.ready || compression.baseline <= 0 {
+		compression.baseline = sample
+		compression.ready = true
 
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
@@ -78,8 +82,8 @@ func (compression *Compression) Read(payload []byte) (int, error) {
 		))
 	}
 
-	if sample > baseline {
-		compression.artifact.Poke(sample, "output", "baseline")
+	if sample > compression.baseline {
+		compression.baseline = sample
 
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
@@ -88,12 +92,11 @@ func (compression *Compression) Read(payload []byte) (int, error) {
 		))
 	}
 
-	value := (baseline - sample) / baseline
+	value := (compression.baseline - sample) / compression.baseline
 
+	state.Poke("output", "root")
+	state.Poke([]string{outputKey}, "inputs")
 	state.MergeOutput(outputKey, value)
-	features.Restore(state)
-	state.Merge("root", "output")
-	state.Merge("inputs", []string{outputKey})
 
 	return state.Read(payload)
 }

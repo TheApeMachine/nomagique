@@ -109,8 +109,8 @@ func (logitScores *LogitScores) Read(payload []byte) (int, error) {
 	}
 
 	state.MergeOutput("strength", strength)
-	state.Merge("root", "output")
-	state.Merge("inputs", outputs)
+	state.Poke("output", "root")
+	state.Poke(outputs, "inputs")
 
 	return state.Read(payload)
 }
@@ -532,20 +532,34 @@ func (logitScores *LogitScores) resolveCompositeScale(
 		return 0, err
 	}
 
-	if leftScale <= 0 || rightScale <= 0 ||
-		math.IsNaN(leftScale) || math.IsNaN(rightScale) ||
+	if math.IsNaN(leftScale) || math.IsNaN(rightScale) ||
 		math.IsInf(leftScale, 0) || math.IsInf(rightScale, 0) {
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
-			fmt.Sprintf(
-				"logit-scores: composite scale operands for %q are non-positive",
-				stageKey,
-			),
+			fmt.Sprintf("logit-scores: composite scale operands for %q are non-finite", stageKey),
 			nil,
 		))
 	}
 
-	return math.Sqrt(leftScale * rightScale), nil
+	if leftScale > 0 && rightScale > 0 {
+		return math.Sqrt(leftScale * rightScale), nil
+	}
+
+	if leftScale > 0 {
+		// ponytail: one-sided scale keeps zero-valued terms live until their own
+		// positive history exists; upgrade path is a dedicated adaptive floor primitive.
+		return leftScale, nil
+	}
+
+	if rightScale > 0 {
+		return rightScale, nil
+	}
+
+	return 0, errnie.Error(errnie.Err(
+		errnie.Validation,
+		fmt.Sprintf("logit-scores: composite scale operands for %q are non-positive", stageKey),
+		nil,
+	))
 }
 
 func (logitScores *LogitScores) compositeOperandScale(
@@ -574,12 +588,16 @@ func (logitScores *LogitScores) compositeOperandScale(
 		return 0, err
 	}
 
-	if wireValue <= 0 || math.IsNaN(wireValue) || math.IsInf(wireValue, 0) {
+	if math.IsNaN(wireValue) || math.IsInf(wireValue, 0) {
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
-			fmt.Sprintf("logit-scores: composite operand %q is non-positive", stageKey),
+			fmt.Sprintf("logit-scores: composite operand %q is non-finite", stageKey),
 			nil,
 		))
+	}
+
+	if wireValue <= 0 {
+		return 0, nil
 	}
 
 	return math.Abs(wireValue), nil

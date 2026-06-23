@@ -64,8 +64,8 @@ func TestTradeFlowSampleRead(testingTB *testing.T) {
 
 		err := transport.NewFlipFlop(frame, sample)
 
-		Convey("It should return a validation error", func() {
-			So(err, ShouldNotBeNil)
+		Convey("It should wait for more trade history without error", func() {
+			So(err, ShouldBeNil)
 		})
 	})
 }

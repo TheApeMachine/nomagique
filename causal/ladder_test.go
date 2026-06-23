@@ -37,6 +37,19 @@ func TestLadder_Read(testingTB *testing.T) {
 	})
 }
 
+func TestLadder_ReadWarmup(testingTB *testing.T) {
+	Convey("Given fewer table rows than minHistory", testingTB, func() {
+		config := causalPipelineConfig(0.8)
+		config.Poke(float64(12), "minHistory")
+		ladder := NewLadder(config)
+		artifact := tableInbound(4, 1.0)
+
+		err := transport.NewFlipFlop(artifact, ladder)
+
+		So(err, ShouldBeNil)
+	})
+}
+
 func BenchmarkLadder_Read(testingTB *testing.B) {
 	config := causalPipelineConfig(0.8)
 	config.Poke(0.35, "kernelBandwidth")

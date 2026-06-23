@@ -51,7 +51,9 @@ func (bookflow *Bookflow) Read(p []byte) (int, error) {
 	outcome := evaluateBookflow(state, inputKeys)
 
 	if !outcome.eligible || outcome.strength <= 0 {
-		return rejectStage(state, "equation: invalid stage input")
+		state.Release()
+
+		return 0, io.EOF
 	}
 
 	return emitOutput(state, p, datura.Map[float64]{

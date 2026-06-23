@@ -80,8 +80,8 @@ func (geometricMean *GeometricMean) Read(p []byte) (int, error) {
 	if left == 0 || right == 0 {
 		state.MergeOutput(destinationKey, 0.0)
 		features.Restore(state)
-		state.Merge("root", "output")
-		state.Merge("inputs", []string{destinationKey})
+		state.Poke("output", "root")
+		state.Poke([]string{destinationKey}, "inputs")
 
 		return state.Read(p)
 	}
@@ -90,8 +90,8 @@ func (geometricMean *GeometricMean) Read(p []byte) (int, error) {
 
 	state.MergeOutput(destinationKey, mean)
 	features.Restore(state)
-	state.Merge("root", "output")
-	state.Merge("inputs", []string{destinationKey})
+	state.Poke("output", "root")
+	state.Poke([]string{destinationKey}, "inputs")
 
 	return state.Read(p)
 }

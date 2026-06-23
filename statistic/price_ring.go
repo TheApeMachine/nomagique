@@ -12,7 +12,8 @@ PriceRing retains a bounded sample history and publishes the current observation
 The constructor artifact holds config; runtime history lives on the stage instance.
 */
 type PriceRing struct {
-	artifact *datura.Artifact
+	artifact     *datura.Artifact
+	priceSamples map[string][]float64
 }
 
 /*
@@ -22,7 +23,8 @@ func NewPriceRing(artifact *datura.Artifact) *PriceRing {
 	artifact.Inspect("statistic", "price-ring", "NewPriceRing()")
 
 	return &PriceRing{
-		artifact: artifact,
+		artifact:     artifact,
+		priceSamples: map[string][]float64{},
 	}
 }
 
@@ -39,7 +41,6 @@ func (priceRing *PriceRing) Read(payload []byte) (int, error) {
 		return 0, err
 	}
 
-	features := SnapshotFeatures(state)
 	stageKey := priceRing.stageKey()
 
 	if stageKey == "" {
@@ -60,10 +61,11 @@ func (priceRing *PriceRing) Read(payload []byte) (int, error) {
 		))
 	}
 
-	sample, err := FeatureColumn(state, sourceKey)
+	sample, sampleErr := FeatureColumn(state, sourceKey)
 
-	if err != nil {
-		return 0, err
+	if sampleErr != nil {
+		root := datura.Peek[string](state, "root")
+		sample = datura.Peek[float64](state, root, sourceKey)
 	}
 
 	if sample <= 0 || math.IsNaN(sample) || math.IsInf(sample, 0) {
@@ -77,7 +79,7 @@ func (priceRing *PriceRing) Read(payload []byte) (int, error) {
 	longHint := int(datura.Peek[float64](priceRing.artifact, stageKey, "longWindow"))
 
 	returnLag, err := ReturnLag(
-		datura.Peek[[]float64](priceRing.artifact, stageKey, "priceSamples"),
+		priceRing.priceSamples[stageKey],
 		int(datura.Peek[float64](priceRing.artifact, stageKey, "returnLag")),
 		longHint,
 	)
@@ -90,7 +92,7 @@ func (priceRing *PriceRing) Read(payload []byte) (int, error) {
 		))
 	}
 
-	samples := datura.Peek[[]float64](priceRing.artifact, stageKey, "priceSamples")
+	samples := priceRing.priceSamples[stageKey]
 	samples = append(samples, sample)
 
 	_, longWindow, err := RollingWindows(samples, 0, longHint)
@@ -107,10 +109,10 @@ func (priceRing *PriceRing) Read(payload []byte) (int, error) {
 		samples = samples[len(samples)-longWindow-returnLag:]
 	}
 
-	priceRing.artifact.Poke(samples, stageKey, "priceSamples")
-	features.Restore(state)
+	priceRing.priceSamples[stageKey] = samples
 	state.MergeOutput(sourceKey, sample)
-	state.Merge("root", "output")
+	state.Poke("output", "root")
+	state.Poke([]string{sourceKey}, "inputs")
 
 	return state.Read(payload)
 }

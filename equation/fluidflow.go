@@ -84,7 +84,7 @@ func (fluidflow *Fluidflow) Read(p []byte) (int, error) {
 
 	laminarScore := 0.0
 
-	if reynolds < laminarCeiling && divergenceEdge > 0 && divergence < divergenceEdge {
+	if reynolds <= laminarCeiling && laminarCeiling > 0 && divergenceEdge > 0 && divergence <= divergenceEdge {
 		laminarScore = viscosity * (1 - divergence/divergenceEdge)
 	}
 
@@ -134,7 +134,14 @@ func (fluidflow *Fluidflow) Read(p []byte) (int, error) {
 		inertialScore = math.Max(inertialScore, executeShare*divergence)
 
 		if addShare > executeShare {
-			viscousScore = math.Max(viscousScore, addShare*viscosity)
+			laminarRegime := laminarCeiling > 0 &&
+				reynolds <= laminarCeiling &&
+				divergenceEdge > 0 &&
+				divergence <= divergenceEdge
+
+			if !laminarRegime {
+				viscousScore = math.Max(viscousScore, addShare*viscosity)
+			}
 		}
 
 		if turbulentReady && executeShare > 0 {
@@ -160,7 +167,7 @@ func (fluidflow *Fluidflow) Read(p []byte) (int, error) {
 		category = 4
 	}
 
-	if best <= 0 && price > 0 && reynolds < laminarCeiling {
+	if best <= 0 && price > 0 && laminarCeiling > 0 && reynolds <= laminarCeiling {
 		category = 1
 		laminarScore = viscosity
 		best = laminarScore

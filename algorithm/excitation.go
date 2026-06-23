@@ -470,7 +470,7 @@ func (symbol *excitationSymbol) measureFit(fit hawkes.BivariateFit) (excitationR
 		if marginErr == nil {
 			saturationEvidence *= (1 - asymmetry)
 
-			if saturationEvidence > confidence {
+			if saturationEvidence > confidence && category != hawkes.FitCategoryFrenzy {
 				category = hawkes.FitCategorySaturation
 				confidence = saturationEvidence
 				saturation = saturationEvidence
@@ -509,9 +509,9 @@ func (symbol *excitationSymbol) measureFit(fit hawkes.BivariateFit) (excitationR
 func (symbol *excitationSymbol) rawBaseStep(sample float64) float64 {
 	inbound := datura.Acquire("excitation-ema-in", datura.APPJSON)
 	inbound.WithPayload(datura.Map[any]{"sample": sample}.Marshal())
-	frame, err := inbound.MarshalPacked()
+	frame := inbound.Pack()
 
-	if err != nil {
+	if len(frame) == 0 {
 		return sample
 	}
 
@@ -546,14 +546,20 @@ func (symbol *excitationSymbol) recordFitGates(spectralRadius, asymmetry float64
 }
 
 func fitGateHistoryCap(history []float64) int {
+	minimumCap := bivariateParamCount * 2
+
+	if len(history) < minimumCap {
+		return minimumCap
+	}
+
 	_, longWindow, err := statistic.RollingWindows(history, 0, 0)
 
 	if err != nil {
-		return 1
+		return minimumCap
 	}
 
-	if longWindow < 1 {
-		return 1
+	if longWindow < minimumCap {
+		return minimumCap
 	}
 
 	return longWindow
@@ -682,7 +688,7 @@ func organicHeadroomScores(
 		}
 	}
 
-	if baseline > 0 && intensity >= baseline {
+	if baseline > 0 && intensity >= baseline && asymmetry < frenzyAsymmetry {
 		margin := intensity - baseline
 		organic = margin / (margin + baseline)
 

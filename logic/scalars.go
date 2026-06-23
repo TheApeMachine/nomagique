@@ -20,9 +20,9 @@ func boundarySample(artifact *datura.Artifact) (float64, bool) {
 }
 
 func artifactBytes(artifact *datura.Artifact) ([]byte, bool) {
-	buf, err := artifact.MarshalPacked()
+	buf := artifact.Pack()
 
-	if err != nil {
+	if len(buf) == 0 {
 		return nil, false
 	}
 

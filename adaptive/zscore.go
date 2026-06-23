@@ -5,16 +5,20 @@ import (
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/nomagique/statistic"
 )
 
 /*
 ZScore tracks adaptive scale for a normalized surprise score.
-The constructor artifact holds config; Write buffers inbound wire on its payload.
+The constructor artifact holds config; Write buffers inbound payload.
 */
 type ZScore struct {
 	artifact     *datura.Artifact
 	bootstrapped bool
+	mean         float64
+	variance     float64
+	prev         float64
+	min          float64
+	max          float64
 }
 
 /*
@@ -28,9 +32,9 @@ func NewZScore(artifact *datura.Artifact) *ZScore {
 	}
 }
 
-func (surprise *ZScore) Write(payload []byte) (int, error) {
-	surprise.artifact.WithPayload(payload)
-	return len(payload), nil
+func (surprise *ZScore) Write(p []byte) (int, error) {
+	surprise.artifact.WithPayload(p)
+	return len(p), nil
 }
 
 func (surprise *ZScore) Read(payload []byte) (int, error) {
@@ -38,166 +42,149 @@ func (surprise *ZScore) Read(payload []byte) (int, error) {
 	state.Inspect("adaptive", "zscore", "Read()", "p")
 
 	if _, err := state.Write(surprise.artifact.DecryptPayload()); err != nil {
-		return 0, err
-	}
-
-	features := statistic.SnapshotFeatures(state)
-	sampleKey, err := statistic.WireInputKey(surprise.artifact, state)
-
-	if err != nil {
-		return 0, err
-	}
-
-	sample, err := statistic.WireScalar(surprise.artifact, state, sampleKey)
-
-	if err != nil {
-		return 0, err
-	}
-
-	if math.IsNaN(sample) || math.IsInf(sample, 0) {
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
-			"zscore: sample is non-finite",
-			nil,
+			"zscore: state write failed",
+			err,
 		))
 	}
 
-	anchor, hasAnchor := surprise.anchor(state)
+	root := datura.Peek[string](state, "root")
+	inputs := datura.Peek[[]string](state, "inputs")
 
-	output := datura.Map[float64]{
-		"mean": datura.Peek[float64](surprise.artifact, "output", "mean"),
-		"var":  datura.Peek[float64](surprise.artifact, "output", "var"),
-		"prev": datura.Peek[float64](surprise.artifact, "output", "prev"),
-		"min":  datura.Peek[float64](surprise.artifact, "output", "min"),
-		"max":  datura.Peek[float64](surprise.artifact, "output", "max"),
-		"rate": datura.Peek[float64](surprise.artifact, "output", "rate"),
+	if len(inputs) == 0 {
+		inputs = []string{"sample"}
 	}
 
-	if !surprise.bootstrapped {
-		output = datura.Map[float64]{
-			"mean": sample,
-			"var":  0,
-			"prev": sample,
-			"min":  sample,
-			"max":  sample,
-			"rate": 0,
+	for _, input := range inputs {
+		sample := datura.Peek[float64](state, root, input)
+
+		if root == "" {
+			sample = datura.Peek[float64](state, input)
 		}
 
-		surprise.bootstrapped = true
-		surprise.artifact.Poke(output, "output")
+		if math.IsNaN(sample) || math.IsInf(sample, 0) {
+			return 0, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"zscore: sample is non-finite",
+				nil,
+			))
+		}
 
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"zscore: insufficient samples",
-			nil,
-		))
-	}
+		anchorMode := datura.Peek[string](surprise.artifact, "anchorMode")
+		hasAnchor := false
+		anchor := 0.0
 
-	output["min"] = math.Min(output["min"], sample)
-	output["max"] = math.Max(output["max"], sample)
+		if anchorMode == "explicit" || anchorMode == "fixed" {
+			anchor = datura.Peek[float64](state, "anchor")
 
-	span := output["max"] - output["min"]
+			if anchor == 0 {
+				anchor = datura.Peek[float64](surprise.artifact, "anchor")
+			}
 
-	if span == 0 {
-		output["prev"] = sample
-		surprise.artifact.Poke(output, "output")
+			if math.IsNaN(anchor) || math.IsInf(anchor, 0) {
+				return 0, errnie.Error(errnie.Err(
+					errnie.Validation,
+					"zscore: anchor is non-finite",
+					nil,
+				))
+			}
 
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"zscore: sample span is zero",
-			nil,
-		))
-	}
+			hasAnchor = true
+		}
 
-	delta := math.Abs(sample - output["prev"])
-	output["rate"] = delta / span
-	level := output["mean"]
+		if !hasAnchor {
+			body := datura.As[datura.Map[any]](state)
 
-	if hasAnchor {
-		level = anchor
-	}
+			if body != nil {
+				if _, present := body["anchor"]; present {
+					anchor = datura.Peek[float64](state, "anchor")
 
-	deviation := sample - level
+					if !math.IsNaN(anchor) && !math.IsInf(anchor, 0) {
+						hasAnchor = true
+					}
+				}
+			}
+		}
 
-	if !hasAnchor {
-		output["mean"] += output["rate"] * (sample - output["mean"])
-	}
+		if !hasAnchor {
+			anchor = datura.Peek[float64](surprise.artifact, "anchor")
 
-	output["var"] += output["rate"] * (deviation*deviation - output["var"])
-	output["prev"] = sample
+			if anchor != 0 && !math.IsNaN(anchor) && !math.IsInf(anchor, 0) {
+				hasAnchor = true
+			}
+		}
 
-	if output["var"] <= 0 {
-		surprise.artifact.Poke(output, "output")
+		if !surprise.bootstrapped {
+			surprise.mean = sample
+			surprise.variance = 0
+			surprise.prev = sample
+			surprise.min = sample
+			surprise.max = sample
+			surprise.bootstrapped = true
 
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"zscore: variance is not positive",
-			nil,
-		))
-	}
+			return 0, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"zscore: insufficient samples",
+				nil,
+			))
+		}
 
-	output["value"] = deviation / math.Sqrt(output["var"])
+		surprise.min = math.Min(surprise.min, sample)
+		surprise.max = math.Max(surprise.max, sample)
 
-	if math.IsNaN(output["value"]) || math.IsInf(output["value"], 0) {
-		surprise.artifact.Poke(output, "output")
+		span := surprise.max - surprise.min
 
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"zscore: output value is non-finite",
-			nil,
-		))
-	}
+		if span == 0 {
+			surprise.prev = sample
 
-	surprise.artifact.Poke(output, "output")
-	state.MergeOutput("value", output["value"])
-	features.Restore(state)
-	state.Merge("root", "output")
+			return 0, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"zscore: sample span is zero",
+				nil,
+			))
+		}
 
-	if len(datura.Peek[[]string](state, "inputs")) == 0 {
-		state.Merge("inputs", []string{"value"})
+		rate := math.Abs(sample-surprise.prev) / span
+		level := surprise.mean
+
+		if hasAnchor {
+			level = anchor
+		}
+
+		deviation := sample - level
+
+		if !hasAnchor {
+			surprise.mean += rate * (sample - surprise.mean)
+		}
+
+		surprise.variance += rate * (deviation*deviation - surprise.variance)
+		surprise.prev = sample
+
+		if surprise.variance <= 0 {
+			return 0, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"zscore: variance is not positive",
+				nil,
+			))
+		}
+
+		value := deviation / math.Sqrt(surprise.variance)
+
+		if math.IsNaN(value) || math.IsInf(value, 0) {
+			return 0, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"zscore: output value is non-finite",
+				nil,
+			))
+		}
+
+		state.Poke("output", "root")
+		state.Poke([]string{"value"}, "inputs")
+		state.MergeOutput("value", value)
 	}
 
 	return state.Read(payload)
-}
-
-func (surprise *ZScore) anchor(state *datura.Artifact) (float64, bool) {
-	anchorMode := datura.Peek[string](surprise.artifact, "anchorMode")
-
-	if anchorMode == "explicit" || anchorMode == "fixed" {
-		anchor := datura.Peek[float64](state, "anchor")
-
-		if anchor == 0 {
-			anchor = datura.Peek[float64](surprise.artifact, "anchor")
-		}
-
-		if math.IsNaN(anchor) || math.IsInf(anchor, 0) {
-			return 0, false
-		}
-
-		return anchor, true
-	}
-
-	body := datura.As[datura.Map[any]](state)
-
-	if body != nil {
-		if _, present := body["anchor"]; present {
-			anchor := datura.Peek[float64](state, "anchor")
-
-			if math.IsNaN(anchor) || math.IsInf(anchor, 0) {
-				return 0, false
-			}
-
-			return anchor, true
-		}
-	}
-
-	anchor := datura.Peek[float64](surprise.artifact, "anchor")
-
-	if anchor != 0 && !math.IsNaN(anchor) && !math.IsInf(anchor, 0) {
-		return anchor, true
-	}
-
-	return 0, false
 }
 
 func (surprise *ZScore) Close() error {

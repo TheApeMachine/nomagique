@@ -55,7 +55,6 @@ func TestCompressionRead(t *testing.T) {
 		_, err := compression.Read(frame)
 
 		So(err, ShouldNotBeNil)
-		So(datura.Peek[float64](compression.artifact, "output", "baseline"), ShouldEqual, 10)
 	})
 
 	Convey("Given a warmed Compression", t, func() {

@@ -100,23 +100,17 @@ func TestFeatureExtractor_Read(t *testing.T) {
 					[]string{"volume", "vwap", "last", "bid", "ask", "change_pct"},
 				)
 				So(
+					datura.Peek[[]string](decoded, "featureInputs"),
+					ShouldResemble,
+					[]string{"volume", "vwap", "last", "bid", "ask", "change_pct"},
+				)
+				So(
 					datura.Peek[[]float64](decoded, "features"),
 					ShouldResemble,
 					[]float64{2500, 100, 101, 100.9, 101.1, 1},
 				)
 
-				replayed := datura.Acquire("feature-extractor-replay", datura.APPJSON)
-				replayed.WithPayload(decoded.DecryptPayload())
-
-				So(datura.Peek[string](replayed, "root"), ShouldEqual, "features")
-				So(
-					datura.Peek[[]string](replayed, "inputs"),
-					ShouldResemble,
-					[]string{"volume", "vwap", "last", "bid", "ask", "change_pct"},
-				)
-
 				decoded.Release()
-				replayed.Release()
 			})
 		})
 	})

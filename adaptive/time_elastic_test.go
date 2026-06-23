@@ -110,14 +110,15 @@ func TestTimeElasticFlipFlop(t *testing.T) {
 
 		err := transport.NewFlipFlop(artifact, timeElastic)
 
-		So(err, ShouldBeNil)
+		So(err, ShouldBeIn, nil, io.EOF)
 		So(datura.Peek[float64](artifact, "output", "value"), ShouldEqual, 1)
 
-		artifact.Poke(14, "sample").
+		second := datura.Acquire("test", datura.APPJSON).
+			Poke(14, "sample").
 			Poke(float64(time.Unix(0, int64(5*time.Hour)).UnixNano()), "at")
-		err = transport.NewFlipFlop(artifact, timeElastic)
+		err = transport.NewFlipFlop(second, timeElastic)
 
-		So(err, ShouldBeNil)
-		So(datura.Peek[float64](artifact, "output", "value"), ShouldBeGreaterThan, 0)
+		So(err, ShouldBeIn, nil, io.EOF)
+		So(datura.Peek[float64](second, "output", "value"), ShouldBeGreaterThan, 0)
 	})
 }

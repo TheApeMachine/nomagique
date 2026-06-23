@@ -43,39 +43,36 @@ func (spreadSample *SpreadSample) Read(p []byte) (int, error) {
 
 	defer state.Release()
 
-	features := statistic.SnapshotFeatures(state)
-	sourceKeys := datura.Peek[[]string](spreadSample.config, "spread", "inputs")
+	inputs := datura.Peek[[]string](spreadSample.config, "spread", "inputs")
 
-	if len(sourceKeys) < 2 {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"spread-sample: spread.inputs requires two feature keys",
-			nil,
-		))
+	if len(inputs) == 0 {
+		inputs = datura.Peek[[]string](state, "inputs")
 	}
 
-	left, err := statistic.FeatureColumn(state, sourceKeys[0])
+	low := math.Inf(1)
+	high := math.Inf(-1)
 
-	if err != nil {
-		return 0, err
+	for _, input := range inputs {
+		data, dataErr := statistic.FeatureColumn(state, input)
+
+		if dataErr != nil {
+			root := datura.Peek[string](state, "root")
+			data = datura.Peek[float64](state, root, input)
+		}
+
+		if math.IsNaN(data) || math.IsInf(data, 0) {
+			return 0, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"spread-sample: input is non-finite",
+				nil,
+			))
+		}
+
+		low = math.Min(low, data)
+		high = math.Max(high, data)
 	}
 
-	right, err := statistic.FeatureColumn(state, sourceKeys[1])
-
-	if err != nil {
-		return 0, err
-	}
-
-	if math.IsNaN(left) || math.IsInf(left, 0) ||
-		math.IsNaN(right) || math.IsInf(right, 0) {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"spread-sample: spread inputs are non-finite",
-			nil,
-		))
-	}
-
-	mid := (left + right) / 2
+	mid := (low + high) / 2
 
 	if mid <= 0 {
 		return 0, errnie.Error(errnie.Err(
@@ -85,12 +82,17 @@ func (spreadSample *SpreadSample) Read(p []byte) (int, error) {
 		))
 	}
 
-	spread := math.Abs(right-left) / mid
+	value := (high - low) / mid
 
-	features.Restore(state)
-	state.MergeOutput("spread", spread)
-	state.MergeOutput("value", spread)
-	state.Merge("root", "output")
+	outputKey := datura.Peek[string](spreadSample.config, "spread", "outputKey")
+
+	if outputKey == "" {
+		outputKey = "spread"
+	}
+
+	state.MergeOutput(outputKey, value)
+	state.Poke("output", "root")
+	state.Poke([]string{outputKey}, "inputs")
 
 	return state.Read(p)
 }

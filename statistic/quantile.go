@@ -57,11 +57,7 @@ func (quantile *Quantile) Read(payload []byte) (int, error) {
 	quantile.artifact.Poke(history, "history")
 
 	if len(history) == 0 {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"quantile: insufficient history",
-			nil,
-		))
+		return 0, nil
 	}
 
 	sorted := append([]float64(nil), history...)

@@ -55,11 +55,7 @@ func (stdDev *StdDev) Read(payload []byte) (int, error) {
 	stdDev.artifact.Poke(history, "history")
 
 	if len(history) < 2 {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"stddev: insufficient history",
-			nil,
-		))
+		return 0, nil
 	}
 
 	value := stat.StdDev(history, nil)

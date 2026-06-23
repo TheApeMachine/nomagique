@@ -42,7 +42,8 @@ func (rollingZScore *RollingZScore) Read(payload []byte) (int, error) {
 		return 0, err
 	}
 
-	features := SnapshotFeatures(state)
+	root := datura.Peek[string](state, "root")
+	inputs := datura.Peek[[]string](state, "inputs")
 	stageKey := rollingZScore.stageKey()
 	outputKey := "value"
 
@@ -54,11 +55,13 @@ func (rollingZScore *RollingZScore) Read(payload []byte) (int, error) {
 		}
 	}
 
-	sample := datura.Peek[float64](state, "sample")
+	inputKey := outputKey
 
-	if datura.Peek[string](state, "root") == "output" {
-		sample = datura.Peek[float64](state, "output", outputKey)
+	if len(inputs) > 0 {
+		inputKey = inputs[0]
 	}
+
+	sample := datura.Peek[float64](state, root, inputKey)
 
 	if math.IsNaN(sample) || math.IsInf(sample, 0) {
 		return 0, errnie.Error(errnie.Err(
@@ -160,8 +163,8 @@ func (rollingZScore *RollingZScore) Read(payload []byte) (int, error) {
 
 	rollingZScore.samples = samples
 	state.MergeOutput(outputKey, score)
-	features.Restore(state)
-	state.Merge("root", "output")
+	state.Poke("output", "root")
+	state.Poke([]string{outputKey}, "inputs")
 
 	return state.Read(payload)
 }

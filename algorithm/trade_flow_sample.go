@@ -2,6 +2,7 @@ package algorithm
 
 import (
 	"fmt"
+	"io"
 	"math"
 
 	"github.com/theapemachine/datura"
@@ -99,11 +100,7 @@ func (tradeFlowSample *TradeFlowSample) Read(payload []byte) (int, error) {
 	features := tradeFlowSample.features(window)
 
 	if len(features) == 0 {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"trade-flow-sample: insufficient trade history for flow features",
-			nil,
-		))
+		return 0, io.EOF
 	}
 
 	state.WithScope(symbol)

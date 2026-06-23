@@ -30,9 +30,9 @@ func TestHawkesFit_Observe(testingTB *testing.T) {
 			Poke(float64(len(xTimes)), "config", "xCount").
 			Poke(float64(len(yTimes)), "config", "yCount").
 			WithPayload(equation.MarshalFeaturesPayload(append(xTimes, yTimes...)))
-		frame, frameErr := inbound.MarshalPacked()
+		frame := inbound.Pack()
 
-		So(frameErr, ShouldBeNil)
+		So(len(frame), ShouldBeGreaterThan, 0)
 
 		_, writeErr := fitProcess.Write(frame)
 
@@ -64,7 +64,7 @@ func BenchmarkHawkesFit_Observe(testingTB *testing.B) {
 		Poke(float64(len(xTimes)), "config", "xCount").
 		Poke(float64(len(yTimes)), "config", "yCount").
 		WithPayload(equation.MarshalFeaturesPayload(append(xTimes, yTimes...)))
-	frame, _ := inbound.MarshalPacked()
+	frame := inbound.Pack()
 	readFrame := make([]byte, 4096)
 
 	testingTB.ReportAllocs()

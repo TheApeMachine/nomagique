@@ -2,6 +2,7 @@ package causal
 
 import (
 	"errors"
+	"io"
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
@@ -57,11 +58,7 @@ func (ladder *Ladder) Read(p []byte) (int, error) {
 	}
 
 	if len(rows) < minHistory {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"causal ladder: insufficient history",
-			errors.New("causal: insufficient table history"),
-		))
+		return 0, io.EOF
 	}
 
 	table, err := newNodeTable(rows, target, minHistory)
@@ -92,21 +89,13 @@ func (ladder *Ladder) Read(p []byte) (int, error) {
 	}
 
 	if bandwidth <= 0 {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"causal ladder: kernel bandwidth is invalid",
-			errors.New("causal: kernel bandwidth must be positive"),
-		))
+		return 0, io.EOF
 	}
 
 	association, err := table.association(treatment)
 
 	if err != nil {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"causal ladder: association failed",
-			err,
-		))
+		return 0, io.EOF
 	}
 
 	intervention, err := table.kernelBackdoorEffect(treatment, bandwidth, controls...)

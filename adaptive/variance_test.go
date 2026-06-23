@@ -6,6 +6,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/datura/transport"
 )
 
 func TestVarianceRead(t *testing.T) {
@@ -29,14 +30,19 @@ func TestVarianceRead(t *testing.T) {
 			_, _ = variance.Read(make([]byte, 65536))
 			_, _ = io.Copy(variance, datura.Acquire("test", datura.APPJSON).Poke(30, "sample"))
 			_, _ = variance.Read(make([]byte, 65536))
-			_, _ = io.Copy(variance, datura.Acquire("test", datura.APPJSON).Poke(40, "sample"))
+			artifact := datura.Acquire("test", datura.APPJSON).Poke(40, "sample")
+			_, _ = io.Copy(variance, artifact)
 
 			frame := make([]byte, 65536)
 			readCount, err := variance.Read(frame)
 
 			So(err, ShouldBeIn, nil, io.EOF)
 			So(readCount, ShouldBeGreaterThan, 0)
-			So(datura.Peek[float64](variance.artifact, "output", "value"), ShouldBeGreaterThan, 0)
+
+			err = transport.NewFlipFlop(artifact, variance)
+
+			So(err, ShouldBeIn, nil, io.EOF)
+			So(datura.Peek[float64](artifact, "output", "value"), ShouldBeGreaterThan, 0)
 		})
 	})
 }

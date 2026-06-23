@@ -52,6 +52,21 @@ func classifyFitWithGates(
 	}
 
 	switch {
+	case asymmetry > frenzyAsymmetry:
+		margin := asymmetry - frenzyAsymmetry
+		span := 1 - frenzyAsymmetry
+
+		if margin <= 0 || span <= 0 {
+			return FitCategoryFrenzy, uniformFitConfidence, nil
+		}
+
+		confidence, err = probability.CompetitionMargin(margin, span)
+
+		if err != nil {
+			return FitCategoryOrganic, 0, err
+		}
+
+		return FitCategoryFrenzy, confidence, nil
 	case fit.SpectralRadius >= saturationRadius:
 		margin := fit.SpectralRadius - saturationRadius
 		span := 1 - saturationRadius
@@ -81,21 +96,6 @@ func classifyFitWithGates(
 		}
 
 		return FitCategoryExhaustion, confidence, nil
-	case asymmetry >= frenzyAsymmetry:
-		margin := asymmetry - frenzyAsymmetry
-		span := 1 - frenzyAsymmetry
-
-		if margin <= 0 || span <= 0 {
-			return FitCategoryFrenzy, uniformFitConfidence, nil
-		}
-
-		confidence, err = probability.CompetitionMargin(margin, span)
-
-		if err != nil {
-			return FitCategoryOrganic, 0, err
-		}
-
-		return FitCategoryFrenzy, confidence, nil
 	default:
 		headroom := -1.0
 
@@ -112,7 +112,7 @@ func classifyFitWithGates(
 			}
 		}
 
-		if baseline > 0 && intensity >= baseline {
+		if baseline > 0 && intensity >= baseline && asymmetry < frenzyAsymmetry {
 			margin := intensity - baseline
 			organicHead := margin / (margin + baseline)
 

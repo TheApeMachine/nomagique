@@ -48,16 +48,16 @@ func ignitionReplayConfig() *datura.Artifact {
 			"rightKey":     "precursor",
 		}, "precursor").
 		Poke(map[string]any{
-			"input":       "spread",
-			"outputKey":   "compression",
-			"scale":       0.0,
-			"scaleMode":   "median",
-			"terms":       []string{"compression", "precursor", "rvol"},
-			"inverts":     []string{"precursor", "rvol"},
-			"gate":        "precursor",
-			"gateInvert":  1.0,
-			"leftKey":     "rvol",
-			"rightKey":    "precursor",
+			"input":      "spread",
+			"outputKey":  "compression",
+			"scale":      0.0,
+			"scaleMode":  "median",
+			"terms":      []string{"compression", "precursor", "rvol"},
+			"inverts":    []string{"precursor", "rvol"},
+			"gate":       "precursor",
+			"gateInvert": 1.0,
+			"leftKey":    "rvol",
+			"rightKey":   "precursor",
 		}, "compression").
 		Poke(map[string]any{
 			"terms":     []string{"rvol", "precursor"},
@@ -171,8 +171,8 @@ func TestIgnitionSpreadAfterLogReturn(testingTB *testing.T) {
 
 		for _, tick := range ignitionWarmupTicks() {
 			frame := datura.Acquire("ignition-spread-pipeline-frame", datura.APPJSON)
-			frame.Merge("root", "features")
-			frame.Merge("inputs", []string{"volume", "last", "bid", "ask"})
+			frame.Poke("features", "root")
+			frame.Poke([]string{"volume", "last", "bid", "ask"}, "inputs")
 			frame.Merge("features", []float64{tick.volume, tick.last, tick.last - 1, tick.last + 1})
 
 			_ = transport.NewFlipFlop(frame, stage)
@@ -180,8 +180,8 @@ func TestIgnitionSpreadAfterLogReturn(testingTB *testing.T) {
 		}
 
 		frame := datura.Acquire("ignition-spread-pipeline-frame", datura.APPJSON)
-		frame.Merge("root", "features")
-		frame.Merge("inputs", []string{"volume", "last", "bid", "ask"})
+		frame.Poke("features", "root")
+		frame.Poke([]string{"volume", "last", "bid", "ask"}, "inputs")
 		frame.Merge("features", []float64{120, 10050, 10050.0001, 10050.0002})
 
 		err := transport.NewFlipFlop(frame, stage)
@@ -226,8 +226,8 @@ func TestIgnitionSpreadOutput(testingTB *testing.T) {
 
 		for _, tick := range ignitionWarmupTicks() {
 			next := datura.Acquire("ignition-spread-frame", datura.APPJSON)
-			next.Merge("root", "features")
-			next.Merge("inputs", []string{"volume", "last", "bid", "ask"})
+			next.Poke("features", "root")
+			next.Poke([]string{"volume", "last", "bid", "ask"}, "inputs")
 			next.Merge("features", []float64{tick.volume, tick.last, tick.last - 1, tick.last + 1})
 
 			_ = transport.NewFlipFlop(next, stage)
@@ -241,8 +241,8 @@ func TestIgnitionSpreadOutput(testingTB *testing.T) {
 
 		spikeVolume, spikeLast := ignitionSpikeTick()
 		spikeFrame := datura.Acquire("ignition-spread-spike-frame", datura.APPJSON)
-		spikeFrame.Merge("root", "features")
-		spikeFrame.Merge("inputs", []string{"volume", "last", "bid", "ask"})
+		spikeFrame.Poke("features", "root")
+		spikeFrame.Poke([]string{"volume", "last", "bid", "ask"}, "inputs")
 		spikeFrame.Merge("features", []float64{spikeVolume, spikeLast, spikeLast - 1, spikeLast + 1})
 
 		err := transport.NewFlipFlop(spikeFrame, stage)
@@ -266,8 +266,8 @@ func TestIgnitionReplayTraversal(testingTB *testing.T) {
 
 		for _, tick := range ignitionWarmupTicks() {
 			frame := datura.Acquire("ignition-replay-frame", datura.APPJSON)
-			frame.Merge("root", "features")
-			frame.Merge("inputs", []string{"volume", "last", "bid", "ask"})
+			frame.Poke("features", "root")
+			frame.Poke([]string{"volume", "last", "bid", "ask"}, "inputs")
 			frame.Merge("features", []float64{tick.volume, tick.last, tick.last - 1, tick.last + 1})
 
 			_ = transport.NewFlipFlop(frame, stage)
@@ -281,8 +281,8 @@ func TestIgnitionReplayTraversal(testingTB *testing.T) {
 
 		spikeVolume, spikeLast := ignitionSpikeTick()
 		spikeFrame := datura.Acquire("ignition-replay-spike-frame", datura.APPJSON)
-		spikeFrame.Merge("root", "features")
-		spikeFrame.Merge("inputs", []string{"volume", "last", "bid", "ask"})
+		spikeFrame.Poke("features", "root")
+		spikeFrame.Poke([]string{"volume", "last", "bid", "ask"}, "inputs")
 		spikeFrame.Merge("features", []float64{spikeVolume, spikeLast, spikeLast - 1, spikeLast + 1})
 
 		err := transport.NewFlipFlop(spikeFrame, stage)
@@ -309,8 +309,8 @@ func BenchmarkIgnitionReplayTraversal(b *testing.B) {
 
 	for _, tick := range ignitionWarmupTicks() {
 		frame := datura.Acquire("ignition-replay-warmup-frame", datura.APPJSON)
-		frame.Merge("root", "features")
-		frame.Merge("inputs", []string{"volume", "last", "bid", "ask"})
+		frame.Poke("features", "root")
+		frame.Poke([]string{"volume", "last", "bid", "ask"}, "inputs")
 		frame.Merge("features", []float64{tick.volume, tick.last, tick.last - 1, tick.last + 1})
 
 		_ = transport.NewFlipFlop(frame, stage)
@@ -328,8 +328,8 @@ func BenchmarkIgnitionReplayTraversal(b *testing.B) {
 		baselineLast += 100
 
 		baselineFrame := datura.Acquire("ignition-replay-baseline-frame", datura.APPJSON)
-		baselineFrame.Merge("root", "features")
-		baselineFrame.Merge("inputs", []string{"volume", "last", "bid", "ask"})
+		baselineFrame.Poke("features", "root")
+		baselineFrame.Poke([]string{"volume", "last", "bid", "ask"}, "inputs")
 		baselineFrame.Merge("features", []float64{
 			baselineVolume, baselineLast, baselineLast - 1, baselineLast + 1,
 		})
@@ -342,8 +342,8 @@ func BenchmarkIgnitionReplayTraversal(b *testing.B) {
 		tickOffset++
 
 		frame := datura.Acquire("ignition-replay-bench-frame", datura.APPJSON)
-		frame.Merge("root", "features")
-		frame.Merge("inputs", []string{"volume", "last", "bid", "ask"})
+		frame.Poke("features", "root")
+		frame.Poke([]string{"volume", "last", "bid", "ask"}, "inputs")
 		frame.Merge("features", []float64{
 			spikeVolumeFrame, spikeLastFrame, spikeLastFrame - 1, spikeLastFrame + 1,
 		})

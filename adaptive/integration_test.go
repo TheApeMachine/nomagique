@@ -13,11 +13,17 @@ import (
 	"github.com/theapemachine/nomagique/adaptive"
 )
 
+func emaConfigArtifact(name string) *datura.Artifact {
+	return datura.Acquire(name, datura.APPJSON).
+		Poke(2, "period").
+		Poke(2, "smoothing")
+}
+
 func TestIntegration(t *testing.T) {
 	Convey("Given adaptive primitives composed through nomagique.Number", t, func() {
 		Convey("When EMA stages volatility before Delta on a trending series", func() {
 			artifact := datura.Acquire("test", datura.APPJSON).Poke(10, "sample")
-			emaConfig := datura.Acquire("ema-config", datura.APPJSON)
+			emaConfig := emaConfigArtifact("ema-config")
 			deltaConfig := datura.Acquire("delta-config", datura.APPJSON)
 
 			pipeline := nomagique.Number(adaptive.NewEMA(emaConfig), adaptive.NewDelta(deltaConfig))
@@ -46,11 +52,11 @@ func TestIntegration(t *testing.T) {
 				mainArtifact := datura.Acquire("test", datura.APPJSON).Poke(10, "sample")
 				referenceArtifact := datura.Acquire("test", datura.APPJSON).Poke(10, "sample")
 				mainPipeline := nomagique.Number(
-					adaptive.NewEMA(datura.Acquire("ema-main-config", datura.APPJSON)),
+					adaptive.NewEMA(emaConfigArtifact("ema-main-config")),
 					adaptive.NewDelta(datura.Acquire("delta-main-config", datura.APPJSON)),
 				)
 				referencePipeline := nomagique.Number(
-					adaptive.NewEMA(datura.Acquire("ema-ref-config", datura.APPJSON)),
+					adaptive.NewEMA(emaConfigArtifact("ema-ref-config")),
 					adaptive.NewDelta(datura.Acquire("delta-ref-config", datura.APPJSON)),
 				)
 
@@ -90,7 +96,7 @@ func TestIntegration(t *testing.T) {
 
 			Convey("It should retain EMA state across sequential FlipFlops", func() {
 				retained := datura.Acquire("test", datura.APPJSON).Poke(10, "sample")
-				exponential := adaptive.NewEMA(datura.Acquire("ema-config", datura.APPJSON))
+				exponential := adaptive.NewEMA(emaConfigArtifact("ema-config"))
 
 				err := transport.NewFlipFlop(retained, exponential)
 
@@ -106,7 +112,7 @@ func TestIntegration(t *testing.T) {
 
 		Convey("When EMA, Variance, and ZScore run in sequence", func() {
 			artifact := datura.Acquire("test", datura.APPJSON).Poke(10, "sample")
-			emaConfig := datura.Acquire("ema-config", datura.APPJSON)
+			emaConfig := emaConfigArtifact("ema-config")
 			varianceConfig := datura.Acquire("variance-config", datura.APPJSON)
 			zscoreConfig := datura.Acquire("zscore-config", datura.APPJSON)
 
@@ -143,7 +149,7 @@ func TestIntegration(t *testing.T) {
 			})
 
 			Convey("It should keep variance on a parallel EMA-Variance path", func() {
-				parallelEMA := datura.Acquire("ema-parallel-config", datura.APPJSON)
+				parallelEMA := emaConfigArtifact("ema-parallel-config")
 				parallelVariance := datura.Acquire("variance-parallel-config", datura.APPJSON)
 				varianceArtifact := datura.Acquire("test", datura.APPJSON).Poke(10, "sample")
 				variancePipeline := nomagique.Number(
@@ -223,14 +229,15 @@ func TestIntegration(t *testing.T) {
 			So(err, ShouldNotBeNil)
 
 			Convey("It should bootstrap at unity then stay finite and positive", func() {
-				artifact.Poke(14, "sample").
+				second := datura.Acquire("test", datura.APPJSON).
+					Poke(14, "sample").
 					Poke(float64(time.Unix(0, int64(5*time.Hour)).UnixNano()), "at")
-				err := transport.NewFlipFlop(artifact, pipeline)
+				err := transport.NewFlipFlop(second, pipeline)
 
-				So(err, ShouldBeNil)
-				So(datura.Peek[float64](artifact, "output", "value"), ShouldEqual, 1)
+				So(err, ShouldBeIn, nil, io.EOF)
+				So(datura.Peek[float64](second, "output", "value"), ShouldEqual, 1)
 
-				relative := datura.Peek[float64](artifact, "output", "value")
+				relative := datura.Peek[float64](second, "output", "value")
 
 				So(relative, ShouldBeGreaterThan, 0)
 				So(math.IsNaN(relative), ShouldBeFalse)

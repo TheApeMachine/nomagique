@@ -6,6 +6,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/datura/transport"
 )
 
 func TestDeltaRead(t *testing.T) {
@@ -22,14 +23,12 @@ func TestDeltaRead(t *testing.T) {
 		Convey("When warmed up with distinct samples", func() {
 			_, _ = io.Copy(delta, datura.Acquire("test", datura.APPJSON).Poke(10, "sample"))
 			_, _ = delta.Read(make([]byte, 65536))
-			_, _ = io.Copy(delta, datura.Acquire("test", datura.APPJSON).Poke(22, "sample"))
+			artifact := datura.Acquire("test", datura.APPJSON).Poke(22, "sample")
 
-			frame := make([]byte, 65536)
-			readCount, err := delta.Read(frame)
+			err := transport.NewFlipFlop(artifact, delta)
 
 			So(err, ShouldBeIn, nil, io.EOF)
-			So(readCount, ShouldBeGreaterThan, 0)
-			So(datura.Peek[float64](delta.artifact, "output", "value"), ShouldBeGreaterThan, 0)
+			So(datura.Peek[float64](artifact, "output", "value"), ShouldBeGreaterThan, 0)
 		})
 	})
 }

@@ -146,12 +146,12 @@ func (classifier *Classifier) Read(payload []byte) (int, error) {
 	state.MergeOutput("confidence", confidence)
 	state.MergeOutput("strength", strength)
 	state.MergeOutput("value", categoryIndex)
-	state.Merge("root", "output")
+	state.Poke("output", "root")
 
 	outputInputs := make([]string, 0, len(inputs)+5)
 	outputInputs = append(outputInputs, inputs...)
 	outputInputs = append(outputInputs, "probabilities", "category", "confidence", "strength", "value")
-	state.Merge("inputs", outputInputs)
+	state.Poke(outputInputs, "inputs")
 
 	return state.Read(payload)
 }

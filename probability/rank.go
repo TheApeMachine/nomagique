@@ -59,7 +59,7 @@ func (rank *Rank) Read(payload []byte) (int, error) {
 
 	sampleKey := statistic.ConfigString(rank.artifact, state, "sampleKey")
 
-	if sampleKey == "" && datura.KeyPresent(state, "sample") {
+	if sampleKey == "" && statistic.KeyPresent(state, "sample") {
 		sampleKey = "sample"
 	}
 

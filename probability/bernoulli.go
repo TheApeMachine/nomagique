@@ -64,7 +64,7 @@ func (bernoulli *Bernoulli) Read(payload []byte) (int, error) {
 
 	sampleKey := statistic.ConfigString(bernoulli.artifact, state, "sampleKey")
 
-	if sampleKey == "" && datura.KeyPresent(state, "sample") {
+	if sampleKey == "" && statistic.KeyPresent(state, "sample") {
 		sampleKey = "sample"
 	}
 

@@ -5,15 +5,24 @@ import (
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/nomagique/statistic"
 )
 
 /*
 FracDiff applies a fractional differencing filter to recent samples.
-The constructor artifact holds config; Write buffers inbound wire on its payload.
+The constructor artifact holds config; Write buffers inbound payload.
 */
 type FracDiff struct {
 	artifact *datura.Artifact
+	history  []float64
+	weights  []float64
+	min      float64
+	max      float64
+	prev     float64
+	order    float64
+	width    int
+	head     int
+	count    int
+	ready    bool
 }
 
 /*
@@ -27,9 +36,9 @@ func NewFracDiff(artifact *datura.Artifact) *FracDiff {
 	}
 }
 
-func (fractional *FracDiff) Write(payload []byte) (int, error) {
-	fractional.artifact.WithPayload(payload)
-	return len(payload), nil
+func (fractional *FracDiff) Write(p []byte) (int, error) {
+	fractional.artifact.WithPayload(p)
+	return len(p), nil
 }
 
 func (fractional *FracDiff) Read(payload []byte) (int, error) {
@@ -37,103 +46,81 @@ func (fractional *FracDiff) Read(payload []byte) (int, error) {
 	state.Inspect("adaptive", "fracdiff", "Read()", "p")
 
 	if _, err := state.Write(fractional.artifact.DecryptPayload()); err != nil {
-		return 0, err
-	}
-
-	features := statistic.SnapshotFeatures(state)
-	sampleKey, err := statistic.WireInputKey(fractional.artifact, state)
-
-	if err != nil {
-		return 0, err
-	}
-
-	sample, err := statistic.WireScalar(fractional.artifact, state, sampleKey)
-
-	if err != nil {
-		return 0, err
-	}
-
-	if math.IsNaN(sample) || math.IsInf(sample, 0) {
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
-			"fracdiff: sample is non-finite",
-			nil,
+			"fracdiff: state write failed",
+			err,
 		))
 	}
 
-	output := datura.Peek[datura.Map[float64]](fractional.artifact, "output")
-	outputReady := datura.KeyPresent(fractional.artifact, "output", "count")
+	root := datura.Peek[string](state, "root")
+	inputs := datura.Peek[[]string](state, "inputs")
 
-	if !outputReady {
-		capacity := float64(fracDiffMaxLag(0) + 1)
-		history := make([]float64, int(capacity))
-		history[0] = sample
+	if len(inputs) == 0 {
+		inputs = []string{"sample"}
+	}
 
-		output = datura.Map[float64]{
-			"min":   sample,
-			"max":   sample,
-			"prev":  sample,
-			"order": 0,
-			"width": 1,
-			"head":  0,
-			"count": 1,
+	for _, input := range inputs {
+		sample := datura.Peek[float64](state, root, input)
+
+		if root == "" {
+			sample = datura.Peek[float64](state, input)
 		}
 
-		fractional.artifact.Poke(output, "output")
-		fractional.artifact.Poke(history, "history")
-		fractional.artifact.Poke([]float64{1}, "weights")
-
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"fracdiff: insufficient samples",
-			nil,
-		))
-	}
-
-	if output == nil {
-		output = datura.Map[float64]{
-			"min":   datura.Peek[float64](fractional.artifact, "output", "min"),
-			"max":   datura.Peek[float64](fractional.artifact, "output", "max"),
-			"prev":  datura.Peek[float64](fractional.artifact, "output", "prev"),
-			"order": datura.Peek[float64](fractional.artifact, "output", "order"),
-			"width": datura.Peek[float64](fractional.artifact, "output", "width"),
-			"head":  datura.Peek[float64](fractional.artifact, "output", "head"),
-			"count": datura.Peek[float64](fractional.artifact, "output", "count"),
-			"value": datura.Peek[float64](fractional.artifact, "output", "value"),
+		if math.IsNaN(sample) || math.IsInf(sample, 0) {
+			return 0, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"fracdiff: sample is non-finite",
+				nil,
+			))
 		}
-	}
 
-	output["min"] = math.Min(output["min"], sample)
-	output["max"] = math.Max(output["max"], sample)
+		if !fractional.ready {
+			capacity := fracDiffMaxLag(0) + 1
+			fractional.history = make([]float64, capacity)
+			fractional.history[0] = sample
+			fractional.min = sample
+			fractional.max = sample
+			fractional.prev = sample
+			fractional.order = 0
+			fractional.width = 1
+			fractional.head = 0
+			fractional.count = 1
+			fractional.weights = []float64{1}
+			fractional.ready = true
 
-	span := output["max"] - output["min"]
+			return 0, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"fracdiff: insufficient samples",
+				nil,
+			))
+		}
 
-	if span == 0 {
-		fractional.pushHistory(sample, output)
-		output["prev"] = sample
-		fractional.artifact.Poke(output, "output")
+		fractional.min = math.Min(fractional.min, sample)
+		fractional.max = math.Max(fractional.max, sample)
 
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"fracdiff: sample span is zero",
-			nil,
-		))
-	}
+		span := fractional.max - fractional.min
 
-	rate := math.Abs(sample-output["prev"]) / span
-	order := fracDiffOrder(rate, span)
-	fractional.rebuildWeights(order, span, output)
-	fractional.pushHistory(sample, output)
-	output["prev"] = sample
-	output["value"] = fractional.outputSum(output)
+		if span == 0 {
+			fractional.pushHistory(sample)
 
-	fractional.artifact.Poke(output, "output")
-	state.MergeOutput("value", output["value"])
-	features.Restore(state)
-	state.Merge("root", "output")
+			return 0, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"fracdiff: sample span is zero",
+				nil,
+			))
+		}
 
-	if len(datura.Peek[[]string](state, "inputs")) == 0 {
-		state.Merge("inputs", []string{"value"})
+		rate := math.Abs(sample-fractional.prev) / span
+		order := fracDiffOrder(rate, span)
+		fractional.rebuildWeights(order, span)
+		fractional.pushHistory(sample)
+		fractional.prev = sample
+		value := fractional.outputSum()
+
+		state.Poke("output", "root")
+		state.Poke([]string{"value"}, "inputs")
+		state.MergeOutput("value", value)
 	}
 
 	return state.Read(payload)
@@ -143,100 +130,66 @@ func (fractional *FracDiff) Close() error {
 	return nil
 }
 
-func (fractional *FracDiff) rebuildWeights(
-	order float64,
-	span float64,
-	output datura.Map[float64],
-) {
-	if order == output["order"] && output["width"] > 0 {
+func (fractional *FracDiff) rebuildWeights(order float64, span float64) {
+	if order == fractional.order && fractional.width > 0 {
 		return
 	}
 
-	output["order"] = order
+	fractional.order = order
 
 	capacity := fracDiffMaxLag(span) + 1
 	weights := make([]float64, 0, capacity)
-	weights, width := buildFracDiffWeights(order, span, output["prev"], weights)
-	output["width"] = float64(width)
+	weights, width := buildFracDiffWeights(order, span, fractional.prev, weights)
+	fractional.width = width
 
-	fractional.ensureHistoryCapacity(int(capacity), output)
-	fractional.artifact.Poke(weights[:width], "weights")
-}
+	if len(fractional.history) < capacity {
+		next := make([]float64, capacity)
+		copy(next, fractional.history)
 
-func (fractional *FracDiff) ensureHistoryCapacity(
-	capacity int,
-	output datura.Map[float64],
-) {
-	history := datura.Peek[[]float64](fractional.artifact, "history")
+		if fractional.count > 0 {
+			for index := 0; index < fractional.count; index++ {
+				source := (fractional.head - index + len(fractional.history)) % len(fractional.history)
+				next[index] = fractional.history[source]
+			}
 
-	if len(history) >= capacity {
-		return
-	}
-
-	next := make([]float64, capacity)
-	copy(next, history)
-
-	head := int(output["head"])
-	count := int(output["count"])
-
-	if count > 0 {
-		for index := 0; index < count; index++ {
-			source := (head - index + len(history)) % len(history)
-			next[index] = history[source]
+			fractional.head = fractional.count - 1
 		}
 
-		output["head"] = float64(count - 1)
+		fractional.history = next
 	}
 
-	fractional.artifact.Poke(next, "history")
+	fractional.weights = weights[:width]
 }
 
-func (fractional *FracDiff) pushHistory(
-	sample float64,
-	output datura.Map[float64],
-) {
-	history := datura.Peek[[]float64](fractional.artifact, "history")
-
-	if len(history) == 0 {
+func (fractional *FracDiff) pushHistory(sample float64) {
+	if len(fractional.history) == 0 {
 		return
 	}
 
-	head := int(output["head"])
-	head = (head + 1) % len(history)
-	history[head] = sample
-	output["head"] = float64(head)
+	fractional.head = (fractional.head + 1) % len(fractional.history)
+	fractional.history[fractional.head] = sample
 
-	count := int(output["count"])
-
-	if count < len(history) {
-		output["count"] = float64(count + 1)
+	if fractional.count < len(fractional.history) {
+		fractional.count++
 	}
-
-	fractional.artifact.Poke(history, "history")
 }
 
-func (fractional *FracDiff) outputSum(output datura.Map[float64]) float64 {
-	history := datura.Peek[[]float64](fractional.artifact, "history")
-	weights := datura.Peek[[]float64](fractional.artifact, "weights")
-
+func (fractional *FracDiff) outputSum() float64 {
 	sum := 0.0
-	limit := int(output["width"])
-	count := int(output["count"])
+	limit := fractional.width
 
-	if count < limit {
-		limit = count
+	if fractional.count < limit {
+		limit = fractional.count
 	}
-
-	head := int(output["head"])
 
 	for lag := 0; lag < limit; lag++ {
-		index := head - lag
+		index := fractional.head - lag
 
 		if index < 0 {
-			index += len(history)
+			index += len(fractional.history)
 		}
 
-		sum += weights[lag] * history[index]
+		sum += fractional.weights[lag] * fractional.history[index]
 	}
 
 	return sum

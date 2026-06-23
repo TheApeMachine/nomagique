@@ -5,16 +5,18 @@ import (
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/nomagique/statistic"
 )
 
 /*
 Momentum tracks a signed unit-normalized move relative to the running range.
-The constructor artifact holds config; Write buffers inbound wire on its payload.
+The constructor artifact holds config; Write buffers inbound payload.
 */
 type Momentum struct {
 	artifact     *datura.Artifact
 	bootstrapped bool
+	min          float64
+	max          float64
+	prev         float64
 }
 
 /*
@@ -28,9 +30,9 @@ func NewMomentum(artifact *datura.Artifact) *Momentum {
 	}
 }
 
-func (momentum *Momentum) Write(payload []byte) (int, error) {
-	momentum.artifact.WithPayload(payload)
-	return len(payload), nil
+func (momentum *Momentum) Write(p []byte) (int, error) {
+	momentum.artifact.WithPayload(p)
+	return len(p), nil
 }
 
 func (momentum *Momentum) Read(payload []byte) (int, error) {
@@ -38,81 +40,69 @@ func (momentum *Momentum) Read(payload []byte) (int, error) {
 	state.Inspect("adaptive", "momentum", "Read()", "p")
 
 	if _, err := state.Write(momentum.artifact.DecryptPayload()); err != nil {
-		return 0, err
-	}
-
-	features := statistic.SnapshotFeatures(state)
-	sampleKey, err := statistic.WireInputKey(momentum.artifact, state)
-
-	if err != nil {
-		return 0, err
-	}
-
-	sample, err := statistic.WireScalar(momentum.artifact, state, sampleKey)
-
-	if err != nil {
-		return 0, err
-	}
-
-	if math.IsNaN(sample) || math.IsInf(sample, 0) {
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
-			"momentum: sample is non-finite",
-			nil,
+			"momentum: state write failed",
+			err,
 		))
 	}
 
-	output := datura.Map[float64]{
-		"min":   datura.Peek[float64](momentum.artifact, "output", "min"),
-		"max":   datura.Peek[float64](momentum.artifact, "output", "max"),
-		"prev":  datura.Peek[float64](momentum.artifact, "output", "prev"),
-		"value": datura.Peek[float64](momentum.artifact, "output", "value"),
+	root := datura.Peek[string](state, "root")
+	inputs := datura.Peek[[]string](state, "inputs")
+
+	if len(inputs) == 0 {
+		inputs = []string{"sample"}
 	}
 
-	if !momentum.bootstrapped {
-		output = datura.Map[float64]{
-			"min":   sample,
-			"max":   sample,
-			"prev":  sample,
-			"value": 0,
+	for _, input := range inputs {
+		sample := datura.Peek[float64](state, root, input)
+
+		if root == "" {
+			sample = datura.Peek[float64](state, input)
 		}
 
-		momentum.bootstrapped = true
-		momentum.artifact.Poke(output, "output")
+		if math.IsNaN(sample) || math.IsInf(sample, 0) {
+			return 0, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"momentum: sample is non-finite",
+				nil,
+			))
+		}
 
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"momentum: insufficient samples",
-			nil,
-		))
-	}
+		if !momentum.bootstrapped {
+			momentum.min = sample
+			momentum.max = sample
+			momentum.prev = sample
+			momentum.bootstrapped = true
 
-	output["min"] = math.Min(output["min"], sample)
-	output["max"] = math.Max(output["max"], sample)
+			return 0, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"momentum: insufficient samples",
+				nil,
+			))
+		}
 
-	span := output["max"] - output["min"]
+		momentum.min = math.Min(momentum.min, sample)
+		momentum.max = math.Max(momentum.max, sample)
 
-	if span == 0 {
-		output["prev"] = sample
-		momentum.artifact.Poke(output, "output")
+		span := momentum.max - momentum.min
 
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"momentum: sample span is zero",
-			nil,
-		))
-	}
+		if span == 0 {
+			momentum.prev = sample
 
-	output["value"] = (sample - output["prev"]) / span
-	output["prev"] = sample
+			return 0, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"momentum: sample span is zero",
+				nil,
+			))
+		}
 
-	momentum.artifact.Poke(output, "output")
-	state.MergeOutput("value", output["value"])
-	features.Restore(state)
-	state.Merge("root", "output")
+		value := (sample - momentum.prev) / span
+		momentum.prev = sample
 
-	if len(datura.Peek[[]string](state, "inputs")) == 0 {
-		state.Merge("inputs", []string{"value"})
+		state.Poke("output", "root")
+		state.Poke([]string{"value"}, "inputs")
+		state.MergeOutput("value", value)
 	}
 
 	return state.Read(payload)

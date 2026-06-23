@@ -1,6 +1,7 @@
 package algorithm
 
 import (
+	"io"
 	"math"
 	"sort"
 	"time"
@@ -81,11 +82,7 @@ func (lag *Lag) Read(payload []byte) (int, error) {
 	lag.outcome = lag.evaluateFields(fields)
 
 	if !lag.outcome.Eligible || lag.outcome.Strength <= 0 {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"lag: ineligible classification",
-			nil,
-		))
+		return 0, io.EOF
 	}
 
 	state.MergeOutput("inefficient", lag.outcome.InefficientScore)

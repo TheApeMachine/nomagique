@@ -133,6 +133,46 @@ func TestTradeExcitationSampleRead(testingTB *testing.T) {
 		})
 	})
 
+	Convey("Given a book frame before a warmed trade pipeline", testingTB, func() {
+		pipeline := nomagique.Number(
+			NewTradeExcitationSample(datura.Acquire("trade-excitation-config", datura.APPJSON)),
+			NewExcitation(datura.Acquire("excitation-config", datura.APPJSON)),
+		)
+		book := bookTouchFrame("ALT/EUR", 80, 2)
+		_, writeErr := pipeline.Write(book.Pack())
+
+		So(writeErr, ShouldBeNil)
+
+		base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
+		var last *datura.Artifact
+
+		for index := range 64 {
+			side := "buy"
+
+			if index%2 == 0 {
+				side = "sell"
+			}
+
+			frame := tradeFrame(
+				"ALT/EUR",
+				side,
+				1,
+				1,
+				base.Add(time.Duration(index)*100*time.Millisecond).UnixNano(),
+			)
+
+			if transport.NewFlipFlop(frame, pipeline) == nil {
+				last = frame
+			}
+		}
+
+		Convey("It should include touch imbalance in the feature batch", func() {
+			features := datura.Peek[[]float64](last, "features")
+			So(len(features), ShouldBeGreaterThanOrEqualTo, 5)
+			So(features[4], ShouldAlmostEqual, (80-2)/82.0, 0.001)
+		})
+	})
+
 	Convey("Given a book frame before a warmed trade sample", testingTB, func() {
 		sample := NewTradeExcitationSample(datura.Acquire("trade-excitation-config", datura.APPJSON))
 		book := bookTouchFrame("ALT/EUR", 1000, 200)

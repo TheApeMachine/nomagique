@@ -6,15 +6,17 @@ import (
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/nomagique/statistic"
 )
 
 /*
 TimeElastic tracks a time-decayed baseline and returns sample/baseline ratios.
-The constructor artifact holds config; Write buffers inbound wire on its payload.
+The constructor artifact holds config; Write buffers inbound payload.
 */
 type TimeElastic struct {
 	artifact *datura.Artifact
+	baseline float64
+	lastAt   time.Time
+	ready    bool
 }
 
 /*
@@ -28,9 +30,9 @@ func NewTimeElastic(artifact *datura.Artifact) *TimeElastic {
 	}
 }
 
-func (timeElastic *TimeElastic) Write(payload []byte) (int, error) {
-	timeElastic.artifact.WithPayload(payload)
-	return len(payload), nil
+func (timeElastic *TimeElastic) Write(p []byte) (int, error) {
+	timeElastic.artifact.WithPayload(p)
+	return len(p), nil
 }
 
 func (timeElastic *TimeElastic) Read(payload []byte) (int, error) {
@@ -38,36 +40,22 @@ func (timeElastic *TimeElastic) Read(payload []byte) (int, error) {
 	state.Inspect("adaptive", "time-elastic", "Read()", "p")
 
 	if _, err := state.Write(timeElastic.artifact.DecryptPayload()); err != nil {
-		return 0, err
-	}
-
-	features := statistic.SnapshotFeatures(state)
-	sampleKey, err := statistic.WireInputKey(timeElastic.artifact, state)
-
-	if err != nil {
-		return 0, err
-	}
-
-	sample, err := statistic.WireScalar(timeElastic.artifact, state, sampleKey)
-
-	if err != nil {
-		return 0, err
-	}
-
-	if math.IsNaN(sample) || math.IsInf(sample, 0) {
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
-			"time-elastic: sample is non-finite",
-			nil,
+			"time-elastic: state write failed",
+			err,
 		))
 	}
 
-	if sample < 0 {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"time-elastic: sample must be non-negative",
-			nil,
-		))
+	root := datura.Peek[string](state, "root")
+	inputs := datura.Peek[[]string](state, "inputs")
+
+	if len(inputs) == 0 {
+		if root == "output" {
+			inputs = []string{"value"}
+		} else {
+			inputs = []string{"sample"}
+		}
 	}
 
 	halflife := time.Duration(datura.Peek[float64](timeElastic.artifact, "config", "halflife"))
@@ -82,60 +70,72 @@ func (timeElastic *TimeElastic) Read(payload []byte) (int, error) {
 	}
 
 	eventAt := time.Unix(0, int64(datura.Peek[float64](state, "at")))
-	output := datura.Peek[datura.Map[float64]](timeElastic.artifact, "output")
+	value := 1.0
 
-	if output == nil {
-		output = datura.Map[float64]{
-			"baseline": sample,
-			"lastAt":   float64(eventAt.UnixNano()),
-			"value":    1,
+	for _, input := range inputs {
+		sample := datura.Peek[float64](state, root, input)
+
+		if root == "" {
+			sample = datura.Peek[float64](state, input)
 		}
 
-		timeElastic.artifact.Poke(output, "output")
-		state.MergeOutput("value", output["value"])
-		features.Restore(state)
-		state.Merge("root", "output")
-
-		if len(datura.Peek[[]string](state, "inputs")) == 0 {
-			state.Merge("inputs", []string{"value"})
+		if math.IsNaN(sample) || math.IsInf(sample, 0) {
+			return 0, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"time-elastic: sample is non-finite",
+				nil,
+			))
 		}
 
-		return state.Read(payload)
+		if sample < 0 {
+			return 0, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"time-elastic: sample must be non-negative",
+				nil,
+			))
+		}
+
+		if !timeElastic.ready {
+			timeElastic.baseline = sample
+			timeElastic.lastAt = eventAt
+			timeElastic.ready = true
+			value = 1
+
+			continue
+		}
+
+		if eventAt.IsZero() {
+			return 0, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"time-elastic: event timestamp required",
+				nil,
+			))
+		}
+
+		delta := eventAt.Sub(timeElastic.lastAt)
+
+		if delta < 0 {
+			return 0, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"time-elastic: event timestamp must not regress",
+				nil,
+			))
+		}
+
+		timeElastic.lastAt = eventAt
+
+		tau := float64(halflife) / math.Ln2
+		alpha := 0.0
+
+		if delta > 0 {
+			alpha = 1.0 - math.Exp(-float64(delta)/tau)
+		}
+
+		value = sample / (timeElastic.baseline + epsilon)
+		timeElastic.baseline = (1.0-alpha)*timeElastic.baseline + alpha*sample
 	}
 
-	if eventAt.IsZero() {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"time-elastic: event timestamp required",
-			nil,
-		))
-	}
-
-	lastAt := time.Unix(0, int64(output["lastAt"]))
-	delta := eventAt.Sub(lastAt)
-
-	if delta < 0 {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"time-elastic: event timestamp must not regress",
-			nil,
-		))
-	}
-
-	output["lastAt"] = float64(eventAt.UnixNano())
-
-	tau := float64(halflife) / math.Ln2
-
-	var alpha float64
-
-	if delta > 0 {
-		alpha = 1.0 - math.Exp(-float64(delta)/tau)
-	}
-
-	output["value"] = sample / (output["baseline"] + epsilon)
-	output["baseline"] = (1.0-alpha)*output["baseline"] + alpha*sample
-
-	if math.IsNaN(output["value"]) || math.IsInf(output["value"], 0) {
+	if math.IsNaN(value) || math.IsInf(value, 0) {
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"time-elastic: output value is non-finite",
@@ -143,14 +143,9 @@ func (timeElastic *TimeElastic) Read(payload []byte) (int, error) {
 		))
 	}
 
-	timeElastic.artifact.Poke(output, "output")
-	state.MergeOutput("value", output["value"])
-	features.Restore(state)
-	state.Merge("root", "output")
-
-	if len(datura.Peek[[]string](state, "inputs")) == 0 {
-		state.Merge("inputs", []string{"value"})
-	}
+	state.Poke("output", "root")
+	state.Poke([]string{"value"}, "inputs")
+	state.MergeOutput("value", value)
 
 	return state.Read(payload)
 }

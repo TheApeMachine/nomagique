@@ -64,8 +64,8 @@ func (moment *Moment) Read(p []byte) (int, error) {
 
 	params := bivariateParamsFromArtifact(moment.artifact)
 
-	if !datura.KeyPresent(moment.artifact, "config", "momentR") ||
-		!datura.KeyPresent(moment.artifact, "config", "momentS") {
+	if !statistic.KeyPresent(moment.artifact, "config", "momentR") ||
+		!statistic.KeyPresent(moment.artifact, "config", "momentS") {
 		state.Release()
 
 		return 0, errnie.Error(errnie.Err(

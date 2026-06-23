@@ -267,7 +267,7 @@ func (contagion *Contagion) memberCapFromArtifact() int {
 }
 
 func (contagion *Contagion) adaptiveSigmaFromArtifact() (float64, error) {
-	if datura.KeyPresent(contagion.artifact, "config", "adaptiveSigma") {
+	if statistic.KeyPresent(contagion.artifact, "config", "adaptiveSigma") {
 		return datura.Peek[float64](contagion.artifact, "config", "adaptiveSigma"), nil
 	}
 

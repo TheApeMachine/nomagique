@@ -7,6 +7,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/datura/transport"
 )
 
 func TestZScoreRead(t *testing.T) {
@@ -30,14 +31,19 @@ func TestZScoreRead(t *testing.T) {
 			_, _ = surprise.Read(make([]byte, 65536))
 			_, _ = io.Copy(surprise, datura.Acquire("test", datura.APPJSON).Poke(30, "sample"))
 			_, _ = surprise.Read(make([]byte, 65536))
-			_, _ = io.Copy(surprise, datura.Acquire("test", datura.APPJSON).Poke(40, "sample"))
+			artifact := datura.Acquire("test", datura.APPJSON).Poke(40, "sample")
+			_, _ = io.Copy(surprise, artifact)
 
 			frame := make([]byte, 65536)
 			readCount, err := surprise.Read(frame)
 
 			So(err, ShouldBeIn, nil, io.EOF)
 			So(readCount, ShouldBeGreaterThan, 0)
-			So(datura.Peek[float64](surprise.artifact, "output", "value"), ShouldNotEqual, 0)
+
+			err = transport.NewFlipFlop(artifact, surprise)
+
+			So(err, ShouldBeIn, nil, io.EOF)
+			So(datura.Peek[float64](artifact, "output", "value"), ShouldNotEqual, 0)
 		})
 	})
 
@@ -65,7 +71,8 @@ func TestZScoreRead(t *testing.T) {
 		_, _ = surprise.Read(make([]byte, 65536))
 		_, _ = io.Copy(surprise, datura.Acquire("test", datura.APPJSON).Poke(30, "sample"))
 		_, _ = surprise.Read(make([]byte, 65536))
-		_, _ = io.Copy(surprise, datura.Acquire("test", datura.APPJSON).Poke(40, "sample"))
+		artifact := datura.Acquire("test", datura.APPJSON).Poke(40, "sample")
+		_, _ = io.Copy(surprise, artifact)
 
 		frame := make([]byte, 65536)
 		readCount, err := surprise.Read(frame)
@@ -73,7 +80,11 @@ func TestZScoreRead(t *testing.T) {
 		Convey("It should anchor at zero without treating it as missing", func() {
 			So(err, ShouldBeIn, nil, io.EOF)
 			So(readCount, ShouldBeGreaterThan, 0)
-			So(datura.Peek[float64](surprise.artifact, "output", "value"), ShouldNotEqual, 0)
+
+			err = transport.NewFlipFlop(artifact, surprise)
+
+			So(err, ShouldBeIn, nil, io.EOF)
+			So(datura.Peek[float64](artifact, "output", "value"), ShouldNotEqual, 0)
 		})
 	})
 }

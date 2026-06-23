@@ -1,19 +1,22 @@
 package adaptive
 
 import (
-	"math"
+	"context"
 
+	"github.com/cinar/indicator/v2/helper"
+	"github.com/cinar/indicator/v2/trend"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/nomagique/statistic"
 )
 
 /*
-EMA is a volatility-adaptive exponential moving average stage.
-The constructor artifact holds config; Write buffers inbound wire on its payload.
+EMA is an exponential moving average stage backed by cinar/indicator trend.Ema.
+The constructor artifact holds config attributes; Write buffers wire on artifact payload.
 */
 type EMA struct {
 	artifact *datura.Artifact
+	inner    *trend.Ema[float64]
+	samples  []float64
 }
 
 /*
@@ -22,106 +25,76 @@ NewEMA returns an EMA stage wired from config attributes on the artifact.
 func NewEMA(artifact *datura.Artifact) *EMA {
 	artifact.Inspect("adaptive", "ema", "NewEMA()")
 
+	inner := trend.NewEma[float64]()
+
+	if period := int(datura.Peek[float64](artifact, "period")); period > 0 {
+		inner.Period = period
+	}
+
+	if smoothing := datura.Peek[float64](artifact, "smoothing"); smoothing > 0 {
+		inner.Smoothing = smoothing
+	}
+
 	return &EMA{
 		artifact: artifact,
+		samples:  []float64{},
+		inner:    inner,
 	}
 }
 
-func (ema *EMA) Write(payload []byte) (int, error) {
-	ema.artifact.WithPayload(payload)
-	return len(payload), nil
+func (ema *EMA) Write(p []byte) (int, error) {
+	ema.artifact.WithPayload(p)
+	return len(p), nil
 }
 
-func (ema *EMA) Read(payload []byte) (int, error) {
+func (ema *EMA) Read(p []byte) (int, error) {
 	state := datura.Acquire("ema-state", datura.APPJSON)
 	state.Inspect("adaptive", "ema", "Read()", "p")
 
 	if _, err := state.Write(ema.artifact.DecryptPayload()); err != nil {
-		return 0, err
-	}
-
-	features := statistic.SnapshotFeatures(state)
-	inputKey, err := statistic.WireInputKey(ema.artifact, state)
-
-	if err != nil {
-		return 0, err
-	}
-
-	sample, err := statistic.WireScalar(ema.artifact, state, inputKey)
-
-	if err != nil {
-		return 0, err
-	}
-
-	if math.IsNaN(sample) || math.IsInf(sample, 0) {
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
-			"ema: sample is non-finite",
-			nil,
+			"ema: state write failed",
+			err,
 		))
 	}
 
-	output := datura.Peek[datura.Map[float64]](ema.artifact, "output")
-	outputReady := datura.KeyPresent(ema.artifact, "output", "prev")
+	root := datura.Peek[string](state, "root")
+	inputs := datura.Peek[[]string](state, "inputs")
 
-	switch {
-	case !outputReady:
-		output = datura.Map[float64]{
-			"min":  sample,
-			"max":  sample,
-			"prev": sample,
-			"rate": 0,
+	if len(inputs) == 0 {
+		inputs = []string{"sample"}
+	}
+
+	for _, input := range inputs {
+		sample := datura.Peek[float64](state, root, input)
+
+		if root == "" {
+			sample = datura.Peek[float64](state, input)
 		}
-		ema.artifact.Poke(output, "output")
 
+		ema.samples = append(ema.samples, sample)
+	}
+
+	inputChannel := helper.SliceToChanWithContext(context.Background(), ema.samples)
+	outputChannel := ema.inner.ComputeWithContext(context.Background(), inputChannel)
+	emaValues := helper.ChanToSlice(outputChannel)
+
+	if len(emaValues) == 0 {
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"ema: insufficient samples",
 			nil,
 		))
-	default:
-		if output == nil {
-			output = datura.Map[float64]{
-				"min":   datura.Peek[float64](ema.artifact, "output", "min"),
-				"max":   datura.Peek[float64](ema.artifact, "output", "max"),
-				"prev":  datura.Peek[float64](ema.artifact, "output", "prev"),
-				"rate":  datura.Peek[float64](ema.artifact, "output", "rate"),
-				"value": datura.Peek[float64](ema.artifact, "output", "value"),
-			}
-		}
-
-		output["min"] = math.Min(output["min"], sample)
-		output["max"] = math.Max(output["max"], sample)
-
-		span := output["max"] - output["min"]
-
-		if span == 0 {
-			output["prev"] = sample
-			ema.artifact.Poke(output, "output")
-
-			return 0, errnie.Error(errnie.Err(
-				errnie.Validation,
-				"ema: sample span is zero",
-				nil,
-			))
-		}
-
-		delta := math.Abs(sample - output["prev"])
-		output["rate"] = delta / span
-		output["value"] += output["rate"] * (sample - output["value"])
-		output["prev"] = sample
 	}
 
-	ema.artifact.Poke(output, "output")
-	state.MergeOutput("value", output["value"])
-	features.Restore(state)
-	state.Merge("root", "output")
+	latestEMA := emaValues[len(emaValues)-1]
 
-	if len(datura.Peek[[]string](state, "inputs")) == 0 {
-		state.Merge("inputs", []string{"value"})
-	}
+	state.Poke("output", "root")
+	state.Poke([]string{"value"}, "inputs")
+	state.MergeOutput("value", latestEMA)
 
-	return state.Read(payload)
+	return state.Read(p)
 }
 
 func (ema *EMA) Close() error {

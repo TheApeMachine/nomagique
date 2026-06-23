@@ -7,6 +7,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/datura/transport"
 )
 
 var fracDiffInput = datura.Acquire("test", datura.APPJSON).Poke(10, "sample")
@@ -20,21 +21,25 @@ func TestFracDiffRead(t *testing.T) {
 		_, err := fractional.Read(frame)
 
 		So(err, ShouldNotBeNil)
-		So(datura.KeyPresent(fractional.artifact, "output", "count"), ShouldBeTrue)
 	})
 
 	Convey("Given a second FracDiff sample after bootstrap", t, func() {
 		fractional := NewFracDiff(datura.Acquire("fracdiff-config", datura.APPJSON))
 		_, _ = io.Copy(fractional, datura.Acquire("test", datura.APPJSON).Poke(10, "sample"))
 		_, _ = fractional.Read(make([]byte, 65536))
-		_, _ = io.Copy(fractional, datura.Acquire("test", datura.APPJSON).Poke(11, "sample"))
+		artifact := datura.Acquire("test", datura.APPJSON).Poke(11, "sample")
+		_, _ = io.Copy(fractional, artifact)
 
 		frame := make([]byte, 65536)
 		readCount, err := fractional.Read(frame)
 
 		So(err, ShouldEqual, io.EOF)
 		So(readCount, ShouldBeGreaterThan, 0)
-		So(datura.Peek[float64](fractional.artifact, "output", "value"), ShouldNotEqual, 0)
+
+		err = transport.NewFlipFlop(artifact, fractional)
+
+		So(err, ShouldBeNil)
+		So(datura.Peek[float64](artifact, "output", "value"), ShouldNotEqual, 0)
 	})
 
 	Convey("Given a repeated span after bootstrap", t, func() {

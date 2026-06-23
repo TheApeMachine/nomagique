@@ -11,9 +11,9 @@ func TestFeatureColumn(t *testing.T) {
 	Convey("Given extracted features with output root", t, func() {
 		state := datura.Acquire("feature-column-test", datura.APPJSON)
 		state.Merge("features", []float64{1000, 42.5, 0.1})
-		state.Merge("inputs", []string{"volume", "last", "change_pct"})
+		state.Poke([]string{"volume", "last", "change_pct"}, "featureInputs")
 		state.MergeOutput("rvol", 3.0)
-		state.Merge("root", "output")
+		state.Poke("output", "root")
 
 		Convey("It should read raw columns by schema key", func() {
 			last, err := FeatureColumn(state, "last")
@@ -36,7 +36,7 @@ func TestFeatureSnapshotRestore(t *testing.T) {
 	Convey("Given a feature snapshot", t, func() {
 		source := datura.Acquire("feature-snapshot-source", datura.APPJSON)
 		source.Merge("features", []float64{1, 2})
-		source.Merge("inputs", []string{"bid", "ask"})
+		source.Poke([]string{"bid", "ask"}, "featureInputs")
 
 		snapshot := SnapshotFeatures(source)
 		target := datura.Acquire("feature-snapshot-target", datura.APPJSON)

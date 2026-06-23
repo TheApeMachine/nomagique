@@ -77,11 +77,7 @@ func (fastSlow *FastSlow) Read(payload []byte) (int, error) {
 	}
 
 	if len(history) <= fastWindow {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"fast-slow: insufficient history",
-			nil,
-		))
+		return 0, nil
 	}
 
 	value, err := fastSlowRate(history, fastWindow, invert)

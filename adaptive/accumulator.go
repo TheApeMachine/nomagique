@@ -5,15 +5,15 @@ import (
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/nomagique/statistic"
 )
 
 /*
 Accumulator integrates signed signal strength into a level with no bounds.
-The constructor artifact holds config; Write buffers inbound wire on its payload.
+The constructor artifact holds config; Write buffers inbound wire on artifact.
 */
 type Accumulator struct {
 	artifact *datura.Artifact
+	total    float64
 }
 
 /*
@@ -27,9 +27,9 @@ func NewAccumulator(artifact *datura.Artifact) *Accumulator {
 	}
 }
 
-func (accumulator *Accumulator) Write(payload []byte) (int, error) {
-	accumulator.artifact.WithPayload(payload)
-	return len(payload), nil
+func (accumulator *Accumulator) Write(p []byte) (int, error) {
+	accumulator.artifact.WithPayload(p)
+	return len(p), nil
 }
 
 func (accumulator *Accumulator) Read(payload []byte) (int, error) {
@@ -37,36 +37,42 @@ func (accumulator *Accumulator) Read(payload []byte) (int, error) {
 	state.Inspect("adaptive", "accumulator", "Read()", "p")
 
 	if _, err := state.Write(accumulator.artifact.DecryptPayload()); err != nil {
-		return 0, err
-	}
-
-	sampleKey, err := statistic.WireInputKey(accumulator.artifact, state)
-
-	if err != nil {
-		return 0, err
-	}
-
-	sample, err := statistic.WireScalar(accumulator.artifact, state, sampleKey)
-
-	if err != nil {
-		return 0, err
-	}
-
-	if math.IsNaN(sample) || math.IsInf(sample, 0) {
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
-			"accumulator: sample is non-finite",
-			nil,
+			"accumulator: state write failed",
+			err,
 		))
 	}
 
-	value := datura.Peek[float64](accumulator.artifact, "output", "value")
-	value += sample
+	root := datura.Peek[string](state, "root")
+	inputs := datura.Peek[[]string](state, "inputs")
 
-	accumulator.artifact.Poke(value, "output", "value")
-	state.MergeOutput("value", value)
-	state.Merge("root", "output")
-	state.Merge("inputs", []string{"value"})
+	if len(inputs) == 0 {
+		inputs = []string{"sample"}
+	}
+
+	for _, input := range inputs {
+		sample := datura.Peek[float64](state, root, input)
+
+		if root == "" {
+			sample = datura.Peek[float64](state, input)
+		}
+
+		if math.IsNaN(sample) || math.IsInf(sample, 0) {
+			return 0, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"accumulator: sample is non-finite",
+				nil,
+			))
+		}
+
+		accumulator.total += sample
+	}
+
+	state.Poke("output", "root")
+	state.Poke([]string{"value"}, "inputs")
+	state.MergeOutput("value", accumulator.total)
+
 	return state.Read(payload)
 }
 

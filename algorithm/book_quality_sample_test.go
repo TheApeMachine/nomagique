@@ -131,10 +131,10 @@ func BenchmarkBookQualitySample_Read(b *testing.B) {
 
 	for b.Loop() {
 		state := datura.Acquire("measurement", datura.APPJSON).WithPayload(frame)
-		packed, err := state.MarshalPacked()
+		packed := state.Pack()
 
-		if err != nil {
-			b.Fatal(err)
+		if len(packed) == 0 {
+			b.Fatal("book_quality_sample: artifact pack failed")
 		}
 
 		_, _ = encoder.Write(packed)

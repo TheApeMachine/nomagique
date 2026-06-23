@@ -65,8 +65,8 @@ func TestNewCircuit(testingTB *testing.T) {
 
 func TestCircuit_Observe(testingTB *testing.T) {
 	Convey("Given a carried signal above its threshold", testingTB, func() {
-		consequence := adaptive.NewEMA(datura.Acquire("ema-config", datura.APPJSON))
-		alternative := adaptive.NewEMA(datura.Acquire("ema-config-alt", datura.APPJSON))
+		consequence := adaptive.NewEMA(datura.Acquire("ema-config", datura.APPJSON).Poke(2, "period"))
+		alternative := adaptive.NewEMA(datura.Acquire("ema-config-alt", datura.APPJSON).Poke(2, "period"))
 
 		circuit := logic.NewCircuit(logic.Rules{
 			{
@@ -89,8 +89,8 @@ func TestCircuit_Observe(testingTB *testing.T) {
 		below := flipFlopCircuit(circuit, 1)
 
 		Convey("It should route through the matching branch", func() {
-			consequenceCompare := adaptive.NewEMA(datura.Acquire("ema-config-compare", datura.APPJSON))
-			alternativeCompare := adaptive.NewEMA(datura.Acquire("ema-config-alt-compare", datura.APPJSON))
+			consequenceCompare := adaptive.NewEMA(datura.Acquire("ema-config-compare", datura.APPJSON).Poke(2, "period"))
+			alternativeCompare := adaptive.NewEMA(datura.Acquire("ema-config-alt-compare", datura.APPJSON).Poke(2, "period"))
 
 			So(above, ShouldEqual, flipFlopStage(consequenceCompare, 3))
 			So(below, ShouldEqual, flipFlopStage(alternativeCompare, 1))
@@ -148,7 +148,7 @@ func BenchmarkCircuit_Observe(benchmark *testing.B) {
 			Condition: logic.GreaterThan{
 				Right: logic.NewConstant(2),
 			},
-			Then: adaptive.NewEMA(datura.Acquire("ema-config", datura.APPJSON)),
+			Then: adaptive.NewEMA(datura.Acquire("ema-config", datura.APPJSON).Poke(2, "period")),
 		},
 		{
 			Condition: logic.True{Operand: true},

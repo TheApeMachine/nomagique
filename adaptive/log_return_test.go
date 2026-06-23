@@ -29,7 +29,7 @@ func TestLogReturnRead(t *testing.T) {
 
 		for _, sample := range []float64{100, 101, 102} {
 			artifact := datura.Acquire("log-return-test", datura.APPJSON)
-			artifact.Merge("sample", sample)
+			artifact.Merge("last", sample)
 
 			err := transport.NewFlipFlop(artifact, stage)
 

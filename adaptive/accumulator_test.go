@@ -20,7 +20,10 @@ func TestAccumulatorRead(t *testing.T) {
 			readCount, err := accumulator.Read(frame)
 			So(err, ShouldEqual, io.EOF)
 			So(readCount, ShouldBeGreaterThan, 0)
-			So(datura.Peek[float64](accumulator.artifact, "output", "value"), ShouldEqual, 1)
+
+			outbound := datura.Acquire("accumulator-outbound", datura.APPJSON)
+			_, _ = outbound.Write(frame[:readCount])
+			So(datura.Peek[float64](outbound, "output", "value"), ShouldEqual, 1)
 		})
 	})
 }

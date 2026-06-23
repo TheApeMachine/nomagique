@@ -83,9 +83,9 @@ func readOutbound(stage io.Reader) (*datura.Artifact, error) {
 func readScalar(stage io.ReadWriter, samples ...float64) float64 {
 	inbound := datura.Acquire("test-in", datura.Artifact_Type_json)
 	inbound.WithPayload(equation.MarshalFeaturesPayload(samples))
-	buf, err := inbound.MarshalPacked()
+	buf := inbound.Pack()
 
-	if err != nil {
+	if len(buf) == 0 {
 		return 0
 	}
 

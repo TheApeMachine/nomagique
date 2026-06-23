@@ -25,17 +25,17 @@ func TestMeanMedianRatioRead(testingTB *testing.T) {
 
 		for _, sample := range []float64{1, 1, 1, 1, 10} {
 			frame := datura.Acquire("mean-median-ratio-test-frame", datura.APPJSON)
-			frame.Merge("root", "features")
-			frame.Merge("inputs", []string{"volume"})
+			frame.Poke("features", "root")
+			frame.Poke([]string{"volume"}, "inputs")
 			frame.Merge("features", []float64{sample})
 
 			err := transport.NewFlipFlop(frame, stage)
 
-			if len(datura.Peek[[]float64](stage.artifact, "output", "histories", "rvol")) < 5 {
+			if len(stage.histories["rvol"]) < 5 {
 				So(err, ShouldNotBeNil)
 			}
 
-			if len(datura.Peek[[]float64](stage.artifact, "output", "histories", "rvol")) >= 5 {
+			if len(stage.histories["rvol"]) >= 5 {
 				So(err, ShouldBeNil)
 			}
 
@@ -70,17 +70,17 @@ func TestMeanMedianRatioRead(testingTB *testing.T) {
 
 		for _, sample := range samples {
 			frame := datura.Acquire("mean-median-ratio-disjoint-frame", datura.APPJSON)
-			frame.Merge("root", "features")
-			frame.Merge("inputs", []string{"volume"})
+			frame.Poke("features", "root")
+			frame.Poke([]string{"volume"}, "inputs")
 			frame.Merge("features", []float64{sample})
 
 			err := transport.NewFlipFlop(frame, stage)
 
-			if len(datura.Peek[[]float64](stage.artifact, "output", "histories", "rvol")) < 5 {
+			if len(stage.histories["rvol"]) < 5 {
 				So(err, ShouldNotBeNil)
 			}
 
-			if len(datura.Peek[[]float64](stage.artifact, "output", "histories", "rvol")) >= 5 {
+			if len(stage.histories["rvol"]) >= 5 {
 				So(err, ShouldBeNil)
 			}
 
@@ -126,17 +126,17 @@ func TestMeanMedianRatioRead(testingTB *testing.T) {
 
 		for _, sample := range []float64{100, 200, 50} {
 			frame := datura.Acquire("mean-median-ratio-decline-frame", datura.APPJSON)
-			frame.Merge("root", "features")
-			frame.Merge("inputs", []string{"volume"})
+			frame.Poke("features", "root")
+			frame.Poke([]string{"volume"}, "inputs")
 			frame.Merge("features", []float64{sample})
 
 			err := transport.NewFlipFlop(frame, stage)
 
-			if len(datura.Peek[[]float64](stage.artifact, "output", "histories", "lift")) < 2 {
+			if len(stage.histories["lift"]) < 2 {
 				So(err, ShouldNotBeNil)
 			}
 
-			if len(datura.Peek[[]float64](stage.artifact, "output", "histories", "lift")) >= 2 {
+			if len(stage.histories["lift"]) >= 2 {
 				So(err, ShouldBeNil)
 			}
 
@@ -158,8 +158,8 @@ func TestMeanMedianRatioRead(testingTB *testing.T) {
 		config := datura.Acquire("mean-median-ratio-empty", datura.APPJSON)
 		stage := NewMeanMedianRatio(config)
 		artifact := datura.Acquire("mean-median-ratio-empty-test", datura.APPJSON)
-		artifact.Merge("root", "features")
-		artifact.Merge("inputs", []string{"volume"})
+		artifact.Poke("features", "root")
+		artifact.Poke([]string{"volume"}, "inputs")
 		artifact.Merge("features", []float64{10})
 
 		err := transport.NewFlipFlop(artifact, stage)
@@ -180,8 +180,8 @@ func TestMeanMedianRatioRead(testingTB *testing.T) {
 
 		stage := NewMeanMedianRatio(config)
 		artifact := datura.Acquire("mean-median-ratio-dynamic-test", datura.APPJSON)
-		artifact.Merge("root", "features")
-		artifact.Merge("inputs", []string{"volume"})
+		artifact.Poke("features", "root")
+		artifact.Poke([]string{"volume"}, "inputs")
 		artifact.Merge("features", []float64{10})
 
 		err := transport.NewFlipFlop(artifact, stage)
@@ -206,13 +206,13 @@ func TestMeanMedianRatioRead(testingTB *testing.T) {
 
 		for _, sample := range []float64{1000, 1100, 1200, 1300, 1400, 2000} {
 			frame := datura.Acquire("mean-median-ratio-zero-long-frame", datura.APPJSON)
-			frame.Merge("root", "features")
-			frame.Merge("inputs", []string{"volume"})
+			frame.Poke("features", "root")
+			frame.Poke([]string{"volume"}, "inputs")
 			frame.Merge("features", []float64{sample})
 
 			err := transport.NewFlipFlop(frame, stage)
 
-			if len(datura.Peek[[]float64](stage.artifact, "output", "histories", "lift")) < 4 {
+			if len(stage.histories["lift"]) < 4 {
 				So(err, ShouldNotBeNil)
 			}
 
@@ -244,8 +244,8 @@ func BenchmarkMeanMedianRatioRead(b *testing.B) {
 
 	stage := NewMeanMedianRatio(config)
 	artifact := datura.Acquire("mean-median-ratio-bench-test", datura.APPJSON)
-	artifact.Merge("root", "features")
-	artifact.Merge("inputs", []string{"volume"})
+	artifact.Poke("features", "root")
+	artifact.Poke([]string{"volume"}, "inputs")
 
 	b.ReportAllocs()
 

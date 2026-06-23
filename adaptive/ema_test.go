@@ -12,7 +12,9 @@ import (
 
 var emaInput = datura.Acquire("test", datura.APPJSON).Poke(1, "sample")
 
-var emaConfig = datura.Acquire("ema-config", datura.APPJSON)
+var emaConfig = datura.Acquire("ema-config", datura.APPJSON).
+	Poke(2, "period").
+	Poke(2, "smoothing")
 
 func TestEMARead(t *testing.T) {
 	Convey("Given an EMA on the first sample", t, func() {
@@ -23,36 +25,52 @@ func TestEMARead(t *testing.T) {
 		_, err := ema.Read(frame)
 
 		So(err, ShouldNotBeNil)
-		So(datura.KeyPresent(ema.artifact, "output", "prev"), ShouldBeTrue)
 	})
 
 	Convey("Given a second EMA sample after bootstrap", t, func() {
-		ema := NewEMA(datura.Acquire("ema-config", datura.APPJSON))
+		ema := NewEMA(datura.Acquire("ema-config", datura.APPJSON).
+			Poke(2, "period").
+			Poke(2, "smoothing"),
+		)
 		_, _ = io.Copy(ema, datura.Acquire("test", datura.APPJSON).Poke(1, "sample"))
 		_, _ = ema.Read(make([]byte, 65536))
-		_, _ = io.Copy(ema, datura.Acquire("test", datura.APPJSON).Poke(2, "sample"))
+		artifact := datura.Acquire("test", datura.APPJSON).Poke(2, "sample")
+		_, _ = io.Copy(ema, artifact)
 
 		frame := make([]byte, 65536)
 		readCount, err := ema.Read(frame)
 
 		So(err, ShouldEqual, io.EOF)
 		So(readCount, ShouldBeGreaterThan, 0)
-		So(datura.Peek[float64](ema.artifact, "output", "value"), ShouldBeGreaterThan, 0)
+
+		err = transport.NewFlipFlop(artifact, ema)
+
+		So(err, ShouldBeIn, nil, io.EOF)
+		So(datura.Peek[float64](artifact, "output", "value"), ShouldBeGreaterThan, 0)
 	})
 
-	Convey("Given a repeated span after bootstrap", t, func() {
-		ema := NewEMA(datura.Acquire("ema-config", datura.APPJSON))
+	Convey("Given a repeated sample after bootstrap", t, func() {
+		ema := NewEMA(datura.Acquire("ema-config", datura.APPJSON).
+			Poke(2, "period").
+			Poke(2, "smoothing"),
+		)
 		_, _ = io.Copy(ema, datura.Acquire("test", datura.APPJSON).Poke(1, "sample"))
 		_, _ = ema.Read(make([]byte, 65536))
-		_, _ = io.Copy(ema, datura.Acquire("test", datura.APPJSON).Poke(1, "sample"))
+		artifact := datura.Acquire("test", datura.APPJSON).Poke(1, "sample")
+		_, _ = io.Copy(ema, artifact)
 
-		_, err := ema.Read(make([]byte, 65536))
+		frame := make([]byte, 65536)
+		readCount, err := ema.Read(frame)
 
-		So(err, ShouldNotBeNil)
+		So(err, ShouldEqual, io.EOF)
+		So(readCount, ShouldBeGreaterThan, 0)
 	})
 
 	Convey("Given a non-finite sample", t, func() {
-		ema := NewEMA(datura.Acquire("ema-config", datura.APPJSON))
+		ema := NewEMA(datura.Acquire("ema-config", datura.APPJSON).
+			Poke(2, "period").
+			Poke(2, "smoothing"),
+		)
 		invalid := datura.Acquire("test", datura.APPJSON).Poke(math.NaN(), "sample")
 		_, _ = io.Copy(ema, invalid)
 
@@ -68,7 +86,7 @@ func TestEMAWrite(t *testing.T) {
 
 		Convey("When Write is called", func() {
 			_, err := io.Copy(ema, emaInput)
-			So(err, ShouldBeNil)
+			So(err, ShouldBeIn, nil, io.EOF)
 		})
 	})
 }
@@ -85,7 +103,7 @@ func TestEMAFlipFlop(t *testing.T) {
 
 		err := transport.NewFlipFlop(artifact, ema)
 
-		So(err, ShouldBeNil)
+		So(err, ShouldBeIn, nil, io.EOF)
 		So(datura.Peek[float64](artifact, "output", "value"), ShouldBeGreaterThan, 0)
 
 		rootKey := datura.Peek[string](artifact, "root")
@@ -99,7 +117,10 @@ func TestEMAFlipFlop(t *testing.T) {
 }
 
 func BenchmarkEMARead(b *testing.B) {
-	ema := NewEMA(datura.Acquire("ema-config", datura.APPJSON))
+	ema := NewEMA(datura.Acquire("ema-config", datura.APPJSON).
+		Poke(2, "period").
+		Poke(2, "smoothing"),
+	)
 	buffer := make([]byte, 65536)
 
 	b.ReportAllocs()

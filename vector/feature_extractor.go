@@ -111,8 +111,9 @@ func (extractor *FeatureExtractor) Read(payload []byte) (int, error) {
 	}
 
 	state.Merge("features", features)
-	state.Merge("root", "features")
-	state.Merge("inputs", inputs)
+	state.Poke("features", "root")
+	state.Poke(inputs, "inputs")
+	state.Poke(inputs, "featureInputs")
 	state.Inspect("feature-extractor", "Read()", "features")
 
 	return state.Read(payload)

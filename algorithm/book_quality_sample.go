@@ -172,7 +172,6 @@ func (bookQualitySample *BookQualitySample) ingestBook(state *datura.Artifact) {
 		threshold = vacuumLow
 	}
 
-	churnGate := bookQualitySample.runGate(bookQualitySample.churnGate, 0, 0)
 	vacuumPeak := bookQualitySample.runGate(bookQualitySample.vacuumGate, 0, 0)
 	supportGate := supportRatioGate(
 		threshold,
@@ -186,7 +185,7 @@ func (bookQualitySample *BookQualitySample) ingestBook(state *datura.Artifact) {
 		gateReady(bookQualitySample.vacuumGate.artifact),
 	)
 
-	if churnRatio <= 0 && churnGate > 0 {
+	if churnRatio <= 0 {
 		if frameAddBid <= 0 && touchCancelBid > 0 && bookQualitySample.prevTouchAddBid > 0 {
 			churnRatio = touchCancelBid / bookQualitySample.prevTouchAddBid
 		}
@@ -211,10 +210,12 @@ func (bookQualitySample *BookQualitySample) ingestBook(state *datura.Artifact) {
 	if churnRatio > 0 {
 		bookQualitySample.runGate(bookQualitySample.churnGate, churnRatio, 0)
 	}
+
+	churnGate := bookQualitySample.runGate(bookQualitySample.churnGate, 0, 0)
 	toxicNear := 0.0
 	toxicBluffStrength := 0.0
 
-	if lastPrice > 0 && churnGate > 0 {
+	if lastPrice > 0 && churnRatio > 0 {
 		proximity := bookQualitySample.touchProximity(lastPrice)
 		sizeThreshold := largeBlockQtyThreshold(
 			bookQualitySample.ledger.SideDepth(SideBid),

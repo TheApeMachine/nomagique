@@ -41,9 +41,9 @@ func TestFitTimesFromBinaryPayload(testingTB *testing.T) {
 			Poke(float64(len(yTimes)), "config", "yCount").
 			WithPayload(encodeFitPayload(append(xTimes, yTimes...)...))
 
-		frame, frameErr := inbound.MarshalPacked()
+		frame := inbound.Pack()
 
-		So(frameErr, ShouldBeNil)
+		So(len(frame), ShouldBeGreaterThan, 0)
 
 		fitStage := NewFit(fitConfigArtifact(
 			float64(start.Add(4*time.Second).UnixNano()),

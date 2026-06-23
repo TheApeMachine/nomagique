@@ -40,10 +40,14 @@ func TestRangeRead(t *testing.T) {
 		_, _ = io.Copy(extent, datura.Acquire("test", datura.APPJSON).Poke(14, "sample"))
 
 		frame := make([]byte, 65536)
-		_, err := extent.Read(frame)
+		readCount, err := extent.Read(frame)
 
 		So(err, ShouldEqual, io.EOF)
-		So(datura.Peek[float64](extent.artifact, "output", "value"), ShouldEqual, 4)
+		So(readCount, ShouldBeGreaterThan, 0)
+
+		outbound := datura.Acquire("range-outbound", datura.APPJSON)
+		_, _ = outbound.Write(frame[:readCount])
+		So(datura.Peek[float64](outbound, "output", "value"), ShouldEqual, 4)
 	})
 
 	Convey("Given a non-finite sample", t, func() {

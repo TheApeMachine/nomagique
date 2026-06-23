@@ -5,16 +5,18 @@ import (
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/nomagique/statistic"
 )
 
 /*
 Delta tracks a unit-normalized change relative to the running sample range.
-The constructor artifact holds config; Write buffers inbound wire on its payload.
+The constructor artifact holds config; Write buffers inbound payload.
 */
 type Delta struct {
 	artifact     *datura.Artifact
 	bootstrapped bool
+	min          float64
+	max          float64
+	prev         float64
 }
 
 /*
@@ -28,9 +30,9 @@ func NewDelta(artifact *datura.Artifact) *Delta {
 	}
 }
 
-func (delta *Delta) Write(payload []byte) (int, error) {
-	delta.artifact.WithPayload(payload)
-	return len(payload), nil
+func (delta *Delta) Write(p []byte) (int, error) {
+	delta.artifact.WithPayload(p)
+	return len(p), nil
 }
 
 func (delta *Delta) Read(payload []byte) (int, error) {
@@ -38,77 +40,71 @@ func (delta *Delta) Read(payload []byte) (int, error) {
 	state.Inspect("adaptive", "delta", "Read()", "p")
 
 	if _, err := state.Write(delta.artifact.DecryptPayload()); err != nil {
-		return 0, err
-	}
-
-	sampleKey, err := statistic.WireInputKey(delta.artifact, state)
-
-	if err != nil {
-		return 0, err
-	}
-
-	sample, err := statistic.WireScalar(delta.artifact, state, sampleKey)
-
-	if err != nil {
-		return 0, err
-	}
-
-	if math.IsNaN(sample) || math.IsInf(sample, 0) {
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
-			"delta: sample is non-finite",
-			nil,
+			"delta: state write failed",
+			err,
 		))
 	}
 
-	output := datura.Map[float64]{
-		"min":   datura.Peek[float64](delta.artifact, "output", "min"),
-		"max":   datura.Peek[float64](delta.artifact, "output", "max"),
-		"prev":  datura.Peek[float64](delta.artifact, "output", "prev"),
-		"value": datura.Peek[float64](delta.artifact, "output", "value"),
+	root := datura.Peek[string](state, "root")
+	inputs := datura.Peek[[]string](state, "inputs")
+
+	if len(inputs) == 0 {
+		inputs = []string{"sample"}
 	}
 
-	if !delta.bootstrapped {
-		output = datura.Map[float64]{
-			"min":   sample,
-			"max":   sample,
-			"prev":  sample,
-			"value": 0,
+	for _, input := range inputs {
+		sample := datura.Peek[float64](state, root, input)
+
+		if root == "" {
+			sample = datura.Peek[float64](state, input)
 		}
 
-		delta.bootstrapped = true
-		delta.artifact.Poke(output, "output")
+		if math.IsNaN(sample) || math.IsInf(sample, 0) {
+			return 0, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"delta: sample is non-finite",
+				nil,
+			))
+		}
 
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"delta: insufficient samples",
-			nil,
-		))
+		if !delta.bootstrapped {
+			delta.min = sample
+			delta.max = sample
+			delta.prev = sample
+			delta.bootstrapped = true
+
+			return 0, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"delta: insufficient samples",
+				nil,
+			))
+		}
+
+		delta.min = math.Min(delta.min, sample)
+		delta.max = math.Max(delta.max, sample)
+
+		span := delta.max - delta.min
+
+		if span == 0 {
+			delta.prev = sample
+
+			return 0, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"delta: sample span is zero",
+				nil,
+			))
+		}
+
+		value := math.Abs(sample-delta.prev) / span
+		delta.prev = sample
+
+		state.Poke("output", "root")
+		state.Poke([]string{"value"}, "inputs")
+		state.MergeOutput("value", value)
 	}
 
-	output["min"] = math.Min(output["min"], sample)
-	output["max"] = math.Max(output["max"], sample)
-
-	span := output["max"] - output["min"]
-
-	if span == 0 {
-		output["prev"] = sample
-		delta.artifact.Poke(output, "output")
-
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"delta: sample span is zero",
-			nil,
-		))
-	}
-
-	output["value"] = math.Abs(sample-output["prev"]) / span
-	output["prev"] = sample
-
-	delta.artifact.Poke(output, "output")
-	state.MergeOutput("value", output["value"])
-	state.Merge("root", "output")
-	state.Merge("inputs", []string{"value"})
 	return state.Read(payload)
 }
 

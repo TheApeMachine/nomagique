@@ -4,6 +4,7 @@ go 1.26.1
 
 require (
 	github.com/bytedance/sonic v1.15.2
+	github.com/cinar/indicator/v2 v2.1.33
 	github.com/smartystreets/goconvey v1.8.1
 )
 

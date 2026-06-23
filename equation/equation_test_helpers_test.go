@@ -11,23 +11,25 @@ import (
 func writeFeatureStage(stage io.Writer, inputKeys []string, values ...float64) error {
 	inbound := datura.Acquire("equation-test-in", datura.APPJSON)
 	inbound.WithPayload(equation.MarshalFeatureSchema(inputKeys, values))
-	frame, err := inbound.MarshalPacked()
+	frame := inbound.Pack()
 
-	if err != nil {
+	if len(frame) == 0 {
 		return errnie.Error(errnie.Err(
 			errnie.Validation,
 			"writeFeatureStage: inbound marshalling failed",
+			nil,
+		))
+	}
+
+	if _, err := stage.Write(frame); err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.IO,
+			"writeFeatureStage: stage write failed",
 			err,
 		))
 	}
 
-	_, err = stage.Write(frame)
-
-	return errnie.Error(errnie.Err(
-		errnie.IO,
-		"writeFeatureStage: stage write failed",
-		err,
-	))
+	return nil
 }
 
 func readStageOutput(stage io.Reader) (*datura.Artifact, error) {

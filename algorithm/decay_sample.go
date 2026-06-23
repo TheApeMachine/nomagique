@@ -86,11 +86,7 @@ func (decaySample *DecaySample) Read(payload []byte) (int, error) {
 	features := decaySample.features(window)
 
 	if len(features) == 0 {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"decay-sample: insufficient history",
-			nil,
-		))
+		return 0, nil
 	}
 
 	state.WithScope(symbol)

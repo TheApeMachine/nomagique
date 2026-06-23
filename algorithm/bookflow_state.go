@@ -307,11 +307,11 @@ func (gate *GateQuantile) observe(sample float64, percentileOverride float64) fl
 		return 0
 	}
 
-	packed, err := frame.MarshalPacked()
+	packed := frame.Pack()
 
 	frame.Release()
 
-	if err != nil {
+	if len(packed) == 0 {
 		return 0
 	}
 

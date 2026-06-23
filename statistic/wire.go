@@ -3,9 +3,32 @@ package statistic
 import (
 	"fmt"
 
+	"github.com/bytedance/sonic"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 )
+
+/*
+keyPresent reports whether the path exists in either the artifact attributes or
+its decrypted payload, mirroring datura.Peek's two-region lookup.
+*/
+func KeyPresent(artifact *datura.Artifact, path ...any) bool {
+	if rawAttributes, err := artifact.Attributes(); err == nil && len(rawAttributes) > 0 {
+		if node, getErr := sonic.Get(rawAttributes, path...); getErr == nil && node.Exists() {
+			return true
+		}
+	}
+
+	payload, err := artifact.DecryptPayloadError()
+
+	if err != nil || len(payload) == 0 {
+		return false
+	}
+
+	node, getErr := sonic.Get(payload, path...)
+
+	return getErr == nil && node.Exists()
+}
 
 /*
 WireRole resolves the inbound channel or artifact role for scoped config lookup.
@@ -64,7 +87,7 @@ func WireInputKey(config, state *datura.Artifact) (string, error) {
 		inputKey = ConfigString(config, state, "sampleKey")
 	}
 
-	if inputKey == "" && datura.KeyPresent(state, "sample") {
+	if inputKey == "" && KeyPresent(state, "sample") {
 		return "sample", nil
 	}
 
@@ -97,11 +120,11 @@ ConfigFloat64 reads a float attribute from config, preferring role-scoped keys.
 func ConfigFloat64(config, state *datura.Artifact, key string) float64 {
 	role := WireRole(state)
 
-	if role != "" && datura.KeyPresent(config, role, key) {
+	if role != "" && KeyPresent(config, role, key) {
 		return datura.Peek[float64](config, role, key)
 	}
 
-	if datura.KeyPresent(config, key) {
+	if KeyPresent(config, key) {
 		return datura.Peek[float64](config, key)
 	}
 
@@ -147,12 +170,12 @@ func WireScalarAt(
 	}
 
 	if rootKey != "" && rootKey != "features" {
-		if datura.KeyPresent(state, rootKey, wireKey) {
+		if KeyPresent(state, rootKey, wireKey) {
 			return datura.Peek[float64](state, rootKey, wireKey), nil
 		}
 	}
 
-	if datura.KeyPresent(state, wireKey) {
+	if KeyPresent(state, wireKey) {
 		return datura.Peek[float64](state, wireKey), nil
 	}
 

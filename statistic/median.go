@@ -40,6 +40,8 @@ func (median *Median) Read(payload []byte) (int, error) {
 		return 0, err
 	}
 
+	state.Inspect("statistic", "median", "Read()", "p")
+
 	peers := panelPeers(state)
 
 	if len(peers) == 0 {
@@ -70,8 +72,8 @@ func (median *Median) Read(payload []byte) (int, error) {
 			}
 
 			state.MergeOutput("value", value)
-			state.Merge("root", "output")
-			state.Merge("inputs", []string{"value"})
+			state.Poke("output", "root")
+			state.Poke([]string{"value"}, "inputs")
 			return state.Read(payload)
 		}
 	}

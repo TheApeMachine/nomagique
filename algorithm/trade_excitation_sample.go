@@ -2,6 +2,7 @@ package algorithm
 
 import (
 	"fmt"
+	"io"
 	"math"
 	"time"
 
@@ -70,9 +71,15 @@ func (tradeExcitationSample *TradeExcitationSample) Read(payload []byte) (int, e
 		return 0, err
 	}
 
+	state.Inspect("algorithm", "trade-excitation-sample", "Read()", "p")
+
 	defer state.Release()
 
 	channel := datura.Peek[string](state, "channel")
+
+	if channel == "book" {
+		return 0, io.EOF
+	}
 
 	if channel != "trade" {
 		return 0, errnie.Error(errnie.Err(
@@ -117,17 +124,13 @@ func (tradeExcitationSample *TradeExcitationSample) Read(payload []byte) (int, e
 	features := tradeExcitationSample.features(window)
 
 	if len(features) == 0 {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"trade-excitation-sample: insufficient trade history for excitation features",
-			nil,
-		))
+		return 0, io.EOF
 	}
 
 	state.WithScope(symbol)
 	state.Merge("features", features)
-	state.Merge("root", "features")
-	state.Merge("inputs", ExcitationSampleInputKeys)
+	state.Poke("features", "root")
+	state.Poke(ExcitationSampleInputKeys, "inputs")
 	state.Poke(float64(len(window.buySeconds)), "config", "xCount")
 	state.Poke(float64(len(window.sellSeconds)), "config", "yCount")
 

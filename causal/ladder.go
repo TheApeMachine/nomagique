@@ -20,8 +20,6 @@ type Ladder struct {
 NewLadder returns a ladder stage wired from config attributes on the artifact.
 */
 func NewLadder(artifact *datura.Artifact) *Ladder {
-	artifact.Inspect("causal", "ladder", "NewLadder()")
-
 	return &Ladder{
 		artifact: artifact,
 	}
@@ -34,11 +32,12 @@ func (ladder *Ladder) Write(p []byte) (int, error) {
 
 func (ladder *Ladder) Read(p []byte) (int, error) {
 	state := datura.Acquire("ladder-state", datura.APPJSON)
-	state.Inspect("causal", "ladder", "Read()", "p")
 
 	if _, err := state.Write(ladder.artifact.DecryptPayload()); err != nil {
 		return 0, err
 	}
+
+	state.Inspect("causal", "ladder", "Read()", "p")
 
 	rows, ok := tableRows(state)
 
@@ -190,8 +189,8 @@ func (ladder *Ladder) Read(p []byte) (int, error) {
 	state.MergeOutput("contagion", contagion)
 	state.MergeOutput("condition", condition)
 	state.MergeOutput("inverted", invertedValue)
-	state.Merge("root", "output")
-	state.Merge("inputs", []string{
+	state.Poke("output", "root")
+	state.Poke([]string{
 		"value", "association", "intervention", "uplift", "contagion", "condition", "inverted",
 	})
 	return state.Read(p)

@@ -41,6 +41,8 @@ func (panel *Panel) Read(payload []byte) (int, error) {
 		return 0, err
 	}
 
+	state.Inspect("statistic", "panel", "Read()", "p")
+
 	memberField := ConfigString(panel.artifact, state, "memberKey")
 
 	if memberField == "" {
@@ -106,8 +108,8 @@ func (panel *Panel) Read(payload []byte) (int, error) {
 	state.Merge("peerKeys", peerKeys)
 	state.Merge("peers", peers)
 	state.MergeOutput("value", sample)
-	state.Merge("root", "output")
-	state.Merge("inputs", []string{"value"})
+	state.Poke("output", "root")
+	state.Poke([]string{"value"}, "inputs")
 	return state.Read(payload)
 }
 

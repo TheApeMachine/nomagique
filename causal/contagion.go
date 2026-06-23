@@ -39,6 +39,8 @@ func (contagion *Contagion) Read(p []byte) (int, error) {
 		return 0, err
 	}
 
+	state.Inspect("causal", "contagion", "Read()", "p")
+
 	peak, err := contagion.peakFromTable(state)
 
 	if err != nil {
@@ -47,8 +49,8 @@ func (contagion *Contagion) Read(p []byte) (int, error) {
 
 	state.Merge("paired", peak)
 	state.MergeOutput("value", peak)
-	state.Merge("root", "output")
-	state.Merge("inputs", []string{"value"})
+	state.Poke("output", "root")
+	state.Poke([]string{"value"}, "inputs")
 	return state.Read(p)
 }
 

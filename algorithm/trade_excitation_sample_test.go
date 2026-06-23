@@ -12,6 +12,24 @@ import (
 )
 
 func TestTradeExcitationSampleRead(testingTB *testing.T) {
+	Convey("Given one trade before excitation history is warm", testingTB, func() {
+		sample := NewTradeExcitationSample(datura.Acquire("trade-excitation-config", datura.APPJSON))
+		frame := tradeFrame(
+			"ALT/EUR",
+			"buy",
+			1,
+			1,
+			time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC).UnixNano(),
+		)
+
+		err := transport.NewFlipFlop(frame, sample)
+
+		Convey("It should stage quietly without publishing features", func() {
+			So(err, ShouldBeNil)
+			So(len(datura.Peek[[]float64](frame, "features")), ShouldEqual, 0)
+		})
+	})
+
 	Convey("Given alternating buy and sell trades", testingTB, func() {
 		sample := NewTradeExcitationSample(datura.Acquire("trade-excitation-config", datura.APPJSON))
 		base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
@@ -130,6 +148,18 @@ func TestTradeExcitationSampleRead(testingTB *testing.T) {
 
 		Convey("It should derive touch imbalance from top-of-book quantities", func() {
 			So(bookTouchImbalance(book), ShouldAlmostEqual, 2.0/3.0, 0.001)
+		})
+	})
+
+	Convey("Given a book frame through the runtime flipflop path", testingTB, func() {
+		sample := NewTradeExcitationSample(datura.Acquire("trade-excitation-config", datura.APPJSON))
+		book := bookTouchFrame("ALT/EUR", 1000, 200)
+
+		err := transport.NewFlipFlop(book, sample)
+
+		Convey("It should buffer touch state without publishing or logging a validation error", func() {
+			So(err, ShouldBeNil)
+			So(len(datura.Peek[[]float64](book, "features")), ShouldEqual, 0)
 		})
 	})
 

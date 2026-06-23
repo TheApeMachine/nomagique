@@ -20,8 +20,6 @@ type Regime struct {
 NewRegime returns a regime stage wired from config attributes on the artifact.
 */
 func NewRegime(artifact *datura.Artifact) *Regime {
-	artifact.Inspect("causal", "regime", "NewRegime()")
-
 	return &Regime{
 		artifact: artifact,
 	}
@@ -34,11 +32,12 @@ func (regime *Regime) Write(p []byte) (int, error) {
 
 func (regime *Regime) Read(p []byte) (int, error) {
 	state := datura.Acquire("regime-state", datura.APPJSON)
-	state.Inspect("causal", "regime", "Read()", "p")
 
 	if _, err := state.Write(regime.artifact.DecryptPayload()); err != nil {
 		return 0, err
 	}
+
+	state.Inspect("causal", "regime", "Read()", "p")
 
 	rows, ok := tableRows(state)
 
@@ -102,8 +101,8 @@ func (regime *Regime) Read(p []byte) (int, error) {
 	state.MergeOutput("value", condition)
 	state.MergeOutput("condition", condition)
 	state.MergeOutput("rawInverted", rawInverted)
-	state.Merge("root", "output")
-	state.Merge("inputs", []string{"value", "condition", "rawInverted"})
+	state.Poke("output", "root")
+	state.Poke([]string{"value", "condition", "rawInverted"}, "inputs")
 	return state.Read(p)
 }
 

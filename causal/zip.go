@@ -47,6 +47,8 @@ func (zipStage *Zip) Read(p []byte) (int, error) {
 		return 0, err
 	}
 
+	state.Inspect("causal", "zip", "Read()", "p")
+
 	if rows, tableOK := tableRows(state); tableOK {
 		state.MergeOutput("value", float64(len(rows)))
 		state.Merge("root", "output")
@@ -86,8 +88,8 @@ func (zipStage *Zip) Read(p []byte) (int, error) {
 	state.Poke(float64(nodeCount), "table", "nodeCount")
 	state.Poke(flat, "table", "rows")
 	state.MergeOutput("value", float64(rowCount))
-	state.Merge("root", "output")
-	state.Merge("inputs", []string{"value"})
+	state.Poke("output", "root")
+	state.Poke([]string{"value"}, "inputs")
 	return state.Read(p)
 }
 

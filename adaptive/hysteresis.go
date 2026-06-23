@@ -22,8 +22,6 @@ type Hysteresis struct {
 NewHysteresis returns a hysteresis stage wired from config attributes on the artifact.
 */
 func NewHysteresis(artifact *datura.Artifact) *Hysteresis {
-	artifact.Inspect("adaptive", "hysteresis", "NewHysteresis()")
-
 	return &Hysteresis{
 		artifact: artifact,
 	}
@@ -36,7 +34,6 @@ func (hysteresis *Hysteresis) Write(p []byte) (int, error) {
 
 func (hysteresis *Hysteresis) Read(payload []byte) (int, error) {
 	state := datura.Acquire("hysteresis-state", datura.APPJSON)
-	state.Inspect("adaptive", "hysteresis", "Read()", "p")
 
 	if _, err := state.Write(hysteresis.artifact.DecryptPayload()); err != nil {
 		return 0, errnie.Error(errnie.Err(
@@ -45,6 +42,8 @@ func (hysteresis *Hysteresis) Read(payload []byte) (int, error) {
 			err,
 		))
 	}
+
+	state.Inspect("adaptive", "hysteresis", "Read()", "p")
 
 	inputKey := datura.Peek[string](hysteresis.artifact, "input")
 

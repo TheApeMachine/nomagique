@@ -81,6 +81,8 @@ func (excitation *Excitation) Read(payload []byte) (int, error) {
 		return 0, err
 	}
 
+	state.Inspect("algorithm", "excitation", "Read()", "p")
+
 	scope, _ := state.Scope()
 
 	if scope == "" {
@@ -118,8 +120,8 @@ func (excitation *Excitation) Read(payload []byte) (int, error) {
 		state.Merge("excitation.eligible", 1.0)
 	}
 
-	state.Merge("root", "output")
-	state.Merge("inputs", []string{"frenzy", "saturation", "organic", "exhaustion"})
+	state.Poke("output", "root")
+	state.Poke([]string{"frenzy", "saturation", "organic", "exhaustion"}, "inputs")
 
 	return state.Read(payload)
 }

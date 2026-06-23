@@ -49,6 +49,8 @@ func (pearlSample *PearlSample) Read(payload []byte) (int, error) {
 		return 0, err
 	}
 
+	state.Inspect("algorithm", "pearl-sample", "Read()", "p")
+
 	defer state.Release()
 
 	if datura.Peek[float64](state, "table", "rowCount") > 0 {

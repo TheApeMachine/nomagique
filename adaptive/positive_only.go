@@ -99,9 +99,9 @@ func (positiveOnly *PositiveOnly) Read(payload []byte) (int, error) {
 		score = math.Max(0, score)
 	}
 
+	state.MergeOutput(outputKey, score)
 	state.Poke("output", "root")
 	state.Poke([]string{outputKey}, "inputs")
-	state.MergeOutput(outputKey, score)
 
 	return state.Read(payload)
 }

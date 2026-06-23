@@ -90,9 +90,9 @@ func (ema *EMA) Read(p []byte) (int, error) {
 
 	latestEMA := emaValues[len(emaValues)-1]
 
-	state.Poke("output", "root")
-	state.Poke([]string{"value"}, "inputs")
 	state.MergeOutput("value", latestEMA)
+	state.Merge("root", "output")
+	state.Merge("inputs", []string{"value"})
 
 	return state.Read(p)
 }

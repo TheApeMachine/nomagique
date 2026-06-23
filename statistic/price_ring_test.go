@@ -23,8 +23,8 @@ func precursorConfig() *datura.Artifact {
 
 func precursorState(last float64) *datura.Artifact {
 	artifact := datura.Acquire("precursor-state", datura.APPJSON)
-	artifact.Poke("features", "root")
-	artifact.Poke([]string{"volume", "last"}, "inputs")
+	artifact.Merge("root", "features")
+	artifact.Merge("inputs", []string{"volume", "last"})
 	artifact.Merge("features", []float64{100, last})
 
 	return artifact

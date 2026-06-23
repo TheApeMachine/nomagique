@@ -61,7 +61,19 @@ func (rollingZScore *RollingZScore) Read(payload []byte) (int, error) {
 		inputKey = inputs[0]
 	}
 
-	sample := datura.Peek[float64](state, root, inputKey)
+	if len(inputs) == 0 && KeyPresent(state, "sample") {
+		inputKey = "sample"
+	}
+
+	var sample float64
+
+	if root != "" {
+		sample = datura.Peek[float64](state, root, inputKey)
+	}
+
+	if root == "" {
+		sample = datura.Peek[float64](state, inputKey)
+	}
 
 	if math.IsNaN(sample) || math.IsInf(sample, 0) {
 		return 0, errnie.Error(errnie.Err(

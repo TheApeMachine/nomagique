@@ -38,7 +38,7 @@ func NewFeatureExtractor(artifact *datura.Artifact) *FeatureExtractor {
 }
 
 func (extractor *FeatureExtractor) Read(payload []byte) (int, error) {
-	state := datura.Acquire("feature-extractor-state", datura.APPJSON)
+	state := datura.Acquire("feature-extractor", datura.APPJSON)
 	state.Inspect("feature-extractor", "Read()", "p")
 
 	if _, err := state.Write(extractor.artifact.DecryptPayload()); err != nil {
@@ -49,6 +49,10 @@ func (extractor *FeatureExtractor) Read(payload []byte) (int, error) {
 
 	if role == "" {
 		role, _ = state.Role()
+	}
+
+	if role == "" {
+		role, _ = extractor.artifact.Role()
 	}
 
 	rootKey := datura.Peek[string](extractor.artifact, role, "root")

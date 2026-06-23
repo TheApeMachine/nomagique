@@ -1,6 +1,7 @@
 package algorithm_test
 
 import (
+	"fmt"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
@@ -46,6 +47,44 @@ func pearlInbound() *datura.Artifact {
 		Poke(flat, "table", "rows")
 }
 
+func pearlTicker(index int) *datura.Artifact {
+	payload := fmt.Appendf(
+		nil,
+		`{"channel":"ticker","type":"update","data":[{"symbol":"BTC/USD","bid":%g,"bid_qty":740,"ask":%g,"ask_qty":720,"last":%g,"volume":%g,"change_pct":%g}]}`,
+		49990.0+float64(index),
+		50010.0+float64(index),
+		50000.0+float64(index),
+		1000.0+float64(index*10),
+		0.01*float64(index),
+	)
+
+	return datura.Acquire("kraken:public", datura.APPJSON).
+		WithRole("ticker").
+		WithScope("update").
+		WithPayload(payload)
+}
+
+func pearlTrade(index int) *datura.Artifact {
+	side := "buy"
+
+	if index%2 == 1 {
+		side = "sell"
+	}
+
+	payload := fmt.Appendf(
+		nil,
+		`{"channel":"trade","type":"update","data":[{"symbol":"BTC/USD","side":%q,"price":%g,"qty":%g}]}`,
+		side,
+		50000.0+float64(index),
+		1.0+float64(index)*0.1,
+	)
+
+	return datura.Acquire("kraken:public", datura.APPJSON).
+		WithRole("trade").
+		WithScope("update").
+		WithPayload(payload)
+}
+
 func TestPearl_Read(testingTB *testing.T) {
 	Convey("Given aligned node streams with causal structure", testingTB, func() {
 		pearl := algorithm.NewPearl(pearlConfig())
@@ -54,6 +93,46 @@ func TestPearl_Read(testingTB *testing.T) {
 
 		So(err, ShouldBeNil)
 		So(datura.Peek[float64](artifact, "output", "intervention"), ShouldBeGreaterThan, 0)
+	})
+}
+
+func TestPearl_ReadsRawTickerFrames(testingTB *testing.T) {
+	Convey("Given the Pearl sample stage and raw Kraken ticker frames", testingTB, func() {
+		sample := algorithm.NewPearlSample(pearlConfig())
+		var artifact *datura.Artifact
+
+		for index := range 16 {
+			artifact = pearlTicker(index)
+			_ = transport.NewFlipFlop(artifact, sample)
+		}
+
+		Convey("It should retain aligned node streams", func() {
+			So(artifact, ShouldNotBeNil)
+			So(datura.Peek[float64](artifact, "streams", "nodeCount"), ShouldEqual, 4)
+		})
+	})
+
+	Convey("Given raw Kraken ticker and trade frames", testingTB, func() {
+		pearl := algorithm.NewPearl(pearlConfig())
+		var artifact *datura.Artifact
+		var streamCount float64
+		var tableRows float64
+
+		for index := range 16 {
+			artifact = pearlTicker(index)
+			_ = transport.NewFlipFlop(artifact, pearl)
+			artifact = pearlTrade(index)
+			_ = transport.NewFlipFlop(artifact, pearl)
+			streamCount = datura.Peek[float64](artifact, "streams", "nodeCount")
+			tableRows = datura.Peek[float64](artifact, "table", "rowCount")
+		}
+
+		Convey("It should emit causal output after history is available", func() {
+			So(artifact, ShouldNotBeNil)
+			So(streamCount, ShouldEqual, 4)
+			So(tableRows, ShouldBeGreaterThanOrEqualTo, 12)
+			So(datura.Peek[float64](artifact, "output", "confidence"), ShouldBeGreaterThan, 0)
+		})
 	})
 }
 

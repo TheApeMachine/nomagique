@@ -94,9 +94,9 @@ func (compression *Compression) Read(payload []byte) (int, error) {
 
 	value := (compression.baseline - sample) / compression.baseline
 
+	state.MergeOutput(outputKey, value)
 	state.Poke("output", "root")
 	state.Poke([]string{outputKey}, "inputs")
-	state.MergeOutput(outputKey, value)
 
 	return state.Read(payload)
 }

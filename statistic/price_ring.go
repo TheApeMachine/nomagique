@@ -65,7 +65,14 @@ func (priceRing *PriceRing) Read(payload []byte) (int, error) {
 
 	if sampleErr != nil {
 		root := datura.Peek[string](state, "root")
-		sample = datura.Peek[float64](state, root, sourceKey)
+
+		if root != "" {
+			sample = datura.Peek[float64](state, root, sourceKey)
+		}
+
+		if root == "" {
+			sample = datura.Peek[float64](state, sourceKey)
+		}
 	}
 
 	if sample <= 0 || math.IsNaN(sample) || math.IsInf(sample, 0) {

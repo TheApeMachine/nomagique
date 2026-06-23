@@ -92,7 +92,15 @@ func (logReturn *LogReturn) Read(payload []byte) (int, error) {
 		inputKey = "sample"
 	}
 
-	sample := datura.Peek[float64](state, root, inputKey)
+	var sample float64
+
+	if root != "" {
+		sample = datura.Peek[float64](state, root, inputKey)
+	}
+
+	if root == "" {
+		sample = datura.Peek[float64](state, inputKey)
+	}
 
 	if sample <= 0 || math.IsNaN(sample) || math.IsInf(sample, 0) {
 		return 0, errnie.Error(errnie.Err(
@@ -126,9 +134,9 @@ func (logReturn *LogReturn) Read(payload []byte) (int, error) {
 
 	logReturnValue := math.Log(sample / anchorSample)
 
+	state.MergeOutput(outputKey, logReturnValue)
 	state.Poke("output", "root")
 	state.Poke([]string{outputKey}, "inputs")
-	state.MergeOutput(outputKey, logReturnValue)
 
 	return state.Read(payload)
 }

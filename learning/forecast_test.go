@@ -175,9 +175,10 @@ func TestForecaster_withAdaptiveSignal(testingTB *testing.T) {
 	Convey("Given EMA and forecast feedback", testingTB, func() {
 		exponential := adaptive.NewEMA(datura.Acquire("ema-config", datura.APPJSON))
 		forecaster := Forecast(datura.Acquire("forecast-config", datura.APPJSON))
-		signal := datura.Acquire("test", datura.APPJSON).Poke(10, "sample")
+		signal := datura.Acquire("test", datura.APPJSON)
+		signal.Merge("sample", 10)
 		_ = transport.NewFlipFlop(signal, exponential)
-		signal.Poke(12, "sample")
+		signal.Merge("sample", 12)
 		err := transport.NewFlipFlop(signal, exponential)
 
 		So(err, ShouldBeNil)
@@ -185,9 +186,9 @@ func TestForecaster_withAdaptiveSignal(testingTB *testing.T) {
 		level := datura.Peek[float64](signal, "output", "value")
 
 		Convey("When comparing EMA level to the outcome", func() {
-			outcome := datura.Acquire("test", datura.APPJSON).
-				Poke(level, "sample").
-				Poke(12, "paired")
+			outcome := datura.Acquire("test", datura.APPJSON)
+			outcome.Merge("sample", level)
+			outcome.Merge("paired", 12)
 			err := transport.NewFlipFlop(outcome, forecaster)
 
 			So(err, ShouldBeNil)

@@ -107,7 +107,7 @@ func attributeKeyPresent(artifact *datura.Artifact, key string) bool {
 		}
 	}
 
-	payload, err := artifact.DecryptPayloadError()
+	payload := artifact.DecryptPayload()
 
 	if err != nil || len(payload) == 0 {
 		return false

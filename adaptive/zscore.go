@@ -94,15 +94,13 @@ func (surprise *ZScore) Read(payload []byte) (int, error) {
 		}
 
 		if !hasAnchor {
-			body := datura.As[datura.Map[any]](state)
+			rawAnchor := datura.Peek[any](state, "anchor")
 
-			if body != nil {
-				if _, present := body["anchor"]; present {
-					anchor = datura.Peek[float64](state, "anchor")
+			if rawAnchor != nil {
+				anchor = datura.Peek[float64](state, "anchor")
 
-					if !math.IsNaN(anchor) && !math.IsInf(anchor, 0) {
-						hasAnchor = true
-					}
+				if !math.IsNaN(anchor) && !math.IsInf(anchor, 0) {
+					hasAnchor = true
 				}
 			}
 		}

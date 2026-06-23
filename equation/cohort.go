@@ -48,10 +48,15 @@ func (cohort *Cohort) Read(p []byte) (int, error) {
 	}
 
 	inputKeys := EnsureFeatureSchema(state, cohort.artifact, CohortInputKeys)
+
+	if !cohortSchemaReady(inputKeys) || len(Features(state)) < len(CohortInputKeys) {
+		return skipStage(state)
+	}
+
 	outcome := evaluateCohort(state, inputKeys)
 
 	if !outcome.eligible || outcome.strength <= 0 {
-		return rejectStage(state, "equation: invalid stage input")
+		return skipStage(state)
 	}
 
 	return emitOutput(state, p, datura.Map[float64]{
@@ -69,6 +74,30 @@ func (cohort *Cohort) Read(p []byte) (int, error) {
 
 func (cohort *Cohort) Close() error {
 	return nil
+}
+
+func cohortSchemaReady(inputKeys []string) bool {
+	if len(inputKeys) < len(CohortInputKeys) {
+		return false
+	}
+
+	for _, expected := range CohortInputKeys {
+		found := false
+
+		for _, actual := range inputKeys {
+			if actual == expected {
+				found = true
+
+				break
+			}
+		}
+
+		if !found {
+			return false
+		}
+	}
+
+	return true
 }
 
 type cohortOutcome struct {

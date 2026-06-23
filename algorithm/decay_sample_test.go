@@ -2,6 +2,7 @@ package algorithm
 
 import (
 	"fmt"
+	"io"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
@@ -37,6 +38,10 @@ func TestDecaySample_Read(t *testing.T) {
 				WithPayload(frame)
 
 			err := transport.NewFlipFlop(state, pipeline)
+
+			if index == 0 {
+				So(err, ShouldEqual, io.EOF)
+			}
 
 			if index == len(quantities)-1 {
 				So(err, ShouldBeNil)
@@ -104,12 +109,19 @@ func TestDecaySample_ReadRejectsMissingSymbol(t *testing.T) {
 func BenchmarkDecaySample_Read(b *testing.B) {
 	encoder := NewDecaySample(datura.Acquire("decay-sample", datura.APPJSON))
 	bookPayload := []byte(`{"channel":"book","type":"update","data":[{"symbol":"BTC/USD","bids":[{"price":100,"qty":10}],"asks":[{"price":101,"qty":10}]}]}`)
-	frame := make([]byte, 4096)
+	frame := make([]byte, 262144)
 
 	b.ReportAllocs()
 
 	for b.Loop() {
-		_, _ = encoder.Write(bookPayload)
+		state := datura.Acquire("measurement", datura.APPJSON).WithPayload(bookPayload)
+		packed := state.Pack()
+
+		if len(packed) == 0 {
+			b.Fatal("decay_sample: artifact pack failed")
+		}
+
+		_, _ = encoder.Write(packed)
 		_, _ = encoder.Read(frame)
 	}
 }

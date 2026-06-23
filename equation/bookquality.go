@@ -1,6 +1,7 @@
 package equation
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -8,6 +9,8 @@ import (
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/nomagique/probability"
 )
+
+var errNoBookQualityCategory = errors.New("no book quality category matched")
 
 /*
 BookQuality classifies toxic bluff, liquidity vacuum, and hard support.
@@ -86,11 +89,15 @@ func (bookQuality *BookQuality) Read(p []byte) (int, error) {
 	)
 
 	if err != nil {
+		if errors.Is(err, errNoBookQualityCategory) {
+			return emitNeutralBookQuality(state, p, lastPrice)
+		}
+
 		return rejectStage(state, fmt.Sprintf("bookquality: %v", err))
 	}
 
 	if category == 0 || strength <= 0 {
-		return rejectStage(state, "bookquality: no qualifying category")
+		return emitNeutralBookQuality(state, p, lastPrice)
 	}
 
 	if math.IsNaN(strength) || math.IsInf(strength, 0) {
@@ -110,6 +117,18 @@ func (bookQuality *BookQuality) Read(p []byte) (int, error) {
 		"supportScore": supportScore,
 		"strength":     strength,
 		"category":     float64(category),
+		"price":        lastPrice,
+	})
+}
+
+func emitNeutralBookQuality(state *datura.Artifact, payload []byte, lastPrice float64) (int, error) {
+	return emitOutput(state, payload, datura.Map[float64]{
+		"value":        0,
+		"bluffScore":   0,
+		"vacuumScore":  0,
+		"supportScore": 0,
+		"strength":     0,
+		"category":     0,
 		"price":        lastPrice,
 	})
 }
@@ -151,11 +170,7 @@ func classifyBookQuality(
 	}
 
 	if threshold <= 0 {
-		if bidRatio > 0 || askRatio > 0 {
-			return 0, 0, 0, 0, 0, fmt.Errorf("bookquality: fillToCancelThreshold not ready")
-		}
-
-		return 0, 0, 0, 0, 0, fmt.Errorf("bookquality: no qualifying category")
+		return 0, 0, 0, 0, 0, errNoBookQualityCategory
 	}
 
 	bidVacuum := bidRatio > threshold && fillBid > 0
@@ -206,7 +221,7 @@ func classifyBookQuality(
 		return 3, supportScore, 0, 0, supportScore, nil
 	}
 
-	return 0, 0, 0, 0, 0, fmt.Errorf("no book quality category matched")
+	return 0, 0, 0, 0, 0, errNoBookQualityCategory
 }
 
 func toxicBluffEvidence(churnRatio, churnGate float64) (float64, error) {

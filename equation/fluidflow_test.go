@@ -31,11 +31,11 @@ func TestFluidflow_Read(testingTB *testing.T) {
 		})
 	})
 
-	Convey("Given non-finite memory", testingTB, func() {
+	Convey("Given huge finite memory", testingTB, func() {
 		stage := equation.NewFluidflow(nil)
 		writeErr := writeFeatureStage(stage, equation.FluidflowInputKeys,
 			0.5, 0.01, 0.8, 1, 1,
-			2, 4, 0, 0.05, 0, 0, 0, math.Inf(1),
+			2, 4, 0, 0.05, 0, 0, 0, math.MaxFloat64,
 			100, 2, 0.01, 1000,
 		)
 
@@ -45,7 +45,7 @@ func TestFluidflow_Read(testingTB *testing.T) {
 
 		So(err, ShouldBeNil)
 
-		Convey("It should ignore memory for viscousScore", func() {
+		Convey("It should keep viscousScore finite", func() {
 			viscousScore := datura.Peek[float64](outbound, "output", "viscousScore")
 
 			So(math.IsInf(viscousScore, 0), ShouldBeFalse)

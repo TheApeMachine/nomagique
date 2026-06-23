@@ -100,11 +100,7 @@ func (ladder *Ladder) Read(p []byte) (int, error) {
 	intervention, err := table.kernelBackdoorEffect(treatment, bandwidth, controls...)
 
 	if err != nil {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"causal ladder: kernel backdoor failed",
-			err,
-		))
+		return 0, io.EOF
 	}
 
 	raw := intervention
@@ -192,7 +188,7 @@ func (ladder *Ladder) Read(p []byte) (int, error) {
 	state.Poke("output", "root")
 	state.Poke([]string{
 		"value", "association", "intervention", "uplift", "contagion", "condition", "inverted",
-	})
+	}, "inputs")
 	return state.Read(p)
 }
 

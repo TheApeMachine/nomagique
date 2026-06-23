@@ -1,6 +1,7 @@
 package algorithm
 
 import (
+	"io"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
@@ -40,6 +41,10 @@ func TestBookflowSample_Read(t *testing.T) {
 
 			err := transport.NewFlipFlop(state, pipeline)
 
+			if index == 0 {
+				So(err, ShouldEqual, io.EOF)
+			}
+
 			if index == len(frames)-1 {
 				So(err, ShouldBeNil)
 			}
@@ -77,12 +82,19 @@ func TestBookflowSample_ReadRejectsMissingSymbol(t *testing.T) {
 func BenchmarkBookflowSample_Read(b *testing.B) {
 	encoder := NewBookflowSample(datura.Acquire("bookflow-sample", datura.APPJSON))
 	bookPayload := []byte(`{"channel":"book","type":"update","data":[{"symbol":"BTC/USD","bids":[{"price":100,"qty":20}],"asks":[{"price":101,"qty":8}]}]}`)
-	frame := make([]byte, 4096)
+	frame := make([]byte, 262144)
 
 	b.ReportAllocs()
 
 	for b.Loop() {
-		_, _ = encoder.Write(bookPayload)
+		state := datura.Acquire("measurement", datura.APPJSON).WithPayload(bookPayload)
+		packed := state.Pack()
+
+		if len(packed) == 0 {
+			b.Fatal("bookflow_sample: artifact pack failed")
+		}
+
+		_, _ = encoder.Write(packed)
 		_, _ = encoder.Read(frame)
 	}
 }

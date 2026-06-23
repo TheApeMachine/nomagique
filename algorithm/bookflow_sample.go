@@ -1,6 +1,7 @@
 package algorithm
 
 import (
+	"io"
 	"math"
 
 	"github.com/theapemachine/datura"
@@ -90,7 +91,7 @@ func (bookflowSample *BookflowSample) Read(payload []byte) (int, error) {
 	features := bookflowSample.features(window)
 
 	if len(features) == 0 {
-		return 0, nil
+		return 0, io.EOF
 	}
 
 	state.WithScope(symbol)

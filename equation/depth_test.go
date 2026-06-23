@@ -1,6 +1,7 @@
 package equation_test
 
 import (
+	"io"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
@@ -46,6 +47,19 @@ func TestDepth_Read(testingTB *testing.T) {
 		Convey("It should classify extreme scarcity", func() {
 			So(int(datura.Peek[float64](outbound, "output", "category")), ShouldEqual, 1)
 			So(datura.Peek[float64](outbound, "output", "scarcityScore"), ShouldEqual, 1)
+		})
+	})
+
+	Convey("Given an incomplete depth feature batch", testingTB, func() {
+		stage := equation.NewDepth(nil)
+		writeErr := writeFeatureStage(stage, equation.DepthInputKeys, 1000)
+
+		So(writeErr, ShouldBeNil)
+
+		_, err := stage.Read(make([]byte, 4096))
+
+		Convey("It should wait without reporting invalid input", func() {
+			So(err, ShouldEqual, io.EOF)
 		})
 	})
 }

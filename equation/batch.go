@@ -1,6 +1,8 @@
 package equation
 
 import (
+	"io"
+
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 )
@@ -28,6 +30,12 @@ func rejectStage(state *datura.Artifact, message string) (int, error) {
 	state.Release()
 
 	return 0, errnie.Error(errnie.Err(errnie.Validation, message, nil))
+}
+
+func skipStage(state *datura.Artifact) (int, error) {
+	state.Release()
+
+	return 0, io.EOF
 }
 
 func emitOutput(state *datura.Artifact, payload []byte, fields datura.Map[float64]) (int, error) {

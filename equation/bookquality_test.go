@@ -5,7 +5,9 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/datura/transport"
 	"github.com/theapemachine/nomagique/equation"
+	"github.com/theapemachine/nomagique/probability"
 )
 
 func TestBookQuality_Read(testingTB *testing.T) {
@@ -52,12 +54,89 @@ func TestBookQuality_Read(testingTB *testing.T) {
 			So(datura.Peek[float64](outbound, "output", "value"), ShouldEqual, 1)
 		})
 	})
+
+	Convey("Given balanced depth without category evidence", testingTB, func() {
+		stage := transport.NewPipeline(
+			equation.NewBookQuality(nil),
+			probability.NewClassifier(
+				datura.Acquire("toxicity-classifier", datura.APPJSON).WithAttributes(datura.Map[any]{
+					"inputs": []string{"bluffScore", "vacuumScore", "supportScore"},
+				}),
+			),
+		)
+		writeErr := writeFeatureStage(stage, equation.BookQualityInputKeys,
+			0, 0, 0, 0,
+			80, 80,
+			0, 0,
+			0.15, 0, 0, 1,
+			100,
+		)
+
+		So(writeErr, ShouldBeNil)
+
+		outbound, err := readStageOutput(stage)
+
+		So(err, ShouldBeNil)
+
+		Convey("It should emit uniform neutral confidence instead of rejecting", func() {
+			So(datura.Peek[float64](outbound, "output", "confidence"), ShouldAlmostEqual, 1.0/3.0)
+			So(datura.Peek[float64](outbound, "output", "strength"), ShouldEqual, 0)
+		})
+	})
+
+	Convey("Given cancel/fill evidence before the adaptive threshold is ready", testingTB, func() {
+		stage := transport.NewPipeline(
+			equation.NewBookQuality(nil),
+			probability.NewClassifier(
+				datura.Acquire("toxicity-classifier", datura.APPJSON).WithAttributes(datura.Map[any]{
+					"inputs": []string{"bluffScore", "vacuumScore", "supportScore"},
+				}),
+			),
+		)
+		writeErr := writeFeatureStage(stage, equation.BookQualityInputKeys,
+			0.3, 0.1, 0, 0,
+			80, 80,
+			0, 0,
+			0, 0, 0, 1,
+			100,
+		)
+
+		So(writeErr, ShouldBeNil)
+
+		outbound, err := readStageOutput(stage)
+
+		So(err, ShouldBeNil)
+
+		Convey("It should remain neutral instead of rejecting threshold warmup", func() {
+			So(datura.Peek[float64](outbound, "output", "confidence"), ShouldAlmostEqual, 1.0/3.0)
+			So(datura.Peek[float64](outbound, "output", "strength"), ShouldEqual, 0)
+		})
+	})
 }
 
 func BenchmarkBookQualityRead(b *testing.B) {
 	stage := equation.NewBookQuality(nil)
 	values := []float64{
 		0.3, 0.1, 0, 0,
+		10, 10,
+		0, 0,
+		0.15, 0, 0, 2,
+		50000,
+	}
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = writeFeatureStage(stage, equation.BookQualityInputKeys, values...)
+		frame := make([]byte, 4096)
+		_, _ = stage.Read(frame)
+	}
+}
+
+func BenchmarkBookQualityReadNeutral(b *testing.B) {
+	stage := equation.NewBookQuality(nil)
+	values := []float64{
+		0, 0, 0, 0,
 		10, 10,
 		0, 0,
 		0.15, 0, 0, 2,

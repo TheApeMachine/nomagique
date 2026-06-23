@@ -2,6 +2,7 @@ package adaptive
 
 import (
 	"context"
+	"io"
 
 	"github.com/cinar/indicator/v2/helper"
 	"github.com/cinar/indicator/v2/trend"
@@ -81,11 +82,7 @@ func (ema *EMA) Read(p []byte) (int, error) {
 	emaValues := helper.ChanToSlice(outputChannel)
 
 	if len(emaValues) == 0 {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"ema: insufficient samples",
-			nil,
-		))
+		return 0, io.EOF
 	}
 
 	latestEMA := emaValues[len(emaValues)-1]

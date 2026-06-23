@@ -1,6 +1,7 @@
 package causal
 
 import (
+	"io"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
@@ -46,7 +47,22 @@ func TestLadder_ReadWarmup(testingTB *testing.T) {
 
 		err := transport.NewFlipFlop(artifact, ladder)
 
-		So(err, ShouldBeNil)
+		So(err, ShouldEqual, io.EOF)
+	})
+}
+
+func TestLadder_ReadKernelMiss(testingTB *testing.T) {
+	Convey("Given a kernel adjustment that cannot be fitted", testingTB, func() {
+		config := causalPipelineConfig(0.8)
+		config.Poke(0.35, "kernelBandwidth")
+		config.Poke(float64(12), "minHistory")
+		config.Poke([]float64{99}, "controlsNormal")
+		ladder := NewLadder(config)
+		artifact := tableInbound(16, 1.0)
+
+		err := transport.NewFlipFlop(artifact, ladder)
+
+		So(err, ShouldEqual, io.EOF)
 	})
 }
 

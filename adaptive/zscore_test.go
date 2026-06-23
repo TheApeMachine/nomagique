@@ -99,3 +99,25 @@ func TestZScoreWrite(t *testing.T) {
 		})
 	})
 }
+
+func BenchmarkZScore_Read(benchmark *testing.B) {
+	surprise := &ZScore{
+		artifact:     datura.Acquire("zscore-config", datura.APPJSON),
+		bootstrapped: true,
+		mean:         20,
+		variance:     1,
+		prev:         30,
+		min:          10,
+		max:          30,
+	}
+
+	benchmark.ResetTimer()
+
+	for benchmark.Loop() {
+		artifact := datura.Acquire("zscore-bench", datura.APPJSON).Poke(40, "sample")
+
+		if err := transport.NewFlipFlop(artifact, surprise); err != nil && err != io.EOF {
+			benchmark.Fatal(err)
+		}
+	}
+}

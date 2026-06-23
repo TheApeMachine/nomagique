@@ -215,30 +215,24 @@ func pokeTransitionMatrix(artifact *datura.Artifact, matrix *TransitionMatrix) {
 }
 
 func transitionProbabilities(state *datura.Artifact) []float64 {
-	body := datura.As[datura.Map[any]](state)
+	raw, err := sonic.Get(state.DecryptPayload(), "output", "probabilities")
 
-	if body == nil {
+	if err != nil || !raw.Exists() {
 		return nil
 	}
 
-	output, ok := body["output"].(map[string]any)
+	values, err := raw.ArrayUseNode()
 
-	if !ok {
+	if err != nil {
 		return nil
 	}
 
-	raw, ok := output["probabilities"].([]any)
+	probabilities := make([]float64, len(values))
 
-	if !ok {
-		return nil
-	}
+	for index, sample := range values {
+		numeric, numericErr := sample.Float64()
 
-	probabilities := make([]float64, len(raw))
-
-	for index, sample := range raw {
-		numeric, numericOK := sample.(float64)
-
-		if !numericOK {
+		if numericErr != nil {
 			return nil
 		}
 
@@ -249,23 +243,17 @@ func transitionProbabilities(state *datura.Artifact) []float64 {
 }
 
 func transitionCategory(state *datura.Artifact) int {
-	body := datura.As[datura.Map[any]](state)
+	category, err := sonic.Get(state.DecryptPayload(), "output", "category")
 
-	if body == nil {
+	if err != nil || !category.Exists() {
 		return 0
 	}
 
-	output, ok := body["output"].(map[string]any)
+	value, err := category.Float64()
 
-	if !ok {
+	if err != nil {
 		return 0
 	}
 
-	numeric, ok := output["category"].(float64)
-
-	if !ok {
-		return 0
-	}
-
-	return int(numeric)
+	return int(value)
 }

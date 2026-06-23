@@ -1,6 +1,7 @@
 package algorithm
 
 import (
+	"io"
 	"math"
 	"sync"
 	"time"
@@ -183,11 +184,7 @@ func (excitation *Excitation) evaluate(scope string, batch []float64) (Excitatio
 	reading, ok := symbolState.measure(buyTimes, sellTimes, horizon, fitCooldown, touchImbalance)
 
 	if !ok {
-		return ExcitationOutcome{}, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"excitation: fit not ready",
-			nil,
-		))
+		return ExcitationOutcome{}, io.EOF
 	}
 
 	return excitationOutcomeFromReading(reading), nil
@@ -520,6 +517,11 @@ func (symbol *excitationSymbol) rawBaseStep(sample float64) float64 {
 	_, _ = symbol.rawBase.Write(frame)
 	out := make([]byte, 4096)
 	readCount, _ := symbol.rawBase.Read(out)
+
+	if readCount == 0 {
+		return sample
+	}
+
 	outbound := datura.Acquire("excitation-ema-out", datura.Artifact_Type_json)
 	_, _ = outbound.Write(out[:readCount])
 	if outbound.HasEncryptedPayload() {

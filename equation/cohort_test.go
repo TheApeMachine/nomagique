@@ -1,6 +1,7 @@
 package equation_test
 
 import (
+	"io"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
@@ -85,15 +86,18 @@ func TestCohort_Read(testingTB *testing.T) {
 
 			So(writeErr, ShouldBeNil)
 
-			outbound, err := readStageOutput(stage)
-
 			if !testCase.eligible {
-				Convey("It should reject invalid payload", func() {
-					So(err, ShouldNotBeNil)
+				Convey("It should skip invalid payload", func() {
+					frame := make([]byte, 4096)
+					_, err := stage.Read(frame)
+
+					So(err, ShouldEqual, io.EOF)
 				})
 
 				return
 			}
+
+			outbound, err := readStageOutput(stage)
 
 			So(err, ShouldBeNil)
 

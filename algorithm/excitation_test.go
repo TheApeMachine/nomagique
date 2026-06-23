@@ -191,11 +191,12 @@ func BenchmarkExcitationRead(b *testing.B) {
 	excitation := NewExcitation(datura.Acquire("excitation-config-bench", datura.APPJSON))
 	base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
 	samples := excitationBurstSamples(base, 128)
-	inbound := daturaBurstArtifact("ALT/EUR", samples)
 
 	b.ReportAllocs()
 
 	for b.Loop() {
+		inbound := daturaBurstArtifact("ALT/EUR", samples)
 		_ = transport.NewFlipFlop(inbound, excitation)
+		inbound.Release()
 	}
 }

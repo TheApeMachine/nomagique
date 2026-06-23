@@ -57,6 +57,37 @@ func TestLogReturnRead(t *testing.T) {
 	})
 }
 
+func TestLogReturnReadLongReplayDoesNotGrowTraversal(t *testing.T) {
+	Convey("Given a long-lived log-return stage", t, func() {
+		config := logReturnConfig()
+		stage := NewLogReturn(config)
+		defer stage.Close()
+
+		var lastArtifact *datura.Artifact
+
+		for index := range 2500 {
+			artifact := datura.Acquire("log-return-replay-test", datura.APPJSON)
+			artifact.Merge("last", 100.0+float64(index)*0.01)
+
+			err := transport.NewFlipFlop(artifact, stage)
+
+			So(err, ShouldBeNil)
+
+			if lastArtifact != nil {
+				lastArtifact.Release()
+			}
+
+			lastArtifact = artifact
+		}
+
+		defer lastArtifact.Release()
+
+		Convey("It should keep emitting output", func() {
+			So(datura.Peek[float64](lastArtifact, "output", "precursor"), ShouldBeGreaterThan, 0)
+		})
+	})
+}
+
 func BenchmarkLogReturnRead(b *testing.B) {
 	config := logReturnConfig()
 	stage := NewLogReturn(config)

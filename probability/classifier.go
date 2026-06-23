@@ -39,6 +39,8 @@ func (classifier *Classifier) Read(payload []byte) (int, error) {
 		return 0, err
 	}
 
+	state.Inspect("probability", "classifier", "Read()", "p")
+
 	defer state.Release()
 
 	inputs := statistic.ConfigStringSlice(classifier.config, state, "inputs")

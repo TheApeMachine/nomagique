@@ -5,6 +5,7 @@ import (
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/nomagique/statistic"
 )
 
 /*
@@ -12,19 +13,17 @@ Compression scores how far below the running baseline the current sample sits.
 The constructor artifact holds config; Write buffers inbound payload.
 */
 type Compression struct {
-	artifact *datura.Artifact
-	baseline float64
-	ready    bool
+	artifact  *datura.Artifact
+	baselines map[string]float64
 }
 
 /*
 NewCompression returns a compression stage wired from config attributes on the artifact.
 */
 func NewCompression(artifact *datura.Artifact) *Compression {
-	artifact.Inspect("adaptive", "compression", "NewCompression()")
-
 	return &Compression{
-		artifact: artifact,
+		artifact:  artifact,
+		baselines: map[string]float64{},
 	}
 }
 
@@ -35,7 +34,6 @@ func (compression *Compression) Write(p []byte) (int, error) {
 
 func (compression *Compression) Read(payload []byte) (int, error) {
 	state := datura.Acquire("compression-state", datura.APPJSON)
-	state.Inspect("adaptive", "compression", "Read()", "p")
 
 	if _, err := state.Write(compression.artifact.DecryptPayload()); err != nil {
 		return 0, errnie.Error(errnie.Err(
@@ -44,6 +42,8 @@ func (compression *Compression) Read(payload []byte) (int, error) {
 			err,
 		))
 	}
+
+	state.Inspect("adaptive", "compression", "Read()", "p")
 
 	inputKey := datura.Peek[string](compression.artifact, "compression", "input")
 	outputKey := datura.Peek[string](compression.artifact, "compression", "outputKey")
@@ -71,28 +71,28 @@ func (compression *Compression) Read(payload []byte) (int, error) {
 		))
 	}
 
-	if !compression.ready || compression.baseline <= 0 {
-		compression.baseline = sample
-		compression.ready = true
+	seriesKey := statistic.SeriesKey(compression.artifact, state, "compression")
+	baseline := compression.baselines[seriesKey]
 
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"compression: insufficient samples",
-			nil,
-		))
+	if baseline <= 0 {
+		compression.baselines[seriesKey] = sample
+		state.MergeOutput(outputKey, 0.0)
+		state.Poke("output", "root")
+		state.Poke([]string{outputKey}, "inputs")
+
+		return state.Read(payload)
 	}
 
-	if sample > compression.baseline {
-		compression.baseline = sample
+	if sample > baseline {
+		compression.baselines[seriesKey] = sample
+		state.MergeOutput(outputKey, 0.0)
+		state.Poke("output", "root")
+		state.Poke([]string{outputKey}, "inputs")
 
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"compression: sample exceeds baseline",
-			nil,
-		))
+		return state.Read(payload)
 	}
 
-	value := (compression.baseline - sample) / compression.baseline
+	value := (baseline - sample) / baseline
 
 	state.MergeOutput(outputKey, value)
 	state.Poke("output", "root")

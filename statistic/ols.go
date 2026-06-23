@@ -7,7 +7,6 @@ import (
 	"gonum.org/v1/gonum/stat"
 )
 
-
 /*
 BackdoorDenominator validates residual norms during backdoor estimation.
 */

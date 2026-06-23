@@ -33,7 +33,7 @@ func TestCompressionZeroOutput(t *testing.T) {
 
 		err := transport.NewFlipFlop(warmup, compression)
 
-		So(err, ShouldNotBeNil)
+		So(err, ShouldBeNil)
 
 		frame := datura.Acquire("compression-zero-frame", datura.APPJSON)
 		frame.Merge("root", "output")
@@ -52,9 +52,15 @@ func TestCompressionRead(t *testing.T) {
 		_, _ = io.Copy(compression, compressionInput)
 
 		frame := make([]byte, 65536)
-		_, err := compression.Read(frame)
+		readCount, err := compression.Read(frame)
 
-		So(err, ShouldNotBeNil)
+		So(err, ShouldEqual, io.EOF)
+		So(readCount, ShouldBeGreaterThan, 0)
+
+		outbound := datura.Acquire("test-out", datura.APPJSON)
+		_, err = outbound.Write(frame[:readCount])
+		So(err, ShouldBeNil)
+		So(datura.Peek[float64](outbound, "output", "value"), ShouldEqual, 0)
 	})
 
 	Convey("Given a warmed Compression", t, func() {

@@ -14,7 +14,7 @@ The constructor artifact holds config; runtime history lives on the stage instan
 */
 type MeanMedianRatio struct {
 	artifact        *datura.Artifact
-	histories       map[string][]float64
+	histories       map[string][]Observation
 	previousSamples map[string]float64
 	previousDeltas  map[string]float64
 	declines        map[string]float64
@@ -24,11 +24,9 @@ type MeanMedianRatio struct {
 NewMeanMedianRatio returns a mean-over-median ratio stage wired from config attributes on the artifact.
 */
 func NewMeanMedianRatio(artifact *datura.Artifact) *MeanMedianRatio {
-	artifact.Inspect("statistic", "mean-median-ratio", "NewMeanMedianRatio()")
-
 	return &MeanMedianRatio{
 		artifact:        artifact,
-		histories:       map[string][]float64{},
+		histories:       map[string][]Observation{},
 		previousSamples: map[string]float64{},
 		previousDeltas:  map[string]float64{},
 		declines:        map[string]float64{},
@@ -42,11 +40,12 @@ func (meanMedianRatio *MeanMedianRatio) Write(payload []byte) (int, error) {
 
 func (meanMedianRatio *MeanMedianRatio) Read(payload []byte) (int, error) {
 	state := datura.Acquire("mean-median-ratio-state", datura.APPJSON)
-	state.Inspect("statistic", "mean-median-ratio", "Read()", "p")
 
 	if _, err := state.Write(meanMedianRatio.artifact.DecryptPayload()); err != nil {
 		return 0, err
 	}
+
+	state.Inspect("statistic", "mean-median-ratio", "Read()", "p")
 
 	features := SnapshotFeatures(state)
 	stageKey := meanMedianRatio.stageKey()
@@ -74,8 +73,15 @@ func (meanMedianRatio *MeanMedianRatio) Read(payload []byte) (int, error) {
 		))
 	}
 
-	sample = meanMedianRatio.applyTransform(stageKey, sample)
-	meanMedianRatio.trackDecline(stageKey, sample)
+	seriesKey := SeriesKey(meanMedianRatio.artifact, state, stageKey)
+	observed, err := EventTime(meanMedianRatio.artifact, state)
+
+	if err != nil {
+		return 0, err
+	}
+
+	sample = meanMedianRatio.applyTransform(seriesKey, stageKey, sample)
+	meanMedianRatio.trackDecline(seriesKey, stageKey, sample)
 
 	shortHint := int(datura.Peek[float64](meanMedianRatio.artifact, stageKey, "shortWindow"))
 	longHint := int(datura.Peek[float64](meanMedianRatio.artifact, stageKey, "longWindow"))
@@ -89,10 +95,13 @@ func (meanMedianRatio *MeanMedianRatio) Read(payload []byte) (int, error) {
 		))
 	}
 
-	history := meanMedianRatio.histories[stageKey]
-	history = append(history, sample)
+	history, err := AppendObservation(meanMedianRatio.histories[seriesKey], sample, observed)
 
-	shortWindow, longWindow, err := RollingWindows(history, shortHint, longHint)
+	if err != nil {
+		return 0, err
+	}
+
+	shortWindow, longWindow, err := RollingObservationWindows(history, shortHint, longHint)
 
 	if err != nil {
 		return 0, errnie.Error(errnie.Err(
@@ -102,46 +111,21 @@ func (meanMedianRatio *MeanMedianRatio) Read(payload []byte) (int, error) {
 		))
 	}
 
-	requiredSamples, err := TargetLongWindow(history, shortHint, longHint)
-
-	if err != nil {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"mean-median-ratio: unable to resolve target window",
-			err,
-		))
-	}
-
 	if longWindow > 0 && len(history) > longWindow {
 		history = history[len(history)-longWindow:]
 	}
 
-	meanMedianRatio.histories[stageKey] = history
-
-	if shortHint <= 0 && longHint <= 0 && len(history) < requiredSamples {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"mean-median-ratio: insufficient samples",
-			nil,
-		))
-	}
-
-	if longWindow <= 0 || len(history) < longWindow {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"mean-median-ratio: insufficient samples",
-			nil,
-		))
-	}
+	meanMedianRatio.histories[seriesKey] = history
 
 	shortCount := min(shortWindow, len(history))
-	shortSlice := history[len(history)-shortCount:]
+	values := ObservationValues(history)
+	shortSlice := values[len(values)-shortCount:]
 	shortMean := stat.Mean(shortSlice, nil)
 
-	longSlice := history
+	longSlice := values
 
-	if len(history) > shortCount {
-		longSlice = history[:len(history)-shortCount]
+	if len(values) > shortCount {
+		longSlice = values[:len(values)-shortCount]
 	}
 
 	longMedian, ok := MedianOf(longSlice)
@@ -174,7 +158,7 @@ func (meanMedianRatio *MeanMedianRatio) Read(payload []byte) (int, error) {
 	declineOutput := datura.Peek[string](meanMedianRatio.artifact, stageKey, "decline", "output")
 
 	if declineOutput != "" {
-		state.MergeOutput(declineOutput, meanMedianRatio.declines[declineOutput])
+		state.MergeOutput(declineOutput, meanMedianRatio.declines[seriesKey+"/"+declineOutput])
 	}
 
 	features.Restore(state)
@@ -251,16 +235,20 @@ func (meanMedianRatio *MeanMedianRatio) sample(
 	return 0, err
 }
 
-func (meanMedianRatio *MeanMedianRatio) applyTransform(stageKey string, sample float64) float64 {
+func (meanMedianRatio *MeanMedianRatio) applyTransform(
+	seriesKey string,
+	stageKey string,
+	sample float64,
+) float64 {
 	transform := datura.Peek[string](meanMedianRatio.artifact, stageKey, "transform")
 
 	if transform == "" {
 		return sample
 	}
 
-	previousSample := meanMedianRatio.previousSamples[stageKey]
+	previousSample := meanMedianRatio.previousSamples[seriesKey]
 
-	meanMedianRatio.previousSamples[stageKey] = sample
+	meanMedianRatio.previousSamples[seriesKey] = sample
 
 	switch transform {
 	case "delta":
@@ -286,22 +274,26 @@ func (meanMedianRatio *MeanMedianRatio) applyTransform(stageKey string, sample f
 	}
 }
 
-func (meanMedianRatio *MeanMedianRatio) trackDecline(stageKey string, sample float64) {
+func (meanMedianRatio *MeanMedianRatio) trackDecline(
+	seriesKey string,
+	stageKey string,
+	sample float64,
+) {
 	declineOutput := datura.Peek[string](meanMedianRatio.artifact, stageKey, "decline", "output")
 
 	if declineOutput == "" {
 		return
 	}
 
-	previousDelta := meanMedianRatio.previousDeltas[stageKey]
+	previousDelta := meanMedianRatio.previousDeltas[seriesKey]
 	decline := 0.0
 
 	if previousDelta > 0 && sample < previousDelta {
 		decline = (previousDelta - sample) / previousDelta
 	}
 
-	meanMedianRatio.previousDeltas[stageKey] = sample
-	meanMedianRatio.declines[declineOutput] = decline
+	meanMedianRatio.previousDeltas[seriesKey] = sample
+	meanMedianRatio.declines[seriesKey+"/"+declineOutput] = decline
 }
 
 func (meanMedianRatio *MeanMedianRatio) Close() error {

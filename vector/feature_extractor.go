@@ -25,8 +25,6 @@ type FeatureExtractor struct {
 NewFeatureExtractor builds an extractor wired from schema attributes.
 */
 func NewFeatureExtractor(artifact *datura.Artifact) *FeatureExtractor {
-	artifact.Inspect("feature-extractor", "NewFeatureExtractor()")
-
 	return &FeatureExtractor{
 		artifact: artifact,
 		transforms: map[string]func(*datura.Artifact) io.ReadWriteCloser{
@@ -39,11 +37,12 @@ func NewFeatureExtractor(artifact *datura.Artifact) *FeatureExtractor {
 
 func (extractor *FeatureExtractor) Read(payload []byte) (int, error) {
 	state := datura.Acquire("feature-extractor", datura.APPJSON)
-	state.Inspect("feature-extractor", "Read()", "p")
 
 	if _, err := state.Write(extractor.artifact.DecryptPayload()); err != nil {
 		return 0, err
 	}
+
+	state.Inspect("feature-extractor", "Read()", "p")
 
 	role := datura.Peek[string](state, "channel")
 
@@ -118,7 +117,8 @@ func (extractor *FeatureExtractor) Read(payload []byte) (int, error) {
 	state.Poke("features", "root")
 	state.Poke(inputs, "inputs")
 	state.Poke(inputs, "featureInputs")
-	state.Inspect("feature-extractor", "Read()", "features")
+	state.Poke(rootKey, "sourceRoot")
+	state.Poke(inputs, "sourceInputs")
 
 	return state.Read(payload)
 }

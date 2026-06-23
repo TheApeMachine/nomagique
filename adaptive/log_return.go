@@ -5,6 +5,7 @@ import (
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/nomagique/statistic"
 )
 
 /*
@@ -13,7 +14,8 @@ The constructor artifact holds config; Write buffers inbound payload.
 */
 type LogReturn struct {
 	artifact  *datura.Artifact
-	samples   []float64
+	samples   map[string][]statistic.Observation
+	stageKey  string
 	inputKey  string
 	outputKey string
 	returnLag int
@@ -23,10 +25,9 @@ type LogReturn struct {
 NewLogReturn returns a log-return stage wired from config attributes on the artifact.
 */
 func NewLogReturn(artifact *datura.Artifact) *LogReturn {
-	artifact.Inspect("adaptive", "log-return", "NewLogReturn()")
-
 	stage := &LogReturn{
 		artifact: artifact,
+		samples:  map[string][]statistic.Observation{},
 	}
 
 	stageKey := datura.Peek[string](artifact, "stage")
@@ -45,6 +46,7 @@ func NewLogReturn(artifact *datura.Artifact) *LogReturn {
 	}
 
 	if stageKey != "" {
+		stage.stageKey = stageKey
 		stage.inputKey = datura.Peek[string](artifact, stageKey, "input")
 		stage.outputKey = datura.Peek[string](artifact, stageKey, "outputKey")
 		stage.returnLag = int(datura.Peek[float64](artifact, stageKey, "returnLag"))
@@ -68,7 +70,6 @@ func (logReturn *LogReturn) Write(p []byte) (int, error) {
 
 func (logReturn *LogReturn) Read(payload []byte) (int, error) {
 	state := datura.Acquire("log-return-state", datura.APPJSON)
-	state.Inspect("adaptive", "log-return", "Read()", "p")
 
 	if _, err := state.Write(logReturn.artifact.DecryptPayload()); err != nil {
 		return 0, errnie.Error(errnie.Err(
@@ -77,6 +78,8 @@ func (logReturn *LogReturn) Read(payload []byte) (int, error) {
 			err,
 		))
 	}
+
+	state.Inspect("adaptive", "log-return", "Read()", "p")
 
 	outputKey := logReturn.outputKey
 	inputKey := logReturn.inputKey
@@ -110,19 +113,47 @@ func (logReturn *LogReturn) Read(payload []byte) (int, error) {
 		))
 	}
 
-	returnLag := logReturn.returnLag
+	seriesKey := statistic.SeriesKey(logReturn.artifact, state, logReturn.stageKey)
+	observed, err := statistic.EventTime(logReturn.artifact, state)
 
-	logReturn.samples = append(logReturn.samples, sample)
+	if err != nil {
+		return 0, err
+	}
 
-	if len(logReturn.samples) <= returnLag {
+	history, err := statistic.AppendObservation(logReturn.samples[seriesKey], sample, observed)
+
+	if err != nil {
+		return 0, err
+	}
+
+	longHint := int(datura.Peek[float64](logReturn.artifact, logReturn.stageKey, "longWindow"))
+	returnLag, err := statistic.ReturnLagObservations(history, logReturn.returnLag, longHint)
+
+	if err != nil {
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
-			"log-return: insufficient samples",
-			nil,
+			"log-return: unable to resolve return lag",
+			err,
 		))
 	}
 
-	anchorSample := logReturn.samples[len(logReturn.samples)-returnLag-1]
+	_, longWindow, err := statistic.RollingObservationWindows(history, 0, longHint)
+
+	if err != nil {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"log-return: unable to resolve long window",
+			err,
+		))
+	}
+
+	anchorIndex := len(history) - returnLag - 1
+
+	if anchorIndex < 0 {
+		anchorIndex = 0
+	}
+
+	anchorSample := history[anchorIndex].Value
 
 	if anchorSample <= 0 || math.IsNaN(anchorSample) || math.IsInf(anchorSample, 0) {
 		return 0, errnie.Error(errnie.Err(
@@ -133,6 +164,7 @@ func (logReturn *LogReturn) Read(payload []byte) (int, error) {
 	}
 
 	logReturnValue := math.Log(sample / anchorSample)
+	logReturn.samples[seriesKey] = statistic.TrimObservations(history, longWindow+returnLag)
 
 	state.MergeOutput(outputKey, logReturnValue)
 	state.Poke("output", "root")

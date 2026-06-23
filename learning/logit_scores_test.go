@@ -243,6 +243,62 @@ func TestLogitScoresRead(testingTB *testing.T) {
 
 		artifact.Release()
 	})
+	Convey("Given median-centered lift with elevated precursor", testingTB, func() {
+		config := logitScoresConfig()
+		config.Poke(0.0, "rvol", "scale")
+		config.Poke(0.0, "precursor", "scale")
+		config.Poke(0.0, "compression", "scale")
+		config.Poke("median", "rvol", "scaleMode")
+		config.Poke("median", "precursor", "scaleMode")
+		config.Poke("median", "compression", "scaleMode")
+		config.Poke("median", "rvol", "centerMode")
+
+		stage := NewLogitScores(config)
+		var artifact *datura.Artifact
+
+		for _, sample := range []struct {
+			rvol      float64
+			precursor float64
+			ignition  float64
+		}{
+			{1.0, 0.1, math.Sqrt(1.0 * 0.1)},
+			{1.01, 10.0, math.Sqrt(1.01 * 10.0)},
+		} {
+			if artifact != nil {
+				artifact.Release()
+			}
+
+			artifact = datura.Acquire("logit-scores-centered-test", datura.APPJSON)
+			artifact.Poke("output", "root")
+			artifact.Poke(
+				[]string{
+					"rvol", "precursor", "compression",
+					"ignition", "value", "rvolDecline",
+				},
+				"inputs",
+			)
+			artifact.MergeOutput("rvol", sample.rvol)
+			artifact.MergeOutput("precursor", sample.precursor)
+			artifact.MergeOutput("compression", 0.0)
+			artifact.MergeOutput("value", 0.0)
+			artifact.MergeOutput("ignition", sample.ignition)
+			artifact.MergeOutput("rvolDecline", 0.0)
+
+			err := transport.NewFlipFlop(artifact, stage)
+
+			So(err, ShouldBeNil)
+		}
+
+		defer artifact.Release()
+
+		Convey("It should not let normal lift turn precursor into ignition", func() {
+			So(
+				datura.Peek[float64](artifact, "output", "trend"),
+				ShouldBeGreaterThan,
+				datura.Peek[float64](artifact, "output", "ignition"),
+			)
+		})
+	})
 }
 
 func BenchmarkLogitScoresRead(testingTB *testing.B) {
@@ -252,11 +308,15 @@ func BenchmarkLogitScoresRead(testingTB *testing.B) {
 	artifact := datura.Acquire("logit-scores-bench-test", datura.APPJSON)
 	artifact.Poke("output", "root")
 	artifact.Poke([]string{"rvol", "precursor", "compression", "ignition", "value", "rvolDecline"}, "inputs")
-	artifact.MergeOutput("rvol", 1.2)
-	artifact.MergeOutput("precursor", 0.05)
-	artifact.MergeOutput("value", 0.5)
-	artifact.MergeOutput("ignition", 0.1)
-	artifact.MergeOutput("rvolDecline", 0.5)
+	artifact.WithPayload(datura.Map[any]{
+		"output": datura.Map[any]{
+			"rvol":        1.2,
+			"precursor":   0.05,
+			"value":       0.5,
+			"ignition":    0.1,
+			"rvolDecline": 0.5,
+		},
+	}.Marshal())
 
 	for testingTB.Loop() {
 		_ = transport.NewFlipFlop(artifact, stage)

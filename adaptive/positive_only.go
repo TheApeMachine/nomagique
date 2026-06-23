@@ -19,8 +19,6 @@ type PositiveOnly struct {
 NewPositiveOnly returns a positive-only gate wired from config attributes on the artifact.
 */
 func NewPositiveOnly(artifact *datura.Artifact) *PositiveOnly {
-	artifact.Inspect("adaptive", "positive-only", "NewPositiveOnly()")
-
 	return &PositiveOnly{
 		artifact: artifact,
 	}
@@ -33,7 +31,6 @@ func (positiveOnly *PositiveOnly) Write(p []byte) (int, error) {
 
 func (positiveOnly *PositiveOnly) Read(payload []byte) (int, error) {
 	state := datura.Acquire("positive-only-state", datura.APPJSON)
-	state.Inspect("adaptive", "positive-only", "Read()", "p")
 
 	if _, err := state.Write(positiveOnly.artifact.DecryptPayload()); err != nil {
 		return 0, errnie.Error(errnie.Err(
@@ -42,6 +39,8 @@ func (positiveOnly *PositiveOnly) Read(payload []byte) (int, error) {
 			err,
 		))
 	}
+
+	state.Inspect("adaptive", "positive-only", "Read()", "p")
 
 	stageKey := datura.Peek[string](positiveOnly.artifact, "stage")
 

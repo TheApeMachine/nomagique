@@ -33,9 +33,7 @@ func TestLogReturnRead(t *testing.T) {
 
 			err := transport.NewFlipFlop(artifact, stage)
 
-			if sample == 100 {
-				So(err, ShouldNotBeNil)
-			}
+			So(err, ShouldBeNil)
 
 			if lastArtifact != nil {
 				lastArtifact.Release()
@@ -62,17 +60,20 @@ func TestLogReturnRead(t *testing.T) {
 func BenchmarkLogReturnRead(b *testing.B) {
 	config := logReturnConfig()
 	stage := NewLogReturn(config)
-	artifact := datura.Acquire("log-return-bench-test", datura.APPJSON)
 
 	for _, sample := range []float64{100, 101, 102} {
-		artifact.Merge("sample", sample)
+		artifact := datura.Acquire("log-return-bench-test", datura.APPJSON)
+		artifact.WithPayload(datura.Map[any]{"last": sample}.Marshal())
 		_ = transport.NewFlipFlop(artifact, stage)
+		artifact.Release()
 	}
 
 	b.ReportAllocs()
 
 	for b.Loop() {
-		artifact.Merge("sample", 103.0)
-		_, _ = stage.Read(make([]byte, 65536))
+		artifact := datura.Acquire("log-return-bench-test", datura.APPJSON)
+		artifact.WithPayload(datura.Map[any]{"last": 103.0}.Marshal())
+		_ = transport.NewFlipFlop(artifact, stage)
+		artifact.Release()
 	}
 }

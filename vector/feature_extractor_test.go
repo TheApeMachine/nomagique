@@ -104,6 +104,12 @@ func TestFeatureExtractor_Read(t *testing.T) {
 					ShouldResemble,
 					[]string{"volume", "vwap", "last", "bid", "ask", "change_pct"},
 				)
+				So(datura.Peek[string](decoded, "sourceRoot"), ShouldEqual, "data")
+				So(
+					datura.Peek[[]string](decoded, "sourceInputs"),
+					ShouldResemble,
+					[]string{"volume", "vwap", "last", "bid", "ask", "change_pct"},
+				)
 				So(
 					datura.Peek[[]float64](decoded, "features"),
 					ShouldResemble,

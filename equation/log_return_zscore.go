@@ -21,8 +21,6 @@ type LogReturnZScore struct {
 NewLogReturnZScore composes the precursor mini-pipeline from config attributes.
 */
 func NewLogReturnZScore(config *datura.Artifact) io.ReadWriteCloser {
-	config.Inspect("equation", "log-return-zscore", "NewLogReturnZScore()")
-
 	return &LogReturnZScore{
 		inner: transport.NewPipeline(
 			statistic.NewPriceRing(config),

@@ -22,13 +22,13 @@ func TestRollingZScoreRead(t *testing.T) {
 
 			err := transport.NewFlipFlop(artifact, stage)
 
-			if index < 2 {
-				So(err, ShouldNotBeNil)
+			So(err, ShouldBeNil)
+
+			if index == 0 {
+				So(datura.Peek[float64](artifact, "output", "value"), ShouldEqual, 0)
 			}
 
 			if index >= 2 {
-				So(err, ShouldBeNil)
-
 				prior := samples[:index]
 				meanSample := stat.Mean(prior, nil)
 				stdSample := stat.StdDev(prior, nil)
@@ -72,20 +72,14 @@ func TestRollingZScoreRead(t *testing.T) {
 		stage := NewRollingZScore(config)
 		var lastArtifact *datura.Artifact
 
-		for index := range 6 {
+		for range 6 {
 			artifact := datura.Acquire("rolling-zscore-flat-test", datura.APPJSON)
 			artifact.Merge("sample", 0.0)
 
 			err := transport.NewFlipFlop(artifact, stage)
 
-			if index < 2 {
-				So(err, ShouldNotBeNil)
-			}
-
-			if index >= 2 {
-				So(err, ShouldBeNil)
-				So(datura.Peek[float64](artifact, "output", "value"), ShouldAlmostEqual, 0, 1e-9)
-			}
+			So(err, ShouldBeNil)
+			So(datura.Peek[float64](artifact, "output", "value"), ShouldAlmostEqual, 0, 1e-9)
 
 			if lastArtifact != nil {
 				lastArtifact.Release()
@@ -114,7 +108,13 @@ func TestRollingZScoreRead(t *testing.T) {
 		defer followThrough.Release()
 
 		Convey("It should advance retained samples through zero-variance priors", func() {
-			So(len(stage.samples), ShouldEqual, 8)
+			sampleCount := 0
+
+			for _, samples := range stage.samples {
+				sampleCount += len(samples)
+			}
+
+			So(sampleCount, ShouldEqual, 8)
 			So(err, ShouldBeNil)
 			So(datura.Peek[float64](followThrough, "output", "value"), ShouldNotEqual, 0)
 		})
@@ -129,7 +129,7 @@ func BenchmarkRollingZScoreRead(b *testing.B) {
 
 	for b.Loop() {
 		artifact := datura.Acquire("rolling-zscore-bench-test", datura.APPJSON)
-		artifact.Merge("sample", 0.03)
+		artifact.WithPayload(datura.Map[any]{"sample": 0.03}.Marshal())
 		_ = transport.NewFlipFlop(artifact, stage)
 		artifact.Release()
 	}

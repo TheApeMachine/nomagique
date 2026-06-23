@@ -53,11 +53,17 @@ func TestPriceRingRead(t *testing.T) {
 func BenchmarkPriceRingRead(b *testing.B) {
 	config := precursorConfig()
 	stage := NewPriceRing(config)
-	artifact := precursorState(101)
 
 	b.ReportAllocs()
 
 	for b.Loop() {
+		artifact := datura.Acquire("precursor-state", datura.APPJSON)
+		artifact.Poke("features", "root")
+		artifact.Poke([]string{"volume", "last"}, "inputs")
+		artifact.WithPayload(datura.Map[any]{
+			"features": []float64{100, 101},
+		}.Marshal())
 		_ = transport.NewFlipFlop(artifact, stage)
+		artifact.Release()
 	}
 }

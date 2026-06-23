@@ -13,18 +13,16 @@ The constructor artifact holds config; runtime history lives on the stage instan
 */
 type PriceRing struct {
 	artifact     *datura.Artifact
-	priceSamples map[string][]float64
+	priceSamples map[string][]Observation
 }
 
 /*
 NewPriceRing returns a sample ring stage wired from config attributes on the artifact.
 */
 func NewPriceRing(artifact *datura.Artifact) *PriceRing {
-	artifact.Inspect("statistic", "price-ring", "NewPriceRing()")
-
 	return &PriceRing{
 		artifact:     artifact,
-		priceSamples: map[string][]float64{},
+		priceSamples: map[string][]Observation{},
 	}
 }
 
@@ -35,11 +33,12 @@ func (priceRing *PriceRing) Write(payload []byte) (int, error) {
 
 func (priceRing *PriceRing) Read(payload []byte) (int, error) {
 	state := datura.Acquire("price-ring-state", datura.APPJSON)
-	state.Inspect("statistic", "price-ring", "Read()", "p")
 
 	if _, err := state.Write(priceRing.artifact.DecryptPayload()); err != nil {
 		return 0, err
 	}
+
+	state.Inspect("statistic", "price-ring", "Read()", "p")
 
 	stageKey := priceRing.stageKey()
 
@@ -84,9 +83,15 @@ func (priceRing *PriceRing) Read(payload []byte) (int, error) {
 	}
 
 	longHint := int(datura.Peek[float64](priceRing.artifact, stageKey, "longWindow"))
+	seriesKey := SeriesKey(priceRing.artifact, state, stageKey)
+	observed, err := EventTime(priceRing.artifact, state)
 
-	returnLag, err := ReturnLag(
-		priceRing.priceSamples[stageKey],
+	if err != nil {
+		return 0, err
+	}
+
+	returnLag, err := ReturnLagObservations(
+		priceRing.priceSamples[seriesKey],
 		int(datura.Peek[float64](priceRing.artifact, stageKey, "returnLag")),
 		longHint,
 	)
@@ -99,10 +104,13 @@ func (priceRing *PriceRing) Read(payload []byte) (int, error) {
 		))
 	}
 
-	samples := priceRing.priceSamples[stageKey]
-	samples = append(samples, sample)
+	samples, err := AppendObservation(priceRing.priceSamples[seriesKey], sample, observed)
 
-	_, longWindow, err := RollingWindows(samples, 0, longHint)
+	if err != nil {
+		return 0, err
+	}
+
+	_, longWindow, err := RollingObservationWindows(samples, 0, longHint)
 
 	if err != nil {
 		return 0, errnie.Error(errnie.Err(
@@ -116,7 +124,7 @@ func (priceRing *PriceRing) Read(payload []byte) (int, error) {
 		samples = samples[len(samples)-longWindow-returnLag:]
 	}
 
-	priceRing.priceSamples[stageKey] = samples
+	priceRing.priceSamples[seriesKey] = samples
 	state.MergeOutput(sourceKey, sample)
 	state.Poke("output", "root")
 	state.Poke([]string{sourceKey}, "inputs")

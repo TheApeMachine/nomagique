@@ -118,10 +118,11 @@ func balancedTermWeights(
 	total := 0.0
 
 	for _, featureKey := range terms {
-		scale, err := positiveScale(scales[featureKey], featureKey)
+		scale := scales[featureKey]
 
-		if err != nil {
-			return nil, err
+		if scale <= 0 || math.IsNaN(scale) || math.IsInf(scale, 0) {
+			rawWeights[featureKey] = 0
+			continue
 		}
 
 		rawWeights[featureKey] = 1.0 / scale
@@ -129,9 +130,7 @@ func balancedTermWeights(
 	}
 
 	if total <= 0 {
-		return nil, errnie.Error(fmt.Errorf(
-			"learning: balancedTermWeights total weight must be positive",
-		))
+		return rawWeights, nil
 	}
 
 	weights := make(map[string]float64, len(terms))
@@ -235,6 +234,10 @@ func (weights *ClassifierWeights) clamp() error {
 		return err
 	}
 
+	if ceiling <= 0 {
+		return nil
+	}
+
 	for outputKey, featureWeights := range weights.termWeights {
 		for featureKey, weight := range featureWeights {
 			weights.termWeights[outputKey][featureKey] = clamp(weight, floor, ceiling)
@@ -258,11 +261,7 @@ func weightBounds(scales map[string]float64) (float64, float64, error) {
 	}
 
 	if minScale == math.MaxFloat64 || maxScale <= 0 {
-		return 0, 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"classifier-weights: scales must contain positive finite values",
-			nil,
-		))
+		return 0, 0, nil
 	}
 
 	spreadRatio := maxScale / minScale

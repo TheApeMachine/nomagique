@@ -14,18 +14,16 @@ The constructor artifact holds config; Write buffers inbound wire on its payload
 */
 type RollingZScore struct {
 	artifact *datura.Artifact
-	samples  []float64
+	samples  map[string][]Observation
 }
 
 /*
 NewRollingZScore returns a rolling z-score stage wired from config attributes on the artifact.
 */
 func NewRollingZScore(artifact *datura.Artifact) *RollingZScore {
-	artifact.Inspect("statistic", "rolling-zscore", "NewRollingZScore()")
-
 	return &RollingZScore{
 		artifact: artifact,
-		samples:  []float64{},
+		samples:  map[string][]Observation{},
 	}
 }
 
@@ -36,11 +34,12 @@ func (rollingZScore *RollingZScore) Write(payload []byte) (int, error) {
 
 func (rollingZScore *RollingZScore) Read(payload []byte) (int, error) {
 	state := datura.Acquire("rolling-zscore-state", datura.APPJSON)
-	state.Inspect("statistic", "rolling-zscore", "Read()", "p")
 
 	if _, err := state.Write(rollingZScore.artifact.DecryptPayload()); err != nil {
 		return 0, err
 	}
+
+	state.Inspect("statistic", "rolling-zscore", "Read()", "p")
 
 	root := datura.Peek[string](state, "root")
 	inputs := datura.Peek[[]string](state, "inputs")
@@ -83,41 +82,6 @@ func (rollingZScore *RollingZScore) Read(payload []byte) (int, error) {
 		))
 	}
 
-	prior := rollingZScore.samples
-
-	if len(prior) < 2 {
-		samples := append(prior, sample)
-		longHint := 0
-
-		if stageKey != "" {
-			longHint = int(datura.Peek[float64](rollingZScore.artifact, stageKey, "longWindow"))
-		}
-
-		_, longWindow, err := RollingWindows(samples, 0, longHint)
-
-		if err != nil {
-			return 0, errnie.Error(errnie.Err(
-				errnie.Validation,
-				"rolling-zscore: unable to resolve long window",
-				err,
-			))
-		}
-
-		if longWindow > 0 && len(samples) > longWindow {
-			samples = samples[len(samples)-longWindow:]
-		}
-
-		rollingZScore.samples = samples
-
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"rolling-zscore: insufficient prior samples",
-			nil,
-		))
-	}
-
-	meanSample := stat.Mean(prior, nil)
-	stdSample := stat.StdDev(prior, nil)
 	longHint := 0
 
 	if stageKey != "" {
@@ -125,41 +89,62 @@ func (rollingZScore *RollingZScore) Read(payload []byte) (int, error) {
 	}
 
 	var score float64
+	seriesKey := SeriesKey(rollingZScore.artifact, state, stageKey)
+	observed, err := EventTime(rollingZScore.artifact, state)
 
-	if stdSample <= 0 {
-		meanAbsoluteDeviation := 0.0
+	if err != nil {
+		return 0, err
+	}
 
-		for _, priorSample := range prior {
-			meanAbsoluteDeviation += math.Abs(priorSample - meanSample)
-		}
+	history, err := AppendObservation(rollingZScore.samples[seriesKey], sample, observed)
 
-		meanAbsoluteDeviation /= float64(len(prior))
+	if err != nil {
+		return 0, err
+	}
 
-		delta := sample - meanSample
-		scale := meanAbsoluteDeviation
+	prior := ObservationValues(history[:len(history)-1])
 
-		if scale <= 0 {
-			if delta == 0 {
-				score = 0
+	if len(prior) == 0 {
+		score = 0
+	}
+
+	if len(prior) > 0 {
+		meanSample := stat.Mean(prior, nil)
+		stdSample := stat.StdDev(prior, nil)
+
+		if stdSample <= 0 {
+			meanAbsoluteDeviation := 0.0
+
+			for _, priorSample := range prior {
+				meanAbsoluteDeviation += math.Abs(priorSample - meanSample)
 			}
 
-			if delta != 0 {
-				score = delta / math.Abs(delta)
+			meanAbsoluteDeviation /= float64(len(prior))
+
+			delta := sample - meanSample
+			scale := meanAbsoluteDeviation
+
+			if scale <= 0 {
+				if delta == 0 {
+					score = 0
+				}
+
+				if delta != 0 {
+					score = delta / math.Abs(delta)
+				}
+			}
+
+			if scale > 0 {
+				score = delta / scale
 			}
 		}
 
-		if scale > 0 {
-			score = delta / scale
+		if stdSample > 0 {
+			score = (sample - meanSample) / stdSample
 		}
 	}
 
-	if stdSample > 0 {
-		score = (sample - meanSample) / stdSample
-	}
-
-	samples := append(prior, sample)
-
-	_, longWindow, err := RollingWindows(samples, 0, longHint)
+	_, longWindow, err := RollingObservationWindows(history, 0, longHint)
 
 	if err != nil {
 		return 0, errnie.Error(errnie.Err(
@@ -169,11 +154,7 @@ func (rollingZScore *RollingZScore) Read(payload []byte) (int, error) {
 		))
 	}
 
-	if longWindow > 0 && len(samples) > longWindow {
-		samples = samples[len(samples)-longWindow:]
-	}
-
-	rollingZScore.samples = samples
+	rollingZScore.samples[seriesKey] = TrimObservations(history, longWindow)
 	state.MergeOutput(outputKey, score)
 	state.Poke("output", "root")
 	state.Poke([]string{outputKey}, "inputs")

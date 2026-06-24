@@ -64,8 +64,18 @@ func (rollingZScore *RollingZScore) Read(payload []byte) (int, error) {
 		))
 	}
 
-	configInput := datura.Peek[string](rollingZScore.artifact, "input")
-	outputKey := datura.Peek[string](rollingZScore.artifact, "outputKey")
+	stageKey := datura.Peek[string](rollingZScore.artifact, "stage")
+
+	if stageKey == "" {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"rolling-zscore: stage required",
+			nil,
+		))
+	}
+
+	configInput := datura.Peek[string](rollingZScore.artifact, stageKey, "input")
+	outputKey := datura.Peek[string](rollingZScore.artifact, stageKey, "outputKey")
 
 	if configInput == "" {
 		return 0, errnie.Error(errnie.Err(
@@ -83,11 +93,17 @@ func (rollingZScore *RollingZScore) Read(payload []byte) (int, error) {
 		))
 	}
 
+	sampleKey := configInput
+
+	if rootKey == "output" {
+		sampleKey = outputKey
+	}
+
 	var sample float64
 	found := false
 
 	for index, input := range inputs {
-		if input != configInput {
+		if input != sampleKey {
 			continue
 		}
 
@@ -128,7 +144,7 @@ func (rollingZScore *RollingZScore) Read(payload []byte) (int, error) {
 		))
 	}
 
-	seriesKey := datura.Peek[string](rollingZScore.artifact, "seriesKey")
+	seriesKey := datura.Peek[string](rollingZScore.artifact, stageKey, "seriesKey")
 
 	if seriesKey == "" {
 		return 0, errnie.Error(errnie.Err(
@@ -170,7 +186,7 @@ func (rollingZScore *RollingZScore) Read(payload []byte) (int, error) {
 		prior[index] = point.value
 	}
 
-	var score float64
+	rollingZScore.samples[seriesKey] = history
 
 	if len(prior) == 0 {
 		return 0, errnie.Error(errnie.Err(
@@ -180,10 +196,12 @@ func (rollingZScore *RollingZScore) Read(payload []byte) (int, error) {
 		))
 	}
 
+	var score float64
+
 	meanSample := stat.Mean(prior, nil)
 	stdSample := stat.StdDev(prior, nil)
 
-	if stdSample <= 0 {
+	if math.IsNaN(stdSample) || stdSample <= 0 {
 		meanAbsoluteDeviation := 0.0
 
 		for _, priorSample := range prior {
@@ -214,7 +232,6 @@ func (rollingZScore *RollingZScore) Read(payload []byte) (int, error) {
 		score = (sample - meanSample) / stdSample
 	}
 
-	rollingZScore.samples[seriesKey] = history
 	state.MergeOutput(outputKey, score)
 	state.Poke("output", "root")
 	state.Poke([]string{outputKey}, "inputs")

@@ -251,11 +251,19 @@ func (rolling *RollingWindow) Resolve(history []float64) (shortWindow, longWindo
 	}
 
 	wire.Release()
-	buffer := make([]byte, max(len(packed)*2, len(packed)+1))
+	bufferSize := max(len(packed)*2, len(packed)+1)
+	buffer := make([]byte, bufferSize)
 	readCount, readErr := stage.Read(buffer)
+
+	for readErr == io.ErrShortBuffer {
+		bufferSize *= 2
+		buffer = make([]byte, bufferSize)
+		readCount, readErr = stage.Read(buffer)
+	}
+
 	config.Release()
 
-	if readErr != nil && readErr != io.ErrShortBuffer && readErr != io.EOF {
+	if readErr != nil && readErr != io.EOF {
 		return 0, 0, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"windows bridge: read failed",

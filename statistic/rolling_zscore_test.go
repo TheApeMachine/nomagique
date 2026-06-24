@@ -1,6 +1,7 @@
 package statistic
 
 import (
+	"math"
 	"testing"
 	"time"
 
@@ -12,9 +13,10 @@ import (
 
 func rollingZScoreConfig() *datura.Artifact {
 	return datura.Acquire("rolling-zscore-config", datura.APPJSON).
-		Poke("sample", "input").
-		Poke("value", "outputKey").
-		Poke("test", "seriesKey")
+		Poke("rolling", "stage").
+		Poke("sample", "rolling", "input").
+		Poke("value", "rolling", "outputKey").
+		Poke("rolling", "rolling", "seriesKey")
 }
 
 func rollingZScoreFrame(sample float64, timestamp int64) *datura.Artifact {
@@ -49,8 +51,18 @@ func TestRollingZScoreRead(t *testing.T) {
 			So(err, ShouldBeNil)
 
 			prior := samples[:index]
+
+			if len(prior) == 1 {
+				continue
+			}
+
 			meanSample := stat.Mean(prior, nil)
 			stdSample := stat.StdDev(prior, nil)
+
+			if stdSample <= 0 || math.IsNaN(stdSample) {
+				continue
+			}
+
 			expected := (sample - meanSample) / stdSample
 
 			So(

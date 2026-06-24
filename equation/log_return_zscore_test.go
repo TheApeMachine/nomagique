@@ -19,6 +19,7 @@ func TestLogReturnZScoreRead(t *testing.T) {
 				"longWindow":   5.0,
 				"positiveOnly": 1.0,
 				"outputKey":    "precursor",
+				"seriesKey":    "precursor",
 			}, "precursor")
 
 		stage := NewLogReturnZScore(config)

@@ -327,8 +327,15 @@ func (gate *GateQuantile) observe(sample float64, percentileOverride float64) fl
 		return 0
 	}
 
-	buffer := make([]byte, max(len(packed)*2, len(packed)+1))
+	bufferSize := max(len(packed)*2, len(packed)+1)
+	buffer := make([]byte, bufferSize)
 	readCount, err := gate.Read(buffer)
+
+	for err == io.ErrShortBuffer {
+		bufferSize *= 2
+		buffer = make([]byte, bufferSize)
+		readCount, err = gate.Read(buffer)
+	}
 
 	if err != nil && err != io.EOF && err != io.ErrShortBuffer {
 		return 0

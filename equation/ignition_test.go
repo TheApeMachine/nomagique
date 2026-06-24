@@ -44,6 +44,7 @@ func ignitionReplayConfig() *datura.Artifact {
 			"longWindow":   5.0,
 			"positiveOnly": 1.0,
 			"outputKey":    "precursor",
+			"seriesKey":    "precursor",
 			"scale":        0.0,
 			"scaleMode":    "median",
 			"leftKey":      "rvol",

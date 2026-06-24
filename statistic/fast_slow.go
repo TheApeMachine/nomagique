@@ -160,10 +160,17 @@ func (fastSlow *FastSlow) Read(payload []byte) (int, error) {
 	}
 
 	windowsConfig.Release()
-	buffer := make([]byte, max(len(packed)*2, len(packed)+1))
+	bufferSize := max(len(packed)*2, len(packed)+1)
+	buffer := make([]byte, bufferSize)
 	readCount, err := windowsStage.Read(buffer)
 
-	if err != nil && err != io.ErrShortBuffer && err != io.EOF {
+	for err == io.ErrShortBuffer {
+		bufferSize *= 2
+		buffer = make([]byte, bufferSize)
+		readCount, err = windowsStage.Read(buffer)
+	}
+
+	if err != nil && err != io.EOF {
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"fast-slow: unable to resolve fast window",

@@ -50,19 +50,10 @@ func (meanMedianRatio *MeanMedianRatio) Read(payload []byte) (int, error) {
 		))
 	}
 
-
 	inputs := datura.Peek[[]string](state, "inputs")
 	features := datura.Peek[[]float64](state, "features")
 	featureInputs := datura.Peek[[]string](state, "featureInputs")
 	featureRoot := datura.Peek[string](state, "root")
-
-	if len(featureInputs) == 0 && featureRoot == "features" {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"mean-median-ratio: featureInputs required when root is features",
-			nil,
-		))
-	}
 
 	order := datura.Peek[[]string](meanMedianRatio.artifact, "order")
 	stageIndex := int(datura.Peek[float64](meanMedianRatio.artifact, "stageIndex"))
@@ -283,6 +274,10 @@ func (meanMedianRatio *MeanMedianRatio) Read(payload []byte) (int, error) {
 		state.Poke("features", "root")
 		state.Poke(featureInputs, "inputs")
 		state.Poke(featureInputs, "featureInputs")
+	}
+
+	if len(featureInputs) == 0 && len(features) > 0 && len(inputs) > 0 {
+		state.Poke(inputs, "featureInputs")
 	}
 
 	if len(featureInputs) == 0 {

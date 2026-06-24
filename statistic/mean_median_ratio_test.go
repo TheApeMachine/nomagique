@@ -11,14 +11,10 @@ import (
 func TestMeanMedianRatioRead(testingTB *testing.T) {
 	Convey("Given configured windows on the artifact", testingTB, func() {
 		config := datura.Acquire("mean-median-ratio-config", datura.APPJSON).
-			Poke(0.0, "stageIndex").
-			Poke([]string{"rvol"}, "order").
-			Poke(map[string]any{
-				"input":       "volume",
-				"shortWindow": 3.0,
-				"longWindow":  5.0,
-				"outputKey":   "rvol",
-			}, "rvol")
+			Poke("volume", "input").
+			Poke(3.0, "shortWindow").
+			Poke(5.0, "longWindow").
+			Poke("rvol", "outputKey")
 
 		stage := NewMeanMedianRatio(config)
 		var lastFrame *datura.Artifact
@@ -49,14 +45,10 @@ func TestMeanMedianRatioRead(testingTB *testing.T) {
 
 	Convey("Given disjoint short and long windows", testingTB, func() {
 		config := datura.Acquire("mean-median-ratio-disjoint-config", datura.APPJSON).
-			Poke(0.0, "stageIndex").
-			Poke([]string{"rvol"}, "order").
-			Poke(map[string]any{
-				"input":       "volume",
-				"shortWindow": 2.0,
-				"longWindow":  5.0,
-				"outputKey":   "rvol",
-			}, "rvol")
+			Poke("volume", "input").
+			Poke(2.0, "shortWindow").
+			Poke(5.0, "longWindow").
+			Poke("rvol", "outputKey")
 
 		stage := NewMeanMedianRatio(config)
 		samples := []float64{10, 20, 30, 40, 1000}

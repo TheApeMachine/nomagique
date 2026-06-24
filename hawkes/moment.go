@@ -3,8 +3,110 @@ package hawkes
 import (
 	"math"
 
+	"github.com/theapemachine/datura"
+	"github.com/theapemachine/errnie"
 	"gonum.org/v1/gonum/stat"
 )
+
+/*
+Moment validates bivariate exponential-kernel parameters through empirical moments.
+The constructor artifact holds config; Write buffers inbound wire on its payload.
+*/
+type Moment struct {
+	artifact *datura.Artifact
+}
+
+/*
+NewMoment creates a Hawkes moment-confidence stage wired from config attributes.
+momentR and momentS on the artifact select the mixed moment used for fit diagnostics.
+*/
+func NewMoment(artifact *datura.Artifact) *Moment {
+	return &Moment{
+		artifact: artifact,
+	}
+}
+
+func (moment *Moment) Read(p []byte) (int, error) {
+	state := datura.Acquire("hawkes-moment-state", datura.APPJSON)
+
+	if _, err := state.Write(moment.artifact.DecryptPayload()); err != nil {
+		state.Release()
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"hawkes-moment: state write failed",
+			err,
+		))
+	}
+
+	xValues, yValues, weights, ok := momentSamples(state, moment.artifact)
+
+	if !ok {
+		state.Release()
+
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"hawkes-moment: require aligned sample streams of at least two observations",
+			nil,
+		))
+	}
+
+	params := bivariateParamsFromArtifact(moment.artifact)
+
+	if datura.Peek[float64](moment.artifact, "config", "momentR") == 0 ||
+		datura.Peek[float64](moment.artifact, "config", "momentS") == 0 {
+		state.Release()
+
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"hawkes-moment: config momentR and momentS required",
+			nil,
+		))
+	}
+
+	momentR := datura.Peek[float64](moment.artifact, "config", "momentR")
+	momentS := datura.Peek[float64](moment.artifact, "config", "momentS")
+
+	empirical := stat.BivariateMoment(momentR, momentS, xValues, yValues, weights)
+	theoretical, theoreticalOK := TheoreticalCentralMoment(params, momentR, momentS)
+
+	if !theoreticalOK {
+		state.Release()
+
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"hawkes-moment: theoretical moment unavailable for parameters",
+			nil,
+		))
+	}
+
+	confidence, confidenceOK := MomentConfidence(empirical, theoretical)
+
+	if !confidenceOK {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"hawkes-moment: confidence could not be derived",
+			nil,
+		))
+	}
+
+	state.MergeOutput("value", confidence)
+	state.MergeOutput("empirical", empirical)
+	state.MergeOutput("theoretical", theoretical)
+	state.MergeOutput("confidence", confidence)
+	state.Poke("output", "root")
+	state.Poke([]string{"value", "empirical", "theoretical", "confidence"}, "inputs")
+
+	return state.Read(p)
+}
+
+func (moment *Moment) Write(p []byte) (int, error) {
+	moment.artifact.WithPayload(p)
+	return len(p), nil
+}
+
+func (moment *Moment) Close() error {
+	return nil
+}
 
 /*
 MethodOfMoments derives a stable seed from empirical x and y count streams.

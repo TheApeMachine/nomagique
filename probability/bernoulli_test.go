@@ -18,7 +18,7 @@ func TestBernoulli(testingTB *testing.T) {
 	})
 }
 
-func TestPosterior_Observe(testingTB *testing.T) {
+func TestBernoulliRead(testingTB *testing.T) {
 	cases := []struct {
 		name   string
 		inputs []float64
@@ -98,7 +98,7 @@ func TestPosterior_Observe(testingTB *testing.T) {
 	})
 }
 
-func TestPosterior_Reset(testingTB *testing.T) {
+func TestBernoulliReset(testingTB *testing.T) {
 	Convey("Given an observed posterior", testingTB, func() {
 		posterior := NewBernoulli(bernoulliConfig("bernoulli-config"))
 		artifact := scalarWire(datura.Acquire("test", datura.APPJSON), "sample", 1)
@@ -113,13 +113,13 @@ func TestPosterior_Reset(testingTB *testing.T) {
 		So(err, ShouldNotBeNil)
 
 		Convey("It should clear derived state", func() {
-			So(datura.Peek[float64](posterior.artifact, "output", "ready"), ShouldEqual, 0)
+			So(datura.Peek[float64](posterior.artifact, "output", "count"), ShouldEqual, 0)
 			So(datura.Peek[float64](posterior.artifact, "output", "value"), ShouldEqual, 0)
 		})
 	})
 }
 
-func BenchmarkBernoulli_Observe(testingTB *testing.B) {
+func BenchmarkBernoulliRead(testingTB *testing.B) {
 	posterior := NewBernoulli(bernoulliPairConfig("bernoulli-config-bench"))
 	artifact := datura.Acquire("test", datura.APPJSON)
 

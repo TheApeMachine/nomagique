@@ -58,11 +58,19 @@ func (circuit *Circuit) Read(payload []byte) (int, error) {
 	inputs := datura.Peek[[]string](state, "inputs")
 
 	if rootKey == "" {
-		rootKey = datura.Peek[string](circuit.artifact, "root")
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"logic: circuit root required",
+			nil,
+		))
 	}
 
 	if len(inputs) == 0 {
-		inputs = datura.Peek[[]string](circuit.artifact, "inputs")
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"logic: circuit inputs required",
+			nil,
+		))
 	}
 
 	matched := false

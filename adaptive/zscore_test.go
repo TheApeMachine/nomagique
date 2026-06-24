@@ -19,18 +19,12 @@ func TestZScoreRead(t *testing.T) {
 
 			So(err, ShouldBeIn, nil, io.EOF)
 
-			frame := make([]byte, 65536)
-			readCount, err := surprise.Read(frame)
+			_, err = surprise.Read(make([]byte, 65536))
 
-			So(err, ShouldBeIn, nil, io.EOF)
-			So(readCount, ShouldBeGreaterThan, 0)
-
-			outbound := datura.Acquire("zscore-outbound", datura.APPJSON)
-			_, _ = outbound.Write(frame[:readCount])
-			So(datura.Peek[float64](outbound, "output", "value"), ShouldEqual, 0)
+			So(err, ShouldNotBeNil)
 		})
 
-		Convey("When warmed up with distinct samples", func() {
+		Convey("When distinct samples arrive", func() {
 			_, _ = io.Copy(surprise, ScalarWire(datura.Acquire("test", datura.APPJSON), "sample", 10))
 			_, _ = surprise.Read(make([]byte, 65536))
 			_, _ = io.Copy(surprise, ScalarWire(datura.Acquire("test", datura.APPJSON), "sample", 22))
@@ -108,13 +102,13 @@ func TestZScoreWrite(t *testing.T) {
 
 func BenchmarkZScore_Read(benchmark *testing.B) {
 	surprise := &ZScore{
-		artifact:     datura.Acquire("zscore-config", datura.APPJSON),
-		bootstrapped: true,
-		mean:         20,
-		variance:     1,
-		prev:         30,
-		min:          10,
-		max:          30,
+		artifact: datura.Acquire("zscore-config", datura.APPJSON),
+		mean:     20,
+		variance: 1,
+		prev:     30,
+		min:      10,
+		max:      30,
+		count:    2,
 	}
 
 	benchmark.ResetTimer()

@@ -6,94 +6,35 @@ import (
 	"github.com/theapemachine/errnie"
 )
 
-func weightStateFromArtifact(artifact *datura.Artifact) WeightState {
-	return WeightState{
+func weightStateFromArtifact(artifact *datura.Artifact) weightResetFields {
+	count := datura.Peek[float64](artifact, "output", "count")
+
+	return weightResetFields{
 		Trust: datura.Peek[float64](artifact, "output", "trust"),
 		Prev:  datura.Peek[float64](artifact, "output", "prev"),
 		Min:   datura.Peek[float64](artifact, "output", "min"),
 		Max:   datura.Peek[float64](artifact, "output", "max"),
 		Rate:  datura.Peek[float64](artifact, "output", "rate"),
-		Ready: datura.Peek[float64](artifact, "output", "ready") != 0,
+		Count: count,
 	}
 }
 
-func pokeWeightState(artifact *datura.Artifact, state *WeightState, value float64) {
-	ready := 0.0
-
-	if state.Ready {
-		ready = 1
-	}
-
-	artifact.Poke(state.Trust, "output", "trust")
-	artifact.Poke(state.Prev, "output", "prev")
-	artifact.Poke(state.Min, "output", "min")
-	artifact.Poke(state.Max, "output", "max")
-	artifact.Poke(state.Rate, "output", "rate")
-	artifact.Poke(ready, "output", "ready")
-	artifact.Poke(value, "output", "value")
+type weightResetFields struct {
+	Trust float64
+	Prev  float64
+	Min   float64
+	Max   float64
+	Rate  float64
+	Count float64
 }
 
-func sampleRatioStateFromArtifact(artifact *datura.Artifact) SampleRatioState {
-	return SampleRatioState{
-		Prev:      datura.Peek[float64](artifact, "output", "prev"),
-		Min:       datura.Peek[float64](artifact, "output", "min"),
-		Max:       datura.Peek[float64](artifact, "output", "max"),
-		PeakRatio: datura.Peek[float64](artifact, "output", "peakRatio"),
-		Ready:     datura.Peek[float64](artifact, "output", "ready") != 0,
-	}
-}
-
-func pokeSampleRatioState(artifact *datura.Artifact, state *SampleRatioState, value float64) {
-	ready := 0.0
-
-	if state.Ready {
-		ready = 1
-	}
-
-	artifact.Poke(state.Prev, "output", "prev")
-	artifact.Poke(state.Min, "output", "min")
-	artifact.Poke(state.Max, "output", "max")
-	artifact.Poke(state.PeakRatio, "output", "peakRatio")
-	artifact.Poke(ready, "output", "ready")
-	artifact.Poke(value, "output", "value")
-}
-
-func forecastStateFromArtifact(artifact *datura.Artifact) ForecastState {
-	return ForecastState{
-		Scale: datura.Peek[float64](artifact, "output", "scale"),
-		Weight: WeightState{
-			Trust: datura.Peek[float64](artifact, "output", "trust"),
-			Prev:  datura.Peek[float64](artifact, "output", "prev"),
-			Min:   datura.Peek[float64](artifact, "output", "min"),
-			Max:   datura.Peek[float64](artifact, "output", "max"),
-			Rate:  datura.Peek[float64](artifact, "output", "rate"),
-			Ready: datura.Peek[float64](artifact, "output", "weightReady") != 0,
-		},
-		Ready: datura.Peek[float64](artifact, "output", "ready") != 0,
-	}
-}
-
-func pokeForecastState(artifact *datura.Artifact, state *ForecastState, value float64) {
-	ready := 0.0
-
-	if state.Ready {
-		ready = 1
-	}
-
-	weightReady := 0.0
-
-	if state.Weight.Ready {
-		weightReady = 1
-	}
-
-	artifact.Poke(state.Scale, "output", "scale")
-	artifact.Poke(state.Weight.Trust, "output", "trust")
-	artifact.Poke(state.Weight.Prev, "output", "prev")
-	artifact.Poke(state.Weight.Min, "output", "min")
-	artifact.Poke(state.Weight.Max, "output", "max")
-	artifact.Poke(state.Weight.Rate, "output", "rate")
-	artifact.Poke(weightReady, "output", "weightReady")
-	artifact.Poke(ready, "output", "ready")
+func pokeWeightState(artifact *datura.Artifact, fields *weightResetFields, value float64) {
+	artifact.Poke(fields.Trust, "output", "trust")
+	artifact.Poke(fields.Prev, "output", "prev")
+	artifact.Poke(fields.Min, "output", "min")
+	artifact.Poke(fields.Max, "output", "max")
+	artifact.Poke(fields.Rate, "output", "rate")
+	artifact.Poke(fields.Count, "output", "count")
 	artifact.Poke(value, "output", "value")
 }
 

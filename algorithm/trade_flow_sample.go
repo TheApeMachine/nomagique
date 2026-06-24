@@ -148,7 +148,7 @@ func (tradeFlowSample *TradeFlowSample) features(window *tradeFlowWindow) []floa
 		notionals[index] = tick.notional
 	}
 
-	_, longWindow, err := statistic.NewRollingWindow(0, 0).Resolve(notionals)
+	_, longWindow, err := statistic.ResolveWindows(notionals, 0, 0)
 
 	if err != nil || tradeCount < longWindow {
 		return nil

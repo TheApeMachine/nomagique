@@ -9,7 +9,7 @@ import (
 	"github.com/theapemachine/nomagique"
 )
 
-func TestPanelObserve(t *testing.T) {
+func TestPanelRead(t *testing.T) {
 	Convey("Given a Panel stage", t, func() {
 		config := datura.Acquire("panel-config", datura.APPJSON).
 			Poke("member", "memberKey").

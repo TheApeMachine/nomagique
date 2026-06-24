@@ -43,7 +43,6 @@ func (logReturn *LogReturn) Read(payload []byte) (int, error) {
 		))
 	}
 
-
 	rootKey := datura.Peek[string](state, "root")
 
 	if rootKey == "" {
@@ -97,6 +96,10 @@ func (logReturn *LogReturn) Read(payload []byte) (int, error) {
 	returnLag := int(datura.Peek[float64](logReturn.artifact, stageKey, "returnLag"))
 
 	if returnLag <= 0 {
+		returnLag = int(datura.Peek[float64](state, "output", "returnLag"))
+	}
+
+	if returnLag <= 0 {
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"log-return: returnLag required",
@@ -113,9 +116,9 @@ func (logReturn *LogReturn) Read(payload []byte) (int, error) {
 		}
 
 		if rootKey == "features" {
-			features := datura.Peek[[]float64](state, rootKey)
+			featureSlice := datura.Peek[[]float64](state, rootKey)
 
-			if index >= len(features) {
+			if index >= len(featureSlice) {
 				return 0, errnie.Error(errnie.Err(
 					errnie.Validation,
 					"log-return: feature index out of range",
@@ -123,7 +126,7 @@ func (logReturn *LogReturn) Read(payload []byte) (int, error) {
 				))
 			}
 
-			sample = features[index]
+			sample = featureSlice[index]
 		}
 
 		if rootKey != "features" {
@@ -149,11 +152,20 @@ func (logReturn *LogReturn) Read(payload []byte) (int, error) {
 		))
 	}
 
-	seriesKey := stageKey
+	seriesKey := datura.Peek[string](logReturn.artifact, stageKey, "seriesKey")
+
+	if seriesKey == "" {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"log-return: seriesKey required",
+			nil,
+		))
+	}
+
 	scope, _ := state.Scope()
 
 	if scope != "" {
-		seriesKey = stageKey + "/" + scope
+		seriesKey = seriesKey + "/" + scope
 	}
 
 	timestamp := state.Timestamp()
@@ -182,16 +194,19 @@ func (logReturn *LogReturn) Read(payload []byte) (int, error) {
 		at    time.Time
 	}{value: sample, at: observed})
 
-	longHint := int(datura.Peek[float64](logReturn.artifact, stageKey, "longWindow"))
-	longWindow := len(history)
+	longWindow := int(datura.Peek[float64](logReturn.artifact, stageKey, "longWindow"))
 
-	if longHint > 0 {
-		longWindow = longHint
+	if longWindow <= 0 {
+		longWindow = int(datura.Peek[float64](state, "output", "longWindow"))
+	}
+
+	if longWindow <= 0 {
+		longWindow = len(history)
 	}
 
 	keep := longWindow + returnLag
 
-	if keep > 0 && len(history) > keep {
+	if len(history) > keep {
 		history = history[len(history)-keep:]
 	}
 

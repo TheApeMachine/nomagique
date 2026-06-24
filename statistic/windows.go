@@ -1,10 +1,10 @@
 package statistic
 
 import (
-	"io"
 	"math"
 
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/datura/transport"
 	"github.com/theapemachine/errnie"
 	"gonum.org/v1/gonum/stat"
 )
@@ -191,102 +191,41 @@ func (windows *Windows) Close() error {
 }
 
 /*
-RollingWindow resolves short and long windows via the Windows stage.
-ponytail: bridge for legacy Resolve() callers; upgrade path is NewWindows Write/Read at each call site.
+ResolveWindows runs the Windows stage via FlipFlop for imperative call sites.
+ponytail: stages that cannot nest pipeline during Read use this instead of duplicating flipFlop wiring.
 */
-type RollingWindow struct {
-	shortHint int
-	longHint  int
-}
+func ResolveWindows(
+	history []float64,
+	shortHint, longHint int,
+) (shortWindow, longWindow int, err error) {
+	config := datura.Acquire("windows-resolve", datura.APPJSON)
 
-/*
-NewRollingWindow binds optional short and long window hints for legacy resolution.
-*/
-func NewRollingWindow(shortHint, longHint int) *RollingWindow {
-	return &RollingWindow{
-		shortHint: shortHint,
-		longHint:  longHint,
-	}
-}
-
-/*
-Resolve derives short and long window sizes through the Windows stage.
-*/
-func (rolling *RollingWindow) Resolve(history []float64) (shortWindow, longWindow int, err error) {
-	config := datura.Acquire("windows-bridge-config", datura.APPJSON)
-
-	if rolling.shortHint > 0 {
-		config.Poke(float64(rolling.shortHint), "config", "shortHint")
+	if shortHint > 0 {
+		config.Poke(float64(shortHint), "config", "shortHint")
 	}
 
-	if rolling.longHint > 0 {
-		config.Poke(float64(rolling.longHint), "config", "longHint")
+	if longHint > 0 {
+		config.Poke(float64(longHint), "config", "longHint")
 	}
 
 	stage := NewWindows(config)
-	wire := datura.Acquire("windows-bridge-wire", datura.APPJSON)
+	wire := datura.Acquire("windows-resolve-wire", datura.APPJSON)
 	wire.Poke(history, "history")
-	packed, packErr := wire.Message().MarshalPacked()
 
-	if packErr != nil {
+	if flipErr := transport.NewFlipFlop(wire, stage); flipErr != nil {
 		wire.Release()
-		config.Release()
-
-		return 0, 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"windows bridge: wire pack failed",
-			packErr,
-		))
-	}
-
-	if _, writeErr := stage.Write(packed); writeErr != nil {
-		wire.Release()
-		config.Release()
-
-		return 0, 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"windows bridge: write failed",
-			writeErr,
-		))
-	}
-
-	wire.Release()
-	bufferSize := max(len(packed)*2, len(packed)+1)
-	buffer := make([]byte, bufferSize)
-	readCount, readErr := stage.Read(buffer)
-
-	for readErr == io.ErrShortBuffer {
-		bufferSize *= 2
-		buffer = make([]byte, bufferSize)
-		readCount, readErr = stage.Read(buffer)
-	}
-
-	config.Release()
-
-	if readErr != nil && readErr != io.EOF {
-		return 0, 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"windows bridge: read failed",
-			readErr,
-		))
-	}
-
-	out := datura.Acquire("windows-bridge-out", datura.APPJSON)
-
-	if _, outErr := out.Write(buffer[:readCount]); outErr != nil {
-		out.Release()
 		stage.Close()
 
 		return 0, 0, errnie.Error(errnie.Err(
 			errnie.Validation,
-			"windows bridge: output decode failed",
-			outErr,
+			"windows: flipFlop failed",
+			flipErr,
 		))
 	}
 
-	shortWindow = int(datura.Peek[float64](out, "output", "shortWindow"))
-	longWindow = int(datura.Peek[float64](out, "output", "longWindow"))
-	out.Release()
+	shortWindow = int(datura.Peek[float64](wire, "output", "shortWindow"))
+	longWindow = int(datura.Peek[float64](wire, "output", "longWindow"))
+	wire.Release()
 	stage.Close()
 
 	return shortWindow, longWindow, nil

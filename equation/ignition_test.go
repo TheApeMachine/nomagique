@@ -10,17 +10,11 @@ import (
 	"github.com/theapemachine/datura/transport"
 	"github.com/theapemachine/nomagique"
 	"github.com/theapemachine/nomagique/probability"
-	"github.com/theapemachine/nomagique/statistic"
 	"github.com/theapemachine/nomagique/vector"
 )
 
-func ignitionReplayConfig() *datura.Artifact {
+func ignitionLogitConfig() *datura.Artifact {
 	return datura.Acquire("pumpdump-ignition-replay", datura.APPJSON).
-		Poke("precursor", "stage").
-		Poke("output", "root").
-		Poke("output", "scoreRoot").
-		Poke([]string{"rvol", "precursor", "compression", "spread", "ignition", "value", "rvolDecline"}, "inputs").
-		Poke(0.0, "stageIndex").
 		Poke([]string{"rvol", "precursor", "compression"}, "order").
 		Poke([]string{"ignition", "compression", "trend", "exhaustion"}, "outputs").
 		Poke(0.01, "threshold").
@@ -32,37 +26,26 @@ func ignitionReplayConfig() *datura.Artifact {
 			"outputKey":   "rvol",
 			"scale":       0.0,
 			"scaleMode":   "median",
+			"centerMode":  "median",
 			"leftKey":     "rvol",
 			"rightKey":    "precursor",
-			"decline": map[string]any{
-				"output": "rvolDecline",
-			},
+			"decline":     map[string]any{"output": "rvolDecline"},
 		}, "rvol").
 		Poke(map[string]any{
 			"input":        "last",
-			"returnLag":    1.0,
-			"longWindow":   5.0,
+			"returnLag":    0.0,
+			"longWindow":   0.0,
 			"positiveOnly": 1.0,
 			"outputKey":    "precursor",
-			"seriesKey":    "precursor",
+			"stageIndex":   1.0,
 			"scale":        0.0,
 			"scaleMode":    "median",
 			"leftKey":      "rvol",
 			"rightKey":     "precursor",
 		}, "precursor").
 		Poke(map[string]any{
-			"input":      "spread",
-			"outputKey":  "compression",
-			"seriesKey":  "spread",
-			"scale":      0.0,
-			"scaleMode":  "median",
-			"terms":      []string{"compression", "precursor", "rvol"},
-			"inverts":    []string{"precursor", "rvol"},
-			"gate":       "precursor",
-			"gateInvert": 1.0,
-			"leftKey":    "rvol",
-			"rightKey":   "precursor",
-		}, "compression").
+			"inputs": []string{"bid", "ask"},
+		}, "spread").
 		Poke(map[string]any{
 			"terms":     []string{"rvol", "precursor"},
 			"source":    "ignition",
@@ -82,22 +65,23 @@ func ignitionReplayConfig() *datura.Artifact {
 			"gate":    "rvolDecline",
 		}, "exhaustion").
 		Poke(map[string]any{
+			"input":      "spread",
+			"outputKey":  "compression",
+			"scale":      0.0,
+			"scaleMode":  "median",
+			"terms":      []string{"compression", "precursor", "rvol"},
+			"inverts":    []string{"precursor", "rvol"},
+			"gate":       "precursor",
+			"gateInvert": 1.0,
+			"leftKey":    "rvol",
+			"rightKey":   "precursor",
+		}, "compression").
+		Poke(map[string]any{
 			"source":    "rvolDecline",
 			"output":    "exhaustion",
 			"squash":    0.0,
 			"attenuate": []string{"compression"},
-		}, "decline").
-		Poke(map[string]any{
-			"inputs":    []string{"bid", "ask"},
-			"outputKey": "spread",
-		}, "spread").
-		Poke(map[string]any{
-			"leftKey":        "rvol",
-			"rightKey":       "precursor",
-			"destinationKey": "ignition",
-			"source":         "ignition",
-			"output":         "ignition",
-		}, "joint")
+		}, "decline")
 }
 
 func TestIgnitionFeatureExtractorPipeline(testingTB *testing.T) {
@@ -113,11 +97,10 @@ func TestIgnitionFeatureExtractorPipeline(testingTB *testing.T) {
 
 		pipeline := nomagique.Number(
 			vector.NewFeatureExtractor(schema),
-			NewIgnition(ignitionReplayConfig()),
+			NewIgnition(ignitionLogitConfig()),
 			probability.NewClassifier(
 				datura.Acquire("ignition-pipeline-classifier", datura.APPJSON).WithAttributes(datura.Map[any]{
-					"inputs":    []string{"ignition", "compression", "trend", "exhaustion"},
-					"scoreRoot": "output",
+					"inputs": []string{"ignition", "compression", "trend", "exhaustion"},
 				}),
 			),
 		)
@@ -172,13 +155,8 @@ func TestIgnitionFeatureExtractorPipeline(testingTB *testing.T) {
 }
 
 func TestIgnitionSpreadAfterLogReturn(testingTB *testing.T) {
-	Convey("Given features after log-return z-score in ignition", testingTB, func() {
-		config := ignitionReplayConfig()
-		stage := transport.NewPipeline(
-			statistic.NewMeanMedianRatio(config),
-			NewLogReturnZScore(config),
-			vector.NewSpreadSample(config),
-		)
+	Convey("Given features through ignition", testingTB, func() {
+		stage := NewIgnition(ignitionLogitConfig())
 		timestamp := time.Unix(0, 1).UnixNano()
 
 		for _, tick := range ignitionWarmupTicks() {
@@ -235,7 +213,7 @@ func ignitionSpikeTick() (volume float64, last float64) {
 
 func TestIgnitionSpreadOutput(testingTB *testing.T) {
 	Convey("Given bid and ask features through ignition", testingTB, func() {
-		config := ignitionReplayConfig()
+		config := ignitionLogitConfig()
 		stage := NewIgnition(config)
 		var frame *datura.Artifact
 		timestamp := time.Unix(0, 1).UnixNano()
@@ -279,7 +257,7 @@ func TestIgnitionSpreadOutput(testingTB *testing.T) {
 
 func TestIgnitionReplayTraversal(testingTB *testing.T) {
 	Convey("Given a long replay on one shared ignition config", testingTB, func() {
-		config := ignitionReplayConfig()
+		config := ignitionLogitConfig()
 		stage := NewIgnition(config)
 		var artifact *datura.Artifact
 		timestamp := time.Unix(0, 1).UnixNano()
@@ -327,7 +305,7 @@ func TestIgnitionReplayTraversal(testingTB *testing.T) {
 }
 
 func BenchmarkIgnitionReplayTraversal(b *testing.B) {
-	config := ignitionReplayConfig()
+	config := ignitionLogitConfig()
 	stage := NewIgnition(config)
 
 	for _, tick := range ignitionWarmupTicks() {

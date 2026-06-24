@@ -1,6 +1,8 @@
 package learning
 
 import (
+	"math"
+
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 )
@@ -43,12 +45,89 @@ func (forecaster *Forecaster) Read(payload []byte) (int, error) {
 		return 0, err
 	}
 
-	forecastState := forecastStateFromArtifact(forecaster.artifact)
-	derived := ObserveForecast(&forecastState, predicted, actual)
-	pokeForecastState(forecaster.artifact, &forecastState, derived)
+	if predicted == 0 {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"forecast: predicted must be non-zero",
+			nil,
+		))
+	}
+
+	residual := actual - predicted
+	scale := datura.Peek[float64](forecaster.artifact, "output", "scale")
+	trust := datura.Peek[float64](forecaster.artifact, "output", "trust")
+	prev := datura.Peek[float64](forecaster.artifact, "output", "prev")
+	minimum := datura.Peek[float64](forecaster.artifact, "output", "min")
+	maximum := datura.Peek[float64](forecaster.artifact, "output", "max")
+	rate := datura.Peek[float64](forecaster.artifact, "output", "rate")
+	weightCount := int(datura.Peek[float64](forecaster.artifact, "output", "weightCount"))
+	count := int(datura.Peek[float64](forecaster.artifact, "output", "count"))
+	derived := scale
+
+	if count == 0 {
+		scale = 1
+		prev = predicted
+		minimum = residual
+		maximum = residual
+		trust = 1
+		weightCount = 1
+		count = 1
+		derived = scale
+	}
+
+	if weightCount > 1 {
+		minimum = math.Min(minimum, residual)
+		maximum = math.Max(maximum, residual)
+		weightCount++
+	}
+
+	if weightCount == 1 && residual != minimum {
+		minimum = math.Min(minimum, residual)
+		maximum = math.Max(maximum, residual)
+		weightCount = 2
+	}
+
+	span := maximum - minimum
+
+	if count > 1 || weightCount > 1 {
+		if span == 0 {
+			return 0, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"forecast: residual span is zero",
+				nil,
+			))
+		}
+
+		surprise := absExact(residual) / span
+		rate = surprise
+		targetTrust := 1 - surprise
+
+		if targetTrust < 0 {
+			targetTrust = 0
+		}
+
+		trust += surprise * (targetTrust - trust)
+		prev = predicted
+		learningRate := surprise * (1 - trust)
+		targetScale := actual / predicted
+		scale += learningRate * (targetScale - scale)
+		count++
+		derived = scale
+	}
+
+	forecaster.artifact.Poke(scale, "output", "scale")
+	forecaster.artifact.Poke(trust, "output", "trust")
+	forecaster.artifact.Poke(prev, "output", "prev")
+	forecaster.artifact.Poke(minimum, "output", "min")
+	forecaster.artifact.Poke(maximum, "output", "max")
+	forecaster.artifact.Poke(rate, "output", "rate")
+	forecaster.artifact.Poke(float64(weightCount), "output", "weightCount")
+	forecaster.artifact.Poke(float64(count), "output", "count")
+	forecaster.artifact.Poke(derived, "output", "value")
 	state.MergeOutput("value", derived)
 	state.Poke("output", "root")
 	state.Poke([]string{"value"}, "inputs")
+
 	return state.Read(payload)
 }
 
@@ -77,80 +156,4 @@ func (forecaster *Forecaster) Write(payload []byte) (int, error) {
 
 func (forecaster *Forecaster) Close() error {
 	return nil
-}
-
-/*
-Scale returns the current multiplicative scale for parameter feedback.
-*/
-func (forecaster *Forecaster) Scale() float64 {
-	return datura.Peek[float64](forecaster.artifact, "output", "scale")
-}
-
-/*
-ForecastState learns a multiplicative scale from predicted and actual outcomes.
-*/
-type ForecastState struct {
-	Scale  float64
-	Weight WeightState
-	Ready  bool
-}
-
-/*
-Observe ingests a predicted and actual pair and returns the current scale.
-*/
-func (state *ForecastState) Observe(predicted float64, actual float64) float64 {
-	return ObserveForecast(state, predicted, actual)
-}
-
-/*
-ObserveSamples writes one scale value per pair into out.
-*/
-func (state *ForecastState) ObserveSamples(
-	predicted []float64, actual []float64, out []float64,
-) {
-	observeForecastSamples(state, predicted, actual, out)
-}
-
-/*
-Reset clears derived state.
-*/
-func (state *ForecastState) Reset() {
-	state.Scale = 0
-	state.Weight.Reset()
-	state.Ready = false
-}
-
-/*
-ObserveForecast updates scale from settled predicted-vs-actual outcomes.
-*/
-func ObserveForecast(state *ForecastState, predicted float64, actual float64) float64 {
-	if !state.Ready {
-		state.Scale = 1
-		state.Weight.Ready = false
-		_ = ObserveWeight(&state.Weight, predicted, actual)
-		state.Ready = true
-		return state.Scale
-	}
-
-	return observeForecastReady(state, predicted, actual)
-}
-
-/*
-observeForecastReady runs the hot forecast path; state must already be Ready.
-*/
-func observeForecastReady(
-	state *ForecastState, predicted float64, actual float64,
-) float64 {
-	trust := ObserveWeight(&state.Weight, predicted, actual)
-	surprise := state.Weight.Rate
-	learningRate := surprise * (1 - trust)
-
-	if predicted == 0 {
-		return state.Scale
-	}
-
-	targetScale := actual / predicted
-	state.Scale += learningRate * (targetScale - state.Scale)
-
-	return state.Scale
 }

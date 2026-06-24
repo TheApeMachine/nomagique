@@ -60,13 +60,13 @@ func TestIntegration(t *testing.T) {
 		})
 
 		Convey("When RLS ingests feature and target batch", func() {
-			stage, err := learning.NewRLS(1, 1000)
-
-			So(err, ShouldBeNil)
+			stage := learning.NewRLS(datura.Acquire("rls-config", datura.APPJSON).
+				WithAttribute("dimension", float64(1)).
+				WithAttribute("initialVariance", 1000.0))
 
 			artifact := datura.Acquire("test", datura.APPJSON).
 				Poke([]float64{2, 4}, "batch")
-			err = transport.NewFlipFlop(artifact, nomagique.Number(stage))
+			err := transport.NewFlipFlop(artifact, nomagique.Number(stage))
 
 			So(err, ShouldBeNil)
 			So(datura.Peek[float64](artifact, "output", "value"), ShouldBeGreaterThan, 0)

@@ -246,12 +246,6 @@ func NewResonanceManifold(
 	}, nil
 }
 
-func (rm *ResonanceManifold) Reset() error {
-	rm.ResetState(false)
-
-	return nil
-}
-
 func (rm *ResonanceManifold) ResetState(resetPrecision bool) {
 	for _, latent := range rm.z {
 		rowCount, _ := latent.Dims()
@@ -335,6 +329,12 @@ func (rm *ResonanceManifold) Read(payload []byte) (int, error) {
 }
 
 func (rm *ResonanceManifold) Write(payload []byte) (int, error) {
+	if payloadHasReset(payload) {
+		rm.ResetState(false)
+
+		return len(payload), nil
+	}
+
 	rm.artifact.WithPayload(payload)
 	return len(payload), nil
 }

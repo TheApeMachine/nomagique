@@ -10,16 +10,14 @@ Constant emits a fixed scalar on every Read.
 */
 type Constant struct {
 	artifact *datura.Artifact
-	value    float64
 }
 
 /*
-NewConstant returns a stage that always emits value.
+NewConstant returns a stage that always emits the artifact "value" attribute.
 */
-func NewConstant(value float64) *Constant {
+func NewConstant(artifact *datura.Artifact) *Constant {
 	return &Constant{
-		artifact: datura.Acquire("constant", datura.APPJSON),
-		value:    value,
+		artifact: artifact,
 	}
 }
 
@@ -34,7 +32,8 @@ func (constant *Constant) Read(payload []byte) (int, error) {
 		))
 	}
 
-	state.MergeOutput("value", constant.value)
+	value := datura.Peek[float64](constant.artifact, "value")
+	state.MergeOutput("value", value)
 	state.Poke("output", "root")
 	state.Poke([]string{"value"}, "inputs")
 

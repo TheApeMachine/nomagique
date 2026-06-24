@@ -8,64 +8,75 @@ import (
 	"github.com/theapemachine/datura/transport"
 )
 
+func hysteresisWire(sample float64, window int) *datura.Artifact {
+	artifact := datura.Acquire("hysteresis-wire", datura.APPJSON)
+	artifact.Poke("features", "root")
+	artifact.Poke([]string{"sample"}, "inputs")
+	artifact.Merge("features", []float64{sample})
+	artifact.Poke(float64(window), "window")
+
+	return artifact
+}
+
 func TestHysteresis_Read(testingTB *testing.T) {
 	Convey("Given a hysteresis stage", testingTB, func() {
 		Convey("It should require consecutive high samples before switching on", func() {
-			stage := NewHysteresis(datura.Acquire("hysteresis-config", datura.APPJSON))
+			stage := NewHysteresis(datura.Acquire("hysteresis-config", datura.APPJSON).
+				Poke("sample", "input").
+				Poke(float64(3), "window"))
 
 			for range 2 {
-				artifact := datura.Acquire("test", datura.APPJSON).
-					Poke(1.0, "sample").
-					Poke(float64(3), "window")
+				artifact := hysteresisWire(1.0, 3)
 				err := transport.NewFlipFlop(artifact, stage)
 
 				So(err, ShouldBeNil)
 				So(datura.Peek[float64](artifact, "output", "value"), ShouldEqual, 0)
+				artifact.Release()
 			}
 
-			artifact := datura.Acquire("test", datura.APPJSON).
-				Poke(1.0, "sample").
-				Poke(float64(3), "window")
+			artifact := hysteresisWire(1.0, 3)
 			err := transport.NewFlipFlop(artifact, stage)
 
 			So(err, ShouldBeNil)
 			So(datura.Peek[float64](artifact, "output", "value"), ShouldEqual, 1)
+			artifact.Release()
 		})
 
 		Convey("It should treat magnitudes above threshold as high", func() {
 			thresholdStage := NewHysteresis(datura.Acquire("hysteresis-threshold", datura.APPJSON).
-				Poke(0.5, "threshold"))
+				Poke("sample", "input").
+				Poke(0.5, "threshold").
+				Poke(float64(3), "window"))
 
 			for range 2 {
-				artifact := datura.Acquire("test", datura.APPJSON).
-					Poke(0.75, "sample").
-					Poke(float64(3), "window")
+				artifact := hysteresisWire(0.75, 3)
 				err := transport.NewFlipFlop(artifact, thresholdStage)
 
 				So(err, ShouldBeNil)
 				So(datura.Peek[float64](artifact, "output", "value"), ShouldEqual, 0)
+				artifact.Release()
 			}
 
-			artifact := datura.Acquire("test", datura.APPJSON).
-				Poke(0.75, "sample").
-				Poke(float64(3), "window")
+			artifact := hysteresisWire(0.75, 3)
 			err := transport.NewFlipFlop(artifact, thresholdStage)
 
 			So(err, ShouldBeNil)
 			So(datura.Peek[float64](artifact, "output", "value"), ShouldEqual, 1)
+			artifact.Release()
 		})
 	})
 }
 
 func BenchmarkHysteresis_Read(b *testing.B) {
-	stage := NewHysteresis(datura.Acquire("hysteresis-config", datura.APPJSON))
+	stage := NewHysteresis(datura.Acquire("hysteresis-config", datura.APPJSON).
+		Poke("sample", "input").
+		Poke(float64(2), "window"))
 
 	b.ReportAllocs()
 
 	for b.Loop() {
-		artifact := datura.Acquire("test", datura.APPJSON).
-			Poke(1.0, "sample").
-			Poke(float64(2), "window")
+		artifact := hysteresisWire(1.0, 2)
 		_ = transport.NewFlipFlop(artifact, stage)
+		artifact.Release()
 	}
 }

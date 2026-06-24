@@ -156,15 +156,19 @@ func TestSideFlowLedger(testingTB *testing.T) {
 
 func TestCancelFillRatio(testingTB *testing.T) {
 	Convey("Given non-positive inputs", testingTB, func() {
-		Convey("It should return zero", func() {
-			So(CancelFillRatio(0, 5), ShouldEqual, 0)
-			So(CancelFillRatio(5, 0), ShouldEqual, 0)
+		Convey("It should return a validation error", func() {
+			_, err := CancelFillRatio(0, 5)
+			So(err, ShouldNotBeNil)
+			_, err = CancelFillRatio(5, 0)
+			So(err, ShouldNotBeNil)
 		})
 	})
 
 	Convey("Given positive cancel and fill", testingTB, func() {
 		Convey("It should divide cancel by fill", func() {
-			So(CancelFillRatio(6, 3), ShouldEqual, 2)
+			ratio, err := CancelFillRatio(6, 3)
+			So(err, ShouldBeNil)
+			So(ratio, ShouldEqual, 2)
 		})
 	})
 }

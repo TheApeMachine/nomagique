@@ -124,13 +124,13 @@ func TestIntegration(t *testing.T) {
 			)
 			err := transport.NewFlipFlop(artifact, pipeline)
 
-			So(err, ShouldBeIn, nil, io.EOF)
+			So(err, ShouldNotBeNil)
 
 			Convey("It should warm up then emit finite surprise scores", func() {
 				adaptive.ScalarWire(artifact, "sample", 22)
 				err := transport.NewFlipFlop(artifact, pipeline)
 
-				So(err, ShouldBeIn, nil, io.EOF)
+				So(err, ShouldNotBeNil)
 
 				adaptive.ScalarWire(artifact, "sample", 30)
 				err = transport.NewFlipFlop(artifact, pipeline)
@@ -159,7 +159,7 @@ func TestIntegration(t *testing.T) {
 				)
 				err := transport.NewFlipFlop(varianceArtifact, variancePipeline)
 
-				So(err, ShouldBeIn, nil, io.EOF)
+				So(err, ShouldNotBeNil)
 
 				adaptive.ScalarWire(varianceArtifact, "sample", 22)
 				err = transport.NewFlipFlop(varianceArtifact, variancePipeline)
@@ -182,7 +182,7 @@ func TestIntegration(t *testing.T) {
 			artifact := adaptive.ScalarWire(datura.Acquire("test", datura.APPJSON), "sample", 1)
 			err := transport.NewFlipFlop(artifact, pipeline)
 
-			So(err, ShouldBeIn, nil, io.EOF)
+			So(err, ShouldNotBeNil)
 
 			Convey("It should bootstrap then emit signed unit-normalized momentum", func() {
 				artifact = adaptive.ScalarWire(datura.Acquire("test", datura.APPJSON), "sample", 3)
@@ -227,7 +227,7 @@ func TestIntegration(t *testing.T) {
 			)
 			err := transport.NewFlipFlop(artifact, pipeline)
 
-			So(err, ShouldBeIn, nil, io.EOF)
+			So(err, ShouldNotBeNil)
 
 			Convey("It should bootstrap at unity then stay finite and positive", func() {
 				second := adaptive.ScalarWire(datura.Acquire("test", datura.APPJSON), "sample", 14)

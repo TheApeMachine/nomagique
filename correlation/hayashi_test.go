@@ -13,7 +13,7 @@ func hayashiConfig() *datura.Artifact {
 		Poke(1, "config", "maxIntervalSeconds")
 }
 
-func TestHayashiYoshida_Observe(testingTB *testing.T) {
+func TestHayashiYoshidaRead(testingTB *testing.T) {
 	Convey("Given proportional async streams", testingTB, func() {
 		hayashi := NewHayashiYoshida(hayashiConfig())
 		artifact := datura.Acquire("test", datura.APPJSON).
@@ -94,7 +94,7 @@ func TestHayashiYoshida_Reset(testingTB *testing.T) {
 	})
 }
 
-func BenchmarkHayashiYoshida_Observe(testingTB *testing.B) {
+func BenchmarkHayashiYoshidaRead(testingTB *testing.B) {
 	hayashi := NewHayashiYoshida(hayashiConfig())
 	artifact := datura.Acquire("test", datura.APPJSON)
 

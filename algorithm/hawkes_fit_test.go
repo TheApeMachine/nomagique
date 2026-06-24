@@ -9,7 +9,7 @@ import (
 	"github.com/theapemachine/nomagique/equation"
 )
 
-func TestHawkesFit_Observe(testingTB *testing.T) {
+func TestHawkesFitRead(testingTB *testing.T) {
 	Convey("Given timestamp arrival streams with enough events", testingTB, func() {
 		start := time.Now()
 		xTimes := make([]float64, 32)
@@ -48,7 +48,7 @@ func TestHawkesFit_Observe(testingTB *testing.T) {
 	})
 }
 
-func BenchmarkHawkesFit_Observe(testingTB *testing.B) {
+func BenchmarkHawkesFitRead(testingTB *testing.B) {
 	start := time.Now()
 	xTimes := make([]float64, 32)
 	yTimes := make([]float64, 32)

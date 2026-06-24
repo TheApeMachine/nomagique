@@ -12,10 +12,10 @@ Range tracks the running span of observed samples.
 The constructor artifact holds config; Write buffers inbound payload.
 */
 type Range struct {
-	artifact     *datura.Artifact
-	bootstrapped bool
-	min          float64
-	max          float64
+	artifact *datura.Artifact
+	min      float64
+	max      float64
+	count    int
 }
 
 /*
@@ -37,7 +37,6 @@ func (extent *Range) Read(payload []byte) (int, error) {
 			err,
 		))
 	}
-
 
 	rootKey := datura.Peek[string](state, "root")
 
@@ -88,17 +87,15 @@ func (extent *Range) Read(payload []byte) (int, error) {
 			))
 		}
 
-		if !extent.bootstrapped {
+		if extent.count == 0 {
 			extent.min = sample
 			extent.max = sample
-			extent.bootstrapped = true
-			state.MergeOutput("value", 0)
-
-			break
+			extent.count = 1
+		} else {
+			extent.min = math.Min(extent.min, sample)
+			extent.max = math.Max(extent.max, sample)
+			extent.count++
 		}
-
-		extent.min = math.Min(extent.min, sample)
-		extent.max = math.Max(extent.max, sample)
 
 		span := extent.max - extent.min
 

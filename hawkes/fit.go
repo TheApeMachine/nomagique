@@ -3,7 +3,102 @@ package hawkes
 import (
 	"math"
 	"time"
+
+	"github.com/theapemachine/datura"
+	"github.com/theapemachine/errnie"
 )
+
+/*
+Fit estimates bivariate Hawkes parameters from timestamp arrival streams.
+The constructor artifact holds config; Write buffers inbound wire on its payload.
+*/
+type Fit struct {
+	artifact *datura.Artifact
+}
+
+/*
+NewFit creates a timestamp-stream Hawkes fit stage wired from config attributes.
+horizonUnixNano on the artifact is the observation horizon in Unix nanoseconds.
+*/
+func NewFit(artifact *datura.Artifact) *Fit {
+	if artifact == nil {
+		artifact = datura.Acquire("hawkes-fit", datura.APPJSON)
+	}
+
+	return &Fit{
+		artifact: artifact,
+	}
+}
+
+func (fit *Fit) Read(p []byte) (int, error) {
+	state := datura.Acquire("hawkes-fit-state", datura.APPJSON)
+
+	if _, err := state.Write(fit.artifact.DecryptPayload()); err != nil {
+		state.Release()
+
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"hawkes-moment: state write failed",
+			err,
+		))
+	}
+
+	xTimes, yTimes, ok := fitTimes(state, fit.artifact)
+
+	if !ok {
+		state.Release()
+
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"hawkes-fit: require aligned arrival timestamp streams",
+			nil,
+		))
+	}
+
+	stream := NewArrivalStream(fitTimesToTime(xTimes), fitTimesToTime(yTimes))
+	horizon := fitHorizon(fit.artifact)
+	prior := bivariateFitFromArtifact(fit.artifact)
+	fitted := NewBivariateEstimator(prior).Fit(stream, horizon)
+
+	if !fitted.Valid() {
+		state.Release()
+
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"hawkes-fit: fit did not converge to valid parameters",
+			nil,
+		))
+	}
+
+	asymmetry := fitted.Asymmetry(false)
+	ratio := 0.0
+
+	if asymmetry > 0 && fitted.MuX > 0 {
+		ratio = fitted.IntensityX / fitted.MuX
+	}
+
+	if asymmetry <= 0 && fitted.MuY > 0 {
+		ratio = fitted.IntensityY / fitted.MuY
+	}
+
+	state.MergeOutput("value", ratio)
+	state.MergeOutput("excitationRatio", ratio)
+	state.MergeOutput("spectralRadius", fitted.SpectralRadius)
+	state.MergeOutput("asymmetry", asymmetry)
+	state.Poke("output", "root")
+	state.Poke([]string{"value", "excitationRatio", "spectralRadius", "asymmetry"}, "inputs")
+
+	return state.Read(p)
+}
+
+func (fit *Fit) Write(p []byte) (int, error) {
+	fit.artifact.WithPayload(p)
+	return len(p), nil
+}
+
+func (fit *Fit) Close() error {
+	return nil
+}
 
 const criticalBranch = 1.0
 

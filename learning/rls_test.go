@@ -5,40 +5,72 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/datura"
+	"github.com/theapemachine/datura/transport"
 )
 
-func TestNewRLSFilter(testingTB *testing.T) {
-	Convey("Given a valid dimension", testingTB, func() {
-		filter, err := NewRLSFilter(2, 1000)
+func rlsConfig(name string, dimension int, initialVariance float64) *datura.Artifact {
+	return datura.Acquire(name, datura.APPJSON).
+		WithAttribute("dimension", float64(dimension)).
+		WithAttribute("initialVariance", initialVariance)
+}
 
-		Convey("It should allocate the filter", func() {
-			So(err, ShouldBeNil)
-			So(filter, ShouldNotBeNil)
-		})
-	})
+func TestRLS(testingTB *testing.T) {
+	Convey("Given NewRLS", testingTB, func() {
+		stage := NewRLS(rlsConfig("rls-config", 2, 1000))
 
-	Convey("Given a non-positive dimension", testingTB, func() {
-		_, err := NewRLSFilter(0, 1000)
-
-		Convey("It should return an error", func() {
-			So(err, ShouldNotBeNil)
+		Convey("It should return a usable stage", func() {
+			So(stage, ShouldNotBeNil)
 		})
 	})
 }
 
-func TestRLSFilterObserve(testingTB *testing.T) {
-	Convey("Given a simple linear relation", testingTB, func() {
-		filter, err := NewRLSFilter(1, 1000)
+func TestRLSRead(testingTB *testing.T) {
+	Convey("Given a non-positive dimension", testingTB, func() {
+		stage := NewRLS(rlsConfig("rls-config", 0, 1000))
+		artifact := datura.Acquire("test", datura.APPJSON).Poke([]float64{1, 2}, "batch")
+		err := transport.NewFlipFlop(artifact, stage)
+
+		Convey("It should return a validation error", func() {
+			So(err, ShouldNotBeNil)
+		})
+	})
+
+	Convey("Given feature and target scalars", testingTB, func() {
+		stage := NewRLS(rlsConfig("rls-config", 1, 1000))
+		artifact := datura.Acquire("test", datura.APPJSON).Poke([]float64{2, 4}, "batch")
+		err := transport.NewFlipFlop(artifact, stage)
+
 		So(err, ShouldBeNil)
+
+		got := datura.Peek[float64](artifact, "output", "value")
+
+		Convey("It should derive a finite prediction", func() {
+			So(got, ShouldBeGreaterThan, 0)
+			So(len(datura.Peek[[]float64](stage.stateStore, "output", "beta")), ShouldEqual, 2)
+			So(len(datura.Peek[[]float64](stage.stateStore, "output", "covarianceDiagonal")), ShouldEqual, 2)
+		})
+	})
+
+	Convey("Given a simple linear relation", testingTB, func() {
+		stage := NewRLS(rlsConfig("rls-config-linear", 1, 1000))
+		artifact := datura.Acquire("test", datura.APPJSON)
 
 		for step := 0; step < 32; step++ {
 			feature := float64(step) / 32
 			target := 2*feature + 1
-			err := filter.Observe([]float64{feature}, target)
+			artifact.Poke([]float64{feature, target}, "batch")
+			err := transport.NewFlipFlop(artifact, stage)
+
 			So(err, ShouldBeNil)
 		}
 
-		forecast, err := filter.Predict([]float64{0.5})
+		artifact.Poke([]float64{0.5, 2}, "batch")
+		err := transport.NewFlipFlop(artifact, stage)
+
+		So(err, ShouldBeNil)
+
+		forecast := datura.Peek[float64](artifact, "output", "value")
 
 		Convey("It should learn the mapping", func() {
 			So(err, ShouldBeNil)
@@ -47,33 +79,35 @@ func TestRLSFilterObserve(testingTB *testing.T) {
 	})
 
 	Convey("Given a forgetting factor", testingTB, func() {
-		filter, err := NewRLSFilter(1, 1000)
-		So(err, ShouldBeNil)
-		So(filter.SetForgettingFactor(0.5), ShouldBeNil)
+		config := rlsConfig("rls-config-forgetting", 1, 1000).WithAttribute("forgettingFactor", 0.5)
+		stage := NewRLS(config)
+		artifact := datura.Acquire("test", datura.APPJSON)
 
 		for step := 0; step < 16; step++ {
-			err := filter.Observe([]float64{1}, 1)
+			artifact.Poke([]float64{1, 1}, "batch")
+			err := transport.NewFlipFlop(artifact, stage)
+
 			So(err, ShouldBeNil)
 		}
 
 		for step := 0; step < 16; step++ {
-			err := filter.Observe([]float64{1}, 5)
+			artifact.Poke([]float64{1, 5}, "batch")
+			err := transport.NewFlipFlop(artifact, stage)
+
 			So(err, ShouldBeNil)
 		}
 
-		forecast, err := filter.Predict([]float64{1})
+		forecast := datura.Peek[float64](artifact, "output", "value")
 
 		Convey("It should adapt faster to the new target", func() {
-			So(err, ShouldBeNil)
 			So(forecast, ShouldBeGreaterThan, 2.5)
 		})
 	})
 
 	Convey("Given repeated collinear updates with aggressive forgetting", testingTB, func() {
-		filter, err := NewRLSFilter(13, 1000)
-		So(err, ShouldBeNil)
-		So(filter.SetForgettingFactor(0.01), ShouldBeNil)
-
+		config := rlsConfig("rls-config-collinear", 13, 1000).WithAttribute("forgettingFactor", 0.01)
+		stage := NewRLS(config)
+		artifact := datura.Acquire("test", datura.APPJSON)
 		features := make([]float64, 13)
 
 		for index := range features {
@@ -82,54 +116,45 @@ func TestRLSFilterObserve(testingTB *testing.T) {
 
 		for step := 0; step < 4096; step++ {
 			target := 0.001 * float64(step%3-1)
-			err := filter.Observe(features, target)
+			batch := append(append([]float64(nil), features...), target)
+			artifact.Poke(batch, "batch")
+			err := transport.NewFlipFlop(artifact, stage)
+
 			So(err, ShouldBeNil)
 		}
 
-		forecast, err := filter.Predict(features)
+		forecast := datura.Peek[float64](artifact, "output", "value")
 
 		Convey("It should stay numerically stable after repair", func() {
-			So(err, ShouldBeNil)
 			So(math.IsNaN(forecast), ShouldBeFalse)
 			So(math.IsInf(forecast, 0), ShouldBeFalse)
 		})
 	})
-}
 
-func TestRLSFilter_Reset(testingTB *testing.T) {
-	Convey("Given a trained RLS filter", testingTB, func() {
-		filter, err := NewRLSFilter(1, 1000)
-		So(err, ShouldBeNil)
+	Convey("Given persisted coefficients across reads", testingTB, func() {
+		stage := NewRLS(rlsConfig("rls-config-persist", 1, 1000))
+		artifact := datura.Acquire("test", datura.APPJSON)
 
 		for step := 0; step < 8; step++ {
 			feature := float64(step) / 8
-			err := filter.Observe([]float64{feature}, 2*feature+1)
+			artifact.Poke([]float64{feature, 2*feature + 1}, "batch")
+			err := transport.NewFlipFlop(artifact, stage)
+
 			So(err, ShouldBeNil)
 		}
 
-		before := filter.Coefficients()
-		filter.Reset()
+		beta := datura.Peek[[]float64](stage.stateStore, "output", "beta")
 
-		Convey("It should clear coefficients after reset", func() {
-			for index, coefficient := range filter.Coefficients() {
-				So(coefficient, ShouldEqual, 0)
-				So(before[index], ShouldNotEqual, 0)
-			}
+		Convey("It should retain non-zero coefficients on the state artifact", func() {
+			So(len(beta), ShouldEqual, 2)
+			So(beta[0], ShouldNotEqual, 0)
 		})
 	})
 }
 
-func BenchmarkRLSFilterObserve(b *testing.B) {
-	filter, err := NewRLSFilter(13, 1000)
-
-	if err != nil {
-		b.Fatal(err)
-	}
-
-	if setErr := filter.SetForgettingFactor(0.01); setErr != nil {
-		b.Fatal(setErr)
-	}
-
+func BenchmarkRLSRead(b *testing.B) {
+	stage := NewRLS(rlsConfig("rls-config", 13, 1000).Poke(0.01, "forgettingFactor"))
+	artifact := datura.Acquire("test", datura.APPJSON)
 	features := make([]float64, 13)
 
 	for index := range features {
@@ -140,9 +165,8 @@ func BenchmarkRLSFilterObserve(b *testing.B) {
 
 	for b.Loop() {
 		target := 0.001 * float64(b.N%3-1)
-
-		if err := filter.Observe(features, target); err != nil {
-			b.Fatal(err)
-		}
+		batch := append(append([]float64(nil), features...), target)
+		artifact.Poke(batch, "batch")
+		_ = transport.NewFlipFlop(artifact, stage)
 	}
 }

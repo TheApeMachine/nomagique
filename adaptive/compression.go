@@ -38,12 +38,16 @@ func (compression *Compression) Read(payload []byte) (int, error) {
 	outputKey := datura.Peek[string](compression.artifact, "compression", "outputKey")
 	seriesKey := datura.Peek[string](compression.artifact, "compression", "seriesKey")
 
-	if inputKey == "" || outputKey == "" || seriesKey == "" {
+	if inputKey == "" || outputKey == "" {
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
-			"compression: input, outputKey, and seriesKey required",
+			"compression: input and outputKey required",
 			nil,
 		))
+	}
+
+	if seriesKey == "" {
+		seriesKey = outputKey
 	}
 
 	rootKey := datura.Peek[string](state, "root")
@@ -75,9 +79,9 @@ func (compression *Compression) Read(payload []byte) (int, error) {
 		}
 
 		if rootKey == "features" {
-			features := datura.Peek[[]float64](state, rootKey)
+			featureSlice := datura.Peek[[]float64](state, rootKey)
 
-			if index >= len(features) {
+			if index >= len(featureSlice) {
 				return 0, errnie.Error(errnie.Err(
 					errnie.Validation,
 					"compression: feature index out of range",
@@ -85,7 +89,7 @@ func (compression *Compression) Read(payload []byte) (int, error) {
 				))
 			}
 
-			sample = features[index]
+			sample = featureSlice[index]
 		}
 
 		if rootKey != "features" {
@@ -118,7 +122,7 @@ func (compression *Compression) Read(payload []byte) (int, error) {
 		compression.artifact.Poke(sample, "output", "baseline", seriesKey)
 		state.MergeOutput(outputKey, value)
 		state.Poke("output", "root")
-		state.Poke([]string{outputKey}, "inputs")
+		state.Poke(appendInputs(inputs, outputKey), "inputs")
 
 		return state.Read(payload)
 	}
@@ -127,7 +131,7 @@ func (compression *Compression) Read(payload []byte) (int, error) {
 		compression.artifact.Poke(sample, "output", "baseline", seriesKey)
 		state.MergeOutput(outputKey, value)
 		state.Poke("output", "root")
-		state.Poke([]string{outputKey}, "inputs")
+		state.Poke(appendInputs(inputs, outputKey), "inputs")
 
 		return state.Read(payload)
 	}
@@ -136,9 +140,19 @@ func (compression *Compression) Read(payload []byte) (int, error) {
 
 	state.MergeOutput(outputKey, value)
 	state.Poke("output", "root")
-	state.Poke([]string{outputKey}, "inputs")
+	state.Poke(appendInputs(inputs, outputKey), "inputs")
 
 	return state.Read(payload)
+}
+
+func appendInputs(inputs []string, key string) []string {
+	for _, input := range inputs {
+		if input == key {
+			return inputs
+		}
+	}
+
+	return append(append([]string(nil), inputs...), key)
 }
 
 func (compression *Compression) Write(payload []byte) (int, error) {

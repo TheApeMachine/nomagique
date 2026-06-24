@@ -207,6 +207,14 @@ func (partition *ModePartition) Read(payload []byte) (int, error) {
 }
 
 func (partition *ModePartition) Write(payload []byte) (int, error) {
+	if payloadHasReset(payload) {
+		partition.snap = nil
+		partition.output = 0
+		partition.artifact.WithAttributes(datura.Map[any]{})
+
+		return len(payload), nil
+	}
+
 	partition.artifact.WithPayload(payload)
 	return len(payload), nil
 }
@@ -220,14 +228,6 @@ Snap returns the last eigenmode partition.
 */
 func (partition *ModePartition) Snap() *EigenSnap {
 	return partition.snap
-}
-
-func (partition *ModePartition) Reset() error {
-	partition.snap = nil
-	partition.output = 0
-	partition.artifact.WithAttributes(datura.Map[any]{})
-
-	return nil
 }
 
 func (partition *ModePartition) partition(

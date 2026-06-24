@@ -15,7 +15,7 @@ func TestIntegration(t *testing.T) {
 	Convey("Given logic stages composed through nomagique.Number", t, func() {
 		Convey("When Constant emits a fixed scalar", func() {
 			artifact := datura.Acquire("test", datura.APPJSON)
-			err := transport.NewFlipFlop(artifact, logic.NewConstant(42))
+			err := transport.NewFlipFlop(artifact, constantStage(42))
 
 			So(err, ShouldBeNil)
 			So(datura.Peek[float64](artifact, "output", "value"), ShouldEqual, 42)
@@ -28,12 +28,12 @@ func TestIntegration(t *testing.T) {
 				Poke(2, "smoothing"))
 			circuit := logic.NewCircuit(circuitConfig(), logic.Rules{
 				{
-					Condition: logic.GreaterThan{Right: logic.NewConstant(2)},
+					Condition: logic.GreaterThan{Right: constantStage(2)},
 					Then:      consequence,
 				},
 				{
 					Condition: logic.True{Operand: true},
-					Then:      logic.NewConstant(0),
+					Then:      constantStage(0),
 				},
 			})
 
@@ -64,12 +64,12 @@ func TestIntegration(t *testing.T) {
 		Convey("When Circuit falls through to default branch", func() {
 			circuit := logic.NewCircuit(circuitConfig(), logic.Rules{
 				{
-					Condition: logic.GreaterThan{Right: logic.NewConstant(10)},
-					Then:      logic.NewConstant(1),
+					Condition: logic.GreaterThan{Right: constantStage(10)},
+					Then:      constantStage(1),
 				},
 				{
 					Condition: logic.True{Operand: true},
-					Then:      logic.NewConstant(99),
+					Then:      constantStage(99),
 				},
 			})
 

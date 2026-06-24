@@ -2,7 +2,6 @@ package algorithm
 
 import (
 	"math"
-	"sort"
 	"time"
 
 	"github.com/theapemachine/datura"
@@ -64,7 +63,6 @@ func (lag *Lag) Read(payload []byte) (int, error) {
 		))
 	}
 
-
 	inputKeys := equation.EnsureFeatureSchema(state, lag.artifact, equation.LagInputKeys)
 	fields, err := equation.FeatureFields(state, inputKeys)
 
@@ -97,20 +95,13 @@ func (lag *Lag) Read(payload []byte) (int, error) {
 	state.MergeOutput("strength", lag.outcome.Strength)
 	state.MergeOutput("value", float64(lag.outcome.Category))
 	state.Poke("output", "root")
-	state.Poke([]string{"inefficient", "sync", "decoupled", "stall"}, "inputs")
+	state.Poke([]string{"inefficient", "sync", "decoupled", "stall", "strength"}, "inputs")
 
 	return state.Read(payload)
 }
 
 func (lag *Lag) Close() error {
 	return nil
-}
-
-/*
-Outcome returns scores from the last Read.
-*/
-func (lag *Lag) Outcome() LagOutcome {
-	return lag.outcome
 }
 
 func (lag *Lag) evaluateFields(fields []float64) LagOutcome {
@@ -215,7 +206,15 @@ func (lag *Lag) evaluateFollower(
 	}
 
 	if lagOK {
-		return lag.lagOutcome(price, lagBars, lagCorr)
+		outcome, err := lag.lagOutcome(price, lagBars, lagCorr)
+
+		if err != nil {
+			errnie.Error(errnie.Err(errnie.Validation, "lag: lag outcome failed", err))
+
+			return LagOutcome{}
+		}
+
+		return outcome
 	}
 
 	if contempOK {
@@ -225,8 +224,13 @@ func (lag *Lag) evaluateFollower(
 	return LagOutcome{}
 }
 
-func (lag *Lag) lagOutcome(price float64, lagBars int, corr float64) LagOutcome {
-	maxBars := lagMaxBars()
+func (lag *Lag) lagOutcome(price float64, lagBars int, corr float64) (LagOutcome, error) {
+	maxBars, err := lagMaxBars()
+
+	if err != nil {
+		return LagOutcome{}, err
+	}
+
 	lagMagnitude := math.Abs(float64(lagBars))
 	lagFraction := lagMagnitude / float64(maxBars)
 	threshold := minLagFraction(maxBars)
@@ -253,7 +257,7 @@ func (lag *Lag) lagOutcome(price float64, lagBars int, corr float64) LagOutcome 
 		Category:         category,
 		Eligible:         true,
 		Price:            price,
-	}
+	}, nil
 }
 
 func (lag *Lag) contemporaneousOutcome(price, corr float64, sampleCount int) LagOutcome {
@@ -297,42 +301,49 @@ func minLagFraction(maxBars int) float64 {
 	return math.Ceil(float64(maxBars)/2) / float64(maxBars)
 }
 
-func lagMinSamples() int {
-	_, longWindow, err := statistic.NewRollingWindow(0, 0).Resolve(make([]float64, 1))
+func lagMinSamples() (int, error) {
+	_, longWindow, err := statistic.ResolveWindows(make([]float64, 1), 0, 0)
 
 	if err != nil {
-		return 1
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"lag: min samples window resolution failed",
+			err,
+		))
 	}
 
-	return longWindow
+	return longWindow, nil
 }
 
-func lagMaxBars() int {
-	_, longWindow, err := statistic.NewRollingWindow(0, 0).Resolve(make([]float64, 1))
+func lagMaxBars() (int, error) {
+	_, longWindow, err := statistic.ResolveWindows(make([]float64, 1), 0, 0)
 
 	if err != nil {
-		return 1
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"lag: max bars window resolution failed",
+			err,
+		))
 	}
 
-	return longWindow
+	return longWindow, nil
 }
 
-func maxLagBarsForSeries(sampleCount int) int {
+func maxLagBarsForSeries(sampleCount int) (int, error) {
 	if sampleCount <= 0 {
 		return lagMaxBars()
 	}
 
-	_, longWindow, err := statistic.NewRollingWindow(0, 0).Resolve(make([]float64, sampleCount))
+	_, longWindow, err := statistic.ResolveWindows(make([]float64, sampleCount), 0, 0)
 
 	if err != nil {
-		halfSeries := sampleCount / 2
-
-		if halfSeries < 1 {
-			return 1
-		}
-
-		return halfSeries
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"lag: series window resolution failed",
+			err,
+		))
 	}
+
 	halfSeries := sampleCount / 2
 
 	if longWindow > halfSeries {
@@ -343,7 +354,7 @@ func maxLagBarsForSeries(sampleCount int) int {
 		longWindow = 1
 	}
 
-	return longWindow
+	return longWindow, nil
 }
 
 func (lag *Lag) InefficientReading() *LagReading {
@@ -457,7 +468,15 @@ func CrossLagScore(
 	anchorSeries, followerSeries []correlation.Sample,
 	barInterval time.Duration,
 ) (lagBars int, corr float64, ok bool) {
-	if len(anchorSeries) < lagMinSamples() || len(followerSeries) < lagMinSamples() {
+	minSamples, err := lagMinSamples()
+
+	if err != nil {
+		errnie.Error(errnie.Err(errnie.Validation, "lag: cross lag min samples failed", err))
+
+		return 0, 0, false
+	}
+
+	if len(anchorSeries) < minSamples || len(followerSeries) < minSamples {
 		return 0, 0, false
 	}
 
@@ -467,7 +486,13 @@ func CrossLagScore(
 		sampleCount = len(followerSeries)
 	}
 
-	maxLagBars := maxLagBarsForSeries(sampleCount)
+	maxLagBars, err := maxLagBarsForSeries(sampleCount)
+
+	if err != nil {
+		errnie.Error(errnie.Err(errnie.Validation, "lag: cross lag max bars failed", err))
+
+		return 0, 0, false
+	}
 
 	baseline := 0.0
 
@@ -515,116 +540,4 @@ func CrossLagScore(
 	}
 
 	return bestLag, bestCorr, true
-}
-
-/*
-MoveBaseline tracks adaptive path-move thresholds for anchor gating.
-*/
-type MoveBaseline struct {
-	moments   ewMoments
-	minObs    int
-	pathMoves []float64
-	pathCap   int
-}
-
-/*
-NewMoveBaseline returns an anchor move gate with the given minimum observations.
-*/
-func NewMoveBaseline(minObs, pathCap int) *MoveBaseline {
-	return &MoveBaseline{
-		minObs:  minObs,
-		pathCap: pathCap,
-	}
-}
-
-/*
-Evaluate updates the baseline and returns move gate state.
-*/
-func (baseline *MoveBaseline) Evaluate(recentMove float64) (moved bool, stallMargin float64, ready bool) {
-	baseline.pathMoves = appendRingFloat(baseline.pathMoves, recentMove, baseline.pathCap)
-	effectiveAlpha := 2.0 / (float64(baseline.moments.count + 1))
-
-	if effectiveAlpha > 1 {
-		effectiveAlpha = 1
-	}
-
-	minMove := baseline.pathMoveFloor()
-
-	if baseline.moments.count < baseline.minObs {
-		baseline.moments.update(recentMove, effectiveAlpha)
-
-		return false, 0, false
-	}
-
-	mean := baseline.moments.mean
-	historicalVar := baseline.moments.variance
-
-	if historicalVar < 0 {
-		historicalVar = 0
-	}
-
-	floorVar := minMove * minMove
-	threshold := mean + math.Sqrt(historicalVar+floorVar)
-
-	if threshold <= 0 && recentMove <= 0 {
-		return false, 1, true
-	}
-
-	moved = recentMove > threshold
-
-	if !moved && threshold > 0 {
-		stallMargin = (threshold - recentMove) / threshold
-	}
-
-	baseline.moments.update(recentMove, effectiveAlpha)
-
-	return moved, stallMargin, true
-}
-
-type ewMoments struct {
-	count    int
-	mean     float64
-	variance float64
-}
-
-func (moments *ewMoments) update(value, alpha float64) {
-	moments.count++
-
-	if moments.count == 1 {
-		moments.mean = value
-		moments.variance = 0
-
-		return
-	}
-
-	delta := value - moments.mean
-	moments.mean += alpha * delta
-	moments.variance = (1 - alpha) * (moments.variance + alpha*delta*delta)
-}
-
-func (baseline *MoveBaseline) pathMoveFloor() float64 {
-	if len(baseline.pathMoves) < baseline.minObs {
-		return 0
-	}
-
-	sortedMoves := append([]float64(nil), baseline.pathMoves...)
-	sort.Float64s(sortedMoves)
-	lowerRank := 1 / float64(len(sortedMoves))
-	floor, err := statistic.QuantileOf(lowerRank, sortedMoves)
-
-	if err == nil && floor > 0 {
-		return floor
-	}
-
-	for _, move := range baseline.pathMoves {
-		if move <= 0 {
-			continue
-		}
-
-		if floor == 0 || move < floor {
-			floor = move
-		}
-	}
-
-	return floor
 }

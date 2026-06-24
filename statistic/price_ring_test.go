@@ -11,13 +11,9 @@ import (
 
 func precursorConfig() *datura.Artifact {
 	return datura.Acquire("precursor-config", datura.APPJSON).
-		Poke("precursor", "stage").
-		Poke(map[string]any{
-			"input":      "last",
-			"returnLag":  1.0,
-			"longWindow": 5.0,
-			"outputKey":  "precursor",
-		}, "precursor")
+		Poke("last", "input").
+		Poke(1.0, "returnLag").
+		Poke(5.0, "longWindow")
 }
 
 func precursorState(last float64) *datura.Artifact {

@@ -92,13 +92,13 @@ func TestTradeExcitationSampleRead(testingTB *testing.T) {
 		}
 
 		for range 4 {
-			if transport.NewFlipFlop(last, pipeline) == nil {
+			if flopArtifact(last, pipeline) == nil {
 				break
 			}
 		}
 
 		Convey("It should publish excitation thermal scores", func() {
-			So(excitation.Outcome().Strength, ShouldBeGreaterThan, 0)
+			So(datura.Peek[float64](last, "output", "strength"), ShouldBeGreaterThan, 0)
 		})
 	})
 
@@ -133,13 +133,13 @@ func TestTradeExcitationSampleRead(testingTB *testing.T) {
 		inbound := daturaBurstArtifact("ALT/EUR", batch)
 
 		for range 4 {
-			if transport.NewFlipFlop(inbound, excitation) == nil {
+			if flopArtifact(inbound, excitation) == nil {
 				break
 			}
 		}
 
 		Convey("It should publish excitation thermal scores", func() {
-			So(excitation.Outcome().Strength, ShouldBeGreaterThan, 0)
+			So(datura.Peek[float64](inbound, "output", "strength"), ShouldBeGreaterThan, 0)
 		})
 	})
 

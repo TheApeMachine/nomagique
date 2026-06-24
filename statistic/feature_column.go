@@ -10,10 +10,9 @@ FeatureSnapshot captures extracted ticker columns that must survive downstream
 stages once the payload root moves to output.
 */
 type FeatureSnapshot struct {
-	features      []float64
-	inputs        []string
-	featureInputs []string
-	root          string
+	features []float64
+	inputs   []string
+	root     string
 }
 
 /*
@@ -21,10 +20,9 @@ SnapshotFeatures records the extracted column vector from pipeline state.
 */
 func SnapshotFeatures(state *datura.Artifact) FeatureSnapshot {
 	return FeatureSnapshot{
-		features:      datura.Peek[[]float64](state, "features"),
-		inputs:        datura.Peek[[]string](state, "inputs"),
-		featureInputs: datura.Peek[[]string](state, "featureInputs"),
-		root:          datura.Peek[string](state, "root"),
+		features: datura.Peek[[]float64](state, "features"),
+		inputs:   datura.Peek[[]string](state, "inputs"),
+		root:     datura.Peek[string](state, "root"),
 	}
 }
 
@@ -43,10 +41,6 @@ func (snapshot FeatureSnapshot) Restore(state *datura.Artifact) {
 	if len(snapshot.inputs) > 0 {
 		state.Poke(snapshot.inputs, "inputs")
 	}
-
-	if len(snapshot.featureInputs) > 0 {
-		state.Poke(snapshot.featureInputs, "featureInputs")
-	}
 }
 
 /*
@@ -56,14 +50,6 @@ func FeatureColumn(state *datura.Artifact, sourceKey string) (float64, error) {
 	snapshot := SnapshotFeatures(state)
 
 	for index, key := range snapshot.inputs {
-		if key != sourceKey || index >= len(snapshot.features) {
-			continue
-		}
-
-		return snapshot.features[index], nil
-	}
-
-	for index, key := range snapshot.featureInputs {
 		if key != sourceKey || index >= len(snapshot.features) {
 			continue
 		}

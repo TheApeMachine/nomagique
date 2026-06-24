@@ -19,15 +19,13 @@ func TestExcitationMeasure(testingTB *testing.T) {
 		inbound := daturaBurstArtifact("ALT/EUR", samples)
 
 		for range 4 {
-			err := transport.NewFlipFlop(inbound, excitation)
-
-			if err != nil {
-				continue
+			if flopArtifact(inbound, excitation) == nil {
+				break
 			}
 		}
 
 		Convey("It should publish thermal scores", func() {
-			So(excitation.Outcome().Strength, ShouldBeGreaterThan, 0)
+			So(datura.Peek[float64](inbound, "output", "strength"), ShouldBeGreaterThan, 0)
 		})
 	})
 

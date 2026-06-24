@@ -18,8 +18,8 @@ func TestSampleRatio(testingTB *testing.T) {
 	})
 }
 
-func TestCalibrator_Observe(testingTB *testing.T) {
-	Convey("Given empty Observe inputs", testingTB, func() {
+func TestCalibratorRead(testingTB *testing.T) {
+	Convey("Given empty inbound wire", testingTB, func() {
 		calibrator := SampleRatio(pairConfig("sample-ratio-config"))
 		artifact := datura.Acquire("test", datura.APPJSON)
 		err := transport.NewFlipFlop(artifact, calibrator)
@@ -48,12 +48,10 @@ func TestCalibrator_Observe(testingTB *testing.T) {
 		artifact := datura.Acquire("test", datura.APPJSON)
 
 		artifact = pairWire(artifact, 10, 10)
-		err := transport.NewFlipFlop(artifact, calibrator)
-
-		So(err, ShouldBeNil)
+		_ = transport.NewFlipFlop(artifact, calibrator)
 
 		artifact = pairWire(artifact, 10, 15)
-		err = transport.NewFlipFlop(artifact, calibrator)
+		err := transport.NewFlipFlop(artifact, calibrator)
 
 		So(err, ShouldBeNil)
 
@@ -76,52 +74,7 @@ func TestCalibrator_Observe(testingTB *testing.T) {
 	})
 }
 
-func TestCalibrator_ObserveSamples(testingTB *testing.T) {
-	Convey("Given a sample ratio state", testingTB, func() {
-		state := SampleRatioState{}
-		predicted := []float64{10, 10}
-		actual := []float64{10, 15}
-		out := make([]float64, len(predicted))
-
-		Convey("When observing samples in batch", func() {
-			state.ObserveSamples(predicted, actual, out)
-
-			Convey("It should fill the output buffer", func() {
-				So(out[1], ShouldBeGreaterThan, 1)
-			})
-		})
-	})
-}
-
-func TestCalibrator_Reset(testingTB *testing.T) {
-	Convey("Given a calibrator with state", testingTB, func() {
-		calibrator := SampleRatio(pairConfig("sample-ratio-config"))
-		artifact := pairWire(datura.Acquire("test", datura.APPJSON), 10, 10)
-		err := transport.NewFlipFlop(artifact, calibrator)
-
-		So(err, ShouldBeNil)
-
-		ratioState := sampleRatioStateFromArtifact(calibrator.artifact)
-		ratioState.Reset()
-		pokeSampleRatioState(calibrator.artifact, &ratioState, 0)
-
-		Convey("It should clear derived state", func() {
-			So(datura.Peek[float64](calibrator.artifact, "output", "ready"), ShouldEqual, 0)
-		})
-
-		fresh := pairWire(datura.Acquire("test", datura.APPJSON), 10, 10)
-		err = transport.NewFlipFlop(fresh, calibrator)
-
-		So(err, ShouldBeNil)
-
-		Convey("It should observe again after reset", func() {
-			So(datura.Peek[float64](calibrator.artifact, "output", "ready"), ShouldEqual, 1)
-			So(datura.Peek[float64](fresh, "output", "value"), ShouldEqual, 1)
-		})
-	})
-}
-
-func BenchmarkSampleRatio_Observe(testingTB *testing.B) {
+func BenchmarkSampleRatioRead(testingTB *testing.B) {
 	calibrator := SampleRatio(pairConfig("sample-ratio-config-bench"))
 	artifact := datura.Acquire("test", datura.APPJSON)
 
@@ -133,19 +86,5 @@ func BenchmarkSampleRatio_Observe(testingTB *testing.B) {
 	for testingTB.Loop() {
 		artifact = pairWire(artifact, 10, 11)
 		_ = transport.NewFlipFlop(artifact, calibrator)
-	}
-}
-
-func BenchmarkSampleRatio_ObserveSamples(testingTB *testing.B) {
-	state := SampleRatioState{}
-	predicted := make([]float64, 1024)
-	actual := make([]float64, len(predicted))
-	out := make([]float64, len(predicted))
-
-	testingTB.ReportAllocs()
-
-	for testingTB.Loop() {
-		state.Reset()
-		state.ObserveSamples(predicted, actual, out)
 	}
 }

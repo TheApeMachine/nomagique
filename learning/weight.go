@@ -1,6 +1,8 @@
 package learning
 
 import (
+	"math"
+
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 )
@@ -50,9 +52,67 @@ func (trustWeight *TrustWeight) Read(payload []byte) (int, error) {
 		return 0, err
 	}
 
-	weightState := weightStateFromArtifact(trustWeight.artifact)
-	derived := ObserveWeight(&weightState, predicted, actual)
-	pokeWeightState(trustWeight.artifact, &weightState, derived)
+	residual := actual - predicted
+	trust := datura.Peek[float64](trustWeight.artifact, "output", "trust")
+	prev := datura.Peek[float64](trustWeight.artifact, "output", "prev")
+	minimum := datura.Peek[float64](trustWeight.artifact, "output", "min")
+	maximum := datura.Peek[float64](trustWeight.artifact, "output", "max")
+	rate := datura.Peek[float64](trustWeight.artifact, "output", "rate")
+	count := int(datura.Peek[float64](trustWeight.artifact, "output", "count"))
+	derived := trust
+
+	if count == 0 {
+		prev = predicted
+		minimum = residual
+		maximum = residual
+		trust = 1
+		count = 1
+		derived = trust
+	}
+
+	if count > 1 {
+		minimum = math.Min(minimum, residual)
+		maximum = math.Max(maximum, residual)
+		count++
+	}
+
+	if count == 1 && residual != minimum {
+		minimum = math.Min(minimum, residual)
+		maximum = math.Max(maximum, residual)
+		count = 2
+	}
+
+	span := maximum - minimum
+
+	if count > 1 {
+		if span == 0 {
+			return 0, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"trust-weight: residual span is zero",
+				nil,
+			))
+		}
+
+		surprise := absExact(residual) / span
+		rate = surprise
+		targetTrust := 1 - surprise
+
+		if targetTrust < 0 {
+			targetTrust = 0
+		}
+
+		trust += surprise * (targetTrust - trust)
+		prev = predicted
+		derived = trust
+	}
+
+	trustWeight.artifact.Poke(trust, "output", "trust")
+	trustWeight.artifact.Poke(prev, "output", "prev")
+	trustWeight.artifact.Poke(minimum, "output", "min")
+	trustWeight.artifact.Poke(maximum, "output", "max")
+	trustWeight.artifact.Poke(rate, "output", "rate")
+	trustWeight.artifact.Poke(float64(count), "output", "count")
+	trustWeight.artifact.Poke(derived, "output", "value")
 	state.MergeOutput("value", derived)
 	state.MergeOutput("predicted", predicted)
 	state.MergeOutput("actual", actual)

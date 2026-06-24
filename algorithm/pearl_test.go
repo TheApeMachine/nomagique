@@ -23,7 +23,9 @@ func pearlConfig() *datura.Artifact {
 		Poke(float64(2), "conditionRight").
 		Poke([]float64{0, 3}, "contagionSkip").
 		Poke(0.35, "kernelBandwidth").
-		Poke(0.8, "contagionBreak")
+		Poke(0.8, "contagionBreak").
+		Poke("rawInverted", "input").
+		Poke(float64(3), "window")
 }
 
 func pearlInbound() *datura.Artifact {
@@ -48,11 +50,16 @@ func pearlInbound() *datura.Artifact {
 }
 
 func pearlTicker(index int) *datura.Artifact {
+	bidQty := 740.0 + float64(index)
+	askQty := 720.0 + float64(index)
+
 	payload := fmt.Appendf(
 		nil,
-		`{"channel":"ticker","type":"update","data":[{"symbol":"BTC/USD","bid":%g,"bid_qty":740,"ask":%g,"ask_qty":720,"last":%g,"volume":%g,"change_pct":%g}]}`,
+		`{"channel":"ticker","type":"update","data":[{"symbol":"BTC/USD","bid":%g,"bid_qty":%g,"ask":%g,"ask_qty":%g,"last":%g,"volume":%g,"change_pct":%g}]}`,
 		49990.0+float64(index),
+		bidQty,
 		50010.0+float64(index),
+		askQty,
 		50000.0+float64(index),
 		1000.0+float64(index*10),
 		0.01*float64(index),

@@ -4,13 +4,14 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"sort"
 	"time"
 
 	"github.com/bytedance/sonic"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/probability"
-	"github.com/theapemachine/nomagique/statistic"
+	"gonum.org/v1/gonum/stat"
 )
 
 const (
@@ -21,12 +22,16 @@ const (
 /*
 CancelFillRatio returns cancel volume divided by matched fill volume.
 */
-func CancelFillRatio(cancel, fill float64) float64 {
+func CancelFillRatio(cancel, fill float64) (float64, error) {
 	if cancel <= 0 || fill <= 0 {
-		return 0
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"algorithm: cancel and fill must be positive",
+			nil,
+		))
 	}
 
-	return cancel / fill
+	return cancel / fill, nil
 }
 
 /*
@@ -276,7 +281,7 @@ func (gate *GateQuantile) value(percentileOverride float64) float64 {
 		return 0
 	}
 
-	value, err := statistic.QuantileOf(percentile, history)
+	value, err := gateSampleQuantile(percentile, history)
 
 	if err != nil {
 		errnie.Error(errnie.Err(
@@ -362,7 +367,7 @@ func gateHistoryCapacity(values []float64, minSamples int) int {
 		return len(values) + 1
 	}
 
-	span, err := statistic.SpanOf(values)
+	span, err := gateDistinctSpan(values)
 
 	if err != nil {
 		errnie.Error(errnie.Err(
@@ -453,6 +458,59 @@ func gateReady(config *datura.Artifact) bool {
 
 func mathInf(sign int) float64 {
 	return math.Inf(sign)
+}
+
+func gateSampleQuantile(percentile float64, values []float64) (float64, error) {
+	if len(values) == 0 {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"gate-quantile: values required",
+			nil,
+		))
+	}
+
+	sorted := append([]float64(nil), values...)
+	sort.Float64s(sorted)
+
+	for _, value := range sorted {
+		if math.IsNaN(value) || math.IsInf(value, 0) {
+			return 0, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"gate-quantile: sample is non-finite",
+				nil,
+			))
+		}
+	}
+
+	return stat.Quantile(percentile, stat.LinInterp, sorted, nil), nil
+}
+
+func gateDistinctSpan(values []float64) (float64, error) {
+	if len(values) == 0 {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"gate-quantile: span values required",
+			nil,
+		))
+	}
+
+	sorted := append([]float64(nil), values...)
+	sort.Float64s(sorted)
+	distinct := 1
+
+	for index := 1; index < len(sorted); index++ {
+		if sorted[index] == sorted[index-1] {
+			continue
+		}
+
+		distinct++
+	}
+
+	if distinct <= 1 {
+		return 0, nil
+	}
+
+	return float64(distinct), nil
 }
 
 var _ io.ReadWriteCloser = (*GateQuantile)(nil)

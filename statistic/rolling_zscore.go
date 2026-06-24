@@ -33,6 +33,20 @@ func NewRollingZScore(artifact *datura.Artifact) *RollingZScore {
 	}
 }
 
+func (rollingZScore *RollingZScore) stageKey() (string, error) {
+	stageKey := datura.Peek[string](rollingZScore.artifact, "stage")
+
+	if stageKey != "" {
+		return stageKey, nil
+	}
+
+	return "", errnie.Error(errnie.Err(
+		errnie.Validation,
+		"rolling-zscore: stage required",
+		nil,
+	))
+}
+
 func (rollingZScore *RollingZScore) Read(payload []byte) (int, error) {
 	state := datura.Acquire("rolling-zscore-state", datura.APPJSON)
 
@@ -108,9 +122,9 @@ func (rollingZScore *RollingZScore) Read(payload []byte) (int, error) {
 		}
 
 		if rootKey == "features" {
-			features := datura.Peek[[]float64](state, rootKey)
+			featureSlice := datura.Peek[[]float64](state, rootKey)
 
-			if index >= len(features) {
+			if index >= len(featureSlice) {
 				return 0, errnie.Error(errnie.Err(
 					errnie.Validation,
 					"rolling-zscore: feature index out of range",
@@ -118,7 +132,7 @@ func (rollingZScore *RollingZScore) Read(payload []byte) (int, error) {
 				))
 			}
 
-			sample = features[index]
+			sample = featureSlice[index]
 		}
 
 		if rootKey != "features" {

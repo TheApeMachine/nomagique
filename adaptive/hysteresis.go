@@ -38,18 +38,71 @@ func (hysteresis *Hysteresis) Read(payload []byte) (int, error) {
 		))
 	}
 
+	rootKey := datura.Peek[string](state, "root")
+
+	if rootKey == "" {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"hysteresis: root required",
+			nil,
+		))
+	}
+
+	inputs := datura.Peek[[]string](state, "inputs")
+
+	if len(inputs) == 0 {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"hysteresis: inputs required",
+			nil,
+		))
+	}
 
 	inputKey := datura.Peek[string](hysteresis.artifact, "input")
 
 	if inputKey == "" {
-		inputKey = "sample"
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"hysteresis: input required",
+			nil,
+		))
 	}
 
-	root := datura.Peek[string](state, "root")
-	sample := datura.Peek[float64](state, root, inputKey)
+	var sample float64
+	found := false
 
-	if root == "" {
-		sample = datura.Peek[float64](state, inputKey)
+	for index, input := range inputs {
+		if input != inputKey {
+			continue
+		}
+
+		if rootKey == "features" {
+			features := datura.Peek[[]float64](state, rootKey)
+
+			if index >= len(features) {
+				return 0, errnie.Error(errnie.Err(
+					errnie.Validation,
+					"hysteresis: feature index out of range",
+					nil,
+				))
+			}
+
+			sample = features[index]
+		}
+
+		if rootKey != "features" {
+			sample = datura.Peek[float64](state, rootKey, input)
+		}
+
+		found = true
+	}
+
+	if !found {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"hysteresis: input not in inputs",
+			nil,
+		))
 	}
 
 	if math.IsNaN(sample) || math.IsInf(sample, 0) {
@@ -60,28 +113,12 @@ func (hysteresis *Hysteresis) Read(payload []byte) (int, error) {
 		))
 	}
 
-	window := int(datura.Peek[float64](state, "window"))
-
-	if window <= 0 {
-		window = int(datura.Peek[float64](hysteresis.artifact, "window"))
-	}
-
-	if window <= 0 {
-		history := int(datura.Peek[float64](hysteresis.artifact, "history"))
-
-		if history > 0 {
-			window = int(math.Ceil(math.Sqrt(float64(history))))
-
-			if window < 1 {
-				window = 1
-			}
-		}
-	}
+	window := int(datura.Peek[float64](hysteresis.artifact, "window"))
 
 	if window <= 0 {
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
-			"hysteresis: window must be positive",
+			"hysteresis: window required",
 			nil,
 		))
 	}

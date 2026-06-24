@@ -152,20 +152,30 @@ func (bookflowSample *BookflowSample) ingestBook(state *datura.Artifact, window 
 	toxicAsk := bookflowToxicPenalty(window.touchCancelAsk, window.frameAddAsk, touchDepth)
 	weighted := bookflowImbalance(window.bids, window.asks, mid, decayRate, false, 0, toxicBid, toxicAsk)
 	level1 := bookflowImbalance(window.bids, window.asks, mid, decayRate, true, 0, toxicBid, toxicAsk)
-	flatDepth := bookflowFlatDepth(window.bids, window.asks)
-	flat := bookflowImbalance(window.bids, window.asks, mid, decayRate, false, flatDepth, toxicBid, toxicAsk)
+	flatDepth, flatDepthErr := bookflowFlatDepth(window.bids, window.asks)
 
 	window.lastMid = mid
 	window.lastSpread = spread
 	window.touchDepth = touchDepth
 	window.flatOK = 1
+	window.weightedHist = appendRingFloat(window.weightedHist, weighted, bookflowSampleHistoryCap)
+	window.level1Hist = appendRingFloat(window.level1Hist, level1, bookflowSampleHistoryCap)
+
+	if flatDepthErr != nil {
+		errnie.Error(errnie.Err(
+			errnie.Validation,
+			"bookflow-sample: flat depth resolution failed",
+			flatDepthErr,
+		))
+
+		return
+	}
 
 	if flatDepth > 0 {
 		window.flatOK = 1
 	}
 
-	window.weightedHist = appendRingFloat(window.weightedHist, weighted, bookflowSampleHistoryCap)
-	window.level1Hist = appendRingFloat(window.level1Hist, level1, bookflowSampleHistoryCap)
+	flat := bookflowImbalance(window.bids, window.asks, mid, decayRate, false, flatDepth, toxicBid, toxicAsk)
 	window.flatHist = appendRingFloat(window.flatHist, flat, bookflowSampleHistoryCap)
 }
 
@@ -286,7 +296,7 @@ func (bookflowSample *BookflowSample) features(window *bookflowWindow) []float64
 		return nil
 	}
 
-	_, longWindow, err := statistic.NewRollingWindow(0, 0).Resolve(window.weightedHist)
+	_, longWindow, err := statistic.ResolveWindows(window.weightedHist, 0, 0)
 
 	if err != nil || historyCount < longWindow {
 		return nil
@@ -402,18 +412,27 @@ func bookflowDecayRate(mid, spread float64) float64 {
 	return 1 / relativeSpread
 }
 
-func bookflowFlatDepth(bids, asks map[float64]float64) int {
+func bookflowFlatDepth(bids, asks map[float64]float64) (int, error) {
 	levelCount := len(bids) + len(asks)
 
 	if levelCount < 2 {
-		return 0
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"bookflow-sample: flat depth needs at least two levels",
+			nil,
+		))
 	}
 
-	_, longWindow, err := statistic.NewRollingWindow(0, 0).Resolve(make([]float64, levelCount))
+	_, longWindow, err := statistic.ResolveWindows(make([]float64, levelCount), 0, 0)
 
 	if err != nil {
-		return 2
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"bookflow-sample: flat depth window resolution failed",
+			err,
+		))
 	}
+
 	flatDepth := int(math.Ceil(math.Sqrt(float64(levelCount))))
 
 	if flatDepth < 2 {
@@ -424,7 +443,7 @@ func bookflowFlatDepth(bids, asks map[float64]float64) int {
 		flatDepth = longWindow
 	}
 
-	return flatDepth
+	return flatDepth, nil
 }
 
 func bookflowImbalance(

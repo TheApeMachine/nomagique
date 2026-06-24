@@ -56,14 +56,34 @@ func hawkesFitConfig(horizonUnixNano float64) *datura.Artifact {
 
 func readOutbound(stage io.Reader) (*datura.Artifact, error) {
 	chunk := make([]byte, 262144)
-	readCount, err := stage.Read(chunk)
+	frame := make([]byte, 0, len(chunk))
 
-	if err != nil && err != io.EOF && err != io.ErrShortBuffer {
-		return nil, errnie.Error(errnie.Err(errnie.IO, "readOutbound: stage read failed", err))
+	for {
+		readCount, err := stage.Read(chunk)
+
+		if readCount > 0 {
+			frame = append(frame, chunk[:readCount]...)
+		}
+
+		if err == io.EOF {
+			break
+		}
+
+		if err != nil && err != io.ErrShortBuffer {
+			return nil, errnie.Error(errnie.Err(errnie.IO, "readOutbound: stage read failed", err))
+		}
+
+		if readCount == 0 {
+			break
+		}
+	}
+
+	if len(frame) == 0 {
+		return nil, errnie.Error(errnie.Err(errnie.Validation, "readOutbound: stage produced no output", nil))
 	}
 
 	outbound := datura.Acquire("test-out", datura.Artifact_Type_json)
-	_, err = outbound.Write(chunk[:readCount])
+	_, err := outbound.Write(frame)
 
 	if err != nil {
 		outbound.Release()
@@ -100,6 +120,24 @@ func readScalar(stage io.ReadWriter, samples ...float64) float64 {
 	defer outbound.Release()
 
 	return datura.Peek[float64](outbound, "output", "value")
+}
+
+func flopArtifact(inbound *datura.Artifact, stage io.ReadWriter) error {
+	if _, err := stage.Write(inbound.Pack()); err != nil {
+		return err
+	}
+
+	outbound, err := readOutbound(stage)
+
+	if err != nil {
+		return err
+	}
+
+	defer outbound.Release()
+
+	_, err = inbound.Write(outbound.Pack())
+
+	return err
 }
 
 func observeWithWork(stage io.ReadWriter, sample float64, work float64) float64 {

@@ -10,7 +10,6 @@ import (
 
 /*
 GeometricMean combines two configured output fields with a geometric mean.
-The constructor artifact holds config; Write buffers inbound wire bytes.
 */
 type GeometricMean struct {
 	artifact *datura.Artifact
@@ -37,7 +36,6 @@ func (geometricMean *GeometricMean) Read(p []byte) (int, error) {
 			err,
 		))
 	}
-
 
 	defer state.Release()
 
@@ -74,11 +72,13 @@ func (geometricMean *GeometricMean) Read(p []byte) (int, error) {
 		))
 	}
 
+	inputs := datura.Peek[[]string](state, "inputs")
+
 	if left == 0 || right == 0 {
 		state.MergeOutput(destinationKey, 0.0)
 		features.Restore(state)
 		state.Poke("output", "root")
-		state.Poke([]string{destinationKey}, "inputs")
+		state.Poke(appendOutputInput(inputs, destinationKey), "inputs")
 
 		return state.Read(p)
 	}
@@ -88,9 +88,19 @@ func (geometricMean *GeometricMean) Read(p []byte) (int, error) {
 	state.MergeOutput(destinationKey, mean)
 	features.Restore(state)
 	state.Poke("output", "root")
-	state.Poke([]string{destinationKey}, "inputs")
+	state.Poke(appendOutputInput(inputs, destinationKey), "inputs")
 
 	return state.Read(p)
+}
+
+func appendOutputInput(inputs []string, key string) []string {
+	for _, input := range inputs {
+		if input == key {
+			return inputs
+		}
+	}
+
+	return append(append([]string(nil), inputs...), key)
 }
 
 func (geometricMean *GeometricMean) Write(p []byte) (int, error) {

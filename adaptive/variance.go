@@ -12,13 +12,13 @@ Variance tracks an adaptive mean and variance from the observed sample stream.
 The constructor artifact holds config; Write buffers inbound payload.
 */
 type Variance struct {
-	artifact     *datura.Artifact
-	bootstrapped bool
-	mean         float64
-	variance     float64
-	prev         float64
-	min          float64
-	max          float64
+	artifact *datura.Artifact
+	mean     float64
+	variance float64
+	prev     float64
+	min      float64
+	max      float64
+	count    int
 }
 
 /*
@@ -40,7 +40,6 @@ func (variance *Variance) Read(payload []byte) (int, error) {
 			err,
 		))
 	}
-
 
 	rootKey := datura.Peek[string](state, "root")
 
@@ -91,20 +90,18 @@ func (variance *Variance) Read(payload []byte) (int, error) {
 			))
 		}
 
-		if !variance.bootstrapped {
+		if variance.count == 0 {
 			variance.mean = sample
 			variance.variance = 0
 			variance.prev = sample
 			variance.min = sample
 			variance.max = sample
-			variance.bootstrapped = true
-			state.MergeOutput("value", 0)
-
-			break
+			variance.count = 1
+		} else {
+			variance.min = math.Min(variance.min, sample)
+			variance.max = math.Max(variance.max, sample)
+			variance.count++
 		}
-
-		variance.min = math.Min(variance.min, sample)
-		variance.max = math.Max(variance.max, sample)
 
 		span := variance.max - variance.min
 

@@ -6,7 +6,7 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 )
 
-func TestTrust_Observe(testingTB *testing.T) {
+func TestTrustRead(testingTB *testing.T) {
 	Convey("Given accurate predicted and actual pairs", testingTB, func() {
 		trust := NewTrust()
 
@@ -23,7 +23,7 @@ func TestTrust_Observe(testingTB *testing.T) {
 	})
 }
 
-func BenchmarkTrust_Observe(testingTB *testing.B) {
+func BenchmarkTrustRead(testingTB *testing.B) {
 	trust := NewTrust()
 
 	testingTB.ReportAllocs()

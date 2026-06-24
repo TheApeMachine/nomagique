@@ -8,7 +8,7 @@ import (
 	"github.com/theapemachine/datura/transport"
 )
 
-func TestIntervalSeriesObserve(testingTB *testing.T) {
+func TestIntervalSeriesRead(testingTB *testing.T) {
 	Convey("Given an interval series", testingTB, func() {
 		series := NewIntervalSeries(IntervalWireConfig("interval-series-config"))
 

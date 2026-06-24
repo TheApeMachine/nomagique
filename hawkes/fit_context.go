@@ -70,7 +70,7 @@ func NewFitContext(stream ArrivalStream, horizon time.Time) (FitContext, bool) {
 		return FitContext{}, false
 	}
 
-	lowerGap, upperGap, quartileErr := statistic.Quartiles(gaps)
+	lowerGap, upperGap, quartileErr := quartiles(gaps)
 
 	if quartileErr != nil {
 		return FitContext{}, false
@@ -94,7 +94,7 @@ func NewFitContext(stream ArrivalStream, horizon time.Time) (FitContext, bool) {
 	}
 	localMin, localMax := tune.localScaleRange(gapCV)
 	scanSteps := tune.scanSteps()
-	betaCandidates, betaErr := statistic.LogSpace(
+	betaCandidates, betaErr := logspace(
 		1/upperGap, 1/lowerGap, scanSteps,
 	)
 
@@ -102,7 +102,7 @@ func NewFitContext(stream ArrivalStream, horizon time.Time) (FitContext, bool) {
 		return FitContext{}, false
 	}
 
-	branchSelfCandidates, selfErr := statistic.LinSpace(
+	branchSelfCandidates, selfErr := linspace(
 		tune.branchFloor(),
 		tune.branchCeiling()*tune.selfBranchShare(),
 		tune.branchScanSteps(),
@@ -112,7 +112,7 @@ func NewFitContext(stream ArrivalStream, horizon time.Time) (FitContext, bool) {
 		return FitContext{}, false
 	}
 
-	branchCrossCandidates, crossErr := statistic.LinSpace(
+	branchCrossCandidates, crossErr := linspace(
 		0, tune.branchCeiling(), tune.branchScanSteps(),
 	)
 
@@ -120,7 +120,7 @@ func NewFitContext(stream ArrivalStream, horizon time.Time) (FitContext, bool) {
 		return FitContext{}, false
 	}
 
-	localScales, scalesErr := statistic.LinSpace(localMin, localMax, scanSteps)
+	localScales, scalesErr := linspace(localMin, localMax, scanSteps)
 
 	if scalesErr != nil {
 		return FitContext{}, false
@@ -351,7 +351,7 @@ func (tune arrivalTune) muUncertaintyFactors(count int) ([]float64, error) {
 
 	spread := 2 / math.Sqrt(float64(count))
 
-	return statistic.LinSpace(1-spread, 1+spread, tune.scanSteps())
+	return linspace(1-spread, 1+spread, tune.scanSteps())
 }
 
 func (tune arrivalTune) localScaleRange(gapCV float64) (minScale, maxScale float64) {

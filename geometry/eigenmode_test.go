@@ -36,7 +36,7 @@ func TestEigenmodeEnergy(t *testing.T) {
 	})
 }
 
-func TestModePartition_Observe(t *testing.T) {
+func TestModePartitionRead(t *testing.T) {
 	t.Parallel()
 
 	Convey("Given no participants", t, func() {
@@ -115,7 +115,7 @@ func TestModePartition_Observe(t *testing.T) {
 	})
 }
 
-func TestModePartition_Reset(t *testing.T) {
+func TestModePartition_WriteReset(t *testing.T) {
 	Convey("Given an observed mode partition", t, func() {
 		partition := NewModePartition(
 			datura.Acquire("mode-partition-config", datura.APPJSON),
@@ -132,7 +132,15 @@ func TestModePartition_Reset(t *testing.T) {
 		err := transport.NewFlipFlop(artifact, partition)
 
 		So(err, ShouldBeNil)
-		So(partition.Reset(), ShouldBeNil)
+
+		reset := datura.Acquire("test-reset", datura.APPJSON)
+		reset.Poke(1, "reset")
+		packed, marshalErr := reset.Message().MarshalPacked()
+		reset.Release()
+		So(marshalErr, ShouldBeNil)
+
+		_, writeErr := partition.Write(packed)
+		So(writeErr, ShouldBeNil)
 
 		Convey("It should clear snap", func() {
 			So(partition.Snap(), ShouldBeNil)
@@ -140,7 +148,7 @@ func TestModePartition_Reset(t *testing.T) {
 	})
 }
 
-func BenchmarkModePartition_Observe(testingTB *testing.B) {
+func BenchmarkModePartitionRead(testingTB *testing.B) {
 	size := 16
 	origins := make([]float64, size)
 	energies := make([]float64, size)

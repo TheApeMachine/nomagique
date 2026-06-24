@@ -12,13 +12,16 @@ import (
 	"github.com/theapemachine/nomagique/vector"
 )
 
+/*
+Ignition composes volume lift, precursor, spread compression, and logit scoring stages.
+*/
 type Ignition struct {
 	artifact *datura.Artifact
 	pipeline io.ReadWriteCloser
 }
 
 /*
-NewIgnition composes generic stages for joint volume-and-return ignition scoring.
+NewIgnition composes ignition stages from one shared config artifact.
 */
 func NewIgnition(artifact *datura.Artifact) *Ignition {
 	return &Ignition{

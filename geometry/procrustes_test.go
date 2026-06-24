@@ -32,12 +32,10 @@ func TestProcrustes_Observe(t *testing.T) {
 			So(err, ShouldBeNil)
 
 			residual := datura.Peek[float64](artifact, "output", "value")
-			So(stage.Err(), ShouldBeNil)
+			rotationFlat := datura.Peek[[]float64](artifact, "output", "rotation")
 
 			Convey("It should return R ≈ I with near-zero residual", func() {
 				So(residual, ShouldBeLessThan, 1e-10)
-
-				result := stage.Result()
 
 				for row := 0; row < nDim; row++ {
 					for col := 0; col < nDim; col++ {
@@ -47,7 +45,7 @@ func TestProcrustes_Observe(t *testing.T) {
 							expected = 1.0
 						}
 
-						So(result.R.At(row, col), ShouldAlmostEqual, expected, 1e-8)
+						So(rotationFlat[row*nDim+col], ShouldAlmostEqual, expected, 1e-8)
 					}
 				}
 			})
@@ -71,15 +69,15 @@ func TestProcrustes_Observe(t *testing.T) {
 			err = transport.NewFlipFlop(artifact, stage)
 
 			So(err, ShouldBeNil)
-			So(stage.Err(), ShouldBeNil)
 
 			Convey("It should recover the known rotation with low residual", func() {
-				result := stage.Result()
-				So(result.Residual, ShouldBeLessThan, 1e-8)
+				residual := datura.Peek[float64](artifact, "output", "value")
+				rotationFlat := datura.Peek[[]float64](artifact, "output", "rotation")
+				So(residual, ShouldBeLessThan, 1e-8)
 
 				for row := 0; row < nDim; row++ {
 					for col := 0; col < nDim; col++ {
-						So(result.R.At(row, col), ShouldAlmostEqual, knownR.At(row, col), 1e-6)
+						So(rotationFlat[row*nDim+col], ShouldAlmostEqual, knownR.At(row, col), 1e-6)
 					}
 				}
 			})
@@ -87,35 +85,31 @@ func TestProcrustes_Observe(t *testing.T) {
 
 		Convey("When given degenerate inputs", func() {
 			Convey("It should error on dimension mismatch", func() {
-				denseA := mat.NewDense(1, 2, []float64{1, 2})
-				denseB := mat.NewDense(2, 2, []float64{1, 2, 3, 4})
-				stage := NewProcrustes(
-					datura.Acquire("procrustes-config", datura.APPJSON),
-					denseA, denseB,
-				)
+				config := datura.Acquire("procrustes-config", datura.APPJSON).
+					Poke(float64(1), "nSamples").
+					Poke(float64(2), "nDim").
+					Poke([]float64{1, 2}, "rowsA").
+					Poke([]float64{1, 2, 3, 4}, "rowsB")
+				stage := NewProcrustes(config)
 				artifact := datura.Acquire("test", datura.APPJSON)
 				err := transport.NewFlipFlop(artifact, stage)
 
 				So(err, ShouldNotBeNil)
-				So(stage.Err(), ShouldNotBeNil)
 			})
 
 			Convey("It should error on row count mismatch", func() {
 				matA := randomMatrix(3, 2, 1)
 				matB := randomMatrix(4, 2, 2)
-				denseA, err := denseFromRows(matA, 3, 2)
-				So(err, ShouldBeNil)
-				denseB, err := denseFromRows(matB, 4, 2)
-				So(err, ShouldBeNil)
-				stage := NewProcrustes(
-					datura.Acquire("procrustes-config", datura.APPJSON),
-					denseA, denseB,
-				)
+				config := datura.Acquire("procrustes-config", datura.APPJSON).
+					Poke(float64(3), "nSamples").
+					Poke(float64(2), "nDim").
+					Poke(rowsToFlat(matA, 3, 2), "rowsA").
+					Poke(rowsToFlat(matB, 4, 2), "rowsB")
+				stage := NewProcrustes(config)
 				artifact := datura.Acquire("test", datura.APPJSON)
-				err = transport.NewFlipFlop(artifact, stage)
+				err := transport.NewFlipFlop(artifact, stage)
 
 				So(err, ShouldNotBeNil)
-				So(stage.Err(), ShouldNotBeNil)
 			})
 		})
 	})
@@ -123,7 +117,7 @@ func TestProcrustes_Observe(t *testing.T) {
 
 func TestProcrustes_Decompose(t *testing.T) {
 	Convey("Given the Jacobi SVD decomposition", t, func() {
-		stage := NewProcrustes(datura.Acquire("procrustes-config", datura.APPJSON), nil, nil)
+		stage := NewProcrustes(datura.Acquire("procrustes-config", datura.APPJSON))
 
 		Convey("When decomposing a known diagonal matrix", func() {
 			dense := mat.NewDense(3, 3, []float64{
@@ -211,7 +205,7 @@ func BenchmarkProcrustes_Decompose(b *testing.B) {
 		b.Fatal(err)
 	}
 
-	stage := NewProcrustes(datura.Acquire("procrustes-config-bench", datura.APPJSON), nil, nil)
+	stage := NewProcrustes(datura.Acquire("procrustes-config-bench", datura.APPJSON))
 
 	b.ReportAllocs()
 

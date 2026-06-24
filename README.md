@@ -2,18 +2,43 @@
 
 **No. magic. numbers.**
 
-Composable numeric dynamics behind `core.Number[T]`. Every stage implements `Observe(...core.Number[T]) core.Scalar[T]` and `Reset() error`. Compose through `nomagique.Number[float64](...)`.
+Composable compute primitives behind `nomagique.Number(...)`. Each primitive is **one file, one type** implementing `io.ReadWriteCloser`:
+
+| Method | Role |
+|--------|------|
+| `New*(artifact *datura.Artifact)` | Config lives on the constructor artifact |
+| `Write(p []byte)` | Buffer inbound wire artifact on the stage payload |
+| `Read(p []byte)` | Evaluate lazily; stamp `output` on the wire |
+| `Close() error` | Dispose |
+
+Wire navigation: read `root`, loop `inputs`, match config `input`. No fallbacks, no silent zeros, no warmup/bootstrap, no static windows — parameters derive from the stream (timestamps, spread, history).
+
+Compose with `datura/transport`:
+
+```go
+emaConfig := datura.Acquire("ema-config", datura.APPJSON).
+    Poke("sample", "input").
+    Poke(2, "period")
+deltaConfig := datura.Acquire("delta-config", datura.APPJSON).Poke("value", "input")
+
+wire := datura.Acquire("wire", datura.APPJSON)
+wire.Poke("features", "root")
+wire.Poke([]string{"sample"}, "inputs")
+wire.Merge("features", []float64{10})
+
+pipeline := nomagique.Number(adaptive.NewEMA(emaConfig), adaptive.NewDelta(deltaConfig))
+err := transport.NewFlipFlop(wire, pipeline)
+```
+
+**Migration:** `learning/`, `probability/`, and parts of `geometry/` still expose legacy `Observe`/`Reset` APIs. Target primitives live in `adaptive/`, `statistic/`, `vector/`, and `correlation/Pearson`. See `core/dynamic.go`.
 
 ## Composability contract
 
-| Layer              | Role                                                                            | Example                                                                      |
-|--------------------|---------------------------------------------------------------------------------|------------------------------------------------------------------------------|
-| Boundary           | `transport.Through` / `transport.From` — push samples in, tap stage outputs out | `nomagique.Number(transport.Through(key), stages..., transport.From(stage))` |
-| Pipeline stage     | `core.Number[T]` — `Observe(...Number[T]) core.Scalar[T]` + `Reset()`           | `adaptive.NewEMA[float64]()`                                                 |
-| Composed number    | `nomagique.Number[T](stages...)` — bootstrap through a stage chain              | `math.Abs(nomagique.Number[float64](transport.Through(sample), ema, delta))` |
-| Multi-input stages | Stages that need paired scalars                                                 | `nomagique.Number[float64](logic.NewCircuit(...)).Observe(source)`           |
-
-Everything composes through the pipeline. Do not call domain math imperatively when a stage exists.
+| Layer | Role | Example |
+|-------|------|---------|
+| Boundary | `transport.NewFlipFlop` — artifact in, artifact out | `transport.NewFlipFlop(wire, pipeline)` |
+| Pipeline | `nomagique.Number(stages...)` | `nomagique.Number(ema, delta)` |
+| Stage | Four-method primitive | `adaptive.NewEMA(configArtifact)` |
 
 ## Packages
 
@@ -33,8 +58,12 @@ Everything composes through the pipeline. Do not call domain math imperatively w
 | `algorithm`   | `Pearl`, `Hawkes`, `HawkesFit`, `Shift`, `Correlate`, `Backdoor`, `Calibrate`, `Trust`                                                                             |
 | `geometry`    | Phase dials, eigenmodes, PGA, Procrustes; pipeline stages `Velocity`, `Coupling`, `ModePartition`, `Rotor`, `Translator`, `Sandwich`                               |
 | `logic`       | `Circuit`, `Rules`, `Condition`, `True`, `And`, `Or`, `Not`, `Xor`, `GreaterThan`, `LessThan`, `Equal`                                                             |
-| `transport`   | `Through` — boundary sample injection; `From` — boundary output tap                                                                                                |
-| `nomagique`   | `Number[T]`, `Numbers[T]` entry points                                                                                                                             |
+| `transport`   | `FlipFlop`, `Pipeline`, `Graph`, `Feedback` (in `datura/transport`)                                                                                                |
+| `nomagique`   | `Number` entry point                                                                                                                                               |
+
+## Legacy examples (Observe API — pending migration)
+
+The examples below use the pre-migration `Observe`/`Reset` API. Prefer the FlipFlop pattern above.
 
 ## Usage
 

@@ -2,9 +2,11 @@ package hawkes
 
 import (
 	"math"
+	"sort"
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/statistic"
+	"gonum.org/v1/gonum/stat"
 )
 
 /*
@@ -26,7 +28,7 @@ func (gates FitGates) Ready() bool {
 FitGatesFromHistory derives saturation and frenzy gates from observed fit statistics.
 */
 func FitGatesFromHistory(spectralRadii, asymmetries []float64) (FitGates, bool) {
-	_, longWindow, err := statistic.NewRollingWindow(0, 0).Resolve(make([]float64, len(spectralRadii)))
+	_, longWindow, err := statistic.ResolveWindows(make([]float64, len(spectralRadii)), 0, 0)
 
 	if err != nil || len(spectralRadii) < longWindow || len(asymmetries) < longWindow {
 		return FitGates{}, false
@@ -63,15 +65,26 @@ func FitGatesFromHistory(spectralRadii, asymmetries []float64) (FitGates, bool) 
 }
 
 func quantileFromHistory(history []float64, percentile float64) (float64, error) {
-	value, err := statistic.QuantileOf(percentile, history)
-
-	if err != nil {
+	if len(history) == 0 {
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
-			"hawkes gates: quantile failed",
-			err,
+			"hawkes gates: quantile requires history",
+			nil,
 		))
 	}
 
-	return value, nil
+	sorted := append([]float64(nil), history...)
+	sort.Float64s(sorted)
+
+	for _, value := range sorted {
+		if math.IsNaN(value) || math.IsInf(value, 0) {
+			return 0, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"hawkes gates: quantile sample is non-finite",
+				nil,
+			))
+		}
+	}
+
+	return stat.Quantile(percentile, stat.LinInterp, sorted, nil), nil
 }

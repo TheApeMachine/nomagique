@@ -9,7 +9,7 @@ import (
 	"github.com/theapemachine/nomagique/tests"
 )
 
-func TestHawkes_Observe(testingTB *testing.T) {
+func TestHawkesRead(testingTB *testing.T) {
 	Convey("Given parameters fit to the configured streams", testingTB, func() {
 		xStream := []float64{2, 4, 6, 8}
 		yStream := []float64{1, 2, 3, 4}
@@ -34,7 +34,7 @@ func TestHawkes_Observe(testingTB *testing.T) {
 	})
 }
 
-func BenchmarkHawkes_Observe(testingTB *testing.B) {
+func BenchmarkHawkesRead(testingTB *testing.B) {
 	xStream := []float64{2, 4, 6, 8, 10, 12}
 	yStream := []float64{1, 2, 3, 4, 5, 6}
 	params := hawkes.BivariateParams{

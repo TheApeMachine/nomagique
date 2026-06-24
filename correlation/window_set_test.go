@@ -8,7 +8,7 @@ import (
 	"github.com/theapemachine/datura/transport"
 )
 
-func TestWindowSetObserve(testingTB *testing.T) {
+func TestWindowSetRead(testingTB *testing.T) {
 	Convey("Given a window set", testingTB, func() {
 		windowSet := NewWindowSet(IntervalWireConfig("window-set-config"))
 		artifact := datura.Acquire("test", datura.APPJSON)

@@ -11,11 +11,8 @@ import (
 func TestPositiveOnlyRead(t *testing.T) {
 	Convey("Given a positive-only gate", t, func() {
 		config := datura.Acquire("positive-only-config", datura.APPJSON).
-			Poke("precursor", "stage").
-			Poke(map[string]any{
-				"outputKey":    "precursor",
-				"positiveOnly": 1.0,
-			}, "precursor")
+			Poke("precursor", "outputKey").
+			Poke(1.0, "positiveOnly")
 
 		stage := NewPositiveOnly(config)
 		artifact := datura.Acquire("positive-only-test", datura.APPJSON)
@@ -32,22 +29,8 @@ func TestPositiveOnlyRead(t *testing.T) {
 		})
 	})
 
-	Convey("Given missing stage config", t, func() {
-		stage := NewPositiveOnly(datura.Acquire("positive-only-missing", datura.APPJSON))
-		artifact := ScalarWire(datura.Acquire("positive-only-test", datura.APPJSON), "sample", 1.0)
-
-		err := transport.NewFlipFlop(artifact, stage)
-
-		So(err, ShouldNotBeNil)
-	})
-
 	Convey("Given missing outputKey config", t, func() {
-		config := datura.Acquire("positive-only-no-output", datura.APPJSON).
-			Poke("precursor", "stage").
-			Poke(map[string]any{
-				"positiveOnly": 1.0,
-			}, "precursor")
-		stage := NewPositiveOnly(config)
+		stage := NewPositiveOnly(datura.Acquire("positive-only-missing", datura.APPJSON))
 		artifact := ScalarWire(datura.Acquire("positive-only-test", datura.APPJSON), "sample", 1.0)
 
 		err := transport.NewFlipFlop(artifact, stage)
@@ -58,11 +41,8 @@ func TestPositiveOnlyRead(t *testing.T) {
 
 func BenchmarkPositiveOnlyRead(b *testing.B) {
 	config := datura.Acquire("positive-only-bench", datura.APPJSON).
-		Poke("precursor", "stage").
-		Poke(map[string]any{
-			"outputKey":    "precursor",
-			"positiveOnly": 1.0,
-		}, "precursor")
+		Poke("precursor", "outputKey").
+		Poke(1.0, "positiveOnly")
 
 	stage := NewPositiveOnly(config)
 	artifact := datura.Acquire("positive-only-bench-test", datura.APPJSON)

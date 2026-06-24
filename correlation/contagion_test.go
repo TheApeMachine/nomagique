@@ -76,7 +76,7 @@ func TestMedianPairwiseAbsCorrelation(testingTB *testing.T) {
 	})
 }
 
-func TestContagionObserve(testingTB *testing.T) {
+func TestContagionRead(testingTB *testing.T) {
 	Convey("Given a contagion stage with fed members", testingTB, func() {
 		contagion := NewContagion(contagionConfigArtifact())
 		artifact := datura.Acquire("test", datura.APPJSON)
@@ -109,7 +109,7 @@ func TestContagionObserve(testingTB *testing.T) {
 	})
 }
 
-func BenchmarkContagionObserve(testingTB *testing.B) {
+func BenchmarkContagionRead(testingTB *testing.B) {
 	contagion := NewContagion(
 		datura.Acquire("test", datura.APPJSON).
 			WithAttributes(datura.Map[any]{

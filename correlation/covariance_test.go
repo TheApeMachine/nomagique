@@ -12,7 +12,7 @@ func covarianceConfig() *datura.Artifact {
 	return datura.Acquire("covariance-config", datura.APPJSON)
 }
 
-func TestCovariance_Observe(testingTB *testing.T) {
+func TestCovarianceRead(testingTB *testing.T) {
 	Convey("Given positively coupled streams", testingTB, func() {
 		covariance := NewCovariance(covarianceConfig())
 		artifact := datura.Acquire("test", datura.APPJSON).
@@ -62,7 +62,7 @@ func TestCovariance_Reset(testingTB *testing.T) {
 	})
 }
 
-func BenchmarkCovariance_Observe(testingTB *testing.B) {
+func BenchmarkCovarianceRead(testingTB *testing.B) {
 	covariance := NewCovariance(covarianceConfig())
 	artifact := datura.Acquire("test", datura.APPJSON)
 

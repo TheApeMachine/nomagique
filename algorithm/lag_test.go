@@ -70,7 +70,11 @@ func TestLagReadInsufficientFields(testingTB *testing.T) {
 func TestCrossLagScore(testingTB *testing.T) {
 	Convey("Given a follower that leads the anchor", testingTB, func() {
 		start := time.Date(2026, 6, 11, 12, 0, 0, 0, time.UTC)
-		sampleCount := lagMinSamples() + lagMaxBars() + 8
+		minSamples, err := lagMinSamples()
+		So(err, ShouldBeNil)
+		maxBars, err := lagMaxBars()
+		So(err, ShouldBeNil)
+		sampleCount := minSamples + maxBars + 8
 		leadBars := 3
 		followerSeries := make([]correlation.Sample, sampleCount)
 
@@ -99,31 +103,6 @@ func TestCrossLagScore(testingTB *testing.T) {
 		})
 	})
 }
-
-func TestMoveBaselineEvaluate(testingTB *testing.T) {
-	Convey("Given a warmed move baseline", testingTB, func() {
-		baseline := NewMoveBaseline(anchorMoveMinObs, 256)
-
-		for index := range anchorMoveMinObs {
-			_, _, ready := baseline.Evaluate(0.0001 + float64(index%2)*0.00005)
-			So(ready, ShouldBeFalse)
-		}
-
-		Convey("It should classify a flat reading as stall with unit margin", func() {
-			moved, margin, ready := baseline.Evaluate(0.00001)
-			So(ready, ShouldBeTrue)
-			So(moved, ShouldBeFalse)
-			So(margin, ShouldBeGreaterThan, 0)
-			So(margin, ShouldBeLessThanOrEqualTo, 1)
-		})
-	})
-}
-
-const (
-	anchorMoveMinObs = 12
-)
-
-var barInterval = 5 * time.Minute
 
 func BenchmarkLagRead(b *testing.B) {
 	lag := NewLag(datura.Acquire("lag-config-bench", datura.APPJSON))

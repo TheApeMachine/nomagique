@@ -1,0 +1,17 @@
+package geometry
+
+import "github.com/theapemachine/datura"
+
+func payloadHasReset(payload []byte) bool {
+	if len(payload) == 0 {
+		return false
+	}
+
+	state := datura.Acquire("geometry-inbound", datura.APPJSON)
+
+	if _, err := state.Write(payload); err != nil {
+		return false
+	}
+
+	return datura.Peek[float64](state, "reset") > 0
+}

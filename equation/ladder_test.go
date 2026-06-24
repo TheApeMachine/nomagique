@@ -18,7 +18,9 @@ func regimeLadderConfig(contagionBreak float64) *datura.Artifact {
 		Poke([]float64{0, 1}, "controlsNormal").
 		Poke([]float64{0, 3}, "contagionSkip").
 		Poke(0.35, "kernelBandwidth").
-		Poke(contagionBreak, "contagionBreak")
+		Poke(contagionBreak, "contagionBreak").
+		Poke("rawInverted", "input").
+		Poke(float64(3), "window")
 }
 
 func regimeLadderInbound() *datura.Artifact {

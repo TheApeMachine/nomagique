@@ -3,33 +3,180 @@ package learning
 import (
 	"fmt"
 	"math"
+
+	"github.com/theapemachine/datura"
+	"github.com/theapemachine/errnie"
 )
 
 /*
-RLSFilter is a recursive least-squares linear predictor for online feature regression.
+RLS is an online recursive-least-squares stage composable in nomagique.Number pipelines.
+The constructor artifact holds config; Write buffers inbound wire on its payload.
 */
-type RLSFilter struct {
-	dimension        int
-	beta             []float64
-	covariance       [][]float64
-	forgettingFactor float64
-	initialVariance  float64
+type RLS struct {
+	artifact   *datura.Artifact
+	stateStore *datura.Artifact
 }
 
 /*
-NewRLSFilter allocates an RLS filter with the given feature dimension (excluding intercept).
-initialVariance sets the diagonal of the initial covariance matrix.
+NewRLS returns an RLS stage wired from config attributes on the artifact.
 */
-func NewRLSFilter(dimension int, initialVariance float64) (*RLSFilter, error) {
+func NewRLS(artifact *datura.Artifact) *RLS {
+	return &RLS{
+		artifact:   artifact,
+		stateStore: datura.Acquire("rls-state-store", datura.APPJSON),
+	}
+}
+
+func (rls *RLS) Read(payload []byte) (int, error) {
+	if rls == nil || rls.artifact == nil {
+		return 0, nil
+	}
+
+	state := datura.Acquire("rls-state", datura.APPJSON)
+
+	if _, err := state.Write(rls.artifact.DecryptPayload()); err != nil {
+		state.Release()
+
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"rls: state write failed",
+			err,
+		))
+	}
+
+	defer state.Release()
+
+	session, err := rls.loadSession()
+
+	if err != nil {
+		return 0, err
+	}
+
+	values := datura.Peek[[]float64](state, "batch")
+
+	if len(values) == 0 {
+		values = datura.Peek[[]float64](state, "features")
+	}
+
+	if len(values) < session.dimension+1 {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"rls: batch shorter than feature dimension plus target",
+			nil,
+		))
+	}
+
+	features := values[:session.dimension]
+	target := values[len(values)-1]
+
+	if err := session.observe(features, target); err != nil {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"rls: observe failed",
+			err,
+		))
+	}
+
+	prediction, err := session.predict(features)
+
+	if err != nil {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"rls: predict failed",
+			err,
+		))
+	}
+
+	session.persist(rls.stateStore, prediction)
+	state.MergeOutput("value", prediction)
+	state.Poke("output", "root")
+	state.Poke([]string{"value"}, "inputs")
+
+	return state.Read(payload)
+}
+
+func (rls *RLS) Write(payload []byte) (int, error) {
+	rls.artifact.WithPayload(payload)
+
+	return len(payload), nil
+}
+
+func (rls *RLS) Close() error {
+	return nil
+}
+
+type rlsSession struct {
+	dimension        int
+	initialVariance  float64
+	forgettingFactor float64
+	beta             []float64
+	covariance       [][]float64
+}
+
+func (rls *RLS) loadSession() (*rlsSession, error) {
+	dimension := int(datura.Peek[float64](rls.artifact, "dimension"))
+	initialVariance := datura.Peek[float64](rls.artifact, "initialVariance")
+	forgettingFactor := datura.Peek[float64](rls.artifact, "forgettingFactor")
+
+	if forgettingFactor == 0 {
+		forgettingFactor = 1
+	}
+
 	if dimension <= 0 {
-		return nil, fmt.Errorf("learning: rls dimension must be positive")
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"rls: dimension must be positive",
+			nil,
+		))
 	}
 
 	if initialVariance <= 0 {
-		return nil, fmt.Errorf("learning: rls initial variance must be positive")
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"rls: initial variance must be positive",
+			nil,
+		))
+	}
+
+	if forgettingFactor <= 0 || forgettingFactor > 1 {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"rls: forgetting factor must be in (0,1]",
+			nil,
+		))
 	}
 
 	size := dimension + 1
+	session := &rlsSession{
+		dimension:        dimension,
+		initialVariance:  initialVariance,
+		forgettingFactor: forgettingFactor,
+	}
+
+	beta := datura.Peek[[]float64](rls.stateStore, "output", "beta")
+	covFlat := datura.Peek[[]float64](rls.stateStore, "output", "covariance")
+
+	if len(beta) == size && len(covFlat) == size*size {
+		session.beta = append([]float64(nil), beta...)
+		session.covariance = unflattenCovariance(covFlat, size)
+
+		return session, nil
+	}
+
+	session.beta = make([]float64, size)
+	session.covariance = newRLSCovariance(size, initialVariance)
+
+	return session, nil
+}
+
+func (session *rlsSession) persist(stateStore *datura.Artifact, prediction float64) {
+	stateStore.MergeOutput("value", prediction)
+	stateStore.MergeOutput("beta", append([]float64(nil), session.beta...))
+	stateStore.MergeOutput("covariance", flattenCovariance(session.covariance))
+	stateStore.MergeOutput("covarianceDiagonal", covarianceDiagonal(session.covariance))
+}
+
+func newRLSCovariance(size int, initialVariance float64) [][]float64 {
 	covariance := make([][]float64, size)
 
 	for row := 0; row < size; row++ {
@@ -37,56 +184,71 @@ func NewRLSFilter(dimension int, initialVariance float64) (*RLSFilter, error) {
 		covariance[row][row] = initialVariance
 	}
 
-	return &RLSFilter{
-		dimension:        dimension,
-		beta:             make([]float64, size),
-		covariance:       covariance,
-		forgettingFactor: 1,
-		initialVariance:  initialVariance,
-	}, nil
+	return covariance
 }
 
-/*
-Reset restores coefficients and covariance to their initial state.
-*/
-func (filter *RLSFilter) Reset() {
-	size := filter.dimension + 1
+func flattenCovariance(covariance [][]float64) []float64 {
+	size := len(covariance)
+	flat := make([]float64, size*size)
 
 	for row := 0; row < size; row++ {
 		for col := 0; col < size; col++ {
-			filter.covariance[row][col] = 0
+			flat[row*size+col] = covariance[row][col]
 		}
-
-		filter.covariance[row][row] = filter.initialVariance
-		filter.beta[row] = 0
 	}
+
+	return flat
 }
 
-func (filter *RLSFilter) resetCovariance() {
-	size := filter.dimension + 1
+func unflattenCovariance(flat []float64, size int) [][]float64 {
+	covariance := make([][]float64, size)
+
+	for row := 0; row < size; row++ {
+		covariance[row] = make([]float64, size)
+
+		for col := 0; col < size; col++ {
+			covariance[row][col] = flat[row*size+col]
+		}
+	}
+
+	return covariance
+}
+
+func covarianceDiagonal(covariance [][]float64) []float64 {
+	diagonal := make([]float64, len(covariance))
+
+	for row := range covariance {
+		diagonal[row] = covariance[row][row]
+	}
+
+	return diagonal
+}
+
+func (session *rlsSession) resetCovariance() {
+	size := session.dimension + 1
 
 	for row := 0; row < size; row++ {
 		for col := 0; col < size; col++ {
-			filter.covariance[row][col] = 0
+			session.covariance[row][col] = 0
 		}
 
-		filter.covariance[row][row] = filter.initialVariance
+		session.covariance[row][row] = session.initialVariance
 	}
 }
 
-func (filter *RLSFilter) stabilizeCovariance() {
-	size := len(filter.covariance)
-	diagonalFloor := filter.initialVariance * rlsCovarianceFloorScale()
+func (session *rlsSession) stabilizeCovariance() {
+	size := len(session.covariance)
+	diagonalFloor := session.initialVariance * rlsCovarianceFloorScale()
 
 	for row := 0; row < size; row++ {
 		for col := row + 1; col < size; col++ {
-			averaged := (filter.covariance[row][col] + filter.covariance[col][row]) * 0.5
-			filter.covariance[row][col] = averaged
-			filter.covariance[col][row] = averaged
+			averaged := (session.covariance[row][col] + session.covariance[col][row]) * 0.5
+			session.covariance[row][col] = averaged
+			session.covariance[col][row] = averaged
 		}
 
-		if filter.covariance[row][row] < diagonalFloor {
-			filter.covariance[row][row] = diagonalFloor
+		if session.covariance[row][row] < diagonalFloor {
+			session.covariance[row][row] = diagonalFloor
 		}
 	}
 }
@@ -95,49 +257,33 @@ func rlsCovarianceFloorScale() float64 {
 	return math.Sqrt(math.Nextafter(1, 2) - 1)
 }
 
-/*
-SetForgettingFactor sets lambda in (0, 1]. Values below one inflate covariance
-before each update so older observations decay faster.
-*/
-func (filter *RLSFilter) SetForgettingFactor(lambda float64) error {
-	if lambda <= 0 || lambda > 1 {
-		return fmt.Errorf("learning: rls forgetting factor must be in (0,1], got %g", lambda)
-	}
-
-	filter.forgettingFactor = lambda
-
-	return nil
-}
-
-func (filter *RLSFilter) applyForgetting() error {
-	if filter.forgettingFactor >= 1 {
+func (session *rlsSession) applyForgetting() error {
+	if session.forgettingFactor >= 1 {
 		return nil
 	}
 
-	scale := 1 / filter.forgettingFactor
+	scale := 1 / session.forgettingFactor
 
-	for row := range filter.covariance {
-		for col := range filter.covariance[row] {
-			filter.covariance[row][col] *= scale
+	for row := range session.covariance {
+		for col := range session.covariance[row] {
+			session.covariance[row][col] *= scale
 		}
 	}
 
 	return nil
 }
 
-/*
-Observe ingests one feature vector and scalar target, updating coefficients in place.
-*/
-func (filter *RLSFilter) Observe(features []float64, target float64) error {
+func (session *rlsSession) observe(features []float64, target float64) error {
 	for attempt := 0; attempt < 2; attempt++ {
-		err := filter.observe(features, target)
+		err := session.observeOnce(features, target)
 
 		if err == nil {
-			filter.stabilizeCovariance()
+			session.stabilizeCovariance()
+
 			return nil
 		}
 
-		filter.resetCovariance()
+		session.resetCovariance()
 
 		if attempt == 1 {
 			return err
@@ -147,8 +293,8 @@ func (filter *RLSFilter) Observe(features []float64, target float64) error {
 	return fmt.Errorf("learning: rls observe failed after covariance repair")
 }
 
-func (filter *RLSFilter) observe(features []float64, target float64) error {
-	if err := filter.applyForgetting(); err != nil {
+func (session *rlsSession) observeOnce(features []float64, target float64) error {
+	if err := session.applyForgetting(); err != nil {
 		return err
 	}
 
@@ -156,15 +302,15 @@ func (filter *RLSFilter) observe(features []float64, target float64) error {
 		return fmt.Errorf("learning: rls target must be finite")
 	}
 
-	if len(features) != filter.dimension {
+	if len(features) != session.dimension {
 		return fmt.Errorf(
 			"learning: rls expected %d features, got %d",
-			filter.dimension,
+			session.dimension,
 			len(features),
 		)
 	}
 
-	design := make([]float64, filter.dimension+1)
+	design := make([]float64, session.dimension+1)
 	design[0] = 1
 
 	for index, feature := range features {
@@ -180,7 +326,7 @@ func (filter *RLSFilter) observe(features []float64, target float64) error {
 
 	for row := 0; row < size; row++ {
 		for col := 0; col < size; col++ {
-			px[row] += filter.covariance[row][col] * design[col]
+			px[row] += session.covariance[row][col] * design[col]
 		}
 	}
 
@@ -197,43 +343,40 @@ func (filter *RLSFilter) observe(features []float64, target float64) error {
 	prediction := 0.0
 
 	for index := 0; index < size; index++ {
-		prediction += filter.beta[index] * design[index]
+		prediction += session.beta[index] * design[index]
 	}
 
 	innovation := target - prediction
 
 	for row := 0; row < size; row++ {
 		gain := px[row] / denominator
-		filter.beta[row] += gain * innovation
+		session.beta[row] += gain * innovation
 
 		for col := 0; col < size; col++ {
-			filter.covariance[row][col] -= gain * px[col]
+			session.covariance[row][col] -= gain * px[col]
 		}
 	}
 
 	return nil
 }
 
-/*
-Predict returns the intercept plus feature-weighted forecast.
-*/
-func (filter *RLSFilter) Predict(features []float64) (float64, error) {
-	if len(features) != filter.dimension {
+func (session *rlsSession) predict(features []float64) (float64, error) {
+	if len(features) != session.dimension {
 		return 0, fmt.Errorf(
 			"learning: rls expected %d features, got %d",
-			filter.dimension,
+			session.dimension,
 			len(features),
 		)
 	}
 
-	forecast := filter.beta[0]
+	forecast := session.beta[0]
 
 	for index, feature := range features {
 		if !finite(feature) {
 			return 0, fmt.Errorf("learning: rls feature[%d] must be finite", index)
 		}
 
-		forecast += filter.beta[index+1] * feature
+		forecast += session.beta[index+1] * feature
 	}
 
 	if !finite(forecast) {
@@ -241,76 +384,4 @@ func (filter *RLSFilter) Predict(features []float64) (float64, error) {
 	}
 
 	return forecast, nil
-}
-
-/*
-Coefficients returns a copy of the current coefficient vector including intercept.
-*/
-func (filter *RLSFilter) Coefficients() []float64 {
-	out := make([]float64, len(filter.beta))
-	copy(out, filter.beta)
-
-	return out
-}
-
-/*
-SetCoefficients restores coefficients when replaying from a checkpoint.
-*/
-func (filter *RLSFilter) SetCoefficients(coefficients []float64) error {
-	if len(coefficients) != len(filter.beta) {
-		return fmt.Errorf(
-			"learning: rls expected %d coefficients, got %d",
-			len(filter.beta),
-			len(coefficients),
-		)
-	}
-
-	for index, coefficient := range coefficients {
-		if !finite(coefficient) {
-			return fmt.Errorf("learning: rls coefficient[%d] must be finite", index)
-		}
-	}
-
-	copy(filter.beta, coefficients)
-
-	return nil
-}
-
-/*
-Residual returns target minus prediction for diagnostics.
-*/
-func (filter *RLSFilter) Residual(features []float64, target float64) (float64, error) {
-	prediction, err := filter.Predict(features)
-
-	if err != nil {
-		return 0, err
-	}
-
-	return target - prediction, nil
-}
-
-/*
-ConditionNumberBound estimates coefficient stability from covariance diagonal.
-*/
-func (filter *RLSFilter) ConditionNumberBound() float64 {
-	minDiagonal := math.Inf(1)
-	maxDiagonal := 0.0
-
-	for row := range filter.covariance {
-		value := filter.covariance[row][row]
-
-		if value < minDiagonal {
-			minDiagonal = value
-		}
-
-		if value > maxDiagonal {
-			maxDiagonal = value
-		}
-	}
-
-	if minDiagonal <= 0 {
-		return math.Inf(1)
-	}
-
-	return maxDiagonal / minDiagonal
 }

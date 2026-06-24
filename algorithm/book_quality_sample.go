@@ -153,10 +153,33 @@ func (bookQualitySample *BookQualitySample) ingestBook(state *datura.Artifact) {
 	bookQualitySample.ledger.ApplyFlow(SideAsk, frameFillAsk, frameCancelAsk, smoothing)
 
 	cancelBid, fillBid, cancelAsk, fillAsk, bidDepth, askDepth := bookQualitySample.ledger.Snapshot()
-	maxRatio := math.Max(
-		CancelFillRatio(cancelBid, fillBid),
-		CancelFillRatio(cancelAsk, fillAsk),
-	)
+	bidRatio := 0.0
+
+	if cancelBid > 0 && fillBid > 0 {
+		var bidRatioErr error
+		bidRatio, bidRatioErr = CancelFillRatio(cancelBid, fillBid)
+
+		if bidRatioErr != nil {
+			errnie.Error(errnie.Err(errnie.Validation, "book-quality-sample: bid cancel/fill ratio failed", bidRatioErr))
+
+			return
+		}
+	}
+
+	askRatio := 0.0
+
+	if cancelAsk > 0 && fillAsk > 0 {
+		var askRatioErr error
+		askRatio, askRatioErr = CancelFillRatio(cancelAsk, fillAsk)
+
+		if askRatioErr != nil {
+			errnie.Error(errnie.Err(errnie.Validation, "book-quality-sample: ask cancel/fill ratio failed", askRatioErr))
+
+			return
+		}
+	}
+
+	maxRatio := math.Max(bidRatio, askRatio)
 
 	churnRatio := 0.0
 

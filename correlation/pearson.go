@@ -37,16 +37,54 @@ func (pearson *Pearson) Read(p []byte) (int, error) {
 		))
 	}
 
+	rootKey := datura.Peek[string](state, "root")
 
-	values := datura.Peek[[]float64](state, "batch")
+	if rootKey == "" {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"correlation-pearson: root required",
+			nil,
+		))
+	}
 
-	if len(values) == 0 {
-		left := datura.Peek[[]float64](state, "left")
-		right := datura.Peek[[]float64](state, "right")
+	inputs := datura.Peek[[]string](state, "inputs")
 
-		if len(left) > 0 || len(right) > 0 {
-			values = append(append([]float64(nil), left...), right...)
+	if len(inputs) == 0 {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"correlation-pearson: inputs required",
+			nil,
+		))
+	}
+
+	batchKey := datura.Peek[string](pearson.artifact, "input")
+
+	if batchKey == "" {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"correlation-pearson: input required",
+			nil,
+		))
+	}
+
+	var values []float64
+	found := false
+
+	for _, input := range inputs {
+		if input != batchKey {
+			continue
 		}
+
+		values = datura.Peek[[]float64](state, rootKey, input)
+		found = true
+	}
+
+	if !found {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"correlation-pearson: input not in inputs",
+			nil,
+		))
 	}
 
 	count := len(values)
@@ -87,6 +125,7 @@ func (pearson *Pearson) Read(p []byte) (int, error) {
 		state.MergeOutput("value", correlation)
 		state.Poke("output", "root")
 		state.Poke([]string{"value"}, "inputs")
+
 		return state.Read(p)
 	}
 

@@ -205,7 +205,7 @@ func (cohortSample *CohortSample) window(symbol string) int {
 		return 0
 	}
 
-	shortWindow, _, err := statistic.NewRollingWindow(0, 0).Resolve(symbolState.returns)
+	shortWindow, _, err := statistic.ResolveWindows(symbolState.returns, 0, 0)
 
 	if err != nil {
 		return 0

@@ -144,8 +144,34 @@ func classifyBookQuality(
 		return 1, toxicBluffStrength, bluffScore, 0, 0, nil
 	}
 
-	bidRatio := CancelFillRatio(cancelBid, fillBid)
-	askRatio := CancelFillRatio(cancelAsk, fillAsk)
+	bidRatio := 0.0
+
+	if cancelBid > 0 && fillBid > 0 {
+		bidRatio, err = CancelFillRatio(cancelBid, fillBid)
+
+		if err != nil {
+			return 0, 0, 0, 0, 0, err
+		}
+	}
+
+	if cancelBid > 0 && fillBid <= 0 {
+		return 0, 0, 0, 0, 0, fmt.Errorf("bookquality: cancelBid requires positive fillBid")
+	}
+
+	askRatio := 0.0
+
+	if cancelAsk > 0 && fillAsk > 0 {
+		askRatio, err = CancelFillRatio(cancelAsk, fillAsk)
+
+		if err != nil {
+			return 0, 0, 0, 0, 0, err
+		}
+	}
+
+	if cancelAsk > 0 && fillAsk <= 0 {
+		return 0, 0, 0, 0, 0, fmt.Errorf("bookquality: cancelAsk requires positive fillAsk")
+	}
+
 	maxRatio := math.Max(bidRatio, askRatio)
 
 	if bidDepth > 0 && askDepth > 0 && maxRatio == 0 && (fillBid > 0 || fillAsk > 0) {

@@ -14,9 +14,12 @@ func TestIntegration(t *testing.T) {
 	Convey("Given correlation stages composed through nomagique.Number", t, func() {
 		Convey("When Pearson receives a perfectly correlated batch", func() {
 			artifact := datura.Acquire("test", datura.APPJSON).
-				Poke([]float64{1, 2, 1, 2}, "batch")
+				Poke("data", "root").
+				Poke([]string{"batch"}, "inputs").
+				Poke([]float64{1, 2, 1, 2}, "data", "batch")
 			pipeline := nomagique.Number(
-				correlation.NewPearson(datura.Acquire("pearson-config", datura.APPJSON)),
+				correlation.NewPearson(datura.Acquire("pearson-config", datura.APPJSON).
+					Poke("batch", "input")),
 			)
 			err := transport.NewFlipFlop(artifact, pipeline)
 

@@ -4,13 +4,19 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/datura"
+	"github.com/theapemachine/datura/transport"
 )
 
-func TestCalibrate_Observe(testingTB *testing.T) {
-	Convey("Given a linear feature-target relation", testingTB, func() {
-		calibrate, err := NewCalibrate(1, 1000)
+func calibrateConfig(dimension int, initialVariance float64) *datura.Artifact {
+	return datura.Acquire("calibrate-config", datura.APPJSON).
+		WithAttribute("dimension", float64(dimension)).
+		WithAttribute("initialVariance", initialVariance)
+}
 
-		So(err, ShouldBeNil)
+func TestCalibrateRead(testingTB *testing.T) {
+	Convey("Given a linear feature-target relation", testingTB, func() {
+		calibrate := NewCalibrate(calibrateConfig(1, 1000))
 
 		var prediction float64
 		lastTarget := 0.0
@@ -26,24 +32,20 @@ func TestCalibrate_Observe(testingTB *testing.T) {
 			So(prediction, ShouldAlmostEqual, lastTarget, 0.25)
 		})
 	})
-}
 
-func TestNewCalibrate(testingTB *testing.T) {
 	Convey("Given a non-positive dimension", testingTB, func() {
-		_, err := NewCalibrate(0, 1000)
+		calibrate := NewCalibrate(calibrateConfig(0, 1000))
+		artifact := datura.Acquire("test", datura.APPJSON).Poke([]float64{1, 2}, "batch")
+		err := transport.NewFlipFlop(artifact, calibrate)
 
-		Convey("It should return an error", func() {
+		Convey("It should return a validation error", func() {
 			So(err, ShouldNotBeNil)
 		})
 	})
 }
 
-func BenchmarkCalibrate_Observe(testingTB *testing.B) {
-	calibrate, err := NewCalibrate(1, 1000)
-
-	if err != nil {
-		testingTB.Fatal(err)
-	}
+func BenchmarkCalibrateRead(testingTB *testing.B) {
+	calibrate := NewCalibrate(calibrateConfig(1, 1000))
 
 	testingTB.ReportAllocs()
 

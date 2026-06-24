@@ -24,7 +24,9 @@ type MeanMedianRatio struct {
 }
 
 /*
-NewMeanMedianRatio returns a mean-over-median ratio stage wired from config attributes on the artifact.
+NewMeanMedianRatio returns a mean-over-median ratio stage wired from config
+attributes on the artifact. The stage's config block is named by the "block"
+attribute, the same convention price_ring uses.
 */
 func NewMeanMedianRatio(artifact *datura.Artifact) *MeanMedianRatio {
 	return &MeanMedianRatio{
@@ -52,25 +54,14 @@ func (meanMedianRatio *MeanMedianRatio) Read(payload []byte) (int, error) {
 
 	inputs := datura.Peek[[]string](state, "inputs")
 	features := datura.Peek[[]float64](state, "features")
-	featureInputs := datura.Peek[[]string](state, "featureInputs")
 	featureRoot := datura.Peek[string](state, "root")
 
-	order := datura.Peek[[]string](meanMedianRatio.artifact, "order")
-	stageIndex := int(datura.Peek[float64](meanMedianRatio.artifact, "stageIndex"))
-	stageKey := ""
-
-	if stageIndex < 0 {
-		stageIndex = 0
-	}
-
-	if len(order) > stageIndex {
-		stageKey = order[stageIndex]
-	}
+	stageKey := datura.Peek[string](meanMedianRatio.artifact, "block")
 
 	if stageKey == "" {
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
-			"mean-median-ratio: stage order required",
+			"mean-median-ratio: block required",
 			nil,
 		))
 	}
@@ -95,17 +86,6 @@ func (meanMedianRatio *MeanMedianRatio) Read(payload []byte) (int, error) {
 
 		sample = features[index]
 		sampleFound = true
-	}
-
-	if !sampleFound {
-		for index, key := range featureInputs {
-			if key != sourceKey || index >= len(features) {
-				continue
-			}
-
-			sample = features[index]
-			sampleFound = true
-		}
 	}
 
 	if !sampleFound {
@@ -180,7 +160,16 @@ func (meanMedianRatio *MeanMedianRatio) Read(payload []byte) (int, error) {
 	}
 
 	shortHint := int(datura.Peek[float64](meanMedianRatio.artifact, stageKey, "shortWindow"))
+
+	if shortHint <= 0 {
+		shortHint = int(datura.Peek[float64](state, "output", "shortWindow"))
+	}
+
 	longHint := int(datura.Peek[float64](meanMedianRatio.artifact, stageKey, "longWindow"))
+
+	if longHint <= 0 {
+		longHint = int(datura.Peek[float64](state, "output", "longWindow"))
+	}
 	outputKey := datura.Peek[string](meanMedianRatio.artifact, stageKey, "outputKey")
 
 	if outputKey == "" {
@@ -270,24 +259,12 @@ func (meanMedianRatio *MeanMedianRatio) Read(payload []byte) (int, error) {
 		state.Merge("features", features)
 	}
 
-	if len(featureInputs) > 0 {
-		state.Poke("features", "root")
-		state.Poke(featureInputs, "inputs")
-		state.Poke(featureInputs, "featureInputs")
+	if featureRoot != "" {
+		state.Poke(featureRoot, "root")
 	}
 
-	if len(featureInputs) == 0 && len(features) > 0 && len(inputs) > 0 {
-		state.Poke(inputs, "featureInputs")
-	}
-
-	if len(featureInputs) == 0 {
-		if featureRoot != "" {
-			state.Poke(featureRoot, "root")
-		}
-
-		if len(inputs) > 0 {
-			state.Poke(inputs, "inputs")
-		}
+	if len(inputs) > 0 {
+		state.Poke(inputs, "inputs")
 	}
 
 	state.MergeOutput(outputKey, ratio)
@@ -295,6 +272,21 @@ func (meanMedianRatio *MeanMedianRatio) Read(payload []byte) (int, error) {
 	if declineOutput != "" {
 		state.MergeOutput(declineOutput, meanMedianRatio.declines[seriesKey+"/"+declineOutput])
 	}
+
+	outputInputs := datura.Peek[[]string](state, "inputs")
+
+	if outputInputs == nil {
+		outputInputs = []string{}
+	}
+
+	outputInputs = append(outputInputs, outputKey)
+
+	if declineOutput != "" {
+		outputInputs = append(outputInputs, declineOutput)
+	}
+
+	state.Poke("output", "root")
+	state.Poke(outputInputs, "inputs")
 
 	return state.Read(payload)
 }

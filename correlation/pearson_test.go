@@ -9,10 +9,18 @@ import (
 )
 
 func pearsonConfig() *datura.Artifact {
-	return datura.Acquire("pearson-config", datura.APPJSON)
+	return datura.Acquire("pearson-config", datura.APPJSON).
+		Poke("batch", "input")
 }
 
-func TestPearson_Observe(testingTB *testing.T) {
+func pearsonWire(batch []float64) *datura.Artifact {
+	return datura.Acquire("pearson-wire", datura.APPJSON).
+		Poke("data", "root").
+		Poke([]string{"batch"}, "inputs").
+		Poke(batch, "data", "batch")
+}
+
+func TestPearsonRead(testingTB *testing.T) {
 	cases := []struct {
 		name   string
 		inputs []float64
@@ -33,7 +41,7 @@ func TestPearson_Observe(testingTB *testing.T) {
 	for _, testCase := range cases {
 		Convey("Given "+testCase.name, testingTB, func() {
 			pearson := NewPearson(pearsonConfig())
-			artifact := datura.Acquire("test", datura.APPJSON).Poke(testCase.inputs, "batch")
+			artifact := pearsonWire(testCase.inputs)
 			err := transport.NewFlipFlop(artifact, pearson)
 
 			So(err, ShouldBeNil)
@@ -58,7 +66,9 @@ func TestPearson_Observe(testingTB *testing.T) {
 
 	Convey("Given empty Observe inputs", testingTB, func() {
 		pearson := NewPearson(pearsonConfig())
-		artifact := datura.Acquire("test", datura.APPJSON)
+		artifact := datura.Acquire("test", datura.APPJSON).
+			Poke("data", "root").
+			Poke([]string{"batch"}, "inputs")
 		err := transport.NewFlipFlop(artifact, pearson)
 
 		Convey("It should return a validation error", func() {
@@ -68,7 +78,9 @@ func TestPearson_Observe(testingTB *testing.T) {
 
 	Convey("Given fewer than two inputs", testingTB, func() {
 		pearson := NewPearson(pearsonConfig())
-		artifact := datura.Acquire("test", datura.APPJSON).Poke(1, "sample")
+		artifact := datura.Acquire("test", datura.APPJSON).
+			Poke("data", "root").
+			Poke([]string{"batch"}, "inputs").Poke(1, "data", "sample")
 		err := transport.NewFlipFlop(artifact, pearson)
 
 		Convey("It should return a validation error", func() {
@@ -78,7 +90,9 @@ func TestPearson_Observe(testingTB *testing.T) {
 
 	Convey("Given odd input count", testingTB, func() {
 		pearson := NewPearson(pearsonConfig())
-		artifact := datura.Acquire("test", datura.APPJSON).Poke([]float64{1, 2, 3}, "batch")
+		artifact := datura.Acquire("test", datura.APPJSON).
+			Poke("data", "root").
+			Poke([]string{"batch"}, "inputs").Poke([]float64{1, 2, 3}, "data", "batch")
 		err := transport.NewFlipFlop(artifact, pearson)
 
 		Convey("It should return a validation error", func() {
@@ -90,7 +104,7 @@ func TestPearson_Observe(testingTB *testing.T) {
 func TestPearson_Reset(testingTB *testing.T) {
 	Convey("Given an observed Pearson stage", testingTB, func() {
 		pearson := NewPearson(pearsonConfig())
-		artifact := datura.Acquire("test", datura.APPJSON).Poke([]float64{1, 2, 1, 2}, "batch")
+		artifact := pearsonWire([]float64{1, 2, 1, 2})
 		err := transport.NewFlipFlop(artifact, pearson)
 
 		So(err, ShouldBeNil)
@@ -100,7 +114,9 @@ func TestPearson_Reset(testingTB *testing.T) {
 
 		So(err, ShouldNotBeNil)
 
-		fresh := datura.Acquire("test", datura.APPJSON)
+		fresh := datura.Acquire("test", datura.APPJSON).
+			Poke("data", "root").
+			Poke([]string{"batch"}, "inputs")
 		err = transport.NewFlipFlop(fresh, pearson)
 
 		Convey("It should return a validation error", func() {
@@ -109,12 +125,14 @@ func TestPearson_Reset(testingTB *testing.T) {
 	})
 }
 
-func BenchmarkPearson_Observe(testingTB *testing.B) {
+func BenchmarkPearsonRead(testingTB *testing.B) {
 	pearson := NewPearson(pearsonConfig())
 	artifact := datura.Acquire("test", datura.APPJSON)
 
 	for testingTB.Loop() {
-		artifact.Poke([]float64{1, 2, 3, 4, 2, 4, 6, 8}, "batch")
+		artifact.Poke("data", "root")
+		artifact.Poke([]string{"batch"}, "inputs")
+		artifact.Poke([]float64{1, 2, 3, 4, 2, 4, 6, 8}, "data", "batch")
 		_ = transport.NewFlipFlop(artifact, pearson)
 	}
 }

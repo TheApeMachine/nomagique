@@ -5,6 +5,7 @@ import (
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
+	"gonum.org/v1/gonum/stat/distuv"
 )
 
 /*
@@ -13,7 +14,6 @@ The constructor artifact holds config; Write buffers inbound wire on its payload
 */
 type Bernoulli struct {
 	artifact *datura.Artifact
-	beta     BetaState
 }
 
 /*
@@ -41,8 +41,14 @@ func (bernoulli *Bernoulli) Read(payload []byte) (int, error) {
 	defer state.Release()
 
 	if datura.Peek[float64](state, "reset") != 0 {
-		bernoulli.beta.Reset()
-		state.MergeOutput("ready", 0)
+		bernoulli.artifact.Poke(0.0, "output", "alpha")
+		bernoulli.artifact.Poke(0.0, "output", "beta")
+		bernoulli.artifact.Poke(0.0, "output", "prev")
+		bernoulli.artifact.Poke(0.0, "output", "min")
+		bernoulli.artifact.Poke(0.0, "output", "max")
+		bernoulli.artifact.Poke(0.0, "output", "rate")
+		bernoulli.artifact.Poke(0.0, "output", "count")
+		bernoulli.artifact.Poke(0.0, "output", "value")
 		state.MergeOutput("value", 0)
 		state.Poke("output", "root")
 		state.Poke([]string{"value"}, "inputs")
@@ -121,8 +127,14 @@ func (bernoulli *Bernoulli) Read(payload []byte) (int, error) {
 		))
 	}
 
+	alpha := datura.Peek[float64](bernoulli.artifact, "output", "alpha")
+	betaParam := datura.Peek[float64](bernoulli.artifact, "output", "beta")
+	prev := datura.Peek[float64](bernoulli.artifact, "output", "prev")
+	minimum := datura.Peek[float64](bernoulli.artifact, "output", "min")
+	maximum := datura.Peek[float64](bernoulli.artifact, "output", "max")
+	rate := datura.Peek[float64](bernoulli.artifact, "output", "rate")
+	count := int(datura.Peek[float64](bernoulli.artifact, "output", "count"))
 	pairedKey := datura.Peek[string](bernoulli.artifact, "pairedKey")
-	value := 0.0
 
 	if pairedKey != "" {
 		var paired float64
@@ -172,7 +184,51 @@ func (bernoulli *Bernoulli) Read(payload []byte) (int, error) {
 			))
 		}
 
-		value = bernoulli.beta.ObservePair(predicted, actual)
+		success := 0.0
+
+		if actual >= predicted {
+			success = 1
+		}
+
+		tracking := actual - predicted
+
+		if count == 0 {
+			alpha = 1 + success
+			betaParam = 1 + (1 - success)
+			prev = predicted
+			minimum = tracking
+			maximum = tracking
+			count = 1
+		}
+
+		if count > 1 {
+			minimum = math.Min(minimum, tracking)
+			maximum = math.Max(maximum, tracking)
+			count++
+		}
+
+		if count == 1 && tracking != minimum {
+			minimum = math.Min(minimum, tracking)
+			maximum = math.Max(maximum, tracking)
+			count = 2
+		}
+
+		span := maximum - minimum
+
+		if count > 1 {
+			if span == 0 {
+				return 0, errnie.Error(errnie.Err(
+					errnie.Validation,
+					"bernoulli: sample span is zero",
+					nil,
+				))
+			}
+
+			rate = math.Abs(tracking) / span
+			prev = predicted
+			alpha += rate * success
+			betaParam += rate * (1 - success)
+		}
 	}
 
 	if pairedKey == "" {
@@ -194,17 +250,69 @@ func (bernoulli *Bernoulli) Read(payload []byte) (int, error) {
 			))
 		}
 
-		value = bernoulli.beta.Observe(outcome)
+		if count == 0 {
+			alpha = 1 + outcome
+			betaParam = 1 + (1 - outcome)
+			prev = outcome
+			minimum = outcome
+			maximum = outcome
+			count = 1
+		}
+
+		if count > 1 {
+			minimum = math.Min(minimum, outcome)
+			maximum = math.Max(maximum, outcome)
+			count++
+		}
+
+		if count == 1 && outcome != minimum {
+			minimum = math.Min(minimum, outcome)
+			maximum = math.Max(maximum, outcome)
+			count = 2
+		}
+
+		span := maximum - minimum
+
+		if count > 1 {
+			if span == 0 {
+				return 0, errnie.Error(errnie.Err(
+					errnie.Validation,
+					"bernoulli: sample span is zero",
+					nil,
+				))
+			}
+
+			movement := outcome - prev
+			rate = math.Abs(movement) / span
+			prev = outcome
+			alpha += rate * outcome
+			betaParam += rate * (1 - outcome)
+		}
 	}
 
-	ready := 0.0
-
-	if bernoulli.beta.Ready {
-		ready = 1
+	if alpha+betaParam == 0 {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"bernoulli: posterior is undefined",
+			nil,
+		))
 	}
 
+	distribution := distuv.Beta{
+		Alpha: alpha,
+		Beta:  betaParam,
+	}
+	value := distribution.Mean()
+
+	bernoulli.artifact.Poke(alpha, "output", "alpha")
+	bernoulli.artifact.Poke(betaParam, "output", "beta")
+	bernoulli.artifact.Poke(prev, "output", "prev")
+	bernoulli.artifact.Poke(minimum, "output", "min")
+	bernoulli.artifact.Poke(maximum, "output", "max")
+	bernoulli.artifact.Poke(rate, "output", "rate")
+	bernoulli.artifact.Poke(float64(count), "output", "count")
+	bernoulli.artifact.Poke(value, "output", "value")
 	state.MergeOutput("value", value)
-	state.MergeOutput("ready", ready)
 	state.Poke("output", "root")
 	state.Poke([]string{"value"}, "inputs")
 

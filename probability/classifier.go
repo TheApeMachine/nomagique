@@ -40,9 +40,9 @@ func (classifier *Classifier) Read(payload []byte) (int, error) {
 
 	defer state.Release()
 
-	wireRoot := datura.Peek[string](state, "root")
+	rootKey := datura.Peek[string](state, "root")
 
-	if wireRoot == "" {
+	if rootKey == "" {
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"classifier: root required",
@@ -50,17 +50,7 @@ func (classifier *Classifier) Read(payload []byte) (int, error) {
 		))
 	}
 
-	wireInputs := datura.Peek[[]string](state, "inputs")
-
-	if len(wireInputs) == 0 {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"classifier: inputs required",
-			nil,
-		))
-	}
-
-	inputs := datura.Peek[[]string](classifier.artifact, "inputs")
+	inputs := datura.Peek[[]string](state, "inputs")
 
 	if len(inputs) == 0 {
 		return 0, errnie.Error(errnie.Err(
@@ -70,28 +60,20 @@ func (classifier *Classifier) Read(payload []byte) (int, error) {
 		))
 	}
 
-	scoreRoot := datura.Peek[string](classifier.artifact, "scoreRoot")
+	categories := datura.Peek[[]string](classifier.artifact, "inputs")
 
-	if scoreRoot == "" {
+	if len(categories) == 0 {
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
-			"classifier: scoreRoot required",
+			"classifier: inputs required",
 			nil,
 		))
 	}
 
-	if scoreRoot != wireRoot {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"classifier: scoreRoot must match state root",
-			nil,
-		))
-	}
+	scores := make([]float64, len(categories))
 
-	scores := make([]float64, len(inputs))
-
-	for index, input := range inputs {
-		if input == "" {
+	for index, category := range categories {
+		if category == "" {
 			return 0, errnie.Error(errnie.Err(
 				errnie.Validation,
 				"classifier: empty input key",
@@ -102,13 +84,13 @@ func (classifier *Classifier) Read(payload []byte) (int, error) {
 		var score float64
 		scoreFound := false
 
-		for wireIndex, wireInput := range wireInputs {
-			if wireInput != input {
+		for wireIndex, wireInput := range inputs {
+			if wireInput != category {
 				continue
 			}
 
-			if scoreRoot == "features" {
-				features := datura.Peek[[]float64](state, scoreRoot)
+			if rootKey == "features" {
+				features := datura.Peek[[]float64](state, rootKey)
 
 				if wireIndex >= len(features) {
 					return 0, errnie.Error(errnie.Err(
@@ -121,8 +103,8 @@ func (classifier *Classifier) Read(payload []byte) (int, error) {
 				score = features[wireIndex]
 			}
 
-			if scoreRoot != "features" {
-				score = datura.Peek[float64](state, scoreRoot, wireInput)
+			if rootKey != "features" {
+				score = datura.Peek[float64](state, rootKey, wireInput)
 			}
 
 			scoreFound = true
@@ -182,13 +164,13 @@ func (classifier *Classifier) Read(payload []byte) (int, error) {
 	var strength float64
 	strengthFound := false
 
-	for wireIndex, wireInput := range wireInputs {
+	for wireIndex, wireInput := range inputs {
 		if wireInput != "strength" {
 			continue
 		}
 
-		if scoreRoot == "features" {
-			features := datura.Peek[[]float64](state, scoreRoot)
+		if rootKey == "features" {
+			features := datura.Peek[[]float64](state, rootKey)
 
 			if wireIndex >= len(features) {
 				return 0, errnie.Error(errnie.Err(
@@ -201,8 +183,8 @@ func (classifier *Classifier) Read(payload []byte) (int, error) {
 			strength = features[wireIndex]
 		}
 
-		if scoreRoot != "features" {
-			strength = datura.Peek[float64](state, scoreRoot, wireInput)
+		if rootKey != "features" {
+			strength = datura.Peek[float64](state, rootKey, wireInput)
 		}
 
 		strengthFound = true
@@ -233,8 +215,8 @@ func (classifier *Classifier) Read(payload []byte) (int, error) {
 	state.MergeOutput("value", categoryIndex)
 	state.Poke("output", "root")
 
-	outputInputs := make([]string, 0, len(inputs)+5)
-	outputInputs = append(outputInputs, inputs...)
+	outputInputs := make([]string, 0, len(categories)+5)
+	outputInputs = append(outputInputs, categories...)
 	outputInputs = append(outputInputs, "probabilities", "category", "confidence", "strength", "value")
 	state.Poke(outputInputs, "inputs")
 

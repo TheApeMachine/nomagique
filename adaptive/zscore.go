@@ -12,13 +12,13 @@ ZScore tracks adaptive scale for a normalized surprise score.
 The constructor artifact holds config; Write buffers inbound payload.
 */
 type ZScore struct {
-	artifact     *datura.Artifact
-	bootstrapped bool
-	mean         float64
-	variance     float64
-	prev         float64
-	min          float64
-	max          float64
+	artifact *datura.Artifact
+	mean     float64
+	variance float64
+	prev     float64
+	min      float64
+	max      float64
+	count    int
 }
 
 /*
@@ -40,7 +40,6 @@ func (surprise *ZScore) Read(payload []byte) (int, error) {
 			err,
 		))
 	}
-
 
 	rootKey := datura.Peek[string](state, "root")
 
@@ -94,13 +93,36 @@ func (surprise *ZScore) Read(payload []byte) (int, error) {
 		anchorMode := datura.Peek[string](surprise.artifact, "anchorMode")
 		hasAnchor := false
 		anchor := 0.0
+		rawWireAnchor := datura.Peek[any](state, "anchor")
 
 		if anchorMode == "explicit" || anchorMode == "fixed" {
-			anchor = datura.Peek[float64](state, "anchor")
+			anchor = datura.Peek[float64](surprise.artifact, "anchor")
 
-			if anchor == 0 {
-				anchor = datura.Peek[float64](surprise.artifact, "anchor")
+			if math.IsNaN(anchor) || math.IsInf(anchor, 0) {
+				return 0, errnie.Error(errnie.Err(
+					errnie.Validation,
+					"zscore: anchor is non-finite",
+					nil,
+				))
 			}
+
+			hasAnchor = true
+
+			if rawWireAnchor != nil {
+				anchor = datura.Peek[float64](state, "anchor")
+
+				if math.IsNaN(anchor) || math.IsInf(anchor, 0) {
+					return 0, errnie.Error(errnie.Err(
+						errnie.Validation,
+						"zscore: anchor is non-finite",
+						nil,
+					))
+				}
+			}
+		}
+
+		if !hasAnchor && rawWireAnchor != nil {
+			anchor = datura.Peek[float64](state, "anchor")
 
 			if math.IsNaN(anchor) || math.IsInf(anchor, 0) {
 				return 0, errnie.Error(errnie.Err(
@@ -113,40 +135,18 @@ func (surprise *ZScore) Read(payload []byte) (int, error) {
 			hasAnchor = true
 		}
 
-		if !hasAnchor {
-			rawAnchor := datura.Peek[any](state, "anchor")
-
-			if rawAnchor != nil {
-				anchor = datura.Peek[float64](state, "anchor")
-
-				if !math.IsNaN(anchor) && !math.IsInf(anchor, 0) {
-					hasAnchor = true
-				}
-			}
-		}
-
-		if !hasAnchor {
-			anchor = datura.Peek[float64](surprise.artifact, "anchor")
-
-			if anchor != 0 && !math.IsNaN(anchor) && !math.IsInf(anchor, 0) {
-				hasAnchor = true
-			}
-		}
-
-		if !surprise.bootstrapped {
+		if surprise.count == 0 {
 			surprise.mean = sample
 			surprise.variance = 0
 			surprise.prev = sample
 			surprise.min = sample
 			surprise.max = sample
-			surprise.bootstrapped = true
-			state.MergeOutput("value", 0)
-
-			break
+			surprise.count = 1
+		} else {
+			surprise.min = math.Min(surprise.min, sample)
+			surprise.max = math.Max(surprise.max, sample)
+			surprise.count++
 		}
-
-		surprise.min = math.Min(surprise.min, sample)
-		surprise.max = math.Max(surprise.max, sample)
 
 		span := surprise.max - surprise.min
 

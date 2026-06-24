@@ -9,7 +9,6 @@ import (
 
 /*
 PositiveOnly optionally clamps a sample at zero from below.
-The constructor artifact holds config; Write buffers inbound payload.
 */
 type PositiveOnly struct {
 	artifact *datura.Artifact
@@ -35,13 +34,12 @@ func (positiveOnly *PositiveOnly) Read(payload []byte) (int, error) {
 		))
 	}
 
-
 	stageKey := datura.Peek[string](positiveOnly.artifact, "stage")
 
 	if stageKey == "" {
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
-			"positive-only: stage config required",
+			"positive-only: stage required",
 			nil,
 		))
 	}
@@ -56,13 +54,13 @@ func (positiveOnly *PositiveOnly) Read(payload []byte) (int, error) {
 		))
 	}
 
-	root := datura.Peek[string](state, "root")
+	rootKey := datura.Peek[string](state, "root")
 	inputs := datura.Peek[[]string](state, "inputs")
 
-	if root == "" || len(inputs) == 0 {
+	if rootKey == "" || len(inputs) == 0 {
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
-			"positive-only: wire required",
+			"positive-only: root and inputs required",
 			nil,
 		))
 	}
@@ -75,7 +73,7 @@ func (positiveOnly *PositiveOnly) Read(payload []byte) (int, error) {
 			continue
 		}
 
-		score = datura.Peek[float64](state, root, input)
+		score = datura.Peek[float64](state, rootKey, input)
 		found = true
 	}
 

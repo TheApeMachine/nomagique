@@ -2,21 +2,16 @@ package statistic
 
 import (
 	"math"
-	"time"
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 )
 
 /*
-PriceRing retains a bounded sample history and publishes the current observation on the wire.
+PriceRing publishes the configured input sample on the outbound wire.
 */
 type PriceRing struct {
-	artifact     *datura.Artifact
-	priceSamples map[string][]struct {
-		value float64
-		at    time.Time
-	}
+	artifact *datura.Artifact
 }
 
 /*
@@ -25,10 +20,6 @@ NewPriceRing returns a sample ring stage wired from config attributes on the art
 func NewPriceRing(artifact *datura.Artifact) *PriceRing {
 	return &PriceRing{
 		artifact: artifact,
-		priceSamples: map[string][]struct {
-			value float64
-			at    time.Time
-		}{},
 	}
 }
 
@@ -42,7 +33,6 @@ func (priceRing *PriceRing) Read(payload []byte) (int, error) {
 			err,
 		))
 	}
-
 
 	rootKey := datura.Peek[string](state, "root")
 
@@ -64,12 +54,12 @@ func (priceRing *PriceRing) Read(payload []byte) (int, error) {
 		))
 	}
 
-	stageKey := datura.Peek[string](priceRing.artifact, "stage")
+	stageKey := datura.Peek[string](priceRing.artifact, "block")
 
 	if stageKey == "" {
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
-			"price-ring: stage required",
+			"price-ring: block required",
 			nil,
 		))
 	}
@@ -84,16 +74,6 @@ func (priceRing *PriceRing) Read(payload []byte) (int, error) {
 		))
 	}
 
-	returnLag := int(datura.Peek[float64](priceRing.artifact, stageKey, "returnLag"))
-
-	if returnLag <= 0 {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"price-ring: returnLag required",
-			nil,
-		))
-	}
-
 	var sample float64
 	sampleFound := false
 
@@ -103,9 +83,9 @@ func (priceRing *PriceRing) Read(payload []byte) (int, error) {
 		}
 
 		if rootKey == "features" {
-			features := datura.Peek[[]float64](state, rootKey)
+			featureSlice := datura.Peek[[]float64](state, rootKey)
 
-			if index >= len(features) {
+			if index >= len(featureSlice) {
 				return 0, errnie.Error(errnie.Err(
 					errnie.Validation,
 					"price-ring: feature index out of range",
@@ -113,7 +93,7 @@ func (priceRing *PriceRing) Read(payload []byte) (int, error) {
 				))
 			}
 
-			sample = features[index]
+			sample = featureSlice[index]
 		}
 
 		if rootKey != "features" {
@@ -139,51 +119,6 @@ func (priceRing *PriceRing) Read(payload []byte) (int, error) {
 		))
 	}
 
-	longHint := int(datura.Peek[float64](priceRing.artifact, stageKey, "longWindow"))
-	seriesKey := stageKey
-	scope, _ := state.Scope()
-
-	if scope != "" {
-		seriesKey = stageKey + "/" + scope
-	}
-
-	timestamp := state.Timestamp()
-
-	if timestamp <= 0 {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"price-ring: event timestamp required",
-			nil,
-		))
-	}
-
-	observed := time.Unix(0, timestamp)
-	samples := priceRing.priceSamples[seriesKey]
-
-	if len(samples) > 0 && observed.Before(samples[len(samples)-1].at) {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"price-ring: event timestamp must not regress",
-			nil,
-		))
-	}
-
-	samples = append(samples, struct {
-		value float64
-		at    time.Time
-	}{value: sample, at: observed})
-
-	longWindow := len(samples)
-
-	if longHint > 0 {
-		longWindow = longHint
-	}
-
-	if longWindow > 0 && len(samples) > longWindow+returnLag {
-		samples = samples[len(samples)-longWindow-returnLag:]
-	}
-
-	priceRing.priceSamples[seriesKey] = samples
 	state.MergeOutput(configInput, sample)
 	state.Poke("output", "root")
 	state.Poke([]string{configInput}, "inputs")

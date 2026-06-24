@@ -18,7 +18,7 @@ func TestWeight(testingTB *testing.T) {
 	})
 }
 
-func TestTrustWeight_Observe(testingTB *testing.T) {
+func TestTrustWeightRead(testingTB *testing.T) {
 	Convey("Given empty Observe inputs", testingTB, func() {
 		trustWeight := Weight(pairConfig("trust-weight-config"))
 		artifact := datura.Acquire("test", datura.APPJSON)
@@ -100,12 +100,12 @@ func TestTrustWeight_Reset(testingTB *testing.T) {
 
 		So(err, ShouldBeNil)
 
-		weightState := weightStateFromArtifact(trustWeight.artifact)
-		weightState.Reset()
-		pokeWeightState(trustWeight.artifact, &weightState, 0)
+		fields := weightStateFromArtifact(trustWeight.artifact)
+		fields.Count = 0
+		pokeWeightState(trustWeight.artifact, &fields, 0)
 
 		Convey("It should clear derived state", func() {
-			So(datura.Peek[float64](trustWeight.artifact, "output", "ready"), ShouldEqual, 0)
+			So(datura.Peek[float64](trustWeight.artifact, "output", "count"), ShouldEqual, 0)
 		})
 
 		fresh := pairWire(datura.Acquire("test", datura.APPJSON), 10, 10)
@@ -114,13 +114,13 @@ func TestTrustWeight_Reset(testingTB *testing.T) {
 		So(err, ShouldBeNil)
 
 		Convey("It should observe again after reset", func() {
-			So(datura.Peek[float64](trustWeight.artifact, "output", "ready"), ShouldEqual, 1)
+			So(datura.Peek[float64](trustWeight.artifact, "output", "count"), ShouldEqual, 1)
 			So(datura.Peek[float64](fresh, "output", "value"), ShouldEqual, 1)
 		})
 	})
 }
 
-func BenchmarkWeight_Observe(testingTB *testing.B) {
+func BenchmarkTrustWeightRead(testingTB *testing.B) {
 	trustWeight := Weight(pairConfig("trust-weight-config-bench"))
 	artifact := datura.Acquire("test", datura.APPJSON)
 
@@ -132,19 +132,5 @@ func BenchmarkWeight_Observe(testingTB *testing.B) {
 	for testingTB.Loop() {
 		artifact = pairWire(artifact, 10, 11)
 		_ = transport.NewFlipFlop(artifact, trustWeight)
-	}
-}
-
-func BenchmarkWeight_ObserveSamples(testingTB *testing.B) {
-	state := WeightState{}
-	predicted := make([]float64, 1024)
-	actual := make([]float64, len(predicted))
-	out := make([]float64, len(predicted))
-
-	testingTB.ReportAllocs()
-
-	for testingTB.Loop() {
-		state.Reset()
-		state.ObserveSamples(predicted, actual, out)
 	}
 }

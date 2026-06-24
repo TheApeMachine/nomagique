@@ -33,7 +33,7 @@ func encodeGapBatch(
 	return batch
 }
 
-func TestCorrelate_Observe(testingTB *testing.T) {
+func TestCorrelateRead(testingTB *testing.T) {
 	Convey("Given positively coupled sync and async streams", testingTB, func() {
 		batch := encodeGapBatch(
 			[]float64{1, 2, 3, 4, 5, 6},
@@ -66,7 +66,7 @@ func TestCorrelate_Observe(testingTB *testing.T) {
 	})
 }
 
-func BenchmarkCorrelate_Observe(testingTB *testing.B) {
+func BenchmarkCorrelateRead(testingTB *testing.B) {
 	batch := encodeGapBatch(
 		[]float64{1, 2, 3, 4, 5, 6, 7, 8},
 		[]float64{2, 4, 6, 8, 10, 12, 14, 16},

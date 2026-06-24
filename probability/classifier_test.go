@@ -12,7 +12,6 @@ import (
 
 func classifierSchema(inputs ...string) *datura.Artifact {
 	return datura.Acquire("schema", datura.APPJSON).
-		Poke("output", "scoreRoot").
 		Poke(inputs, "inputs")
 }
 

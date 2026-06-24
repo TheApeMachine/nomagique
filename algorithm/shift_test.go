@@ -16,9 +16,18 @@ func shiftWire(artifact *datura.Artifact, observed float64, expected float64) *d
 	return artifact
 }
 
-func TestShift_Observe(testingTB *testing.T) {
+func shiftConfig() *datura.Artifact {
+	return datura.Acquire("shift-config", datura.APPJSON).
+		Poke(0.0, "config", "expectedSum").
+		Poke(0.0, "config", "floor").
+		Poke("sample", "sampleKey").
+		Poke("paired", "pairedKey").
+		Poke("value", "outputKey")
+}
+
+func TestShiftRead(testingTB *testing.T) {
 	Convey("Given matching reference and live distributions", testingTB, func() {
-		shift := NewShift(0, 0)
+		shift := NewShift(shiftConfig())
 		artifact := datura.Acquire("shift-test", datura.APPJSON)
 
 		for range 4 {
@@ -31,7 +40,7 @@ func TestShift_Observe(testingTB *testing.T) {
 	})
 
 	Convey("Given diverging reference and live distributions", testingTB, func() {
-		shift := NewShift(0, 0)
+		shift := NewShift(shiftConfig())
 		artifact := datura.Acquire("shift-test", datura.APPJSON)
 		pairs := []struct {
 			observed float64
@@ -50,8 +59,8 @@ func TestShift_Observe(testingTB *testing.T) {
 	})
 }
 
-func BenchmarkShift_Observe(testingTB *testing.B) {
-	shift := NewShift(0, 0)
+func BenchmarkShiftRead(testingTB *testing.B) {
+	shift := NewShift(shiftConfig())
 	artifact := datura.Acquire("shift-bench", datura.APPJSON)
 	pairs := []struct {
 		observed float64

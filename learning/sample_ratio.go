@@ -1,6 +1,8 @@
 package learning
 
 import (
+	"math"
+
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 )
@@ -43,14 +45,81 @@ func (calibrator *Calibrator) Read(payload []byte) (int, error) {
 		return 0, err
 	}
 
-	ratioState := sampleRatioStateFromArtifact(calibrator.artifact)
-	derived := ObserveSampleRatio(&ratioState, predicted, actual)
-	pokeSampleRatioState(calibrator.artifact, &ratioState, derived)
-	state.MergeOutput("value", derived)
+	residual := actual - predicted
+	prev := datura.Peek[float64](calibrator.artifact, "output", "prev")
+	minimum := datura.Peek[float64](calibrator.artifact, "output", "min")
+	maximum := datura.Peek[float64](calibrator.artifact, "output", "max")
+	peakRatio := datura.Peek[float64](calibrator.artifact, "output", "peakRatio")
+	count := int(datura.Peek[float64](calibrator.artifact, "output", "count"))
+
+	if count == 0 {
+		minimum = residual
+		maximum = residual
+		prev = predicted
+		count = 1
+	}
+
+	if count > 1 {
+		minimum = math.Min(minimum, residual)
+		maximum = math.Max(maximum, residual)
+		count++
+	}
+
+	if count == 1 && residual != minimum {
+		minimum = math.Min(minimum, residual)
+		maximum = math.Max(maximum, residual)
+		count = 2
+	}
+
+	span := maximum - minimum
+	ratio := actual / predicted
+
+	if actual < predicted {
+		lossRatio := 1 + actual/predicted
+
+		if lossRatio < 0 {
+			return 0, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"sample-ratio: loss ratio is negative",
+				nil,
+			))
+		}
+
+		ratio = lossRatio
+	}
+
+	ceiling := 1.0
+
+	if span > 0 {
+		ceiling = 1 + 1/span
+	}
+
+	if span == 0 && absExact(prev) > 0 {
+		ceiling = 1 + 1/absExact(prev)
+	}
+
+	if ratio > ceiling {
+		ratio = ceiling
+	}
+
+	if ratio > peakRatio {
+		peakRatio = ratio
+	}
+
+	prev = predicted
+
+	calibrator.artifact.Poke(prev, "output", "prev")
+	calibrator.artifact.Poke(minimum, "output", "min")
+	calibrator.artifact.Poke(maximum, "output", "max")
+	calibrator.artifact.Poke(peakRatio, "output", "peakRatio")
+	calibrator.artifact.Poke(float64(count), "output", "count")
+	calibrator.artifact.Poke(ratio, "output", "value")
+	state.MergeOutput("value", ratio)
 	state.MergeOutput("predicted", predicted)
 	state.MergeOutput("actual", actual)
 	state.Poke("output", "root")
 	state.Poke([]string{"value", "predicted", "actual"}, "inputs")
+
 	return state.Read(payload)
 }
 
@@ -79,133 +148,4 @@ func (calibrator *Calibrator) Write(payload []byte) (int, error) {
 
 func (calibrator *Calibrator) Close() error {
 	return nil
-}
-
-/*
-SampleRatioState maps predicted and actual pairs into calibration samples.
-*/
-type SampleRatioState struct {
-	Prev      float64
-	Min       float64
-	Max       float64
-	PeakRatio float64
-	Ready     bool
-}
-
-/*
-Observe ingests a predicted and actual pair and returns the calibration sample.
-*/
-func (state *SampleRatioState) Observe(predicted float64, actual float64) float64 {
-	return ObserveSampleRatio(state, predicted, actual)
-}
-
-/*
-ObserveSamples writes one calibration sample per pair into out.
-*/
-func (state *SampleRatioState) ObserveSamples(
-	predicted []float64, actual []float64, out []float64,
-) {
-	observeSampleRatioSamples(state, predicted, actual, out)
-}
-
-/*
-Reset clears derived state.
-*/
-func (state *SampleRatioState) Reset() {
-	state.Prev = 0
-	state.Min = 0
-	state.Max = 0
-	state.PeakRatio = 0
-	state.Ready = false
-}
-
-/*
-ObserveSampleRatio maps one predicted and actual pair to a calibration sample.
-*/
-func ObserveSampleRatio(
-	state *SampleRatioState, predicted float64, actual float64,
-) float64 {
-	if !state.Ready {
-		state.Min = actual - predicted
-		state.Max = actual - predicted
-		state.Prev = predicted
-		state.Ready = true
-
-		return bootstrapSampleRatio(predicted, actual)
-	}
-
-	return observeSampleRatioReady(state, predicted, actual)
-}
-
-func bootstrapSampleRatio(predicted float64, actual float64) float64 {
-	ratio := rawSampleRatio(predicted, actual)
-	ceiling := maxSampleRatioCeiling(0, absExact(predicted))
-
-	if ratio > ceiling {
-		return ceiling
-	}
-
-	return ratio
-}
-
-/*
-observeSampleRatioReady runs the hot sample-ratio path; state must already be Ready.
-*/
-func observeSampleRatioReady(
-	state *SampleRatioState, predicted float64, actual float64,
-) float64 {
-	residual := actual - predicted
-
-	if residual < state.Min {
-		state.Min = residual
-	}
-
-	if residual > state.Max {
-		state.Max = residual
-	}
-
-	span := state.Max - state.Min
-	ratio := rawSampleRatio(predicted, actual)
-	ceiling := maxSampleRatioCeiling(span, absExact(state.Prev))
-
-	if ratio > ceiling {
-		ratio = ceiling
-	}
-
-	if ratio > state.PeakRatio {
-		state.PeakRatio = ratio
-	}
-
-	state.Prev = predicted
-
-	return ratio
-}
-
-func rawSampleRatio(predicted float64, actual float64) float64 {
-	if actual >= predicted {
-		return actual / predicted
-	}
-
-	lossRatio := 1 + actual/predicted
-
-	if lossRatio < 0 {
-		return 0
-	}
-
-	return lossRatio
-}
-
-/*
-maxSampleRatioCeiling derives the upper calibration bound from observed spread.
-*/
-func maxSampleRatioCeiling(span float64, reference float64) float64 {
-	if span > 0 {
-		return 1 + 1/span
-	}
-
-	if reference > 0 {
-		return 1 + 1/reference
-	}
-
-	return 1
 }

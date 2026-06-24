@@ -19,8 +19,8 @@ func TestForecast(testingTB *testing.T) {
 	})
 }
 
-func TestForecaster_Observe(testingTB *testing.T) {
-	Convey("Given empty Observe inputs", testingTB, func() {
+func TestForecasterRead(testingTB *testing.T) {
+	Convey("Given empty inbound wire", testingTB, func() {
 		forecaster := Forecast(pairConfig("forecast-config"))
 		artifact := datura.Acquire("test", datura.APPJSON)
 		err := transport.NewFlipFlop(artifact, forecaster)
@@ -41,7 +41,7 @@ func TestForecaster_Observe(testingTB *testing.T) {
 
 		Convey("It should return unit scale", func() {
 			So(got, ShouldEqual, 1)
-			So(forecaster.Scale(), ShouldEqual, 1)
+			So(datura.Peek[float64](forecaster.artifact, "output", "scale"), ShouldEqual, 1)
 		})
 	})
 
@@ -50,58 +50,35 @@ func TestForecaster_Observe(testingTB *testing.T) {
 		artifact := datura.Acquire("test", datura.APPJSON)
 
 		artifact = pairWire(artifact, 10, 10)
-		err := transport.NewFlipFlop(artifact, forecaster)
-
-		So(err, ShouldBeNil)
+		_ = transport.NewFlipFlop(artifact, forecaster)
 
 		artifact = pairWire(artifact, 10, 15)
-		err = transport.NewFlipFlop(artifact, forecaster)
+		err := transport.NewFlipFlop(artifact, forecaster)
 
 		So(err, ShouldBeNil)
 
 		Convey("It should expose scale for feedback", func() {
-			So(forecaster.Scale(), ShouldBeGreaterThan, 1)
+			So(datura.Peek[float64](forecaster.artifact, "output", "scale"), ShouldBeGreaterThan, 1)
 		})
 	})
-}
 
-func TestForecaster_ObserveSamples(testingTB *testing.T) {
-	Convey("Given a forecast state", testingTB, func() {
-		state := ForecastState{}
-		predicted := []float64{10, 10}
-		actual := []float64{10, 15}
-		out := make([]float64, len(predicted))
-
-		Convey("When observing samples in batch", func() {
-			state.ObserveSamples(predicted, actual, out)
-
-			Convey("It should fill the output buffer", func() {
-				So(out[1], ShouldBeGreaterThan, 1)
-			})
-		})
-	})
-}
-
-func TestForecaster_Reset(testingTB *testing.T) {
-	Convey("Given a forecaster with state", testingTB, func() {
+	Convey("Given zero actual with non-zero predicted", testingTB, func() {
 		forecaster := Forecast(pairConfig("forecast-config"))
-		artifact := pairWire(datura.Acquire("test", datura.APPJSON), 10, 10)
+		artifact := pairWire(datura.Acquire("test", datura.APPJSON), 10, 0)
 		err := transport.NewFlipFlop(artifact, forecaster)
 
-		So(err, ShouldBeNil)
+		Convey("It should return a validation error", func() {
+			So(err, ShouldNotBeNil)
+		})
+	})
 
-		forecastState := forecastStateFromArtifact(forecaster.artifact)
-		forecastState.Reset()
-		pokeForecastState(forecaster.artifact, &forecastState, 1)
+	Convey("Given zero predicted", testingTB, func() {
+		forecaster := Forecast(pairConfig("forecast-config"))
+		artifact := pairWire(datura.Acquire("test", datura.APPJSON), 0, 10)
+		err := transport.NewFlipFlop(artifact, forecaster)
 
-		fresh := pairWire(datura.Acquire("test", datura.APPJSON), 10, 10)
-		err = transport.NewFlipFlop(fresh, forecaster)
-
-		So(err, ShouldBeNil)
-
-		Convey("It should clear derived state", func() {
-			So(forecaster.Scale(), ShouldEqual, 1)
-			So(datura.Peek[float64](fresh, "output", "value"), ShouldEqual, 1)
+		Convey("It should return a validation error", func() {
+			So(err, ShouldNotBeNil)
 		})
 	})
 }
@@ -139,27 +116,7 @@ func TestForecaster_learningComposition(testingTB *testing.T) {
 		So(err, ShouldBeNil)
 
 		Convey("It should raise learned scale", func() {
-			So(forecaster.Scale(), ShouldBeGreaterThan, 1)
-		})
-	})
-
-	Convey("Given zero actual with non-zero predicted", testingTB, func() {
-		forecaster := Forecast(pairConfig("forecast-config"))
-		artifact := pairWire(datura.Acquire("test", datura.APPJSON), 10, 0)
-		err := transport.NewFlipFlop(artifact, forecaster)
-
-		Convey("It should return a validation error", func() {
-			So(err, ShouldNotBeNil)
-		})
-	})
-
-	Convey("Given zero predicted", testingTB, func() {
-		forecaster := Forecast(pairConfig("forecast-config"))
-		artifact := pairWire(datura.Acquire("test", datura.APPJSON), 0, 10)
-		err := transport.NewFlipFlop(artifact, forecaster)
-
-		Convey("It should return a parse error", func() {
-			So(err, ShouldNotBeNil)
+			So(datura.Peek[float64](forecaster.artifact, "output", "scale"), ShouldBeGreaterThan, 1)
 		})
 	})
 }
@@ -182,12 +139,12 @@ func TestForecaster_withAdaptiveSignal(testingTB *testing.T) {
 			err := transport.NewFlipFlop(outcome, forecaster)
 
 			So(err, ShouldBeNil)
-			So(forecaster.Scale(), ShouldBeGreaterThan, 0)
+			So(datura.Peek[float64](forecaster.artifact, "output", "scale"), ShouldBeGreaterThan, 0)
 		})
 	})
 }
 
-func BenchmarkForecast_Observe(testingTB *testing.B) {
+func BenchmarkForecastRead(testingTB *testing.B) {
 	forecaster := Forecast(pairConfig("forecast-config-bench"))
 	artifact := datura.Acquire("test", datura.APPJSON)
 
@@ -199,19 +156,5 @@ func BenchmarkForecast_Observe(testingTB *testing.B) {
 	for testingTB.Loop() {
 		artifact = pairWire(artifact, 10, 11)
 		_ = transport.NewFlipFlop(artifact, forecaster)
-	}
-}
-
-func BenchmarkForecast_ObserveSamples(testingTB *testing.B) {
-	state := ForecastState{}
-	predicted := make([]float64, 1024)
-	actual := make([]float64, len(predicted))
-	out := make([]float64, len(predicted))
-
-	testingTB.ReportAllocs()
-
-	for testingTB.Loop() {
-		state.Reset()
-		state.ObserveSamples(predicted, actual, out)
 	}
 }

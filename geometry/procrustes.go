@@ -18,21 +18,16 @@ type ProcrustesResult struct {
 
 /*
 Procrustes computes the orthogonal alignment between two sample matrices.
+Matrix data is read from artifact attributes rowsA and rowsB, either as
+[][]float64 or flat []float64 with nSamples and nDim.
 */
 type Procrustes struct {
 	artifact *datura.Artifact
-	matA     mat.Matrix
-	matB     mat.Matrix
-	result   ProcrustesResult
-	err      error
-	output   float64
 }
 
-func NewProcrustes(artifact *datura.Artifact, matA, matB mat.Matrix) *Procrustes {
+func NewProcrustes(artifact *datura.Artifact) *Procrustes {
 	return &Procrustes{
 		artifact: artifact,
-		matA:     matA,
-		matB:     matB,
 	}
 }
 
@@ -41,19 +36,22 @@ func NewProcrustesFromRows(
 	rowsA, rowsB [][]float64,
 	nSamples, nDim int,
 ) (*Procrustes, error) {
-	denseA, err := denseFromRows(rowsA, nSamples, nDim)
-
-	if err != nil {
-		return nil, err
+	if len(rowsA) != nSamples || len(rowsB) != nSamples {
+		return nil, procrustesError("row count mismatch")
 	}
 
-	denseB, err := denseFromRows(rowsB, nSamples, nDim)
-
-	if err != nil {
-		return nil, err
+	for rowIdx := range nSamples {
+		if len(rowsA[rowIdx]) != nDim || len(rowsB[rowIdx]) != nDim {
+			return nil, procrustesError("column count mismatch")
+		}
 	}
 
-	return NewProcrustes(artifact, denseA, denseB), nil
+	artifact.Poke(float64(nSamples), "nSamples")
+	artifact.Poke(float64(nDim), "nDim")
+	artifact.Poke(rowsToFlat(rowsA, nSamples, nDim), "rowsA")
+	artifact.Poke(rowsToFlat(rowsB, nSamples, nDim), "rowsB")
+
+	return NewProcrustes(artifact), nil
 }
 
 func (procrustes *Procrustes) Read(payload []byte) (int, error) {
@@ -67,24 +65,39 @@ func (procrustes *Procrustes) Read(payload []byte) (int, error) {
 		))
 	}
 
+	matA, matB, err := matricesFromArtifact(procrustes.artifact)
 
-	procrustes.result, procrustes.err = procrustes.align(procrustes.matA, procrustes.matB)
-
-	if procrustes.err != nil {
-		procrustes.output = 0
-
+	if err != nil {
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
-			"procrustes: alignment failed",
-			procrustes.err,
+			"procrustes: matrix read failed",
+			err,
 		))
 	}
 
-	procrustes.output = procrustes.result.Residual
-	procrustes.artifact.Poke(procrustes.output, "output", "value")
-	state.MergeOutput("value", procrustes.output)
+	result, err := procrustes.align(matA, matB)
+
+	if err != nil {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"procrustes: alignment failed",
+			err,
+		))
+	}
+
+	nSamples, nDim := matA.Dims()
+	_ = nSamples
+
+	rotationFlat := rotationToFlat(result.R, nDim)
+	procrustes.artifact.Poke(result.Residual, "output", "value")
+	procrustes.artifact.Poke(rotationFlat, "output", "rotation")
+	procrustes.artifact.Poke(float64(nDim), "output", "nDim")
+	state.MergeOutput("value", result.Residual)
+	state.MergeOutput("rotation", rotationFlat)
+	state.MergeOutput("nDim", float64(nDim))
 	state.Poke("output", "root")
-	state.Poke([]string{"value"}, "inputs")
+	state.Poke([]string{"value", "rotation", "nDim"}, "inputs")
+
 	return state.Read(payload)
 }
 
@@ -94,26 +107,6 @@ func (procrustes *Procrustes) Write(payload []byte) (int, error) {
 }
 
 func (procrustes *Procrustes) Close() error {
-	return nil
-}
-
-func (procrustes *Procrustes) Result() ProcrustesResult {
-	return procrustes.result
-}
-
-/*
-Err returns the last alignment error.
-*/
-func (procrustes *Procrustes) Err() error {
-	return procrustes.err
-}
-
-func (procrustes *Procrustes) Reset() error {
-	procrustes.result = ProcrustesResult{}
-	procrustes.err = nil
-	procrustes.output = 0
-	procrustes.artifact.WithAttributes(datura.Map[any]{})
-
 	return nil
 }
 
@@ -214,6 +207,69 @@ func (procrustes *Procrustes) jacobiSVD(matrix mat.Matrix) (
 	svd.VTo(&vDense)
 
 	return &uDense, sigma, &vDense, nil
+}
+
+func matricesFromArtifact(artifact *datura.Artifact) (*mat.Dense, *mat.Dense, error) {
+	nSamples := int(datura.Peek[float64](artifact, "nSamples"))
+	nDim := int(datura.Peek[float64](artifact, "nDim"))
+
+	nestedA := datura.Peek[[][]float64](artifact, "rowsA")
+	nestedB := datura.Peek[[][]float64](artifact, "rowsB")
+
+	if len(nestedA) > 0 && len(nestedB) > 0 {
+		if nSamples <= 0 {
+			nSamples = len(nestedA)
+		}
+
+		if nDim <= 0 && len(nestedA) > 0 {
+			nDim = len(nestedA[0])
+		}
+
+		matA, err := denseFromRows(nestedA, nSamples, nDim)
+
+		if err != nil {
+			return nil, nil, err
+		}
+
+		matB, err := denseFromRows(nestedB, nSamples, nDim)
+
+		if err != nil {
+			return nil, nil, err
+		}
+
+		return matA, matB, nil
+	}
+
+	flatA := datura.Peek[[]float64](artifact, "rowsA")
+	flatB := datura.Peek[[]float64](artifact, "rowsB")
+
+	if nSamples <= 0 || nDim <= 0 || len(flatA) != nSamples*nDim || len(flatB) != nSamples*nDim {
+		return nil, nil, procrustesError("matrix attributes invalid")
+	}
+
+	return mat.NewDense(nSamples, nDim, flatA), mat.NewDense(nSamples, nDim, flatB), nil
+}
+
+func rowsToFlat(rows [][]float64, nSamples, nDim int) []float64 {
+	flat := make([]float64, nSamples*nDim)
+
+	for rowIdx := range nSamples {
+		copy(flat[rowIdx*nDim:(rowIdx+1)*nDim], rows[rowIdx])
+	}
+
+	return flat
+}
+
+func rotationToFlat(rotation *mat.Dense, nDim int) []float64 {
+	flat := make([]float64, nDim*nDim)
+
+	for rowIdx := 0; rowIdx < nDim; rowIdx++ {
+		for colIdx := 0; colIdx < nDim; colIdx++ {
+			flat[rowIdx*nDim+colIdx] = rotation.At(rowIdx, colIdx)
+		}
+	}
+
+	return flat
 }
 
 func denseFromRows(rows [][]float64, nSamples, nDim int) (*mat.Dense, error) {

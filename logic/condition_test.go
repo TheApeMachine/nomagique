@@ -33,7 +33,7 @@ func TestTrue_Match(testingTB *testing.T) {
 func TestGreaterThan_Match(testingTB *testing.T) {
 	Convey("Given a carried signal above Right", testingTB, func() {
 		condition := logic.GreaterThan{
-			Right: logic.NewConstant(2),
+			Right: constantStage(2),
 		}
 
 		Convey("It should match when the boundary exceeds Right", func() {
@@ -47,7 +47,7 @@ func TestAnd_Match(testingTB *testing.T) {
 		condition := logic.And{
 			logic.True{Operand: true},
 			logic.GreaterThan{
-				Right: logic.NewConstant(2),
+				Right: constantStage(2),
 			},
 		}
 
@@ -62,7 +62,7 @@ func TestOr_Match(testingTB *testing.T) {
 		condition := logic.Or{
 			logic.True{Operand: false},
 			logic.GreaterThan{
-				Right: logic.NewConstant(2),
+				Right: constantStage(2),
 			},
 		}
 

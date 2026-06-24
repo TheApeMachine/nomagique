@@ -16,7 +16,9 @@ func causalPipelineConfig(contagionBreak float64) *datura.Artifact {
 		Poke([]float64{0, 1}, "controlsNormal").
 		Poke(float64(1), "treatmentInverted").
 		Poke([]float64{0, 2}, "controlsInverted").
-		Poke(contagionBreak, "contagionBreak")
+		Poke(contagionBreak, "contagionBreak").
+		Poke("rawInverted", "input").
+		Poke(float64(3), "window")
 }
 
 func tableInbound(rowCount int, step float64) *datura.Artifact {

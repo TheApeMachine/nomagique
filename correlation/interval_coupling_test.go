@@ -8,7 +8,7 @@ import (
 	"github.com/theapemachine/datura/transport"
 )
 
-func TestIntervalCoupling_Observe(testingTB *testing.T) {
+func TestIntervalCouplingRead(testingTB *testing.T) {
 	Convey("Given proportional interval histories", testingTB, func() {
 		coupling := NewIntervalCoupling(IntervalWireConfig("interval-coupling-config"))
 		artifact := datura.Acquire("test", datura.APPJSON)
@@ -45,7 +45,7 @@ func TestIntervalCoupling_Observe(testingTB *testing.T) {
 	})
 }
 
-func BenchmarkIntervalCoupling_Observe(testingTB *testing.B) {
+func BenchmarkIntervalCouplingRead(testingTB *testing.B) {
 	coupling := NewIntervalCoupling(IntervalWireConfig("interval-coupling-config"))
 	artifact := datura.Acquire("test", datura.APPJSON)
 

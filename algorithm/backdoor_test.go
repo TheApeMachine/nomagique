@@ -36,7 +36,7 @@ func backdoorTable(rowCount int) *datura.Artifact {
 		Poke(flat, "table", "rows")
 }
 
-func TestBackdoor_Observe(testingTB *testing.T) {
+func TestBackdoorRead(testingTB *testing.T) {
 	Convey("Given aligned node streams with causal structure", testingTB, func() {
 		backdoor := algorithm.NewBackdoor(backdoorConfig())
 		artifact := backdoorTable(16)
@@ -50,7 +50,7 @@ func TestBackdoor_Observe(testingTB *testing.T) {
 	})
 }
 
-func BenchmarkBackdoor_Observe(testingTB *testing.B) {
+func BenchmarkBackdoorRead(testingTB *testing.B) {
 	backdoor := algorithm.NewBackdoor(backdoorConfig())
 	artifact := backdoorTable(16)
 

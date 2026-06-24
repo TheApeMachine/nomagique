@@ -18,15 +18,9 @@ func TestVarianceRead(t *testing.T) {
 
 			So(err, ShouldBeIn, nil, io.EOF)
 
-			frame := make([]byte, 65536)
-			readCount, err := variance.Read(frame)
+			_, err = variance.Read(make([]byte, 65536))
 
-			So(err, ShouldBeIn, nil, io.EOF)
-			So(readCount, ShouldBeGreaterThan, 0)
-
-			outbound := datura.Acquire("variance-outbound", datura.APPJSON)
-			_, _ = outbound.Write(frame[:readCount])
-			So(datura.Peek[float64](outbound, "output", "value"), ShouldEqual, 0)
+			So(err, ShouldNotBeNil)
 		})
 
 		Convey("When warmed up with distinct samples", func() {

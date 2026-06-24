@@ -37,7 +37,7 @@ func TestNewCircuit(testingTB *testing.T) {
 		circuit := logic.NewCircuit(circuitConfig(), logic.Rules{
 			{
 				Condition: logic.True{Operand: true},
-				Then:      logic.NewConstant(1),
+				Then:      constantStage(1),
 			},
 		})
 
@@ -47,18 +47,18 @@ func TestNewCircuit(testingTB *testing.T) {
 	})
 }
 
-func TestCircuit_Observe(testingTB *testing.T) {
+func TestCircuitRead(testingTB *testing.T) {
 	Convey("Given a carried signal above its threshold", testingTB, func() {
 		circuit := logic.NewCircuit(circuitConfig(), logic.Rules{
 			{
 				Condition: logic.GreaterThan{
-					Right: logic.NewConstant(2),
+					Right: constantStage(2),
 				},
-				Then: logic.NewConstant(10),
+				Then: constantStage(10),
 			},
 			{
 				Condition: logic.True{Operand: true},
-				Then:      logic.NewConstant(20),
+				Then:      constantStage(20),
 			},
 		})
 
@@ -76,23 +76,23 @@ func TestCircuit_Observe(testingTB *testing.T) {
 	})
 }
 
-func TestCircuit_ObserveAnd(testingTB *testing.T) {
+func TestCircuitReadAnd(testingTB *testing.T) {
 	Convey("Given a compound And condition", testingTB, func() {
 		circuit := logic.NewCircuit(circuitConfig(), logic.Rules{
 			{
 				Condition: logic.And{
 					logic.GreaterThan{
-						Right: logic.NewConstant(2),
+						Right: constantStage(2),
 					},
 					logic.True{
-						Stage: logic.NewConstant(1),
+						Stage: constantStage(1),
 					},
 				},
-				Then: logic.NewConstant(10),
+				Then: constantStage(10),
 			},
 			{
 				Condition: logic.True{Operand: true},
-				Then:      logic.NewConstant(20),
+				Then:      constantStage(20),
 			},
 		})
 
@@ -107,30 +107,36 @@ func TestCircuit_Reset(testingTB *testing.T) {
 		circuit := logic.NewCircuit(circuitConfig(), logic.Rules{
 			{
 				Condition: logic.True{Operand: true},
-				Then:      logic.NewConstant(7),
+				Then:      constantStage(7),
 			},
 		})
 		_ = flipFlopCircuit(circuit, 0)
 
 		Convey("It should reset through the artifact", func() {
 			resetArtifact := datura.Acquire("test", datura.APPJSON).Poke(1, "reset")
-			So(transport.NewFlipFlop(resetArtifact, circuit), ShouldBeNil)
+			packed := resetArtifact.Pack()
+			resetArtifact.Release()
+
+			So(len(packed), ShouldBeGreaterThan, 0)
+
+			_, writeErr := circuit.Write(packed)
+			So(writeErr, ShouldBeNil)
 			So(flipFlopCircuit(circuit, 0), ShouldEqual, 7)
 		})
 	})
 }
 
-func BenchmarkCircuit_Observe(benchmark *testing.B) {
+func BenchmarkCircuitRead(benchmark *testing.B) {
 	circuit := logic.NewCircuit(circuitConfig(), logic.Rules{
 		{
 			Condition: logic.GreaterThan{
-				Right: logic.NewConstant(2),
+				Right: constantStage(2),
 			},
 			Then: adaptive.NewEMA(datura.Acquire("ema-config", datura.APPJSON).Poke(2, "period")),
 		},
 		{
 			Condition: logic.True{Operand: true},
-			Then:      logic.NewConstant(0),
+			Then:      constantStage(0),
 		},
 	})
 

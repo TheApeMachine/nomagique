@@ -43,19 +43,25 @@ func (meanMedianRatio *MeanMedianRatio) Read(payload []byte) (int, error) {
 	state := datura.Acquire("mean-median-ratio-state", datura.APPJSON)
 
 	if _, err := state.Write(meanMedianRatio.artifact.DecryptPayload()); err != nil {
-		return 0, err
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"mean-median-ratio: state write failed",
+			err,
+		))
 	}
 
-	state.Inspect("statistic", "mean-median-ratio", "Read()", "p")
 
-	root := datura.Peek[string](state, "root")
 	inputs := datura.Peek[[]string](state, "inputs")
 	features := datura.Peek[[]float64](state, "features")
 	featureInputs := datura.Peek[[]string](state, "featureInputs")
 	featureRoot := datura.Peek[string](state, "root")
 
 	if len(featureInputs) == 0 && featureRoot == "features" {
-		featureInputs = inputs
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"mean-median-ratio: featureInputs required when root is features",
+			nil,
+		))
 	}
 
 	order := datura.Peek[[]string](meanMedianRatio.artifact, "order")
@@ -111,13 +117,12 @@ func (meanMedianRatio *MeanMedianRatio) Read(payload []byte) (int, error) {
 		}
 	}
 
-	if !sampleFound && root != "" {
-		sample = datura.Peek[float64](state, root, sourceKey)
-		sampleFound = true
-	}
-
 	if !sampleFound {
-		sample = datura.Peek[float64](state, sourceKey)
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"mean-median-ratio: source key not found in inputs",
+			nil,
+		))
 	}
 
 	if math.IsNaN(sample) || math.IsInf(sample, 0) {
@@ -219,10 +224,6 @@ func (meanMedianRatio *MeanMedianRatio) Read(payload []byte) (int, error) {
 
 	if shortWindow <= 0 {
 		shortWindow = longWindow
-
-		if shortWindow < 1 {
-			shortWindow = 1
-		}
 	}
 
 	if shortWindow > longWindow {

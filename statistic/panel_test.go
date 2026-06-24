@@ -33,8 +33,8 @@ func TestMedianPanelPeers(t *testing.T) {
 			Poke("sample", "sampleKey")
 		medianConfig := datura.Acquire("median-config", datura.APPJSON).
 			Poke("member", "memberKey")
-		crossSection := nomagique.Number(NewPanel(panelConfig), NewMedian(medianConfig))
-		var lastArtifact *datura.Artifact
+		panel := NewPanel(panelConfig)
+		crossSection := nomagique.Number(panel, NewMedian(medianConfig))
 
 		for _, member := range []struct {
 			key   float64
@@ -45,15 +45,10 @@ func TestMedianPanelPeers(t *testing.T) {
 			{3, 0.06},
 		} {
 			artifact := PanelWire(datura.Acquire("test", datura.APPJSON), member.key, member.value)
-			err := transport.NewFlipFlop(artifact, crossSection)
+			err := transport.NewFlipFlop(artifact, panel)
 
 			So(err, ShouldBeNil)
-
-			if lastArtifact != nil {
-				lastArtifact.Release()
-			}
-
-			lastArtifact = artifact
+			artifact.Release()
 		}
 
 		artifact := PanelWire(datura.Acquire("test", datura.APPJSON), 1, 0.01)
@@ -61,9 +56,6 @@ func TestMedianPanelPeers(t *testing.T) {
 
 		So(err, ShouldBeNil)
 		So(datura.Peek[float64](artifact, "output", "value"), ShouldEqual, 0.05)
-
-		if lastArtifact != nil {
-			lastArtifact.Release()
-		}
+		artifact.Release()
 	})
 }

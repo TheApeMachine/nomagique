@@ -27,7 +27,11 @@ func (min *Min) Read(payload []byte) (int, error) {
 	state := datura.Acquire("min-state", datura.APPJSON)
 
 	if _, err := state.Write(min.artifact.DecryptPayload()); err != nil {
-		return 0, err
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"min: state write failed",
+			err,
+		))
 	}
 
 	rootKey := datura.Peek[string](state, "root")

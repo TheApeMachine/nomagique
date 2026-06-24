@@ -24,14 +24,17 @@ func Forecast(artifact *datura.Artifact) *Forecaster {
 
 func (forecaster *Forecaster) Read(payload []byte) (int, error) {
 	state := datura.Acquire("forecast-state", datura.APPJSON)
-	
+
 	if _, err := state.Write(forecaster.artifact.DecryptPayload()); err != nil {
 		state.Release()
-		
-		return 0, err
+
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"forecast: state write failed",
+			err,
+		))
 	}
-	
-	state.Inspect("learning", "forecast", "Read()", "p")
+
 	defer state.Release()
 
 	predicted, actual, err := forecaster.resolvePair(state)
@@ -84,32 +87,70 @@ func (forecaster *Forecaster) Scale() float64 {
 }
 
 /*
-ObserveSamples runs the exact batch kernel over pairs into out.
+ForecastState learns a multiplicative scale from predicted and actual outcomes.
 */
-func (forecaster *Forecaster) ObserveSamples(
+type ForecastState struct {
+	Scale  float64
+	Weight WeightState
+	Ready  bool
+}
+
+/*
+Observe ingests a predicted and actual pair and returns the current scale.
+*/
+func (state *ForecastState) Observe(predicted float64, actual float64) float64 {
+	return ObserveForecast(state, predicted, actual)
+}
+
+/*
+ObserveSamples writes one scale value per pair into out.
+*/
+func (state *ForecastState) ObserveSamples(
 	predicted []float64, actual []float64, out []float64,
 ) {
-	forecastState := forecastStateFromArtifact(forecaster.artifact)
-	observeForecastSamples(&forecastState, predicted, actual, out)
-
-	if len(out) > 0 {
-		pokeForecastState(forecaster.artifact, &forecastState, out[len(out)-1])
-	}
+	observeForecastSamples(state, predicted, actual, out)
 }
 
 /*
 Reset clears derived state.
 */
-func (forecaster *Forecaster) Reset() error {
-	forecaster.artifact.Poke(0.0, "output", "scale")
-	forecaster.artifact.Poke(0.0, "output", "trust")
-	forecaster.artifact.Poke(0.0, "output", "prev")
-	forecaster.artifact.Poke(0.0, "output", "min")
-	forecaster.artifact.Poke(0.0, "output", "max")
-	forecaster.artifact.Poke(0.0, "output", "rate")
-	forecaster.artifact.Poke(0.0, "output", "weightReady")
-	forecaster.artifact.Poke(0.0, "output", "ready")
-	forecaster.artifact.Poke(0.0, "output", "value")
+func (state *ForecastState) Reset() {
+	state.Scale = 0
+	state.Weight.Reset()
+	state.Ready = false
+}
 
-	return nil
+/*
+ObserveForecast updates scale from settled predicted-vs-actual outcomes.
+*/
+func ObserveForecast(state *ForecastState, predicted float64, actual float64) float64 {
+	if !state.Ready {
+		state.Scale = 1
+		state.Weight.Ready = false
+		_ = ObserveWeight(&state.Weight, predicted, actual)
+		state.Ready = true
+		return state.Scale
+	}
+
+	return observeForecastReady(state, predicted, actual)
+}
+
+/*
+observeForecastReady runs the hot forecast path; state must already be Ready.
+*/
+func observeForecastReady(
+	state *ForecastState, predicted float64, actual float64,
+) float64 {
+	trust := ObserveWeight(&state.Weight, predicted, actual)
+	surprise := state.Weight.Rate
+	learningRate := surprise * (1 - trust)
+
+	if predicted == 0 {
+		return state.Scale
+	}
+
+	targetScale := actual / predicted
+	state.Scale += learningRate * (targetScale - state.Scale)
+
+	return state.Scale
 }

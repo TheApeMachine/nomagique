@@ -27,7 +27,11 @@ func (mean *Mean) Read(payload []byte) (int, error) {
 	state := datura.Acquire("mean-state", datura.APPJSON)
 
 	if _, err := state.Write(mean.artifact.DecryptPayload()); err != nil {
-		return 0, err
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"mean: state write failed",
+			err,
+		))
 	}
 
 	rootKey := datura.Peek[string](state, "root")
@@ -83,7 +87,7 @@ func (mean *Mean) Read(payload []byte) (int, error) {
 		}
 
 		if rootKey != "features" {
-			sample = datura.Peek[float64](state, rootKey, 0, input)
+			sample = datura.Peek[float64](state, rootKey, input)
 		}
 
 		found = true

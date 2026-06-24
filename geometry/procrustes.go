@@ -60,10 +60,13 @@ func (procrustes *Procrustes) Read(payload []byte) (int, error) {
 	state := datura.Acquire("procrustes-state", datura.APPJSON)
 
 	if _, err := state.Write(procrustes.artifact.DecryptPayload()); err != nil {
-		return 0, err
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"procrustes: state write failed",
+			err,
+		))
 	}
 
-	state.Inspect("geometry", "procrustes", "Read()", "p")
 
 	procrustes.result, procrustes.err = procrustes.align(procrustes.matA, procrustes.matB)
 
@@ -136,10 +139,10 @@ func (procrustes *Procrustes) align(matA, matB mat.Matrix) (ProcrustesResult, er
 
 	cross.Mul(&bTranspose, matA)
 
-	uMat, _, vMat, svdErr := procrustes.jacobiSVD(&cross)
+	uMat, _, vMat, err := procrustes.jacobiSVD(&cross)
 
-	if svdErr != nil {
-		return ProcrustesResult{}, svdErr
+	if err != nil {
+		return ProcrustesResult{}, err
 	}
 
 	var vTranspose mat.Dense

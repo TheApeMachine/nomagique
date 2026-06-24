@@ -30,7 +30,10 @@ NewShift returns a distribution-shift KL divergence stage.
 func NewShift(expectedSum, floor float64) io.ReadWriteCloser {
 	config := datura.Acquire("shift-config", datura.APPJSON).
 		Poke(expectedSum, "config", "expectedSum").
-		Poke(floor, "config", "floor")
+		Poke(floor, "config", "floor").
+		Poke("sample", "sampleKey").
+		Poke("paired", "pairedKey").
+		Poke("value", "outputKey")
 
 	return statistic.NewKLDivergence(config)
 }

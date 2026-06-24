@@ -11,8 +11,8 @@ import (
 
 func TestBookflowEvaluate(testingTB *testing.T) {
 	Convey("Given a bid-heavy book snapshot", testingTB, func() {
-		bookflow := equation.NewBookflow(nil)
-		writeErr := tests.WriteSamples(bookflow,
+		bookflow := equation.NewBookflow(bookflowAlgoConfig())
+		err := tests.WriteSamples(bookflow,
 			0.85, 0.80, 0.86, 1,
 			100, 2, 12,
 			0.8,
@@ -22,7 +22,7 @@ func TestBookflowEvaluate(testingTB *testing.T) {
 			0.80, 0.82, 0.83, 0.84,
 		)
 
-		So(writeErr, ShouldBeNil)
+		So(err, ShouldBeNil)
 
 		outbound, err := readOutbound(bookflow)
 
@@ -35,8 +35,8 @@ func TestBookflowEvaluate(testingTB *testing.T) {
 	})
 
 	Convey("Given deep bid wall with bearish touch", testingTB, func() {
-		bookflow := equation.NewBookflow(nil)
-		writeErr := tests.WriteSamples(bookflow,
+		bookflow := equation.NewBookflow(bookflowAlgoConfig())
+		err := tests.WriteSamples(bookflow,
 			0.6, -0.4, 0.5, 1,
 			50, 2, 3,
 			-0.5,
@@ -46,7 +46,7 @@ func TestBookflowEvaluate(testingTB *testing.T) {
 			0.25, 0.24, 0.26, 0.23,
 		)
 
-		So(writeErr, ShouldBeNil)
+		So(err, ShouldBeNil)
 
 		outbound, err := readOutbound(bookflow)
 
@@ -59,7 +59,7 @@ func TestBookflowEvaluate(testingTB *testing.T) {
 }
 
 func BenchmarkBookflowRead(b *testing.B) {
-	bookflow := equation.NewBookflow(nil)
+	bookflow := equation.NewBookflow(bookflowAlgoConfig())
 	samples := []float64{
 		0.85, 0.80, 0.86, 1,
 		100, 2, 12,

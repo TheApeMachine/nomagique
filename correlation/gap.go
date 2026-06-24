@@ -35,10 +35,13 @@ func (gap *Gap) Read(p []byte) (int, error) {
 	state := datura.Acquire("gap-state", datura.APPJSON)
 
 	if _, err := state.Write(gap.artifact.DecryptPayload()); err != nil {
-		return 0, err
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"correlation-gap: state write failed",
+			err,
+		))
 	}
 
-	state.Inspect("correlation", "gap", "Read()", "p")
 
 	batch := gapBatch(state)
 

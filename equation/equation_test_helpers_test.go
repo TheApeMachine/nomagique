@@ -68,3 +68,15 @@ func readStageOutput(stage io.Reader) (*datura.Artifact, error) {
 
 	return outbound, nil
 }
+
+func depthConfig() *datura.Artifact {
+	return equation.DepthConfig()
+}
+
+func cohortConfig() *datura.Artifact {
+	return equation.CohortConfig()
+}
+
+func bookflowConfig() *datura.Artifact {
+	return equation.BookflowConfig()
+}

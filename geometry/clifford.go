@@ -1,6 +1,7 @@
 package geometry
 
 import (
+	"github.com/theapemachine/errnie"
 	"math"
 
 	"github.com/theapemachine/datura"
@@ -198,10 +199,13 @@ func (rotor *Rotor) Read(payload []byte) (int, error) {
 	state := datura.Acquire("rotor-state", datura.APPJSON)
 
 	if _, err := state.Write(rotor.artifact.DecryptPayload()); err != nil {
-		return 0, err
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"geometry-clifford: state write failed",
+			err,
+		))
 	}
 
-	state.Inspect("geometry", "rotor", "Read()", "p")
 
 	scalars := datura.Peek[[]float64](state, "batch")
 
@@ -264,10 +268,13 @@ func (translator *Translator) Read(payload []byte) (int, error) {
 	state := datura.Acquire("translator-state", datura.APPJSON)
 
 	if _, err := state.Write(translator.artifact.DecryptPayload()); err != nil {
-		return 0, err
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"geometry-clifford: state write failed",
+			err,
+		))
 	}
 
-	state.Inspect("geometry", "translator", "Read()", "p")
 
 	scalars := datura.Peek[[]float64](state, "batch")
 
@@ -331,10 +338,13 @@ func (sandwich *Sandwich) Read(payload []byte) (int, error) {
 	state := datura.Acquire("sandwich-state", datura.APPJSON)
 
 	if _, err := state.Write(sandwich.artifact.DecryptPayload()); err != nil {
-		return 0, err
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"geometry-clifford: state write failed",
+			err,
+		))
 	}
 
-	state.Inspect("geometry", "sandwich", "Read()", "p")
 
 	scalars := datura.Peek[[]float64](state, "batch")
 

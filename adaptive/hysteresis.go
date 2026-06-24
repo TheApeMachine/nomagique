@@ -38,7 +38,6 @@ func (hysteresis *Hysteresis) Read(payload []byte) (int, error) {
 		))
 	}
 
-	state.Inspect("adaptive", "hysteresis", "Read()", "p")
 
 	inputKey := datura.Peek[string](hysteresis.artifact, "input")
 

@@ -10,13 +10,13 @@ import (
 
 func TestFlow_Read(testingTB *testing.T) {
 	Convey("Given aggressive buy flow with rising price", testingTB, func() {
-		stage := equation.NewFlow(nil)
-		writeErr := writeFeatureStage(stage, equation.FlowInputKeys,
+		stage := equation.NewFlow(equation.FlowConfig())
+		err := writeFeatureStage(stage, equation.FlowInputKeys,
 			500, 0, 5, 0, 100,
 			100, 100.01, 100.02, 100.03, 100.04,
 		)
 
-		So(writeErr, ShouldBeNil)
+		So(err, ShouldBeNil)
 
 		outbound, err := readStageOutput(stage)
 
@@ -30,13 +30,13 @@ func TestFlow_Read(testingTB *testing.T) {
 	})
 
 	Convey("Given aggressive buy flow with flat price", testingTB, func() {
-		stage := equation.NewFlow(nil)
-		writeErr := writeFeatureStage(stage, equation.FlowInputKeys,
+		stage := equation.NewFlow(equation.FlowConfig())
+		err := writeFeatureStage(stage, equation.FlowInputKeys,
 			200, 0, 4, 0, 50,
 			50, 50.001, 50, 50.001,
 		)
 
-		So(writeErr, ShouldBeNil)
+		So(err, ShouldBeNil)
 
 		outbound, err := readStageOutput(stage)
 
@@ -50,7 +50,7 @@ func TestFlow_Read(testingTB *testing.T) {
 }
 
 func BenchmarkFlowRead(b *testing.B) {
-	stage := equation.NewFlow(nil)
+	stage := equation.NewFlow(equation.FlowConfig())
 	values := []float64{
 		500, 0, 5, 0, 100,
 		100, 100.01, 100.02, 100.03, 100.04,

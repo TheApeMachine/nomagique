@@ -37,12 +37,19 @@ func (series *IntervalSeries) Read(p []byte) (int, error) {
 	state := datura.Acquire("interval-series-state", datura.APPJSON)
 
 	if _, err := state.Write(series.artifact.DecryptPayload()); err != nil {
-		return 0, err
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"correlation-interval-series: state write failed",
+			err,
+		))
 	}
 
-	state.Inspect("correlation", "interval-series", "Read()", "p")
 
-	level := datura.Peek[float64](state, "paired")
+	epoch, level, err := wireEpochLevel(series.artifact, state, "interval-series")
+
+	if err != nil {
+		return 0, err
+	}
 
 	if level <= 0 {
 		return 0, errnie.Error(errnie.Err(
@@ -51,7 +58,6 @@ func (series *IntervalSeries) Read(p []byte) (int, error) {
 		))
 	}
 
-	epoch := int64(datura.Peek[float64](state, "sample"))
 	series.ingest(series.capacityFromArtifact(), epoch, level)
 
 	magnitude := series.lastReturnMagnitude()
@@ -192,7 +198,7 @@ func (series *IntervalSeries) lastReturnMagnitude(root ...any) float64 {
 type IntervalSeriesErrorType string
 
 const (
-	IntervalSeriesErrorRequirePositiveLevel IntervalSeriesErrorType = "require positive paired level"
+	IntervalSeriesErrorRequirePositiveLevel  IntervalSeriesErrorType = "require positive paired level"
 	IntervalSeriesErrorInsufficientIntervals IntervalSeriesErrorType = "require at least one log-return interval"
 )
 

@@ -31,7 +31,11 @@ func (bernoulli *Bernoulli) Read(payload []byte) (int, error) {
 	if _, err := state.Write(bernoulli.artifact.DecryptPayload()); err != nil {
 		state.Release()
 
-		return 0, err
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"bernoulli: state write failed",
+			err,
+		))
 	}
 
 	defer state.Release()
@@ -158,13 +162,13 @@ func (bernoulli *Bernoulli) Read(payload []byte) (int, error) {
 			))
 		}
 
-		predicted, actual, parseErr := parsePredictedActual(sample, []float64{paired})
+		predicted, actual, err := parsePredictedActual(sample, []float64{paired})
 
-		if parseErr != nil {
+		if err != nil {
 			return 0, errnie.Error(errnie.Err(
 				errnie.Validation,
 				"bernoulli: unable to parse predicted and actual pair",
-				parseErr,
+				err,
 			))
 		}
 
@@ -180,13 +184,13 @@ func (bernoulli *Bernoulli) Read(payload []byte) (int, error) {
 			))
 		}
 
-		outcome, parseErr := parseBernoulliOutcome(sample, nil)
+		outcome, err := parseBernoulliOutcome(sample, nil)
 
-		if parseErr != nil {
+		if err != nil {
 			return 0, errnie.Error(errnie.Err(
 				errnie.Validation,
 				"bernoulli: invalid outcome",
-				parseErr,
+				err,
 			))
 		}
 

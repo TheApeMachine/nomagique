@@ -1,7 +1,6 @@
 package causal
 
 import (
-	"errors"
 	"math"
 
 	"github.com/theapemachine/datura"
@@ -29,18 +28,21 @@ func (regime *Regime) Read(p []byte) (int, error) {
 	state := datura.Acquire("regime-state", datura.APPJSON)
 
 	if _, err := state.Write(regime.artifact.DecryptPayload()); err != nil {
-		return 0, err
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"causal: state write failed",
+			err,
+		))
 	}
 
-	state.Inspect("causal", "regime", "Read()", "p")
 
-	rows, ok := tableRows(state)
+	rows, err := tableRows(state)
 
-	if !ok {
+	if err != nil {
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"causal regime: missing table rows",
-			errors.New("causal: table rows missing"),
+			err,
 		))
 	}
 
@@ -48,7 +50,11 @@ func (regime *Regime) Read(p []byte) (int, error) {
 	minHistory := int(datura.Peek[float64](regime.artifact, "minHistory"))
 
 	if minHistory <= 0 {
-		minHistory = len(rows)
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"causal regime: minHistory required",
+			nil,
+		))
 	}
 
 	table, err := newNodeTable(rows, target, minHistory)

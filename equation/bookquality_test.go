@@ -12,8 +12,8 @@ import (
 
 func TestBookQuality_Read(testingTB *testing.T) {
 	Convey("Given near-touch toxic churn above gate", testingTB, func() {
-		stage := equation.NewBookQuality(nil)
-		writeErr := writeFeatureStage(stage, equation.BookQualityInputKeys,
+		stage := equation.NewBookQuality(equation.BookQualityConfig())
+		err := writeFeatureStage(stage, equation.BookQualityInputKeys,
 			0, 0.1, 0, 0.1,
 			80, 80,
 			1, 4.5,
@@ -21,7 +21,7 @@ func TestBookQuality_Read(testingTB *testing.T) {
 			100,
 		)
 
-		So(writeErr, ShouldBeNil)
+		So(err, ShouldBeNil)
 
 		outbound, err := readStageOutput(stage)
 
@@ -34,8 +34,8 @@ func TestBookQuality_Read(testingTB *testing.T) {
 	})
 
 	Convey("Given balanced depth with fills and no cancels", testingTB, func() {
-		stage := equation.NewBookQuality(nil)
-		writeErr := writeFeatureStage(stage, equation.BookQualityInputKeys,
+		stage := equation.NewBookQuality(equation.BookQualityConfig())
+		err := writeFeatureStage(stage, equation.BookQualityInputKeys,
 			0, 0.1, 0, 0.1,
 			80, 80,
 			0, 0,
@@ -43,7 +43,7 @@ func TestBookQuality_Read(testingTB *testing.T) {
 			100,
 		)
 
-		So(writeErr, ShouldBeNil)
+		So(err, ShouldBeNil)
 
 		outbound, err := readStageOutput(stage)
 
@@ -57,7 +57,7 @@ func TestBookQuality_Read(testingTB *testing.T) {
 
 	Convey("Given balanced depth without category evidence", testingTB, func() {
 		stage := transport.NewPipeline(
-			equation.NewBookQuality(nil),
+			equation.NewBookQuality(equation.BookQualityConfig()),
 			probability.NewClassifier(
 				datura.Acquire("toxicity-classifier", datura.APPJSON).WithAttributes(datura.Map[any]{
 					"inputs":    []string{"bluffScore", "vacuumScore", "supportScore"},
@@ -65,7 +65,7 @@ func TestBookQuality_Read(testingTB *testing.T) {
 				}),
 			),
 		)
-		writeErr := writeFeatureStage(stage, equation.BookQualityInputKeys,
+		err := writeFeatureStage(stage, equation.BookQualityInputKeys,
 			0, 0, 0, 0,
 			80, 80,
 			0, 0,
@@ -73,7 +73,7 @@ func TestBookQuality_Read(testingTB *testing.T) {
 			100,
 		)
 
-		So(writeErr, ShouldBeNil)
+		So(err, ShouldBeNil)
 
 		outbound, err := readStageOutput(stage)
 
@@ -87,7 +87,7 @@ func TestBookQuality_Read(testingTB *testing.T) {
 
 	Convey("Given cancel/fill evidence before the adaptive threshold is ready", testingTB, func() {
 		stage := transport.NewPipeline(
-			equation.NewBookQuality(nil),
+			equation.NewBookQuality(equation.BookQualityConfig()),
 			probability.NewClassifier(
 				datura.Acquire("toxicity-classifier", datura.APPJSON).WithAttributes(datura.Map[any]{
 					"inputs":    []string{"bluffScore", "vacuumScore", "supportScore"},
@@ -95,7 +95,7 @@ func TestBookQuality_Read(testingTB *testing.T) {
 				}),
 			),
 		)
-		writeErr := writeFeatureStage(stage, equation.BookQualityInputKeys,
+		err := writeFeatureStage(stage, equation.BookQualityInputKeys,
 			0.3, 0.1, 0, 0,
 			80, 80,
 			0, 0,
@@ -103,7 +103,7 @@ func TestBookQuality_Read(testingTB *testing.T) {
 			100,
 		)
 
-		So(writeErr, ShouldBeNil)
+		So(err, ShouldBeNil)
 
 		outbound, err := readStageOutput(stage)
 
@@ -117,7 +117,7 @@ func TestBookQuality_Read(testingTB *testing.T) {
 }
 
 func BenchmarkBookQualityRead(b *testing.B) {
-	stage := equation.NewBookQuality(nil)
+	stage := equation.NewBookQuality(equation.BookQualityConfig())
 	values := []float64{
 		0.3, 0.1, 0, 0,
 		10, 10,
@@ -136,7 +136,7 @@ func BenchmarkBookQualityRead(b *testing.B) {
 }
 
 func BenchmarkBookQualityReadNeutral(b *testing.B) {
-	stage := equation.NewBookQuality(nil)
+	stage := equation.NewBookQuality(equation.BookQualityConfig())
 	values := []float64{
 		0, 0, 0, 0,
 		10, 10,

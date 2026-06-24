@@ -66,14 +66,14 @@ func TestForecaster_Observe(testingTB *testing.T) {
 }
 
 func TestForecaster_ObserveSamples(testingTB *testing.T) {
-	Convey("Given a forecaster", testingTB, func() {
-		forecaster := Forecast(pairConfig("forecast-config"))
+	Convey("Given a forecast state", testingTB, func() {
+		state := ForecastState{}
 		predicted := []float64{10, 10}
 		actual := []float64{10, 15}
 		out := make([]float64, len(predicted))
 
 		Convey("When observing samples in batch", func() {
-			forecaster.ObserveSamples(predicted, actual, out)
+			state.ObserveSamples(predicted, actual, out)
 
 			Convey("It should fill the output buffer", func() {
 				So(out[1], ShouldBeGreaterThan, 1)
@@ -89,7 +89,10 @@ func TestForecaster_Reset(testingTB *testing.T) {
 		err := transport.NewFlipFlop(artifact, forecaster)
 
 		So(err, ShouldBeNil)
-		So(forecaster.Reset(), ShouldBeNil)
+
+		forecastState := forecastStateFromArtifact(forecaster.artifact)
+		forecastState.Reset()
+		pokeForecastState(forecaster.artifact, &forecastState, 1)
 
 		fresh := pairWire(datura.Acquire("test", datura.APPJSON), 10, 10)
 		err = transport.NewFlipFlop(fresh, forecaster)
@@ -200,7 +203,7 @@ func BenchmarkForecast_Observe(testingTB *testing.B) {
 }
 
 func BenchmarkForecast_ObserveSamples(testingTB *testing.B) {
-	forecaster := Forecast(pairConfig("forecast-config-bench"))
+	state := ForecastState{}
 	predicted := make([]float64, 1024)
 	actual := make([]float64, len(predicted))
 	out := make([]float64, len(predicted))
@@ -208,7 +211,7 @@ func BenchmarkForecast_ObserveSamples(testingTB *testing.B) {
 	testingTB.ReportAllocs()
 
 	for testingTB.Loop() {
-		_ = forecaster.Reset()
-		forecaster.ObserveSamples(predicted, actual, out)
+		state.Reset()
+		state.ObserveSamples(predicted, actual, out)
 	}
 }

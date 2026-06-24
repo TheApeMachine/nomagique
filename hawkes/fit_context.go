@@ -70,7 +70,11 @@ func NewFitContext(stream ArrivalStream, horizon time.Time) (FitContext, bool) {
 		return FitContext{}, false
 	}
 
-	lowerGap, upperGap := statistic.Quartiles(gaps)
+	lowerGap, upperGap, quartileErr := statistic.Quartiles(gaps)
+
+	if quartileErr != nil {
+		return FitContext{}, false
+	}
 
 	if upperGap <= lowerGap {
 		upperGap = medianGap * (1 + 1/math.Sqrt(float64(len(gaps))))
@@ -89,6 +93,50 @@ func NewFitContext(stream ArrivalStream, horizon time.Time) (FitContext, bool) {
 		eventsY:     stream.sell.Len(),
 	}
 	localMin, localMax := tune.localScaleRange(gapCV)
+	scanSteps := tune.scanSteps()
+	betaCandidates, betaErr := statistic.LogSpace(
+		1/upperGap, 1/lowerGap, scanSteps,
+	)
+
+	if betaErr != nil {
+		return FitContext{}, false
+	}
+
+	branchSelfCandidates, selfErr := statistic.LinSpace(
+		tune.branchFloor(),
+		tune.branchCeiling()*tune.selfBranchShare(),
+		tune.branchScanSteps(),
+	)
+
+	if selfErr != nil {
+		return FitContext{}, false
+	}
+
+	branchCrossCandidates, crossErr := statistic.LinSpace(
+		0, tune.branchCeiling(), tune.branchScanSteps(),
+	)
+
+	if crossErr != nil {
+		return FitContext{}, false
+	}
+
+	localScales, scalesErr := statistic.LinSpace(localMin, localMax, scanSteps)
+
+	if scalesErr != nil {
+		return FitContext{}, false
+	}
+
+	muXFactors, muXErr := tune.muUncertaintyFactors(tune.eventsX)
+
+	if muXErr != nil {
+		return FitContext{}, false
+	}
+
+	muYFactors, muYErr := tune.muUncertaintyFactors(tune.eventsY)
+
+	if muYErr != nil {
+		return FitContext{}, false
+	}
 
 	return FitContext{
 		SpanSec:      span,
@@ -108,20 +156,12 @@ func NewFitContext(stream ArrivalStream, horizon time.Time) (FitContext, bool) {
 		BranchScanSteps: tune.branchScanSteps(),
 		BranchFloor:     tune.branchFloor(),
 		BranchCeiling:   tune.branchCeiling(),
-		BetaCandidates: statistic.LogSpace(
-			1/upperGap, 1/lowerGap, tune.scanSteps(),
-		),
-		MuXFactors: tune.muUncertaintyFactors(tune.eventsX),
-		MuYFactors: tune.muUncertaintyFactors(tune.eventsY),
-		BranchSelfCandidates: statistic.LinSpace(
-			tune.branchFloor(),
-			tune.branchCeiling()*tune.selfBranchShare(),
-			tune.branchScanSteps(),
-		),
-		BranchCrossCandidates: statistic.LinSpace(
-			0, tune.branchCeiling(), tune.branchScanSteps(),
-		),
-		LocalScales: statistic.LinSpace(localMin, localMax, tune.scanSteps()),
+		BetaCandidates:        betaCandidates,
+		MuXFactors:            muXFactors,
+		MuYFactors:            muYFactors,
+		BranchSelfCandidates:  branchSelfCandidates,
+		BranchCrossCandidates: branchCrossCandidates,
+		LocalScales:           localScales,
 	}, true
 }
 
@@ -304,9 +344,9 @@ func (tune arrivalTune) tradeWindowDuration(
 	)
 }
 
-func (tune arrivalTune) muUncertaintyFactors(count int) []float64 {
+func (tune arrivalTune) muUncertaintyFactors(count int) ([]float64, error) {
 	if count <= 0 {
-		return []float64{1}
+		return []float64{1}, nil
 	}
 
 	spread := 2 / math.Sqrt(float64(count))

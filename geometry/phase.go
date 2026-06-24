@@ -30,10 +30,13 @@ func (velocity *Velocity) Read(payload []byte) (int, error) {
 	state := datura.Acquire("velocity-state", datura.APPJSON)
 
 	if _, err := state.Write(velocity.artifact.DecryptPayload()); err != nil {
-		return 0, err
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"coupling: state write failed",
+			err,
+		))
 	}
 
-	state.Inspect("geometry", "velocity", "Read()", "p")
 
 	sample := datura.Peek[float64](state, "sample")
 
@@ -106,10 +109,13 @@ func (coupling *Coupling) Read(payload []byte) (int, error) {
 	state := datura.Acquire("coupling-state", datura.APPJSON)	
 
 	if _, err := state.Write(coupling.artifact.DecryptPayload()); err != nil {
-		return 0, err
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"coupling: state write failed",
+			err,
+		))
 	}
 
-	state.Inspect("geometry", "coupling", "Read()", "p")
 
 	values := datura.Peek[[]float64](state, "batch")
 

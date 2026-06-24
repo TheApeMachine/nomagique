@@ -11,7 +11,6 @@ import (
 
 /*
 Quantile computes a sample quantile over retained history.
-The constructor artifact holds config; Write buffers inbound wire on its payload.
 */
 type Quantile struct {
 	artifact *datura.Artifact
@@ -19,7 +18,6 @@ type Quantile struct {
 
 /*
 NewQuantile returns a quantile stage wired from config attributes on the artifact.
-Percentile and cumulant kind live under config.percentile and config.kind.
 */
 func NewQuantile(artifact *datura.Artifact) *Quantile {
 	return &Quantile{
@@ -31,12 +29,89 @@ func (quantile *Quantile) Read(payload []byte) (int, error) {
 	state := datura.Acquire("quantile-state", datura.APPJSON)
 
 	if _, err := state.Write(quantile.artifact.DecryptPayload()); err != nil {
-		return 0, err
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"quantile: state write failed",
+			err,
+		))
 	}
 
-	state.Inspect("statistic", "quantile", "Read()", "p")
+	rootKey := datura.Peek[string](state, "root")
 
-	sample := datura.Peek[float64](state, "sample")
+	if rootKey == "" {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"quantile: root required",
+			nil,
+		))
+	}
+
+	inputs := datura.Peek[[]string](state, "inputs")
+
+	if len(inputs) == 0 {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"quantile: inputs required",
+			nil,
+		))
+	}
+
+	configInput := datura.Peek[string](quantile.artifact, "input")
+
+	if configInput == "" {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"quantile: input required",
+			nil,
+		))
+	}
+
+	outputKey := datura.Peek[string](quantile.artifact, "outputKey")
+
+	if outputKey == "" {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"quantile: outputKey required",
+			nil,
+		))
+	}
+
+	var sample float64
+	found := false
+
+	for index, input := range inputs {
+		if input != configInput {
+			continue
+		}
+
+		if rootKey == "features" {
+			features := datura.Peek[[]float64](state, rootKey)
+
+			if index >= len(features) {
+				return 0, errnie.Error(errnie.Err(
+					errnie.Validation,
+					"quantile: feature index out of range",
+					nil,
+				))
+			}
+
+			sample = features[index]
+		}
+
+		if rootKey != "features" {
+			sample = datura.Peek[float64](state, rootKey, input)
+		}
+
+		found = true
+	}
+
+	if !found {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"quantile: input not in inputs",
+			nil,
+		))
+	}
 
 	if math.IsNaN(sample) || math.IsInf(sample, 0) {
 		return 0, errnie.Error(errnie.Err(
@@ -50,28 +125,39 @@ func (quantile *Quantile) Read(payload []byte) (int, error) {
 	history = append(history, sample)
 	quantile.artifact.Poke(history, "history")
 
-	if len(history) == 0 {
-		return 0, nil
-	}
-
 	sorted := append([]float64(nil), history...)
 	sort.Float64s(sorted)
 
 	percentile := datura.Peek[float64](quantile.artifact, "config", "percentile")
 	kind := stat.CumulantKind(int(datura.Peek[float64](quantile.artifact, "config", "kind")))
-	value, ok := quantileValue(sorted, nil, percentile, kind)
+	value := sorted[0]
 
-	if !ok {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"quantile: history contains non-finite values",
-			nil,
-		))
+	if percentile <= 0 {
+		value = sorted[0]
 	}
 
-	state.MergeOutput("value", value)
+	if percentile > 0 && percentile < 1 {
+		for _, entry := range sorted {
+			if math.IsNaN(entry) || math.IsInf(entry, 0) {
+				return 0, errnie.Error(errnie.Err(
+					errnie.Validation,
+					"quantile: history contains non-finite values",
+					nil,
+				))
+			}
+		}
+
+		value = stat.Quantile(percentile, kind, sorted, nil)
+	}
+
+	if percentile >= 1 {
+		value = sorted[len(sorted)-1]
+	}
+
+	state.MergeOutput(outputKey, value)
 	state.Poke("output", "root")
-	state.Poke([]string{"value"}, "inputs")
+	state.Poke([]string{outputKey}, "inputs")
+
 	return state.Read(payload)
 }
 
@@ -82,65 +168,4 @@ func (quantile *Quantile) Write(payload []byte) (int, error) {
 
 func (quantile *Quantile) Close() error {
 	return nil
-}
-
-func quantileValue(
-	sorted []float64, weights []float64,
-	percentile float64, kind stat.CumulantKind,
-) (float64, bool) {
-	if len(sorted) == 0 {
-		return 0, false
-	}
-
-	if percentile <= 0 {
-		return sorted[0], true
-	}
-
-	if percentile >= 1 {
-		return sorted[len(sorted)-1], true
-	}
-
-	if weights == nil {
-		for _, value := range sorted {
-			if math.IsNaN(value) || math.IsInf(value, 0) {
-				return 0, false
-			}
-		}
-
-		return stat.Quantile(percentile, kind, sorted, nil), true
-	}
-
-	return stat.Quantile(percentile, kind, sorted, weights), true
-}
-
-/*
-QuantileOf returns the sample quantile with linear interpolation.
-*/
-func QuantileOf(percentile float64, values []float64) (float64, bool) {
-	if len(values) == 0 {
-		return 0, false
-	}
-
-	sorted := append([]float64(nil), values...)
-	sort.Float64s(sorted)
-
-	for _, value := range sorted {
-		if math.IsNaN(value) || math.IsInf(value, 0) {
-			return 0, false
-		}
-	}
-
-	return stat.Quantile(percentile, stat.LinInterp, sorted, nil), true
-}
-
-type QuantileErrorType string
-
-const (
-	QuantileErrorWeightLengthMismatch QuantileErrorType = "require equal weight length"
-)
-
-type QuantileError string
-
-func (quantileError QuantileError) Error() string {
-	return string(quantileError)
 }

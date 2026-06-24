@@ -19,9 +19,9 @@ func transitionSchema(numStates int, alpha float64) *datura.Artifact {
 func TestTransitionMatrixSurprise(testingTB *testing.T) {
 	Convey("Given a transition matrix and padded observation", testingTB, func() {
 		matrix := NewTransitionMatrix(5, 0.1)
-		observed, padErr := matrix.PadObserved([]float64{0.25, 0.25, 0.25, 0.25}, 0.1)
+		observed, err := matrix.PadObserved([]float64{0.25, 0.25, 0.25, 0.25}, 0.1)
 
-		So(padErr, ShouldBeNil)
+		So(err, ShouldBeNil)
 
 		surprise, err := matrix.Surprise(observed)
 
@@ -132,13 +132,13 @@ func TestTransitionSurprise_Read(testingTB *testing.T) {
 	Convey("Given a padded observation through TransitionSurprise", testingTB, func() {
 		stage := NewTransitionSurprise(transitionSchema(5, 0.1))
 		matrix := NewTransitionMatrix(5, 0.1)
-		observed, padErr := matrix.PadObserved([]float64{0.25, 0.25, 0.25, 0.25}, 0.1)
+		observed, err := matrix.PadObserved([]float64{0.25, 0.25, 0.25, 0.25}, 0.1)
 
-		So(padErr, ShouldBeNil)
+		So(err, ShouldBeNil)
 
 		artifact := transitionInboundArtifact(observed, 1)
 
-		err := transport.NewFlipFlop(artifact, stage)
+		err = transport.NewFlipFlop(artifact, stage)
 
 		So(err, ShouldBeNil)
 
@@ -154,13 +154,13 @@ func TestTransitionSurprise_Reset(testingTB *testing.T) {
 	Convey("Given a transition stage with accumulated state", testingTB, func() {
 		stage := NewTransitionSurprise(transitionSchema(5, 0.1))
 		matrix := NewTransitionMatrix(5, 0.1)
-		observed, padErr := matrix.PadObserved([]float64{0.25, 0.25, 0.25, 0.25}, 0.1)
+		observed, err := matrix.PadObserved([]float64{0.25, 0.25, 0.25, 0.25}, 0.1)
 
-		So(padErr, ShouldBeNil)
+		So(err, ShouldBeNil)
 
 		artifact := transitionInboundArtifact(observed, 2)
 
-		err := transport.NewFlipFlop(artifact, stage)
+		err = transport.NewFlipFlop(artifact, stage)
 
 		So(err, ShouldBeNil)
 		So(datura.Peek[float64](stage.artifact, "transition", "lastCategory"), ShouldEqual, 1)
@@ -184,10 +184,10 @@ func TestTransitionSurprise_Reset(testingTB *testing.T) {
 func BenchmarkTransitionSurprise_Read(testingTB *testing.B) {
 	stage := NewTransitionSurprise(transitionSchema(5, 0.1))
 	matrix := NewTransitionMatrix(5, 0.1)
-	observed, padErr := matrix.PadObserved([]float64{0.4, 0.3, 0.2, 0.1}, 0.1)
+	observed, err := matrix.PadObserved([]float64{0.4, 0.3, 0.2, 0.1}, 0.1)
 
-	if padErr != nil {
-		testingTB.Fatal(padErr)
+	if err != nil {
+		testingTB.Fatal(err)
 	}
 
 	artifact := transitionInboundArtifact(observed, 2)

@@ -11,14 +11,14 @@ import (
 
 func TestFluidflow_Read(testingTB *testing.T) {
 	Convey("Given a balanced laminar field", testingTB, func() {
-		stage := equation.NewFluidflow(nil)
-		writeErr := writeFeatureStage(stage, equation.FluidflowInputKeys,
+		stage := equation.NewFluidflow(equation.FluidflowConfig())
+		err := writeFeatureStage(stage, equation.FluidflowInputKeys,
 			0.5, 0.01, 0.8, 1, 1,
 			2, 4, 0, 0.05, 0, 0, 0, 0,
 			100, 2, 0.01, 1000,
 		)
 
-		So(writeErr, ShouldBeNil)
+		So(err, ShouldBeNil)
 
 		outbound, err := readStageOutput(stage)
 
@@ -32,14 +32,14 @@ func TestFluidflow_Read(testingTB *testing.T) {
 	})
 
 	Convey("Given huge finite memory", testingTB, func() {
-		stage := equation.NewFluidflow(nil)
-		writeErr := writeFeatureStage(stage, equation.FluidflowInputKeys,
+		stage := equation.NewFluidflow(equation.FluidflowConfig())
+		err := writeFeatureStage(stage, equation.FluidflowInputKeys,
 			0.5, 0.01, 0.8, 1, 1,
 			2, 4, 0, 0.05, 0, 0, 0, math.MaxFloat64,
 			100, 2, 0.01, 1000,
 		)
 
-		So(writeErr, ShouldBeNil)
+		So(err, ShouldBeNil)
 
 		outbound, err := readStageOutput(stage)
 
@@ -54,14 +54,14 @@ func TestFluidflow_Read(testingTB *testing.T) {
 	})
 
 	Convey("Given Reynolds above the turbulent floor", testingTB, func() {
-		stage := equation.NewFluidflow(nil)
-		writeErr := writeFeatureStage(stage, equation.FluidflowInputKeys,
+		stage := equation.NewFluidflow(equation.FluidflowConfig())
+		err := writeFeatureStage(stage, equation.FluidflowInputKeys,
 			8, 0.2, 0.5, 1, 1,
 			2, 4, 1, 0.1, 0, 0.5, 0.8, 0,
 			100, 2, 0.01, 1000,
 		)
 
-		So(writeErr, ShouldBeNil)
+		So(err, ShouldBeNil)
 
 		outbound, err := readStageOutput(stage)
 
@@ -76,7 +76,7 @@ func TestFluidflow_Read(testingTB *testing.T) {
 }
 
 func BenchmarkFluidflowRead(b *testing.B) {
-	stage := equation.NewFluidflow(nil)
+	stage := equation.NewFluidflow(equation.FluidflowConfig())
 	values := []float64{
 		2, 0.1, 0.6, 1, 1,
 		3, 5, 1, 0.08, 0, 0.2, 0.3, 0,

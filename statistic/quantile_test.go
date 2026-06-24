@@ -9,17 +9,18 @@ import (
 	"gonum.org/v1/gonum/stat"
 )
 
-func TestQuantileSeries(t *testing.T) {
+func TestQuantileRead(t *testing.T) {
 	Convey("Given a Quantile stage", t, func() {
 		quantileConfig := datura.Acquire("quantile-config", datura.APPJSON).
+			Poke("sample", "input").
+			Poke("value", "outputKey").
 			Poke(0.5, "config", "percentile").
 			Poke(float64(stat.LinInterp), "config", "kind")
 		quantile := NewQuantile(quantileConfig)
 		artifact := datura.Acquire("test", datura.APPJSON)
 
 		for _, sample := range []float64{1, 2, 3, 4} {
-			artifact.Poke(sample, "sample")
-			err := transport.NewFlipFlop(artifact, quantile)
+			err := transport.NewFlipFlop(ScalarWire(artifact, "sample", sample), quantile)
 
 			So(err, ShouldBeNil)
 		}

@@ -2,7 +2,6 @@ package algorithm
 
 import (
 	"fmt"
-	"io"
 	"math"
 
 	"github.com/theapemachine/datura"
@@ -57,7 +56,11 @@ func (tradeFlowSample *TradeFlowSample) Read(payload []byte) (int, error) {
 	if _, err := state.Write(tradeFlowSample.artifact.DecryptPayload()); err != nil {
 		state.Release()
 
-		return 0, err
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"trade-flow-sample: state write failed",
+			err,
+		))
 	}
 
 	defer state.Release()
@@ -100,7 +103,11 @@ func (tradeFlowSample *TradeFlowSample) Read(payload []byte) (int, error) {
 	features := tradeFlowSample.features(window)
 
 	if len(features) == 0 {
-		return 0, io.EOF
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"trade-flow-sample: feature batch not ready",
+			nil,
+		))
 	}
 
 	state.WithScope(symbol)

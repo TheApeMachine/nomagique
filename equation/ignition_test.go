@@ -52,6 +52,7 @@ func ignitionReplayConfig() *datura.Artifact {
 		Poke(map[string]any{
 			"input":      "spread",
 			"outputKey":  "compression",
+			"seriesKey":  "spread",
 			"scale":      0.0,
 			"scaleMode":  "median",
 			"terms":      []string{"compression", "precursor", "rvol"},
@@ -86,7 +87,8 @@ func ignitionReplayConfig() *datura.Artifact {
 			"attenuate": []string{"compression"},
 		}, "decline").
 		Poke(map[string]any{
-			"inputs": []string{"bid", "ask"},
+			"inputs":    []string{"bid", "ask"},
+			"outputKey": "spread",
 		}, "spread").
 		Poke(map[string]any{
 			"leftKey":        "rvol",
@@ -102,8 +104,9 @@ func TestIgnitionFeatureExtractorPipeline(testingTB *testing.T) {
 		schema := datura.Acquire("ignition-pipeline-schema", datura.APPJSON).WithAttributes(datura.Map[any]{
 			"required": []string{"ticker"},
 			"ticker": datura.Map[any]{
-				"root":   "data",
-				"inputs": []string{"symbol", "bid", "ask", "last", "volume"},
+				"root":         "data",
+				"elementIndex": 0.0,
+				"inputs":       []string{"symbol", "bid", "ask", "last", "volume"},
 			},
 		})
 

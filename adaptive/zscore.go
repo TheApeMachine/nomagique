@@ -41,7 +41,6 @@ func (surprise *ZScore) Read(payload []byte) (int, error) {
 		))
 	}
 
-	state.Inspect("adaptive", "zscore", "Read()", "p")
 
 	rootKey := datura.Peek[string](state, "root")
 

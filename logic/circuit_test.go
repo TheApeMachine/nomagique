@@ -34,7 +34,7 @@ func flipFlopStage(stage interface {
 
 func TestNewCircuit(testingTB *testing.T) {
 	Convey("Given NewCircuit", testingTB, func() {
-		circuit := logic.NewCircuit(logic.Rules{
+		circuit := logic.NewCircuit(circuitConfig(), logic.Rules{
 			{
 				Condition: logic.True{Operand: true},
 				Then:      logic.NewConstant(1),
@@ -49,7 +49,7 @@ func TestNewCircuit(testingTB *testing.T) {
 
 func TestCircuit_Observe(testingTB *testing.T) {
 	Convey("Given a carried signal above its threshold", testingTB, func() {
-		circuit := logic.NewCircuit(logic.Rules{
+		circuit := logic.NewCircuit(circuitConfig(), logic.Rules{
 			{
 				Condition: logic.GreaterThan{
 					Right: logic.NewConstant(2),
@@ -78,7 +78,7 @@ func TestCircuit_Observe(testingTB *testing.T) {
 
 func TestCircuit_ObserveAnd(testingTB *testing.T) {
 	Convey("Given a compound And condition", testingTB, func() {
-		circuit := logic.NewCircuit(logic.Rules{
+		circuit := logic.NewCircuit(circuitConfig(), logic.Rules{
 			{
 				Condition: logic.And{
 					logic.GreaterThan{
@@ -104,7 +104,7 @@ func TestCircuit_ObserveAnd(testingTB *testing.T) {
 
 func TestCircuit_Reset(testingTB *testing.T) {
 	Convey("Given an observed circuit", testingTB, func() {
-		circuit := logic.NewCircuit(logic.Rules{
+		circuit := logic.NewCircuit(circuitConfig(), logic.Rules{
 			{
 				Condition: logic.True{Operand: true},
 				Then:      logic.NewConstant(7),
@@ -121,7 +121,7 @@ func TestCircuit_Reset(testingTB *testing.T) {
 }
 
 func BenchmarkCircuit_Observe(benchmark *testing.B) {
-	circuit := logic.NewCircuit(logic.Rules{
+	circuit := logic.NewCircuit(circuitConfig(), logic.Rules{
 		{
 			Condition: logic.GreaterThan{
 				Right: logic.NewConstant(2),

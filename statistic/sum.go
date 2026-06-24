@@ -27,7 +27,11 @@ func (sum *Sum) Read(payload []byte) (int, error) {
 	state := datura.Acquire("sum-state", datura.APPJSON)
 
 	if _, err := state.Write(sum.artifact.DecryptPayload()); err != nil {
-		return 0, err
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"sum: state write failed",
+			err,
+		))
 	}
 
 	rootKey := datura.Peek[string](state, "root")

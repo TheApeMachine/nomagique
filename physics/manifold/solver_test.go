@@ -135,9 +135,9 @@ func TestReadOscillators(t *testing.T) {
 
 			convey.So(stepErr, convey.ShouldBeNil)
 
-			oscillators, readErr := solver.ReadOscillators(1)
+			oscillators, err := solver.ReadOscillators(1)
 
-			convey.So(readErr, convey.ShouldBeNil)
+			convey.So(err, convey.ShouldBeNil)
 			convey.So(len(oscillators), convey.ShouldEqual, 1)
 			convey.So(oscillators[0].Heat, convey.ShouldBeGreaterThan, 0)
 		})
@@ -343,9 +343,9 @@ func TestSolverProduction128Oscillators(t *testing.T) {
 
 			convey.So(stepErr, convey.ShouldBeNil)
 
-			readback, readErr := solver.ReadOscillators(len(oscillators))
+			readback, err := solver.ReadOscillators(len(oscillators))
 
-			convey.So(readErr, convey.ShouldBeNil)
+			convey.So(err, convey.ShouldBeNil)
 			convey.So(len(readback), convey.ShouldEqual, carrierCount)
 			convey.So(math.IsNaN(readback[0].Phase), convey.ShouldBeFalse)
 			convey.So(math.IsNaN(readback[0].Heat), convey.ShouldBeFalse)

@@ -6,6 +6,7 @@ import (
 	"sort"
 
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/probability"
 	"gonum.org/v1/gonum/stat"
 )
@@ -22,14 +23,6 @@ type Decay struct {
 NewDecay returns a microstructure decay stage wired from config attributes.
 */
 func NewDecay(artifact *datura.Artifact) io.ReadWriteCloser {
-	if artifact == nil {
-		artifact = datura.Acquire("decay", datura.APPJSON)
-	}
-
-	if len(datura.Peek[[]string](artifact, "inputs")) == 0 {
-		artifact.Poke(DecayInputKeys, "inputs")
-	}
-
 	return &Decay{
 		artifact: artifact,
 	}
@@ -77,8 +70,21 @@ func (decay *Decay) Read(p []byte) (int, error) {
 		offset += segmentCount
 	}
 
-	longOutcome := decay.exitSide(series, 1)
-	shortOutcome := decay.exitSide(series, -1)
+	longOutcome, err := decay.exitSide(series, 1)
+
+	if err != nil {
+		state.Release()
+
+		return 0, err
+	}
+
+	shortOutcome, err := decay.exitSide(series, -1)
+
+	if err != nil {
+		state.Release()
+
+		return 0, err
+	}
 
 	mechanical := longOutcome.mechanical
 	fragile := longOutcome.fragile
@@ -121,7 +127,7 @@ type decaySideOutcome struct {
 	category   int
 }
 
-func (decay *Decay) exitSide(series [][]float64, side int) decaySideOutcome {
+func (decay *Decay) exitSide(series [][]float64, side int) (decaySideOutcome, error) {
 	bidDepths := series[0]
 	askDepths := series[1]
 	densities := series[2]
@@ -158,10 +164,14 @@ func (decay *Decay) exitSide(series [][]float64, side int) decaySideOutcome {
 		collapseMargin,
 	}
 
-	fusionWeights, fusionErr := probability.SoftmaxScoresNormalized(margins)
+	fusionWeights, err := probability.SoftmaxScoresNormalized(margins)
 
-	if fusionErr != nil {
-		return decaySideOutcome{}
+	if err != nil {
+		return decaySideOutcome{}, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"equation decay: softmax fusion failed",
+			err,
+		))
 	}
 
 	urgency := 0.0
@@ -179,7 +189,7 @@ func (decay *Decay) exitSide(series [][]float64, side int) decaySideOutcome {
 		reversal:   margins[3],
 		urgency:    urgency,
 		category:   category,
-	}
+	}, nil
 }
 
 func depthTrend(depths []float64) float64 {

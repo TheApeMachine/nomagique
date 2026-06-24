@@ -43,7 +43,6 @@ func (logReturn *LogReturn) Read(payload []byte) (int, error) {
 		))
 	}
 
-	state.Inspect("adaptive", "log-return", "Read()", "p")
 
 	rootKey := datura.Peek[string](state, "root")
 

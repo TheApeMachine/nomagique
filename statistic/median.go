@@ -29,7 +29,11 @@ func (median *Median) Read(payload []byte) (int, error) {
 	state := datura.Acquire("median-state", datura.APPJSON)
 
 	if _, err := state.Write(median.artifact.DecryptPayload()); err != nil {
-		return 0, err
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"median: state write failed",
+			err,
+		))
 	}
 
 	rawPeers := datura.Peek[map[string]any](state, "peers")
@@ -124,21 +128,29 @@ func (median *Median) Read(payload []byte) (int, error) {
 		}
 
 		if len(peerSamples) == 0 {
-			ownSample, ok := rawPeers[memberLabel].(float64)
+			if len(rawPeers) == 1 {
+				soleSample, ok := rawPeers[memberLabel].(float64)
 
-			if !ok {
-				return 0, errnie.Error(errnie.Err(
-					errnie.Validation,
-					"median: peer sample is invalid",
-					nil,
-				))
+				if !ok {
+					return 0, errnie.Error(errnie.Err(
+						errnie.Validation,
+						"median: sole peer sample is invalid",
+						nil,
+					))
+				}
+
+				state.MergeOutput("value", soleSample)
+				state.Poke("output", "root")
+				state.Poke([]string{"value"}, "inputs")
+
+				return state.Read(payload)
 			}
 
-			state.MergeOutput("value", ownSample)
-			state.Poke("output", "root")
-			state.Poke([]string{"value"}, "inputs")
-
-			return state.Read(payload)
+			return 0, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"median: no peer samples for member",
+				nil,
+			))
 		}
 
 		for _, peerSample := range peerSamples {

@@ -290,13 +290,18 @@ func TestGateQuantileObserveWireBus(testingTB *testing.T) {
 
 func TestObservationRingAdversarial(testingTB *testing.T) {
 	Convey("Given non-positive observations", testingTB, func() {
-		ringConfig := datura.Acquire("observation-ring-config", datura.APPJSON)
+		ringConfig := datura.Acquire("observation-ring-config", datura.APPJSON).
+			Poke("sample", "input").
+			Poke("value", "outputKey").
+			Poke(8.0, "config", "capacity")
 		ring := statistic.NewObservationRing(ringConfig)
 		artifact := datura.Acquire("test", datura.APPJSON)
 
 		for _, value := range []float64{0, -1} {
-			artifact.Poke(value, "sample")
-			_ = transport.NewFlipFlop(artifact, ring)
+			wired := artifact.Poke("features", "root").
+				Poke([]string{"sample"}, "inputs")
+			wired.Merge("features", []float64{value})
+			_ = transport.NewFlipFlop(wired, ring)
 		}
 
 		Convey("It should ignore invalid samples", func() {

@@ -30,7 +30,11 @@ func (cusum *CUSUM) Read(payload []byte) (int, error) {
 	if _, err := state.Write(cusum.artifact.DecryptPayload()); err != nil {
 		state.Release()
 
-		return 0, err
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"cusum: state write failed",
+			err,
+		))
 	}
 
 	defer state.Release()

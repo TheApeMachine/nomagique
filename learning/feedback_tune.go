@@ -84,8 +84,8 @@ func (tuner *FeedbackTuner) Apply(
 		}
 	}
 
-	if clampErr := weights.clamp(); clampErr != nil {
-		return false, clampErr
+	if err := weights.clamp(); err != nil {
+		return false, err
 	}
 
 	return true, nil

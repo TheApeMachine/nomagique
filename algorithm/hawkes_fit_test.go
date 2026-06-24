@@ -34,9 +34,9 @@ func TestHawkesFit_Observe(testingTB *testing.T) {
 
 		So(len(frame), ShouldBeGreaterThan, 0)
 
-		_, writeErr := fitProcess.Write(frame)
+		_, err := fitProcess.Write(frame)
 
-		So(writeErr, ShouldBeNil)
+		So(err, ShouldBeNil)
 
 		outbound, err := readOutbound(fitProcess)
 

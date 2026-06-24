@@ -11,14 +11,14 @@ import (
 
 func TestDepthEvaluate(testingTB *testing.T) {
 	Convey("Given deep quote volume versus peers", testingTB, func() {
-		depth := equation.NewDepth(nil)
-		writeErr := tests.WriteSamples(depth,
+		depth := equation.NewDepth(equation.DepthConfig())
+		err := tests.WriteSamples(depth,
 			1200, 4,
 			800, 900, 1000, 1100,
 			1, 0,
 		)
 
-		So(writeErr, ShouldBeNil)
+		So(err, ShouldBeNil)
 
 		outbound, err := readOutbound(depth)
 
@@ -31,14 +31,14 @@ func TestDepthEvaluate(testingTB *testing.T) {
 	})
 
 	Convey("Given peak scarcity volume", testingTB, func() {
-		depth := equation.NewDepth(nil)
-		writeErr := tests.WriteSamples(depth,
+		depth := equation.NewDepth(equation.DepthConfig())
+		err := tests.WriteSamples(depth,
 			50, 3,
 			1100, 950, 50,
 			1, 0,
 		)
 
-		So(writeErr, ShouldBeNil)
+		So(err, ShouldBeNil)
 
 		outbound, err := readOutbound(depth)
 
@@ -51,7 +51,7 @@ func TestDepthEvaluate(testingTB *testing.T) {
 }
 
 func BenchmarkDepthRead(b *testing.B) {
-	depth := equation.NewDepth(nil)
+	depth := equation.NewDepth(equation.DepthConfig())
 	samples := []float64{
 		1200, 4,
 		800, 900, 1000, 1100,

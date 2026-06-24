@@ -49,9 +49,9 @@ func TestFitTimesFromBinaryPayload(testingTB *testing.T) {
 			float64(start.Add(4*time.Second).UnixNano()),
 			BivariateFit{},
 		))
-		_, writeErr := fitStage.Write(frame)
+		_, err := fitStage.Write(frame)
 
-		So(writeErr, ShouldBeNil)
+		So(err, ShouldBeNil)
 
 		state := datura.Acquire("hawkes-fit-decode-test", datura.APPJSON)
 		_, writeStateErr := state.Write(fitStage.artifact.DecryptPayload())
@@ -76,15 +76,15 @@ func TestMomentReadRequiresAlignedSamples(testingTB *testing.T) {
 			1,
 		))
 		payload := make([]byte, 0)
-		_, writeErr := moment.Write(payload)
+		_, err := moment.Write(payload)
 
-		So(writeErr, ShouldBeNil)
+		So(err, ShouldBeNil)
 
 		response := make([]byte, 4096)
-		_, readErr := moment.Read(response)
+		_, err = moment.Read(response)
 
 		Convey("It should return a validation error", func() {
-			So(readErr, ShouldNotBeNil)
+			So(err, ShouldNotBeNil)
 		})
 	})
 }
@@ -93,15 +93,15 @@ func TestFitReadRequiresAlignedTimestamps(testingTB *testing.T) {
 	Convey("Given insufficient fit timestamps", testingTB, func() {
 		fitStage := NewFit(fitConfigArtifact(float64(time.Now().UnixNano()), BivariateFit{}))
 		payload := make([]byte, 0)
-		_, writeErr := fitStage.Write(payload)
+		_, err := fitStage.Write(payload)
 
-		So(writeErr, ShouldBeNil)
+		So(err, ShouldBeNil)
 
 		response := make([]byte, 4096)
-		_, readErr := fitStage.Read(response)
+		_, err = fitStage.Read(response)
 
 		Convey("It should return a validation error", func() {
-			So(readErr, ShouldNotBeNil)
+			So(err, ShouldNotBeNil)
 		})
 	})
 }

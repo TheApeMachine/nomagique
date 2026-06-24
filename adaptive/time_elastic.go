@@ -39,7 +39,6 @@ func (timeElastic *TimeElastic) Read(payload []byte) (int, error) {
 		))
 	}
 
-	state.Inspect("adaptive", "time-elastic", "Read()", "p")
 
 	configInput := datura.Peek[string](timeElastic.artifact, "input")
 

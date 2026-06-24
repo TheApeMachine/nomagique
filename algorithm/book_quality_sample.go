@@ -16,19 +16,19 @@ BookQualitySample turns Kraken book frames into the feature vector BookQuality e
 Ledger and gate state live on the stage instance across Measure calls.
 */
 type BookQualitySample struct {
-	artifact      *datura.Artifact
-	ledger        SideFlowLedger
-	vacuumGate    *GateQuantile
-	churnGate     *GateQuantile
-	cancelQtyGate *GateQuantile
-	levelSizeGate *GateQuantile
-	fillMatchGate *GateQuantile
+	artifact        *datura.Artifact
+	ledger          SideFlowLedger
+	vacuumGate      *GateQuantile
+	churnGate       *GateQuantile
+	cancelQtyGate   *GateQuantile
+	levelSizeGate   *GateQuantile
+	fillMatchGate   *GateQuantile
 	prevTouchAddBid float64
 	prevTouchAddAsk float64
-	bids          map[float64]float64
-	asks          map[float64]float64
-	frameCount    int
-	pendingFrame  bool
+	bids            map[float64]float64
+	asks            map[float64]float64
+	frameCount      int
+	pendingFrame    bool
 }
 
 /*
@@ -76,7 +76,11 @@ func (bookQualitySample *BookQualitySample) Write(payload []byte) (int, error) {
 
 func (bookQualitySample *BookQualitySample) Read(payload []byte) (int, error) {
 	if !bookQualitySample.pendingFrame {
-		return 0, io.EOF
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"book-quality-sample: no inbound frame",
+			nil,
+		))
 	}
 
 	bookQualitySample.pendingFrame = false
@@ -86,7 +90,11 @@ func (bookQualitySample *BookQualitySample) Read(payload []byte) (int, error) {
 	if _, err := state.Write(bookQualitySample.artifact.DecryptPayload()); err != nil {
 		state.Release()
 
-		return 0, err
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"book-quality-sample: state write failed",
+			err,
+		))
 	}
 
 	defer state.Release()
@@ -236,11 +244,11 @@ func (bookQualitySample *BookQualitySample) ingestBook(state *datura.Artifact) {
 				addVolume = bookQualitySample.prevTouchAddBid
 			}
 
-			evidence, evidenceErr := ToxicChurnEvidence(
+			evidence, err := ToxicChurnEvidence(
 				churnRatio, churnGate, addVolume, sizeThreshold, distance, proximity,
 			)
 
-			if evidenceErr == nil && evidence > 0 {
+			if err == nil && evidence > 0 {
 				toxicNear = 1
 				toxicBluffStrength = math.Max(toxicBluffStrength, churnRatio)
 			}
@@ -254,11 +262,11 @@ func (bookQualitySample *BookQualitySample) ingestBook(state *datura.Artifact) {
 				addVolume = bookQualitySample.prevTouchAddAsk
 			}
 
-			evidence, evidenceErr := ToxicChurnEvidence(
+			evidence, err := ToxicChurnEvidence(
 				churnRatio, churnGate, addVolume, sizeThreshold, distance, proximity,
 			)
 
-			if evidenceErr == nil && evidence > 0 {
+			if err == nil && evidence > 0 {
 				toxicNear = 1
 				toxicBluffStrength = math.Max(toxicBluffStrength, churnRatio)
 			}

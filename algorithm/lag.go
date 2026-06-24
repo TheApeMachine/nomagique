@@ -1,7 +1,6 @@
 package algorithm
 
 import (
-	"io"
 	"math"
 	"sort"
 	"time"
@@ -58,10 +57,13 @@ func (lag *Lag) Read(payload []byte) (int, error) {
 	state := datura.Acquire("lag-state", datura.APPJSON)
 
 	if _, err := state.Write(lag.artifact.DecryptPayload()); err != nil {
-		return 0, err
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"lag: state write failed",
+			err,
+		))
 	}
 
-	state.Inspect("algorithm", "lag", "Read()", "p")
 
 	inputKeys := equation.EnsureFeatureSchema(state, lag.artifact, equation.LagInputKeys)
 	fields, err := equation.FeatureFields(state, inputKeys)
@@ -81,7 +83,11 @@ func (lag *Lag) Read(payload []byte) (int, error) {
 	lag.outcome = lag.evaluateFields(fields)
 
 	if !lag.outcome.Eligible || lag.outcome.Strength <= 0 {
-		return 0, io.EOF
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"lag: insufficient signal eligibility",
+			nil,
+		))
 	}
 
 	state.MergeOutput("inefficient", lag.outcome.InefficientScore)
@@ -387,7 +393,11 @@ func (reading *LagReading) Read(payload []byte) (int, error) {
 	state := datura.Acquire("lag-reading-state", datura.APPJSON)
 
 	if _, err := state.Write(reading.artifact.DecryptPayload()); err != nil {
-		return 0, err
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"lag: state write failed",
+			err,
+		))
 	}
 
 	value := 0.0
@@ -600,9 +610,9 @@ func (baseline *MoveBaseline) pathMoveFloor() float64 {
 	sortedMoves := append([]float64(nil), baseline.pathMoves...)
 	sort.Float64s(sortedMoves)
 	lowerRank := 1 / float64(len(sortedMoves))
-	floor, ok := statistic.QuantileOf(lowerRank, sortedMoves)
+	floor, err := statistic.QuantileOf(lowerRank, sortedMoves)
 
-	if ok && floor > 0 {
+	if err == nil && floor > 0 {
 		return floor
 	}
 

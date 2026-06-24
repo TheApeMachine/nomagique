@@ -99,7 +99,10 @@ func TestTrustWeight_Reset(testingTB *testing.T) {
 		err := transport.NewFlipFlop(artifact, trustWeight)
 
 		So(err, ShouldBeNil)
-		So(trustWeight.Reset(), ShouldBeNil)
+
+		weightState := weightStateFromArtifact(trustWeight.artifact)
+		weightState.Reset()
+		pokeWeightState(trustWeight.artifact, &weightState, 0)
 
 		Convey("It should clear derived state", func() {
 			So(datura.Peek[float64](trustWeight.artifact, "output", "ready"), ShouldEqual, 0)
@@ -133,7 +136,7 @@ func BenchmarkWeight_Observe(testingTB *testing.B) {
 }
 
 func BenchmarkWeight_ObserveSamples(testingTB *testing.B) {
-	trustWeight := Weight(pairConfig("trust-weight-config-bench"))
+	state := WeightState{}
 	predicted := make([]float64, 1024)
 	actual := make([]float64, len(predicted))
 	out := make([]float64, len(predicted))
@@ -141,7 +144,7 @@ func BenchmarkWeight_ObserveSamples(testingTB *testing.B) {
 	testingTB.ReportAllocs()
 
 	for testingTB.Loop() {
-		_ = trustWeight.Reset()
-		trustWeight.ObserveSamples(predicted, actual, out)
+		state.Reset()
+		state.ObserveSamples(predicted, actual, out)
 	}
 }

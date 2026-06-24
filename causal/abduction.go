@@ -28,18 +28,21 @@ func (abduction *Abduction) Read(p []byte) (int, error) {
 	state := datura.Acquire("abduction-state", datura.APPJSON)
 
 	if _, err := state.Write(abduction.artifact.DecryptPayload()); err != nil {
-		return 0, err
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"causal: state write failed",
+			err,
+		))
 	}
 
-	state.Inspect("causal", "abduction", "Read()", "p")
 
-	rows, ok := tableRows(state)
+	rows, err := tableRows(state)
 
-	if !ok {
+	if err != nil {
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"causal abduction: missing table rows",
-			errors.New("causal: table rows missing"),
+			err,
 		))
 	}
 
@@ -51,7 +54,11 @@ func (abduction *Abduction) Read(p []byte) (int, error) {
 	linear := datura.Peek[float64](abduction.artifact, "linear") > 0
 
 	if minHistory <= 0 {
-		minHistory = len(rows)
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"causal abduction: minHistory required",
+			nil,
+		))
 	}
 
 	table, err := newNodeTable(rows, target, minHistory)

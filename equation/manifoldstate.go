@@ -19,14 +19,6 @@ type Manifoldstate struct {
 NewManifoldstate returns a manifold-state stage wired from config attributes.
 */
 func NewManifoldstate(artifact *datura.Artifact) io.ReadWriteCloser {
-	if artifact == nil {
-		artifact = datura.Acquire("manifoldstate", datura.APPJSON)
-	}
-
-	if len(datura.Peek[[]string](artifact, "inputs")) == 0 {
-		artifact.Poke(ManifoldInputKeys, "inputs")
-	}
-
 	return &Manifoldstate{
 		artifact: artifact,
 	}

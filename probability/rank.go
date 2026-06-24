@@ -30,7 +30,11 @@ func (rank *Rank) Read(payload []byte) (int, error) {
 	if _, err := state.Write(rank.artifact.DecryptPayload()); err != nil {
 		state.Release()
 
-		return 0, err
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"rank: state write failed",
+			err,
+		))
 	}
 
 	defer state.Release()

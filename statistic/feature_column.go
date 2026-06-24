@@ -20,18 +20,12 @@ type FeatureSnapshot struct {
 SnapshotFeatures records the extracted column vector from pipeline state.
 */
 func SnapshotFeatures(state *datura.Artifact) FeatureSnapshot {
-	snapshot := FeatureSnapshot{
+	return FeatureSnapshot{
 		features:      datura.Peek[[]float64](state, "features"),
 		inputs:        datura.Peek[[]string](state, "inputs"),
 		featureInputs: datura.Peek[[]string](state, "featureInputs"),
 		root:          datura.Peek[string](state, "root"),
 	}
-
-	if len(snapshot.featureInputs) == 0 && snapshot.root == "features" {
-		snapshot.featureInputs = snapshot.inputs
-	}
-
-	return snapshot
 }
 
 /*

@@ -35,10 +35,13 @@ func (nodeRing *NodeRing) Read(p []byte) (int, error) {
 	state := datura.Acquire("node-ring-state", datura.APPJSON)
 
 	if _, err := state.Write(nodeRing.artifact.DecryptPayload()); err != nil {
-		return 0, err
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"causal: state write failed",
+			err,
+		))
 	}
 
-	state.Inspect("causal", "node-ring", "Read()", "p")
 
 	nodeCount := nodeRing.nodeCountFromArtifact()
 	capacity := nodeRing.capacityFromArtifact()

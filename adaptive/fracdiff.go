@@ -45,7 +45,6 @@ func (fractional *FracDiff) Read(payload []byte) (int, error) {
 		))
 	}
 
-	state.Inspect("adaptive", "fracdiff", "Read()", "p")
 
 	rootKey := datura.Peek[string](state, "root")
 

@@ -13,14 +13,14 @@ import (
 func TestLagEvaluateFollowerSync(testingTB *testing.T) {
 	Convey("Given aligned follower correlation before anchor move gate warms", testingTB, func() {
 		lag := NewLag(datura.Acquire("lag-config", datura.APPJSON))
-		writeErr := tests.WriteSamples(lag,
+		err := tests.WriteSamples(lag,
 			0, 100,
 			0, 0, 0,
 			0, 0, 0,
 			1, 0.9,
 			16,
 		)
-		So(writeErr, ShouldBeNil)
+		So(err, ShouldBeNil)
 		_, _ = lag.Read(make([]byte, 4096))
 
 		Convey("It should classify synchronized drift", func() {
@@ -33,14 +33,14 @@ func TestLagEvaluateFollowerSync(testingTB *testing.T) {
 func TestLagEvaluateAnchorStall(testingTB *testing.T) {
 	Convey("Given a warmed flat anchor path", testingTB, func() {
 		lag := NewLag(datura.Acquire("lag-config", datura.APPJSON))
-		writeErr := tests.WriteSamples(lag,
+		err := tests.WriteSamples(lag,
 			1, 50000,
 			1, 0, 0.6,
 			0, 0, 0,
 			0, 0,
 			0,
 		)
-		So(writeErr, ShouldBeNil)
+		So(err, ShouldBeNil)
 		_, _ = lag.Read(make([]byte, 4096))
 
 		Convey("It should classify anchor stall", func() {
@@ -53,16 +53,16 @@ func TestLagEvaluateAnchorStall(testingTB *testing.T) {
 func TestLagReadInsufficientFields(testingTB *testing.T) {
 	Convey("Given fewer than eleven lag feature fields", testingTB, func() {
 		lag := NewLag(datura.Acquire("lag-config", datura.APPJSON))
-		writeErr := tests.WriteSamples(lag,
+		err := tests.WriteSamples(lag,
 			0, 100,
 			0, 0, 0,
 		)
-		So(writeErr, ShouldBeNil)
+		So(err, ShouldBeNil)
 
-		_, readErr := lag.Read(make([]byte, 4096))
+		_, err = lag.Read(make([]byte, 4096))
 
 		Convey("It should return a validation error", func() {
-			So(readErr, ShouldNotBeNil)
+			So(err, ShouldNotBeNil)
 		})
 	})
 }

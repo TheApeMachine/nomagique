@@ -10,12 +10,15 @@ import (
 
 func TestWindowSetObserve(testingTB *testing.T) {
 	Convey("Given a window set", testingTB, func() {
-		windowSet := NewWindowSet(datura.Acquire("window-set-config", datura.APPJSON))
+		windowSet := NewWindowSet(IntervalWireConfig("window-set-config"))
 		artifact := datura.Acquire("test", datura.APPJSON)
 
 		for index := range 13 {
-			artifact.Poke(float64((index+1)*1_000), "sample").
-				Poke(100+float64(index), "paired")
+			artifact = EpochLevelWire(
+				artifact,
+				float64((index+1)*1_000),
+				100+float64(index),
+			)
 			err := transport.NewFlipFlop(artifact, windowSet)
 
 			if index == 0 {

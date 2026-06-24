@@ -64,8 +64,8 @@ func NewConfig(
 
 	ApplyDerivedGasParams(&config)
 
-	if validateErr := config.Validate(); validateErr != nil {
-		return Config{}, validateErr
+	if err := config.Validate(); err != nil {
+		return Config{}, err
 	}
 
 	return config, nil

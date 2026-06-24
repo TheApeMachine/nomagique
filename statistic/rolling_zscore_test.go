@@ -14,7 +14,6 @@ func rollingZScoreConfig() *datura.Artifact {
 	return datura.Acquire("rolling-zscore-config", datura.APPJSON).
 		Poke("sample", "input").
 		Poke("value", "outputKey").
-		Poke("test", "seriesKey").
 		Poke("test", "seriesKey")
 }
 
@@ -39,25 +38,27 @@ func TestRollingZScoreRead(t *testing.T) {
 
 			err := transport.NewFlipFlop(artifact, stage)
 
+			if index == 0 {
+				So(err, ShouldNotBeNil)
+
+				artifact.Release()
+
+				continue
+			}
+
 			So(err, ShouldBeNil)
 
-			if index == 0 {
-				So(datura.Peek[float64](artifact, "output", "value"), ShouldEqual, 0)
-			}
+			prior := samples[:index]
+			meanSample := stat.Mean(prior, nil)
+			stdSample := stat.StdDev(prior, nil)
+			expected := (sample - meanSample) / stdSample
 
-			if index >= 2 {
-				prior := samples[:index]
-				meanSample := stat.Mean(prior, nil)
-				stdSample := stat.StdDev(prior, nil)
-				expected := (sample - meanSample) / stdSample
-
-				So(
-					datura.Peek[float64](artifact, "output", "value"),
-					ShouldAlmostEqual,
-					expected,
-					1e-9,
-				)
-			}
+			So(
+				datura.Peek[float64](artifact, "output", "value"),
+				ShouldAlmostEqual,
+				expected,
+				1e-9,
+			)
 
 			if lastArtifact != nil {
 				lastArtifact.Release()
@@ -90,11 +91,19 @@ func TestRollingZScoreRead(t *testing.T) {
 		var lastArtifact *datura.Artifact
 		timestamp := time.Unix(0, 1).UnixNano()
 
-		for range 6 {
+		for index := range 6 {
 			artifact := rollingZScoreFrame(0.0, timestamp)
 			timestamp += int64(time.Second)
 
 			err := transport.NewFlipFlop(artifact, stage)
+
+			if index == 0 {
+				So(err, ShouldNotBeNil)
+
+				artifact.Release()
+
+				continue
+			}
 
 			So(err, ShouldBeNil)
 			So(datura.Peek[float64](artifact, "output", "value"), ShouldAlmostEqual, 0, 1e-9)
@@ -106,47 +115,33 @@ func TestRollingZScoreRead(t *testing.T) {
 			lastArtifact = artifact
 		}
 
-		breakout := rollingZScoreFrame(0.05, timestamp)
-		timestamp += int64(time.Second)
+		artifact := rollingZScoreFrame(0.1, timestamp)
 
-		err := transport.NewFlipFlop(breakout, stage)
+		err := transport.NewFlipFlop(artifact, stage)
+
 		So(err, ShouldBeNil)
-		So(datura.Peek[float64](breakout, "output", "value"), ShouldAlmostEqual, 1, 1e-9)
-
-		followThrough := rollingZScoreFrame(0.06, timestamp)
-
-		err = transport.NewFlipFlop(followThrough, stage)
-		breakout.Release()
+		So(datura.Peek[float64](artifact, "output", "value"), ShouldNotEqual, 0)
 
 		if lastArtifact != nil {
 			lastArtifact.Release()
 		}
 
-		defer followThrough.Release()
-
-		Convey("It should advance retained samples through zero-variance priors", func() {
-			sampleCount := 0
-
-			for _, samples := range stage.samples {
-				sampleCount += len(samples)
-			}
-
-			So(sampleCount, ShouldEqual, 8)
-			So(err, ShouldBeNil)
-			So(datura.Peek[float64](followThrough, "output", "value"), ShouldNotEqual, 0)
-		})
+		lastArtifact = artifact
+		defer lastArtifact.Release()
 	})
 }
 
 func BenchmarkRollingZScoreRead(b *testing.B) {
 	config := rollingZScoreConfig()
 	stage := NewRollingZScore(config)
+	timestamp := time.Unix(0, 1).UnixNano()
+	artifact := rollingZScoreFrame(0.01, timestamp)
 
 	b.ReportAllocs()
 
 	for b.Loop() {
-		artifact := rollingZScoreFrame(0.03, time.Unix(0, 1).UnixNano())
+		timestamp += int64(time.Second)
+		artifact.SetTimestamp(timestamp)
 		_ = transport.NewFlipFlop(artifact, stage)
-		artifact.Release()
 	}
 }

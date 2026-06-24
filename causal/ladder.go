@@ -1,8 +1,6 @@
 package causal
 
 import (
-	"errors"
-
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 )
@@ -28,18 +26,21 @@ func (ladder *Ladder) Read(p []byte) (int, error) {
 	state := datura.Acquire("ladder-state", datura.APPJSON)
 
 	if _, err := state.Write(ladder.artifact.DecryptPayload()); err != nil {
-		return 0, err
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"causal: state write failed",
+			err,
+		))
 	}
 
-	state.Inspect("causal", "ladder", "Read()", "p")
 
-	rows, ok := tableRows(state)
+	rows, err := tableRows(state)
 
-	if !ok {
+	if err != nil {
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"causal ladder: missing table rows",
-			errors.New("causal: table rows missing"),
+			err,
 		))
 	}
 
@@ -47,7 +48,11 @@ func (ladder *Ladder) Read(p []byte) (int, error) {
 	minHistory := int(datura.Peek[float64](ladder.artifact, "minHistory"))
 
 	if minHistory <= 0 {
-		minHistory = len(rows)
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"causal ladder: minHistory required",
+			nil,
+		))
 	}
 
 	if len(rows) < minHistory {
@@ -82,7 +87,15 @@ func (ladder *Ladder) Read(p []byte) (int, error) {
 	bandwidth := datura.Peek[float64](ladder.artifact, "kernelBandwidth")
 
 	if bandwidth <= 0 {
-		bandwidth = deriveBandwidth(rows, int(datura.Peek[float64](ladder.artifact, "treatmentNormal")))
+		bandwidth, err = deriveBandwidth(rows, int(datura.Peek[float64](ladder.artifact, "treatmentNormal")))
+
+		if err != nil {
+			return 0, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"causal ladder: kernel bandwidth derivation failed",
+				err,
+			))
+		}
 	}
 
 	if bandwidth <= 0 {
@@ -128,13 +141,13 @@ func (ladder *Ladder) Read(p []byte) (int, error) {
 				percentile = 1 - 1/float64(len(rows))
 			}
 
-			level, percentileErr := table.percentile(treatment, percentile)
+			level, err := table.percentile(treatment, percentile)
 
-			if percentileErr != nil {
+			if err != nil {
 				return 0, errnie.Error(errnie.Err(
 					errnie.Validation,
 					"causal ladder: intervention level failed",
-					percentileErr,
+					err,
 				))
 			}
 
@@ -144,41 +157,37 @@ func (ladder *Ladder) Read(p []byte) (int, error) {
 		nonLinear, fitOK := fitNonLinearTable(table, predictors)
 
 		if fitOK {
-			upliftValue, upliftErr := nonLinear.counterfactualUplift(currentRow, treatment, interventionLevel)
+			uplift, err = nonLinear.counterfactualUplift(currentRow, treatment, interventionLevel)
 
-			if upliftErr != nil {
+			if err != nil {
 				return 0, errnie.Error(errnie.Err(
 					errnie.Validation,
 					"causal ladder: nonlinear uplift failed",
-					upliftErr,
+					err,
 				))
 			}
-
-			uplift = upliftValue
 		}
 
 		if !fitOK {
-			linear, linearErr := table.fitLinearModel(predictors...)
+			linear, err := table.fitLinearModel(predictors...)
 
-			if linearErr != nil {
+			if err != nil {
 				return 0, errnie.Error(errnie.Err(
 					errnie.Validation,
 					"causal ladder: linear uplift fit failed",
-					linearErr,
+					err,
 				))
 			}
 
-			upliftValue, upliftErr := linear.counterfactualUplift(currentRow, treatment, interventionLevel)
+			uplift, err = linear.counterfactualUplift(currentRow, treatment, interventionLevel)
 
-			if upliftErr != nil {
+			if err != nil {
 				return 0, errnie.Error(errnie.Err(
 					errnie.Validation,
 					"causal ladder: linear uplift failed",
-					upliftErr,
+					err,
 				))
 			}
-
-			uplift = upliftValue
 		}
 	}
 

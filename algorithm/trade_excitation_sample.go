@@ -46,7 +46,11 @@ func (tradeExcitationSample *TradeExcitationSample) Write(payload []byte) (int, 
 	if _, err := state.Write(payload); err != nil {
 		state.Release()
 
-		return 0, err
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"trade-excitation-sample: state write failed",
+			err,
+		))
 	}
 
 	channel := datura.Peek[string](state, "channel")
@@ -68,10 +72,13 @@ func (tradeExcitationSample *TradeExcitationSample) Read(payload []byte) (int, e
 	if _, err := state.Write(tradeExcitationSample.artifact.DecryptPayload()); err != nil {
 		state.Release()
 
-		return 0, err
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"trade-excitation-sample: state write failed",
+			err,
+		))
 	}
 
-	state.Inspect("algorithm", "trade-excitation-sample", "Read()", "p")
 
 	defer state.Release()
 

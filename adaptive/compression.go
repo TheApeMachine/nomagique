@@ -11,8 +11,7 @@ import (
 Compression scores how far below the running baseline the current sample sits.
 */
 type Compression struct {
-	artifact  *datura.Artifact
-	baselines map[string]float64
+	artifact *datura.Artifact
 }
 
 /*
@@ -20,8 +19,7 @@ NewCompression returns a compression stage wired from config attributes on the a
 */
 func NewCompression(artifact *datura.Artifact) *Compression {
 	return &Compression{
-		artifact:  artifact,
-		baselines: map[string]float64{},
+		artifact: artifact,
 	}
 }
 
@@ -36,15 +34,14 @@ func (compression *Compression) Read(payload []byte) (int, error) {
 		))
 	}
 
-	state.Inspect("adaptive", "compression", "Read()", "p")
-
 	inputKey := datura.Peek[string](compression.artifact, "compression", "input")
 	outputKey := datura.Peek[string](compression.artifact, "compression", "outputKey")
+	seriesKey := datura.Peek[string](compression.artifact, "compression", "seriesKey")
 
-	if inputKey == "" || outputKey == "" {
+	if inputKey == "" || outputKey == "" || seriesKey == "" {
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
-			"compression: input and outputKey required",
+			"compression: input, outputKey, and seriesKey required",
 			nil,
 		))
 	}
@@ -114,18 +111,12 @@ func (compression *Compression) Read(payload []byte) (int, error) {
 		))
 	}
 
-	seriesKey := "compression"
-	scope, _ := state.Scope()
-
-	if scope != "" {
-		seriesKey = "compression/" + scope
-	}
-
-	baseline := compression.baselines[seriesKey]
+	baseline := datura.Peek[float64](compression.artifact, "output", "baseline", seriesKey)
+	value := 0.0
 
 	if baseline <= 0 {
-		compression.baselines[seriesKey] = sample
-		state.MergeOutput(outputKey, 0.0)
+		compression.artifact.Poke(sample, "output", "baseline", seriesKey)
+		state.MergeOutput(outputKey, value)
 		state.Poke("output", "root")
 		state.Poke([]string{outputKey}, "inputs")
 
@@ -133,15 +124,15 @@ func (compression *Compression) Read(payload []byte) (int, error) {
 	}
 
 	if sample > baseline {
-		compression.baselines[seriesKey] = sample
-		state.MergeOutput(outputKey, 0.0)
+		compression.artifact.Poke(sample, "output", "baseline", seriesKey)
+		state.MergeOutput(outputKey, value)
 		state.Poke("output", "root")
 		state.Poke([]string{outputKey}, "inputs")
 
 		return state.Read(payload)
 	}
 
-	value := (baseline - sample) / baseline
+	value = (baseline - sample) / baseline
 
 	state.MergeOutput(outputKey, value)
 	state.Poke("output", "root")

@@ -2,7 +2,6 @@ package adaptive
 
 import (
 	"context"
-	"io"
 
 	"github.com/cinar/indicator/v2/helper"
 	"github.com/cinar/indicator/v2/trend"
@@ -50,7 +49,6 @@ func (ema *EMA) Read(payload []byte) (int, error) {
 		))
 	}
 
-	state.Inspect("adaptive", "ema", "Read()", "p")
 
 	rootKey := datura.Peek[string](state, "root")
 
@@ -119,10 +117,6 @@ func (ema *EMA) Read(payload []byte) (int, error) {
 	inputChannel := helper.SliceToChanWithContext(context.Background(), currentSamples)
 	outputChannel := ema.inner.ComputeWithContext(context.Background(), inputChannel)
 	emaValues := helper.ChanToSlice(outputChannel)
-
-	if len(currentSamples) == 0 {
-		return 0, io.EOF
-	}
 
 	latestEMA := currentSamples[len(currentSamples)-1]
 

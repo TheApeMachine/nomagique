@@ -8,14 +8,21 @@ import (
 	"github.com/theapemachine/datura/transport"
 )
 
+func shiftWire(artifact *datura.Artifact, observed float64, expected float64) *datura.Artifact {
+	artifact.Poke("features", "root")
+	artifact.Poke([]string{"sample", "paired"}, "inputs")
+	artifact.Merge("features", []float64{observed, expected})
+
+	return artifact
+}
+
 func TestShift_Observe(testingTB *testing.T) {
 	Convey("Given matching reference and live distributions", testingTB, func() {
 		shift := NewShift(0, 0)
 		artifact := datura.Acquire("shift-test", datura.APPJSON)
 
 		for range 4 {
-			artifact.Poke(1.0, "sample").Poke(1.0, "paired")
-			_ = transport.NewFlipFlop(artifact, shift)
+			_ = transport.NewFlipFlop(shiftWire(artifact, 1.0, 1.0), shift)
 		}
 
 		Convey("It should return zero drift", func() {
@@ -34,8 +41,7 @@ func TestShift_Observe(testingTB *testing.T) {
 		}
 
 		for _, pair := range pairs {
-			artifact.Poke(pair.observed, "sample").Poke(pair.expected, "paired")
-			_ = transport.NewFlipFlop(artifact, shift)
+			_ = transport.NewFlipFlop(shiftWire(artifact, pair.observed, pair.expected), shift)
 		}
 
 		Convey("It should return positive drift", func() {
@@ -58,8 +64,7 @@ func BenchmarkShift_Observe(testingTB *testing.B) {
 
 	for testingTB.Loop() {
 		for _, pair := range pairs {
-			artifact.Poke(pair.observed, "sample").Poke(pair.expected, "paired")
-			_ = transport.NewFlipFlop(artifact, shift)
+			_ = transport.NewFlipFlop(shiftWire(artifact, pair.observed, pair.expected), shift)
 		}
 	}
 }

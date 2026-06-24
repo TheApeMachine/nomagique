@@ -8,8 +8,7 @@ import (
 )
 
 /*
-MedianAbsolute measures typical magnitude while ignoring sign.
-The constructor artifact holds config; Write buffers inbound wire on its payload.
+MedianAbsolute computes the median of absolute values over retained history.
 */
 type MedianAbsolute struct {
 	artifact *datura.Artifact
@@ -28,12 +27,89 @@ func (medianAbsolute *MedianAbsolute) Read(payload []byte) (int, error) {
 	state := datura.Acquire("median-absolute-state", datura.APPJSON)
 
 	if _, err := state.Write(medianAbsolute.artifact.DecryptPayload()); err != nil {
-		return 0, err
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"median-absolute: state write failed",
+			err,
+		))
 	}
 
-	state.Inspect("statistic", "median-absolute", "Read()", "p")
+	rootKey := datura.Peek[string](state, "root")
 
-	sample := datura.Peek[float64](state, "sample")
+	if rootKey == "" {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"median-absolute: root required",
+			nil,
+		))
+	}
+
+	inputs := datura.Peek[[]string](state, "inputs")
+
+	if len(inputs) == 0 {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"median-absolute: inputs required",
+			nil,
+		))
+	}
+
+	configInput := datura.Peek[string](medianAbsolute.artifact, "input")
+
+	if configInput == "" {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"median-absolute: input required",
+			nil,
+		))
+	}
+
+	outputKey := datura.Peek[string](medianAbsolute.artifact, "outputKey")
+
+	if outputKey == "" {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"median-absolute: outputKey required",
+			nil,
+		))
+	}
+
+	var sample float64
+	found := false
+
+	for index, input := range inputs {
+		if input != configInput {
+			continue
+		}
+
+		if rootKey == "features" {
+			features := datura.Peek[[]float64](state, rootKey)
+
+			if index >= len(features) {
+				return 0, errnie.Error(errnie.Err(
+					errnie.Validation,
+					"median-absolute: feature index out of range",
+					nil,
+				))
+			}
+
+			sample = features[index]
+		}
+
+		if rootKey != "features" {
+			sample = datura.Peek[float64](state, rootKey, input)
+		}
+
+		found = true
+	}
+
+	if !found {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"median-absolute: input not in inputs",
+			nil,
+		))
+	}
 
 	if math.IsNaN(sample) || math.IsInf(sample, 0) {
 		return 0, errnie.Error(errnie.Err(
@@ -44,22 +120,23 @@ func (medianAbsolute *MedianAbsolute) Read(payload []byte) (int, error) {
 	}
 
 	history := datura.Peek[[]float64](medianAbsolute.artifact, "history")
-	history = append(history, sample)
+	history = append(history, math.Abs(sample))
 	medianAbsolute.artifact.Poke(history, "history")
 
-	value, ok := MedianAbsoluteOf(history)
+	value, ok := MedianOf(history)
 
 	if !ok {
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
-			"median-absolute: history is invalid",
+			"median-absolute: unable to compute median",
 			nil,
 		))
 	}
 
-	state.MergeOutput("value", value)
+	state.MergeOutput(outputKey, value)
 	state.Poke("output", "root")
-	state.Poke([]string{"value"}, "inputs")
+	state.Poke([]string{outputKey}, "inputs")
+
 	return state.Read(payload)
 }
 
@@ -80,11 +157,11 @@ func MedianAbsoluteOf(values []float64) (float64, bool) {
 		return 0, false
 	}
 
-	absoluteValues := make([]float64, len(values))
+	absolute := make([]float64, len(values))
 
 	for index, value := range values {
-		absoluteValues[index] = math.Abs(value)
+		absolute[index] = math.Abs(value)
 	}
 
-	return MedianOf(absoluteValues)
+	return MedianOf(absolute)
 }

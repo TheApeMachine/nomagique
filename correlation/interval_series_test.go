@@ -10,17 +10,15 @@ import (
 
 func TestIntervalSeriesObserve(testingTB *testing.T) {
 	Convey("Given an interval series", testingTB, func() {
-		series := NewIntervalSeries(datura.Acquire("interval-series-config", datura.APPJSON))
+		series := NewIntervalSeries(IntervalWireConfig("interval-series-config"))
 
 		Convey("It should accumulate log-return intervals", func() {
-			artifact := datura.Acquire("test", datura.APPJSON).
-				Poke(float64(1_000), "sample").
-				Poke(100.0, "paired")
+			artifact := EpochLevelWire(datura.Acquire("test", datura.APPJSON), float64(1_000), 100.0)
 			err := transport.NewFlipFlop(artifact, series)
 
 			So(err, ShouldNotBeNil)
 
-			artifact.Poke(float64(2_000), "sample").Poke(110.0, "paired")
+			artifact = EpochLevelWire(datura.Acquire("test", datura.APPJSON), float64(2_000), 110.0)
 			err = transport.NewFlipFlop(artifact, series)
 
 			So(err, ShouldBeNil)
@@ -28,33 +26,29 @@ func TestIntervalSeriesObserve(testingTB *testing.T) {
 		})
 
 		Convey("It should correlate proportional interval streams", func() {
-			coupling := NewIntervalCoupling(datura.Acquire("interval-coupling-config", datura.APPJSON))
+			coupling := NewIntervalCoupling(IntervalWireConfig("interval-coupling-config"))
 			artifact := datura.Acquire("test", datura.APPJSON)
 
-			artifact.Poke(0, "config", "side").
-				Poke(float64(1_000), "sample").
-				Poke(100.0, "paired")
+			artifact.Poke(0, "config", "side")
+			artifact = EpochLevelWire(artifact, float64(1_000), 100.0)
 			err := transport.NewFlipFlop(artifact, coupling)
 
 			So(err, ShouldNotBeNil)
 
-			artifact.Poke(0, "config", "side").
-				Poke(float64(2_000), "sample").
-				Poke(110.0, "paired")
+			artifact.Poke(0, "config", "side")
+			artifact = EpochLevelWire(artifact, float64(2_000), 110.0)
 			err = transport.NewFlipFlop(artifact, coupling)
 
 			So(err, ShouldNotBeNil)
 
-			artifact.Poke(1, "config", "side").
-				Poke(float64(1_000), "sample").
-				Poke(50.0, "paired")
+			artifact.Poke(1, "config", "side")
+			artifact = EpochLevelWire(artifact, float64(1_000), 50.0)
 			err = transport.NewFlipFlop(artifact, coupling)
 
 			So(err, ShouldNotBeNil)
 
-			artifact.Poke(1, "config", "side").
-				Poke(float64(2_000), "sample").
-				Poke(55.0, "paired")
+			artifact.Poke(1, "config", "side")
+			artifact = EpochLevelWire(artifact, float64(2_000), 55.0)
 			err = transport.NewFlipFlop(artifact, coupling)
 
 			So(err, ShouldBeNil)
@@ -67,14 +61,16 @@ func TestIntervalSeriesObserve(testingTB *testing.T) {
 }
 
 func BenchmarkIntervalCorrelation(testingTB *testing.B) {
-	coupling := NewIntervalCoupling(datura.Acquire("interval-coupling-config", datura.APPJSON))
+	coupling := NewIntervalCoupling(IntervalWireConfig("interval-coupling-config"))
 	artifact := datura.Acquire("test", datura.APPJSON)
 
 	for index := range 128 {
 		epoch := float64((index + 1) * 1_000)
-		artifact.Poke(0, "config", "side").Poke(epoch, "sample").Poke(100+float64(index)*0.1, "paired")
+		artifact.Poke(0, "config", "side")
+		artifact = EpochLevelWire(artifact, epoch, 100+float64(index)*0.1)
 		_ = transport.NewFlipFlop(artifact, coupling)
-		artifact.Poke(1, "config", "side").Poke(epoch, "sample").Poke(50+float64(index)*0.05, "paired")
+		artifact.Poke(1, "config", "side")
+		artifact = EpochLevelWire(artifact, epoch, 50+float64(index)*0.05)
 		_ = transport.NewFlipFlop(artifact, coupling)
 	}
 

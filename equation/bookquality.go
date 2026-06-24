@@ -24,14 +24,6 @@ type BookQuality struct {
 NewBookQuality returns a book-flow quality stage wired from config attributes.
 */
 func NewBookQuality(artifact *datura.Artifact) io.ReadWriteCloser {
-	if artifact == nil {
-		artifact = datura.Acquire("book-quality", datura.APPJSON)
-	}
-
-	if len(datura.Peek[[]string](artifact, "inputs")) == 0 {
-		artifact.Poke(BookQualityInputKeys, "inputs")
-	}
-
 	return &BookQuality{
 		artifact: artifact,
 	}

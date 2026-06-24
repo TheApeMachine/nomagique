@@ -8,16 +8,23 @@ import (
 	"github.com/theapemachine/datura/transport"
 )
 
-func TestKLDivergenceSeries(t *testing.T) {
+func klConfig(name string) *datura.Artifact {
+	return datura.Acquire(name, datura.APPJSON).
+		Poke("sample", "sampleKey").
+		Poke("paired", "pairedKey").
+		Poke("value", "outputKey")
+}
+
+func TestKLDivergenceRead(t *testing.T) {
 	Convey("Given a KL stage", t, func() {
-		kl := NewKLDivergence(datura.Acquire("kl-config", datura.APPJSON))
+		kl := NewKLDivergence(klConfig("kl-config"))
 		artifact := datura.Acquire("test", datura.APPJSON)
 		observed := []float64{1, 1, 1, 1}
 		expected := []float64{1, 1, 1, 1}
 
 		for index := 0; index < len(observed); index++ {
-			artifact.Poke(observed[index], "sample").Poke(expected[index], "paired")
-			err := transport.NewFlipFlop(artifact, kl)
+			wired := PairWire(artifact, "sample", "paired", observed[index], expected[index])
+			err := transport.NewFlipFlop(wired, kl)
 
 			if index < 1 {
 				So(err, ShouldNotBeNil)
@@ -35,14 +42,14 @@ func TestKLDivergenceSeries(t *testing.T) {
 	})
 
 	Convey("Given mismatched distributions after renormalization", t, func() {
-		kl := NewKLDivergence(datura.Acquire("kl-config", datura.APPJSON))
+		kl := NewKLDivergence(klConfig("kl-config-mismatch"))
 		artifact := datura.Acquire("test", datura.APPJSON)
 		observed := []float64{4, 1}
 		expected := []float64{1, 4}
 
 		for index := range observed {
-			artifact.Poke(observed[index], "sample").Poke(expected[index], "paired")
-			err := transport.NewFlipFlop(artifact, kl)
+			wired := PairWire(artifact, "sample", "paired", observed[index], expected[index])
+			err := transport.NewFlipFlop(wired, kl)
 
 			if index < 1 {
 				So(err, ShouldNotBeNil)

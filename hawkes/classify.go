@@ -101,10 +101,10 @@ func classifyFitWithGates(
 
 		if fit.SpectralRadius < saturationRadius {
 			margin := saturationRadius - fit.SpectralRadius
-			saturationHead, marginErr := probability.CompetitionMargin(margin, saturationRadius)
+			saturationHead, err := probability.CompetitionMargin(margin, saturationRadius)
 
-			if marginErr != nil {
-				return FitCategoryOrganic, 0, marginErr
+			if err != nil {
+				return FitCategoryOrganic, 0, err
 			}
 
 			if saturationHead > headroom {
@@ -123,10 +123,10 @@ func classifyFitWithGates(
 
 		if asymmetry < frenzyAsymmetry {
 			margin := frenzyAsymmetry - asymmetry
-			frenzyHead, marginErr := probability.CompetitionMargin(margin, frenzyAsymmetry)
+			frenzyHead, err := probability.CompetitionMargin(margin, frenzyAsymmetry)
 
-			if marginErr != nil {
-				return FitCategoryOrganic, 0, marginErr
+			if err != nil {
+				return FitCategoryOrganic, 0, err
 			}
 
 			if frenzyHead > headroom {

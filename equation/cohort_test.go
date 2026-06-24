@@ -1,7 +1,6 @@
 package equation_test
 
 import (
-	"io"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
@@ -81,17 +80,17 @@ func TestCohort_Read(testingTB *testing.T) {
 		testCase := testCase
 
 		Convey("Given cohort payload "+testCase.name, testingTB, func() {
-			stage := equation.NewCohort(nil)
-			writeErr := writeFeatureStage(stage, equation.CohortInputKeys, testCase.batch...)
+			stage := equation.NewCohort(cohortConfig())
+			err := writeFeatureStage(stage, equation.CohortInputKeys, testCase.batch...)
 
-			So(writeErr, ShouldBeNil)
+			So(err, ShouldBeNil)
 
 			if !testCase.eligible {
-				Convey("It should skip invalid payload", func() {
+				Convey("It should reject invalid payload", func() {
 					frame := make([]byte, 4096)
 					_, err := stage.Read(frame)
 
-					So(err, ShouldEqual, io.EOF)
+					So(err, ShouldNotBeNil)
 				})
 
 				return
@@ -114,7 +113,7 @@ func TestCohort_Read(testingTB *testing.T) {
 }
 
 func BenchmarkCohortRead(b *testing.B) {
-	stage := equation.NewCohort(nil)
+	stage := equation.NewCohort(cohortConfig())
 	values := cohortBatch(
 		4,
 		60,

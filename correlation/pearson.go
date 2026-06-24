@@ -30,10 +30,13 @@ func (pearson *Pearson) Read(p []byte) (int, error) {
 	state := datura.Acquire("pearson-state", datura.APPJSON)
 
 	if _, err := state.Write(pearson.artifact.DecryptPayload()); err != nil {
-		return 0, err
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"correlation-pearson: state write failed",
+			err,
+		))
 	}
 
-	state.Inspect("correlation", "pearson", "Read()", "p")
 
 	values := datura.Peek[[]float64](state, "batch")
 

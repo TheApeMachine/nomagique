@@ -32,9 +32,9 @@ type Circuit struct {
 /*
 NewCircuit returns a branching stage for the given ordered rules.
 */
-func NewCircuit(rules Rules) *Circuit {
+func NewCircuit(artifact *datura.Artifact, rules Rules) *Circuit {
 	return &Circuit{
-		artifact: datura.Acquire("circuit", datura.APPJSON),
+		artifact: artifact,
 		rules:    rules,
 	}
 }
@@ -45,13 +45,25 @@ func (circuit *Circuit) Read(payload []byte) (int, error) {
 	if _, err := state.Write(circuit.artifact.DecryptPayload()); err != nil {
 		state.Release()
 
-		return 0, err
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"logic: state write failed",
+			err,
+		))
 	}
 
 	defer state.Release()
 
-	rootKey := datura.Peek[string](circuit.artifact, "root")
-	inputs := datura.Peek[[]string](circuit.artifact, "inputs")
+	rootKey := datura.Peek[string](state, "root")
+	inputs := datura.Peek[[]string](state, "inputs")
+
+	if rootKey == "" {
+		rootKey = datura.Peek[string](circuit.artifact, "root")
+	}
+
+	if len(inputs) == 0 {
+		inputs = datura.Peek[[]string](circuit.artifact, "inputs")
+	}
 
 	matched := false
 

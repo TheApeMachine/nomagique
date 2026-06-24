@@ -40,7 +40,11 @@ func (transition *Transition) Read(payload []byte) (int, error) {
 	if _, err := state.Write(wire); err != nil {
 		state.Release()
 
-		return 0, err
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"transition: state write failed",
+			err,
+		))
 	}
 
 	defer state.Release()
@@ -83,21 +87,21 @@ func (transition *Transition) Read(payload []byte) (int, error) {
 		))
 	}
 
-	matrix, matrixErr := transitionMatrixFromPayload(transition.artifact, numStates, alpha)
+	matrix, err := transitionMatrixFromPayload(transition.artifact, numStates, alpha)
 
-	if matrixErr != nil {
-		return 0, matrixErr
+	if err != nil {
+		return 0, err
 	}
 
-	observed, padErr := matrix.PadObserved(probabilities, alpha)
+	observed, err := matrix.PadObserved(probabilities, alpha)
 
-	if padErr != nil {
-		return 0, padErr
+	if err != nil {
+		return 0, err
 	}
-	surprise, surpriseErr := matrix.Surprise(observed)
+	surprise, err := matrix.Surprise(observed)
 
-	if surpriseErr != nil {
-		return 0, surpriseErr
+	if err != nil {
+		return 0, err
 	}
 
 	categoryIndex := transitionCategory(state)
@@ -163,13 +167,13 @@ func transitionMatrixFromPayload(
 	for row := range numStates {
 		for column := range numStates {
 			index := row*numStates + column
-			sample, sampleErr := rawCounts[index].Float64()
+			sample, err := rawCounts[index].Float64()
 
-			if sampleErr != nil {
+			if err != nil {
 				return nil, errnie.Error(errnie.Err(
 					errnie.Validation,
 					"transition: counts entry is non-numeric",
-					sampleErr,
+					err,
 				))
 			}
 
@@ -229,9 +233,9 @@ func transitionProbabilities(state *datura.Artifact) []float64 {
 	probabilities := make([]float64, len(values))
 
 	for index, sample := range values {
-		numeric, numericErr := sample.Float64()
+		numeric, err := sample.Float64()
 
-		if numericErr != nil {
+		if err != nil {
 			return nil
 		}
 

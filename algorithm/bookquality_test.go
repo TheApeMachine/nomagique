@@ -11,8 +11,8 @@ import (
 
 func TestBookQualityToxicBluff(testingTB *testing.T) {
 	Convey("Given near-touch toxic churn above gate", testingTB, func() {
-		bookQuality := equation.NewBookQuality(nil)
-		writeErr := tests.WriteSamples(bookQuality,
+		bookQuality := equation.NewBookQuality(equation.BookQualityConfig())
+		err := tests.WriteSamples(bookQuality,
 			0, 0.1, 0, 0.1,
 			80, 80,
 			1, 4.5,
@@ -20,7 +20,7 @@ func TestBookQualityToxicBluff(testingTB *testing.T) {
 			100,
 		)
 
-		So(writeErr, ShouldBeNil)
+		So(err, ShouldBeNil)
 
 		outbound, err := readOutbound(bookQuality)
 
@@ -35,8 +35,8 @@ func TestBookQualityToxicBluff(testingTB *testing.T) {
 
 func TestBookQualityLiquidityVacuum(testingTB *testing.T) {
 	Convey("Given cancel/fill asymmetry with fill flow", testingTB, func() {
-		bookQuality := equation.NewBookQuality(nil)
-		writeErr := tests.WriteSamples(bookQuality,
+		bookQuality := equation.NewBookQuality(equation.BookQualityConfig())
+		err := tests.WriteSamples(bookQuality,
 			0.3, 0.1, 0, 0,
 			10, 10,
 			0, 0,
@@ -44,7 +44,7 @@ func TestBookQualityLiquidityVacuum(testingTB *testing.T) {
 			50000,
 		)
 
-		So(writeErr, ShouldBeNil)
+		So(err, ShouldBeNil)
 
 		outbound, err := readOutbound(bookQuality)
 
@@ -59,8 +59,8 @@ func TestBookQualityLiquidityVacuum(testingTB *testing.T) {
 
 func TestBookQualityHardSupport(testingTB *testing.T) {
 	Convey("Given balanced depth with fills and no cancels", testingTB, func() {
-		bookQuality := equation.NewBookQuality(nil)
-		writeErr := tests.WriteSamples(bookQuality,
+		bookQuality := equation.NewBookQuality(equation.BookQualityConfig())
+		err := tests.WriteSamples(bookQuality,
 			0, 0.1, 0, 0.1,
 			80, 80,
 			0, 0,
@@ -68,7 +68,7 @@ func TestBookQualityHardSupport(testingTB *testing.T) {
 			100,
 		)
 
-		So(writeErr, ShouldBeNil)
+		So(err, ShouldBeNil)
 
 		outbound, err := readOutbound(bookQuality)
 
@@ -82,7 +82,7 @@ func TestBookQualityHardSupport(testingTB *testing.T) {
 }
 
 func BenchmarkBookQualityRead(b *testing.B) {
-	bookQuality := equation.NewBookQuality(nil)
+	bookQuality := equation.NewBookQuality(equation.BookQualityConfig())
 	samples := []float64{
 		0.3, 0.1, 0, 0,
 		10, 10,

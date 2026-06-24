@@ -34,7 +34,7 @@ func NewPearl(config *datura.Artifact) io.ReadWriteCloser {
 		})),
 		causal.NewContagion(config),
 		equation.NewRegimeLadder(config),
-		equation.NewCausalStory(nil),
+		equation.NewCausalStory(equation.CausalStoryConfig()),
 		classifier,
 	)
 }

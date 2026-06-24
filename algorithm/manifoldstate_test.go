@@ -11,10 +11,10 @@ import (
 
 func TestManifoldstateEvaluateHerd(testingTB *testing.T) {
 	Convey("Given high coherence and guidance speed", testingTB, func() {
-		stage := equation.NewManifoldstate(nil)
-		writeErr := tests.WriteSamples(stage, 0.5, 8, 1, 0.5, 50000)
+		stage := equation.NewManifoldstate(equation.ManifoldConfig())
+		err := tests.WriteSamples(stage, 0.5, 8, 1, 0.5, 50000)
 
-		So(writeErr, ShouldBeNil)
+		So(err, ShouldBeNil)
 
 		outbound, err := readOutbound(stage)
 
@@ -30,10 +30,10 @@ func TestManifoldstateEvaluateHerd(testingTB *testing.T) {
 
 func TestManifoldstateEvaluateShock(testingTB *testing.T) {
 	Convey("Given dominant pressure gradient", testingTB, func() {
-		stage := equation.NewManifoldstate(nil)
-		writeErr := tests.WriteSamples(stage, 12, 0.2, 0.5, 0.5, 50000)
+		stage := equation.NewManifoldstate(equation.ManifoldConfig())
+		err := tests.WriteSamples(stage, 12, 0.2, 0.5, 0.5, 50000)
 
-		So(writeErr, ShouldBeNil)
+		So(err, ShouldBeNil)
 
 		outbound, err := readOutbound(stage)
 
@@ -49,10 +49,10 @@ func TestManifoldstateEvaluateShock(testingTB *testing.T) {
 
 func TestManifoldstateEvaluateDrift(testingTB *testing.T) {
 	Convey("Given laminar guidance with low viscosity", testingTB, func() {
-		stage := equation.NewManifoldstate(nil)
-		writeErr := tests.WriteSamples(stage, 0.1, 0.2, 4, 0.1, 50000)
+		stage := equation.NewManifoldstate(equation.ManifoldConfig())
+		err := tests.WriteSamples(stage, 0.1, 0.2, 4, 0.1, 50000)
 
-		So(writeErr, ShouldBeNil)
+		So(err, ShouldBeNil)
 
 		outbound, err := readOutbound(stage)
 
@@ -68,10 +68,10 @@ func TestManifoldstateEvaluateDrift(testingTB *testing.T) {
 
 func TestManifoldstateEvaluateNoise(testingTB *testing.T) {
 	Convey("Given low coherence and high viscosity", testingTB, func() {
-		stage := equation.NewManifoldstate(nil)
-		writeErr := tests.WriteSamples(stage, 0.1, 0.1, 0.5, 2, 50000)
+		stage := equation.NewManifoldstate(equation.ManifoldConfig())
+		err := tests.WriteSamples(stage, 0.1, 0.1, 0.5, 2, 50000)
 
-		So(writeErr, ShouldBeNil)
+		So(err, ShouldBeNil)
 
 		outbound, err := readOutbound(stage)
 
@@ -87,12 +87,12 @@ func TestManifoldstateEvaluateNoise(testingTB *testing.T) {
 
 func TestManifoldstateEvaluateIneligible(testingTB *testing.T) {
 	Convey("Given non-positive observables", testingTB, func() {
-		stage := equation.NewManifoldstate(nil)
-		writeErr := tests.WriteSamples(stage, 0.5, 0, 1, 0.5, 50000)
+		stage := equation.NewManifoldstate(equation.ManifoldConfig())
+		err := tests.WriteSamples(stage, 0.5, 0, 1, 0.5, 50000)
 
-		So(writeErr, ShouldBeNil)
+		So(err, ShouldBeNil)
 
-		_, err := readOutbound(stage)
+		_, err = readOutbound(stage)
 
 		Convey("It should reject the reading", func() {
 			So(err, ShouldNotBeNil)
@@ -101,7 +101,7 @@ func TestManifoldstateEvaluateIneligible(testingTB *testing.T) {
 }
 
 func BenchmarkManifoldstateRead(testingTB *testing.B) {
-	stage := equation.NewManifoldstate(nil)
+	stage := equation.NewManifoldstate(equation.ManifoldConfig())
 	batch := []float64{0.5, 8, 1, 0.5, 50000}
 	frame := make([]byte, 4096)
 

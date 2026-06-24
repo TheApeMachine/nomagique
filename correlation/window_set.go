@@ -41,13 +41,20 @@ func (windowSet *WindowSet) Read(p []byte) (int, error) {
 	}
 
 	state := datura.Acquire("window-set-state", datura.APPJSON)
-	state.Inspect("correlation", "window-set", "Read()", "p")
 
 	if _, err := state.Write(windowSet.artifact.DecryptPayload()); err != nil {
-		return 0, err
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"correlation-window-set: state write failed",
+			err,
+		))
 	}
 
-	level := datura.Peek[float64](state, "paired")
+	epoch, level, err := wireEpochLevel(windowSet.artifact, state, "window-set")
+
+	if err != nil {
+		return 0, err
+	}
 
 	if level <= 0 {
 		return 0, errnie.Error(errnie.Err(
@@ -56,7 +63,6 @@ func (windowSet *WindowSet) Read(p []byte) (int, error) {
 		))
 	}
 
-	epoch := int64(datura.Peek[float64](state, "sample"))
 	windowSet.ingest(windowSet.capacityFromArtifact(), epoch, level)
 
 	magnitude := windowSet.lastReturnMagnitude()
@@ -197,9 +203,9 @@ func (windowSet *WindowSet) lastReturnMagnitude(root ...any) float64 {
 type WindowSetErrorType string
 
 const (
-	WindowSetErrorNilReceiver            WindowSetErrorType = "require non-nil window set stage"
-	WindowSetErrorRequirePositiveLevel   WindowSetErrorType = "require positive paired level"
-	WindowSetErrorInsufficientIntervals  WindowSetErrorType = "require at least one log-return interval"
+	WindowSetErrorNilReceiver           WindowSetErrorType = "require non-nil window set stage"
+	WindowSetErrorRequirePositiveLevel  WindowSetErrorType = "require positive paired level"
+	WindowSetErrorInsufficientIntervals WindowSetErrorType = "require at least one log-return interval"
 )
 
 type WindowSetError string

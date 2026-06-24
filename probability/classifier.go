@@ -15,29 +15,52 @@ The config artifact carries input score keys in attributes; its payload buses
 inbound wire from Write to Read. Read classifies from reconstituted output scores.
 */
 type Classifier struct {
-	config *datura.Artifact
+	artifact *datura.Artifact
 }
 
 /*
 NewClassifier returns a classifier wired from schema.inputs score keys.
 */
-func NewClassifier(config *datura.Artifact) *Classifier {
-	return &Classifier{config: config}
+func NewClassifier(artifact *datura.Artifact) *Classifier {
+	return &Classifier{artifact: artifact}
 }
 
 func (classifier *Classifier) Read(payload []byte) (int, error) {
 	state := datura.Acquire("classifier-state", datura.APPJSON)
 
-	if _, err := state.Write(classifier.config.DecryptPayload()); err != nil {
+	if _, err := state.Write(classifier.artifact.DecryptPayload()); err != nil {
 		state.Release()
-		return 0, err
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"classifier: state write failed",
+			err,
+		))
 	}
 
-	state.Inspect("probability", "classifier", "Read()", "p")
 
 	defer state.Release()
 
-	inputs := datura.Peek[[]string](classifier.config, "inputs")
+	wireRoot := datura.Peek[string](state, "root")
+
+	if wireRoot == "" {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"classifier: root required",
+			nil,
+		))
+	}
+
+	wireInputs := datura.Peek[[]string](state, "inputs")
+
+	if len(wireInputs) == 0 {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"classifier: inputs required",
+			nil,
+		))
+	}
+
+	inputs := datura.Peek[[]string](classifier.artifact, "inputs")
 
 	if len(inputs) == 0 {
 		return 0, errnie.Error(errnie.Err(
@@ -47,12 +70,20 @@ func (classifier *Classifier) Read(payload []byte) (int, error) {
 		))
 	}
 
-	scoreRoot := datura.Peek[string](classifier.config, "scoreRoot")
+	scoreRoot := datura.Peek[string](classifier.artifact, "scoreRoot")
 
 	if scoreRoot == "" {
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"classifier: scoreRoot required",
+			nil,
+		))
+	}
+
+	if scoreRoot != wireRoot {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"classifier: scoreRoot must match state root",
 			nil,
 		))
 	}
@@ -71,7 +102,7 @@ func (classifier *Classifier) Read(payload []byte) (int, error) {
 		var score float64
 		scoreFound := false
 
-		for wireIndex, wireInput := range datura.Peek[[]string](state, "inputs") {
+		for wireIndex, wireInput := range wireInputs {
 			if wireInput != input {
 				continue
 			}
@@ -138,20 +169,20 @@ func (classifier *Classifier) Read(payload []byte) (int, error) {
 
 	categoryIndex := ArgmaxIndex(probabilities) + 1
 
-	confidence, confidenceErr := CategoryShareConfidence(scores, categoryIndex)
+	confidence, err := CategoryShareConfidence(scores, categoryIndex)
 
-	if confidenceErr != nil {
+	if err != nil {
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"classifier: unable to compute category confidence",
-			confidenceErr,
+			err,
 		))
 	}
 
 	var strength float64
 	strengthFound := false
 
-	for wireIndex, wireInput := range datura.Peek[[]string](state, "inputs") {
+	for wireIndex, wireInput := range wireInputs {
 		if wireInput != "strength" {
 			continue
 		}
@@ -211,7 +242,7 @@ func (classifier *Classifier) Read(payload []byte) (int, error) {
 }
 
 func (classifier *Classifier) Write(p []byte) (int, error) {
-	classifier.config.WithPayload(p)
+	classifier.artifact.WithPayload(p)
 	return len(p), nil
 }
 

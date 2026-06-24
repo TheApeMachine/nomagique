@@ -31,7 +31,11 @@ func (panel *Panel) Read(payload []byte) (int, error) {
 	state := datura.Acquire("panel-state", datura.APPJSON)
 
 	if _, err := state.Write(panel.artifact.DecryptPayload()); err != nil {
-		return 0, err
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"panel: state write failed",
+			err,
+		))
 	}
 
 	rootKey := datura.Peek[string](state, "root")

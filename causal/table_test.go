@@ -6,6 +6,52 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 )
 
+func TestDeriveBandwidth(testingTB *testing.T) {
+	Convey("Given tabular rows with treatment spread", testingTB, func() {
+		rows := [][]float64{
+			{1, 0, 0},
+			{2, 1, 2},
+			{3, 2, 4},
+			{4, 3, 6},
+			{5, 4, 8},
+			{6, 5, 10},
+			{7, 6, 12},
+			{8, 7, 14},
+			{9, 8, 16},
+		}
+		bandwidth, err := deriveBandwidth(rows, 0)
+
+		So(err, ShouldBeNil)
+		So(bandwidth, ShouldBeGreaterThan, 0)
+
+		Convey("It should widen bandwidth when treatment spread grows", func() {
+			wideRows := [][]float64{
+				{1, 0, 0},
+				{5, 1, 2},
+				{10, 2, 4},
+				{15, 3, 6},
+				{20, 4, 8},
+				{25, 5, 10},
+				{30, 6, 12},
+				{35, 7, 14},
+				{40, 8, 16},
+			}
+			wideBandwidth, wideErr := deriveBandwidth(wideRows, 0)
+
+			So(wideErr, ShouldBeNil)
+			So(wideBandwidth, ShouldBeGreaterThan, bandwidth)
+		})
+	})
+
+	Convey("Given insufficient rows", testingTB, func() {
+		_, err := deriveBandwidth([][]float64{{1, 2}}, 0)
+
+		Convey("It should reject bandwidth derivation", func() {
+			So(err, ShouldNotBeNil)
+		})
+	})
+}
+
 func TestLinearModel_counterfactualUplift(testingTB *testing.T) {
 	Convey("Given a linear model fit on treatment and controls", testingTB, func() {
 		rows := [][]float64{

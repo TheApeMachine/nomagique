@@ -5,7 +5,6 @@ import (
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/nomagique/statistic"
 )
 
 /*
@@ -30,28 +29,43 @@ func (spreadSample *SpreadSample) Read(p []byte) (int, error) {
 	if _, err := state.Write(spreadSample.config.DecryptPayload()); err != nil {
 		state.Release()
 
-		return 0, err
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"spread-sample: state write failed",
+			err,
+		))
 	}
-
-	state.Inspect("vector", "spread-sample", "Read()", "p")
 
 	defer state.Release()
 
 	inputs := datura.Peek[[]string](spreadSample.config, "spread", "inputs")
 
 	if len(inputs) == 0 {
-		inputs = datura.Peek[[]string](state, "inputs")
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"spread-sample: spread.inputs required",
+			nil,
+		))
+	}
+
+	outputKey := datura.Peek[string](spreadSample.config, "spread", "outputKey")
+
+	if outputKey == "" {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"spread-sample: spread.outputKey required",
+			nil,
+		))
 	}
 
 	low := math.Inf(1)
 	high := math.Inf(-1)
 
 	for _, input := range inputs {
-		data, dataErr := statistic.FeatureColumn(state, input)
+		data, err := spreadInputValue(state, input)
 
-		if dataErr != nil {
-			root := datura.Peek[string](state, "root")
-			data = datura.Peek[float64](state, root, input)
+		if err != nil {
+			return 0, err
 		}
 
 		if math.IsNaN(data) || math.IsInf(data, 0) {
@@ -78,12 +92,6 @@ func (spreadSample *SpreadSample) Read(p []byte) (int, error) {
 
 	value := (high - low) / mid
 
-	outputKey := datura.Peek[string](spreadSample.config, "spread", "outputKey")
-
-	if outputKey == "" {
-		outputKey = "spread"
-	}
-
 	state.MergeOutput(outputKey, value)
 	state.Poke("output", "root")
 	state.Poke([]string{outputKey}, "inputs")
@@ -98,4 +106,58 @@ func (spreadSample *SpreadSample) Write(p []byte) (int, error) {
 
 func (spreadSample *SpreadSample) Close() error {
 	return nil
+}
+
+func spreadInputValue(state *datura.Artifact, inputKey string) (float64, error) {
+	rootKey := datura.Peek[string](state, "root")
+	wireInputs := datura.Peek[[]string](state, "inputs")
+
+	if rootKey != "" && len(wireInputs) > 0 {
+		for wireIndex, wireInput := range wireInputs {
+			if wireInput != inputKey {
+				continue
+			}
+
+			if rootKey == "features" {
+				features := datura.Peek[[]float64](state, rootKey)
+
+				if wireIndex >= len(features) {
+					return 0, errnie.Error(errnie.Err(
+						errnie.Validation,
+						"spread-sample: feature index out of range",
+						nil,
+					))
+				}
+
+				return features[wireIndex], nil
+			}
+
+			return datura.Peek[float64](state, rootKey, wireInput), nil
+		}
+	}
+
+	featureInputs := datura.Peek[[]string](state, "featureInputs")
+	features := datura.Peek[[]float64](state, "features")
+
+	for featureIndex, featureKey := range featureInputs {
+		if featureKey != inputKey {
+			continue
+		}
+
+		if featureIndex >= len(features) {
+			return 0, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"spread-sample: feature index out of range",
+				nil,
+			))
+		}
+
+		return features[featureIndex], nil
+	}
+
+	return 0, errnie.Error(errnie.Err(
+		errnie.Validation,
+		"spread-sample: spread input not in wire inputs",
+		nil,
+	))
 }

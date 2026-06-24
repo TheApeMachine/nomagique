@@ -25,10 +25,6 @@ NewMoment creates a Hawkes moment-confidence stage wired from config attributes.
 momentR and momentS on the artifact select the mixed moment used for fit diagnostics.
 */
 func NewMoment(artifact *datura.Artifact) *Moment {
-	if artifact == nil {
-		artifact = datura.Acquire("hawkes-moment", datura.APPJSON)
-	}
-
 	return &Moment{
 		artifact: artifact,
 	}
@@ -39,10 +35,12 @@ func (moment *Moment) Read(p []byte) (int, error) {
 
 	if _, err := state.Write(moment.artifact.DecryptPayload()); err != nil {
 		state.Release()
-		return 0, err
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"hawkes-moment: state write failed",
+			err,
+		))
 	}
-
-	state.Inspect("hawkes", "moment", "Read()", "p")
 
 	xValues, yValues, weights, ok := momentSamples(state, moment.artifact)
 
@@ -142,10 +140,13 @@ func (fit *Fit) Read(p []byte) (int, error) {
 	if _, err := state.Write(fit.artifact.DecryptPayload()); err != nil {
 		state.Release()
 
-		return 0, err
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"hawkes-moment: state write failed",
+			err,
+		))
 	}
 
-	state.Inspect("hawkes", "fit", "Read()", "p")
 
 	xTimes, yTimes, ok := fitTimes(state, fit.artifact)
 

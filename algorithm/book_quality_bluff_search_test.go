@@ -21,7 +21,7 @@ func replayBookQuality(
 	frames [][]byte,
 ) (*datura.Artifact, float64, float64, float64) {
 	encoder := NewBookQualitySample(bookQualitySampleConfig())
-	bookQuality := equation.NewBookQuality(nil)
+	bookQuality := equation.NewBookQuality(equation.BookQualityConfig())
 	classifier := probability.NewClassifier(
 		datura.Acquire("toxicity-classifier", datura.APPJSON).WithAttributes(datura.Map[any]{
 			"inputs":    []string{"bluffScore", "vacuumScore", "supportScore"},

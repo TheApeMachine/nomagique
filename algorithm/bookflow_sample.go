@@ -1,7 +1,6 @@
 package algorithm
 
 import (
-	"io"
 	"math"
 
 	"github.com/theapemachine/datura"
@@ -63,7 +62,11 @@ func (bookflowSample *BookflowSample) Read(payload []byte) (int, error) {
 	if _, err := state.Write(bookflowSample.artifact.DecryptPayload()); err != nil {
 		state.Release()
 
-		return 0, err
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"bookflow-sample: state write failed",
+			err,
+		))
 	}
 
 	defer state.Release()
@@ -91,7 +94,11 @@ func (bookflowSample *BookflowSample) Read(payload []byte) (int, error) {
 	features := bookflowSample.features(window)
 
 	if len(features) == 0 {
-		return 0, io.EOF
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"bookflow-sample: feature batch not ready",
+			nil,
+		))
 	}
 
 	state.WithScope(symbol)

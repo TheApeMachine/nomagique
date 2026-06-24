@@ -9,3 +9,7 @@ func scalarWire(artifact *datura.Artifact, sample float64) *datura.Artifact {
 
 	return artifact
 }
+
+func circuitConfig() *datura.Artifact {
+	return datura.Acquire("circuit-config", datura.APPJSON)
+}

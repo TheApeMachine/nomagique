@@ -19,14 +19,6 @@ type Flow struct {
 NewFlow returns a CVD flow stage wired from config attributes.
 */
 func NewFlow(artifact *datura.Artifact) io.ReadWriteCloser {
-	if artifact == nil {
-		artifact = datura.Acquire("flow", datura.APPJSON)
-	}
-
-	if len(datura.Peek[[]string](artifact, "inputs")) == 0 {
-		artifact.Poke(FlowInputKeys, "inputs")
-	}
-
 	return &Flow{
 		artifact: artifact,
 	}

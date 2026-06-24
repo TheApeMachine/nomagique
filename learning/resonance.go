@@ -293,10 +293,13 @@ func (rm *ResonanceManifold) SetStreamAdvanceTemporal(enabled bool) {
 
 func (rm *ResonanceManifold) Read(payload []byte) (int, error) {
 	state := datura.Acquire("resonance-state", datura.APPJSON)
-	state.Inspect("learning", "resonance", "Read()", "p")
 
 	if _, err := state.Write(rm.artifact.DecryptPayload()); err != nil {
-		return 0, err
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"resonance: state write failed",
+			err,
+		))
 	}
 
 	values := datura.Peek[[]float64](state, "batch")
@@ -316,10 +319,10 @@ func (rm *ResonanceManifold) Read(payload []byte) (int, error) {
 		target = values[rm.arch[0] : rm.arch[0]+rm.targetDim]
 	}
 
-	reconstruction, settleErr := rm.SettleFromBatch(input, target)
+	reconstruction, err := rm.SettleFromBatch(input, target)
 
-	if settleErr != nil {
-		return 0, settleErr
+	if err != nil {
+		return 0, err
 	}
 
 	latent := rm.LatentState()
@@ -358,13 +361,13 @@ func (rm *ResonanceManifold) SettleFromBatchOptions(
 		))
 	}
 
-	settleErr := rm.Settle(input, advanceTemporal)
+	err := rm.Settle(input, advanceTemporal)
 
-	if settleErr != nil {
+	if err != nil {
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"resonance: settle failed",
-			settleErr,
+			err,
 		))
 	}
 

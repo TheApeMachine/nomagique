@@ -169,9 +169,9 @@ func TestTradeExcitationSampleRead(testingTB *testing.T) {
 			NewExcitation(datura.Acquire("excitation-config", datura.APPJSON)),
 		)
 		book := bookTouchFrame("ALT/EUR", 80, 2)
-		_, writeErr := pipeline.Write(book.Pack())
+		_, err := pipeline.Write(book.Pack())
 
-		So(writeErr, ShouldBeNil)
+		So(err, ShouldBeNil)
 
 		base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
 		var last *datura.Artifact
@@ -206,9 +206,9 @@ func TestTradeExcitationSampleRead(testingTB *testing.T) {
 	Convey("Given a book frame before a warmed trade sample", testingTB, func() {
 		sample := NewTradeExcitationSample(datura.Acquire("trade-excitation-config", datura.APPJSON))
 		book := bookTouchFrame("ALT/EUR", 1000, 200)
-		_, writeErr := sample.Write(book.Pack())
+		_, err := sample.Write(book.Pack())
 
-		So(writeErr, ShouldBeNil)
+		So(err, ShouldBeNil)
 
 		base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
 		var last *datura.Artifact

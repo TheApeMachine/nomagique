@@ -56,19 +56,19 @@ func hawkesFitConfig(horizonUnixNano float64) *datura.Artifact {
 
 func readOutbound(stage io.Reader) (*datura.Artifact, error) {
 	chunk := make([]byte, 262144)
-	readCount, readErr := stage.Read(chunk)
+	readCount, err := stage.Read(chunk)
 
-	if readErr != nil && readErr != io.EOF && readErr != io.ErrShortBuffer {
-		return nil, errnie.Error(errnie.Err(errnie.IO, "readOutbound: stage read failed", readErr))
+	if err != nil && err != io.EOF && err != io.ErrShortBuffer {
+		return nil, errnie.Error(errnie.Err(errnie.IO, "readOutbound: stage read failed", err))
 	}
 
 	outbound := datura.Acquire("test-out", datura.Artifact_Type_json)
-	_, writeErr := outbound.Write(chunk[:readCount])
+	_, err = outbound.Write(chunk[:readCount])
 
-	if writeErr != nil {
+	if err != nil {
 		outbound.Release()
 
-		return nil, errnie.Error(errnie.Err(errnie.IO, "readOutbound: outbound write failed", writeErr))
+		return nil, errnie.Error(errnie.Err(errnie.IO, "readOutbound: outbound write failed", err))
 	}
 
 	if !outbound.HasEncryptedPayload() {
@@ -131,4 +131,8 @@ func observeWithWork(stage io.ReadWriter, sample float64, work float64) float64 
 
 func observeInputs(stage io.ReadWriter, series ...float64) float64 {
 	return readScalar(stage, series...)
+}
+
+func bookflowAlgoConfig() *datura.Artifact {
+	return equation.BookflowConfig()
 }

@@ -518,15 +518,15 @@ func (s *BatchSolver) Weights(slot int) (w, r, a, v []float32, err error) {
 	rP, rL := floatPtr(r)
 	aP, aL := floatPtr(a)
 	vP, vL := floatPtr(v)
-	callErr := s.call(func(errBuf []byte) C.int {
+	err = s.call(func(errBuf []byte) C.int {
 		return C.batch_solver_read_weights(
 			s.handle, C.uint32_t(slot),
 			wP, C.size_t(wL), rP, C.size_t(rL), aP, C.size_t(aL), vP, C.size_t(vL),
 			(*C.char)(unsafe.Pointer(&errBuf[0])), C.int(len(errBuf)),
 		)
 	})
-	if callErr != nil {
-		return nil, nil, nil, nil, callErr
+	if err != nil {
+		return nil, nil, nil, nil, err
 	}
 	return w, r, a, v, nil
 }

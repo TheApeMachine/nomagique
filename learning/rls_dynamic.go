@@ -37,10 +37,13 @@ func (rls *RLS) Read(payload []byte) (int, error) {
 	}
 
 	state := datura.Acquire("rls-state", datura.APPJSON)
-	state.Inspect("learning", "rls", "Read()", "p")
 
 	if _, err := state.Write(rls.artifact.DecryptPayload()); err != nil {
-		return 0, err
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"rls: state write failed",
+			err,
+		))
 	}
 
 	values := datura.Peek[[]float64](state, "batch")
@@ -53,21 +56,21 @@ func (rls *RLS) Read(payload []byte) (int, error) {
 		features := values[:rls.filter.dimension]
 		target := values[len(values)-1]
 
-		if observeErr := rls.filter.Observe(features, target); observeErr != nil {
+		if err := rls.filter.Observe(features, target); err != nil {
 			return 0, errnie.Error(errnie.Err(
 				errnie.Validation,
 				"rls: observe failed",
-				observeErr,
+				err,
 			))
 		}
 
-		prediction, predictErr := rls.filter.Predict(features)
+		prediction, err := rls.filter.Predict(features)
 
-		if predictErr != nil {
+		if err != nil {
 			return 0, errnie.Error(errnie.Err(
 				errnie.Validation,
 				"rls: predict failed",
-				predictErr,
+				err,
 			))
 		}
 

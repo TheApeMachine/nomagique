@@ -38,7 +38,6 @@ func (extent *Range) Read(payload []byte) (int, error) {
 		))
 	}
 
-	state.Inspect("adaptive", "range", "Read()", "p")
 
 	rootKey := datura.Peek[string](state, "root")
 

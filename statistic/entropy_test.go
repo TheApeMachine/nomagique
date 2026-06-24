@@ -8,14 +8,13 @@ import (
 	"github.com/theapemachine/datura/transport"
 )
 
-func TestEntropySeries(t *testing.T) {
+func TestEntropyRead(t *testing.T) {
 	Convey("Given an Entropy stage", t, func() {
 		uniformArtifact := datura.Acquire("test", datura.APPJSON)
-		uniformStage := NewEntropy(datura.Acquire("entropy-config-uniform", datura.APPJSON))
+		uniformStage := NewEntropy(scalarStageConfig("entropy-config-uniform"))
 
 		for _, sample := range []float64{1, 1, 1, 1} {
-			uniformArtifact.Poke(sample, "sample")
-			err := transport.NewFlipFlop(uniformArtifact, uniformStage)
+			err := transport.NewFlipFlop(ScalarWire(uniformArtifact, "sample", sample), uniformStage)
 
 			So(err, ShouldBeNil)
 		}
@@ -23,11 +22,10 @@ func TestEntropySeries(t *testing.T) {
 		uniform := datura.Peek[float64](uniformArtifact, "output", "value")
 
 		peakedArtifact := datura.Acquire("test", datura.APPJSON)
-		peakedStage := NewEntropy(datura.Acquire("entropy-config-peaked", datura.APPJSON))
+		peakedStage := NewEntropy(scalarStageConfig("entropy-config-peaked"))
 
 		for _, sample := range []float64{100, 1, 1, 1} {
-			peakedArtifact.Poke(sample, "sample")
-			err := transport.NewFlipFlop(peakedArtifact, peakedStage)
+			err := transport.NewFlipFlop(ScalarWire(peakedArtifact, "sample", sample), peakedStage)
 
 			So(err, ShouldBeNil)
 		}

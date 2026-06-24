@@ -79,10 +79,13 @@ func (excitation *Excitation) Read(payload []byte) (int, error) {
 	state := datura.Acquire("excitation-state", datura.APPJSON)
 
 	if _, err := state.Write(excitation.artifact.DecryptPayload()); err != nil {
-		return 0, err
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"excitation: state write failed",
+			err,
+		))
 	}
 
-	state.Inspect("algorithm", "excitation", "Read()", "p")
 
 	scope, _ := state.Scope()
 
@@ -249,7 +252,11 @@ func (reading *ExcitationReading) Read(payload []byte) (int, error) {
 	state := datura.Acquire("excitation-reading-state", datura.APPJSON)
 
 	if _, err := state.Write(reading.artifact.DecryptPayload()); err != nil {
-		return 0, err
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"excitation: state write failed",
+			err,
+		))
 	}
 
 	value := 0.0
@@ -450,9 +457,9 @@ func (symbol *excitationSymbol) measureFit(fit hawkes.BivariateFit) (excitationR
 		return excitationReading{}, false
 	}
 
-	category, confidence, classifyErr := hawkes.ClassifyFit(fit, asymmetry, sellSide, gates)
+	category, confidence, err := hawkes.ClassifyFit(fit, asymmetry, sellSide, gates)
 
-	if classifyErr != nil {
+	if err != nil {
 		return excitationReading{}, false
 	}
 
@@ -464,9 +471,9 @@ func (symbol *excitationSymbol) measureFit(fit hawkes.BivariateFit) (excitationR
 	symbol.lastRawNorm = symbol.rawBaseStep(raw)
 
 	if rawNorm > 0 {
-		saturationEvidence, marginErr := competitionMargin(raw-rawNorm, rawNorm)
+		saturationEvidence, err := competitionMargin(raw-rawNorm, rawNorm)
 
-		if marginErr == nil {
+		if err == nil {
 			saturationEvidence *= (1 - asymmetry)
 
 			if saturationEvidence > confidence && category != hawkes.FitCategoryFrenzy {
@@ -479,9 +486,9 @@ func (symbol *excitationSymbol) measureFit(fit hawkes.BivariateFit) (excitationR
 
 	if symbol.lastCategory == hawkes.FitCategoryFrenzy ||
 		symbol.lastCategory == hawkes.FitCategorySaturation {
-		exhaustionEvidence, marginErr := competitionMargin(rawNorm-raw, rawNorm)
+		exhaustionEvidence, err := competitionMargin(rawNorm-raw, rawNorm)
 
-		if marginErr == nil && exhaustionEvidence > confidence {
+		if err == nil && exhaustionEvidence > confidence {
 			category = hawkes.FitCategoryExhaustion
 			confidence = exhaustionEvidence
 			exhaustion = exhaustionEvidence
@@ -685,9 +692,9 @@ func organicHeadroomScores(
 
 	if fit.SpectralRadius < saturationRadius {
 		margin := saturationRadius - fit.SpectralRadius
-		saturation, marginErr := competitionMargin(margin, saturationRadius)
+		saturation, err := competitionMargin(margin, saturationRadius)
 
-		if marginErr == nil && saturation > headroom {
+		if err == nil && saturation > headroom {
 			headroom = saturation
 		}
 	}
@@ -703,9 +710,9 @@ func organicHeadroomScores(
 
 	if asymmetry < frenzyAsymmetry {
 		margin := frenzyAsymmetry - asymmetry
-		frenzy, marginErr := competitionMargin(margin, frenzyAsymmetry)
+		frenzy, err := competitionMargin(margin, frenzyAsymmetry)
 
-		if marginErr == nil && frenzy > headroom {
+		if err == nil && frenzy > headroom {
 			headroom = frenzy
 		}
 	}

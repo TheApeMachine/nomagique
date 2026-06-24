@@ -41,7 +41,6 @@ func (variance *Variance) Read(payload []byte) (int, error) {
 		))
 	}
 
-	state.Inspect("adaptive", "variance", "Read()", "p")
 
 	rootKey := datura.Peek[string](state, "root")
 

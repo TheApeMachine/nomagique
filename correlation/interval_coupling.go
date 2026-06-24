@@ -42,16 +42,22 @@ func (coupling *IntervalCoupling) Read(p []byte) (int, error) {
 	}
 
 	state := datura.Acquire("interval-coupling-state", datura.APPJSON)
-	state.Inspect("correlation", "interval-coupling", "Read()", "p")
 
 	if _, err := state.Write(coupling.artifact.DecryptPayload()); err != nil {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"correlation-interval-coupling: state write failed",
+			err,
+		))
+	}
+
+	epoch, level, err := wireEpochLevel(coupling.artifact, state, "interval-coupling")
+
+	if err != nil {
 		return 0, err
 	}
 
-	level := datura.Peek[float64](state, "paired")
-
 	if level > 0 {
-		epoch := int64(datura.Peek[float64](state, "sample"))
 		side := "left"
 
 		if int(datura.Peek[float64](state, "config", "side")) == 1 {
@@ -259,8 +265,8 @@ func intervalCovariance(
 type IntervalCouplingErrorType string
 
 const (
-	IntervalCouplingErrorNilReceiver            IntervalCouplingErrorType = "require non-nil interval coupling stage"
-	IntervalCouplingErrorInsufficientIntervals  IntervalCouplingErrorType = "require overlapping interval histories"
+	IntervalCouplingErrorNilReceiver           IntervalCouplingErrorType = "require non-nil interval coupling stage"
+	IntervalCouplingErrorInsufficientIntervals IntervalCouplingErrorType = "require overlapping interval histories"
 )
 
 type IntervalCouplingError string

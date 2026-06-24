@@ -27,15 +27,15 @@ func TestIntegration(t *testing.T) {
 		Convey("When IntervalSeries streams epoch and level pairs", func() {
 			artifact := datura.Acquire("test", datura.APPJSON)
 			series := nomagique.Number(
-				correlation.NewIntervalSeries(datura.Acquire("interval-series-config", datura.APPJSON)),
+				correlation.NewIntervalSeries(correlation.IntervalWireConfig("interval-series-config")),
 			)
 
-			artifact.Poke(float64(1_000), "sample").Poke(100.0, "paired")
+			artifact = correlation.EpochLevelWire(artifact, float64(1_000), 100.0)
 			err := transport.NewFlipFlop(artifact, series)
 
 			So(err, ShouldNotBeNil)
 
-			artifact.Poke(float64(2_000), "sample").Poke(110.0, "paired")
+			artifact = correlation.EpochLevelWire(artifact, float64(2_000), 110.0)
 			err = transport.NewFlipFlop(artifact, series)
 
 			So(err, ShouldBeNil)

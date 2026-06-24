@@ -11,10 +11,10 @@ import (
 
 func TestConvictionEvaluate(testingTB *testing.T) {
 	Convey("Given broad positive breadth with leadership", testingTB, func() {
-		conviction := equation.NewConviction(nil)
-		writeErr := tests.WriteSamples(conviction, 1.0, 2.0, 0.5, 1, 2.0)
+		conviction := equation.NewConviction(equation.ConvictionConfig())
+		err := tests.WriteSamples(conviction, 1.0, 2.0, 0.5, 1, 2.0)
 
-		So(writeErr, ShouldBeNil)
+		So(err, ShouldBeNil)
 
 		outbound, err := readOutbound(conviction)
 
@@ -27,10 +27,10 @@ func TestConvictionEvaluate(testingTB *testing.T) {
 	})
 
 	Convey("Given a local leader in a weak market", testingTB, func() {
-		conviction := equation.NewConviction(nil)
-		writeErr := tests.WriteSamples(conviction, 0.33, 4.0, 0.5, 1, 4.0)
+		conviction := equation.NewConviction(equation.ConvictionConfig())
+		err := tests.WriteSamples(conviction, 0.33, 4.0, 0.5, 1, 4.0)
 
-		So(writeErr, ShouldBeNil)
+		So(err, ShouldBeNil)
 
 		outbound, err := readOutbound(conviction)
 
@@ -42,10 +42,10 @@ func TestConvictionEvaluate(testingTB *testing.T) {
 	})
 
 	Convey("Given weak breadth without leadership", testingTB, func() {
-		conviction := equation.NewConviction(nil)
-		writeErr := tests.WriteSamples(conviction, 0.2, -1.0, 0.5, 0, -1.0)
+		conviction := equation.NewConviction(equation.ConvictionConfig())
+		err := tests.WriteSamples(conviction, 0.2, -1.0, 0.5, 0, -1.0)
 
-		So(writeErr, ShouldBeNil)
+		So(err, ShouldBeNil)
 
 		outbound, err := readOutbound(conviction)
 
@@ -58,7 +58,7 @@ func TestConvictionEvaluate(testingTB *testing.T) {
 }
 
 func BenchmarkConvictionRead(b *testing.B) {
-	conviction := equation.NewConviction(nil)
+	conviction := equation.NewConviction(equation.ConvictionConfig())
 	samples := []float64{1.0, 2.0, 0.5, 1, 2.0}
 	frame := make([]byte, 4096)
 

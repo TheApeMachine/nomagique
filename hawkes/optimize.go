@@ -236,7 +236,7 @@ func (estimator *BivariateEstimator) maximizeLikelihood(
 			}
 		},
 	}
-	result, minimizeErr := optimize.Minimize(
+	result, err := optimize.Minimize(
 		problem,
 		freeStart,
 		&optimize.Settings{
@@ -246,7 +246,7 @@ func (estimator *BivariateEstimator) maximizeLikelihood(
 		&optimize.LBFGS{Store: lbfgsMemory},
 	)
 
-	if minimizeErr != nil || result.Status != optimize.Success && result.Status != optimize.GradientThreshold {
+	if err != nil || result.Status != optimize.Success && result.Status != optimize.GradientThreshold {
 		return BivariateFit{}
 	}
 

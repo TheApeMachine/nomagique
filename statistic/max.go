@@ -27,7 +27,11 @@ func (max *Max) Read(payload []byte) (int, error) {
 	state := datura.Acquire("max-state", datura.APPJSON)
 
 	if _, err := state.Write(max.artifact.DecryptPayload()); err != nil {
-		return 0, err
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"max: state write failed",
+			err,
+		))
 	}
 
 	rootKey := datura.Peek[string](state, "root")

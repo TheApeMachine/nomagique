@@ -171,8 +171,8 @@ func TestBatchSolver_ReadOutcomesParity(t *testing.T) {
 				slotEnergy, energyErr := solver.Energy(slot)
 				convey.So(energyErr, convey.ShouldBeNil)
 
-				slotSurprise, surpriseErr := solver.ReconstructionError(slot)
-				convey.So(surpriseErr, convey.ShouldBeNil)
+				slotSurprise, err := solver.ReconstructionError(slot)
+				convey.So(err, convey.ShouldBeNil)
 
 				latentWorst = math.Max(latentWorst, maxAbsDiff(batchLatent, slotLatent))
 				energyWorst = math.Max(energyWorst, math.Abs(batchEnergy-slotEnergy))

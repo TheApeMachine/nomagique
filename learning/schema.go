@@ -233,9 +233,9 @@ func attributeKeyPresent(artifact *datura.Artifact, key string) bool {
 	rawAttributes, err := artifact.Attributes()
 
 	if err == nil && len(rawAttributes) > 0 {
-		node, getErr := sonic.Get(rawAttributes, key)
+		node, err := sonic.Get(rawAttributes, key)
 
-		if getErr == nil && node.Exists() {
+		if err == nil && node.Exists() {
 			return true
 		}
 	}
@@ -246,7 +246,7 @@ func attributeKeyPresent(artifact *datura.Artifact, key string) bool {
 		return false
 	}
 
-	node, getErr := sonic.Get(payload, key)
+	node, err := sonic.Get(payload, key)
 
-	return getErr == nil && node.Exists()
+	return err == nil && node.Exists()
 }

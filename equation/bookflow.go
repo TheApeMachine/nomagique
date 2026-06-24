@@ -1,10 +1,10 @@
 package equation
 
 import (
-	"io"
 	"math"
 
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/statistic"
 )
 
@@ -21,23 +21,10 @@ type Bookflow struct {
 /*
 NewBookflow returns a depth-flow stage wired from config attributes.
 */
-func NewBookflow(artifact *datura.Artifact) io.ReadWriteCloser {
-	if artifact == nil {
-		artifact = datura.Acquire("bookflow", datura.APPJSON)
-	}
-
-	if len(datura.Peek[[]string](artifact, "inputs")) == 0 {
-		artifact.Poke(BookflowInputKeys, "inputs")
-	}
-
+func NewBookflow(artifact *datura.Artifact) *Bookflow {
 	return &Bookflow{
 		artifact: artifact,
 	}
-}
-
-func (bookflow *Bookflow) Write(p []byte) (int, error) {
-	bookflow.artifact.WithPayload(p)
-	return len(p), nil
 }
 
 func (bookflow *Bookflow) Read(p []byte) (int, error) {
@@ -53,7 +40,11 @@ func (bookflow *Bookflow) Read(p []byte) (int, error) {
 	if !outcome.eligible || outcome.strength <= 0 {
 		state.Release()
 
-		return 0, io.EOF
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"bookflow: insufficient signal eligibility",
+			nil,
+		))
 	}
 
 	return emitOutput(state, p, datura.Map[float64]{
@@ -65,6 +56,11 @@ func (bookflow *Bookflow) Read(p []byte) (int, error) {
 		"neutralScore": outcome.neutralScore,
 		"category":     float64(outcome.category),
 	})
+}
+
+func (bookflow *Bookflow) Write(p []byte) (int, error) {
+	bookflow.artifact.WithPayload(p)
+	return len(p), nil
 }
 
 func (bookflow *Bookflow) Close() error {

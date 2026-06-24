@@ -10,33 +10,29 @@ import (
 
 func TestIntervalCoupling_Observe(testingTB *testing.T) {
 	Convey("Given proportional interval histories", testingTB, func() {
-		coupling := NewIntervalCoupling(datura.Acquire("interval-coupling-config", datura.APPJSON))
+		coupling := NewIntervalCoupling(IntervalWireConfig("interval-coupling-config"))
 		artifact := datura.Acquire("test", datura.APPJSON)
 
-		artifact.Poke(0, "config", "side").
-			Poke(float64(1_000), "sample").
-			Poke(100.0, "paired")
+		artifact.Poke(0, "config", "side")
+		artifact = EpochLevelWire(artifact, float64(1_000), 100.0)
 		err := transport.NewFlipFlop(artifact, coupling)
 
 		So(err, ShouldNotBeNil)
 
-		artifact.Poke(0, "config", "side").
-			Poke(float64(2_000), "sample").
-			Poke(110.0, "paired")
+		artifact.Poke(0, "config", "side")
+		artifact = EpochLevelWire(artifact, float64(2_000), 110.0)
 		err = transport.NewFlipFlop(artifact, coupling)
 
 		So(err, ShouldNotBeNil)
 
-		artifact.Poke(1, "config", "side").
-			Poke(float64(1_000), "sample").
-			Poke(50.0, "paired")
+		artifact.Poke(1, "config", "side")
+		artifact = EpochLevelWire(artifact, float64(1_000), 50.0)
 		err = transport.NewFlipFlop(artifact, coupling)
 
 		So(err, ShouldNotBeNil)
 
-		artifact.Poke(1, "config", "side").
-			Poke(float64(2_000), "sample").
-			Poke(55.0, "paired")
+		artifact.Poke(1, "config", "side")
+		artifact = EpochLevelWire(artifact, float64(2_000), 55.0)
 		err = transport.NewFlipFlop(artifact, coupling)
 
 		So(err, ShouldBeNil)
@@ -50,14 +46,16 @@ func TestIntervalCoupling_Observe(testingTB *testing.T) {
 }
 
 func BenchmarkIntervalCoupling_Observe(testingTB *testing.B) {
-	coupling := NewIntervalCoupling(datura.Acquire("interval-coupling-config", datura.APPJSON))
+	coupling := NewIntervalCoupling(IntervalWireConfig("interval-coupling-config"))
 	artifact := datura.Acquire("test", datura.APPJSON)
 
 	for step := range 64 {
 		epoch := float64((step + 1) * 1_000)
-		artifact.Poke(0, "config", "side").Poke(epoch, "sample").Poke(100+float64(step)*0.1, "paired")
+		artifact.Poke(0, "config", "side")
+		artifact = EpochLevelWire(artifact, epoch, 100+float64(step)*0.1)
 		_ = transport.NewFlipFlop(artifact, coupling)
-		artifact.Poke(1, "config", "side").Poke(epoch, "sample").Poke(50+float64(step)*0.05, "paired")
+		artifact.Poke(1, "config", "side")
+		artifact = EpochLevelWire(artifact, epoch, 50+float64(step)*0.05)
 		_ = transport.NewFlipFlop(artifact, coupling)
 	}
 

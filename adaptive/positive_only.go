@@ -35,7 +35,6 @@ func (positiveOnly *PositiveOnly) Read(payload []byte) (int, error) {
 		))
 	}
 
-	state.Inspect("adaptive", "positive-only", "Read()", "p")
 
 	stageKey := datura.Peek[string](positiveOnly.artifact, "stage")
 

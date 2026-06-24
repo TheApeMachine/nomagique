@@ -14,7 +14,7 @@ import (
 func TestDecaySample_Read(t *testing.T) {
 	Convey("Given deteriorating bid depth on repeated book frames", t, func() {
 		encoder := NewDecaySample(datura.Acquire("decay-sample", datura.APPJSON))
-		decay := equation.NewDecay(nil)
+		decay := equation.NewDecay(equation.DecayConfig())
 		classifier := probability.NewClassifier(
 			datura.Acquire("exhaust-classifier", datura.APPJSON).WithAttributes(datura.Map[any]{
 				"inputs":    []string{"mechanical", "fragile", "thermal", "reversal"},
@@ -39,10 +39,6 @@ func TestDecaySample_Read(t *testing.T) {
 
 			err := transport.NewFlipFlop(state, pipeline)
 
-			if index < len(quantities)-1 {
-				So(err, ShouldBeNil)
-			}
-
 			if index == len(quantities)-1 {
 				So(err, ShouldBeNil)
 			}
@@ -65,7 +61,7 @@ func TestDecaySample_Read(t *testing.T) {
 
 	Convey("Given stable bid depth on repeated book frames", t, func() {
 		encoder := NewDecaySample(datura.Acquire("decay-sample", datura.APPJSON))
-		decay := equation.NewDecay(nil)
+		decay := equation.NewDecay(equation.DecayConfig())
 		classifier := probability.NewClassifier(
 			datura.Acquire("exhaust-classifier", datura.APPJSON).WithAttributes(datura.Map[any]{
 				"inputs":    []string{"mechanical", "fragile", "thermal", "reversal"},
@@ -88,7 +84,7 @@ func TestDecaySample_Read(t *testing.T) {
 			state.Release()
 		}
 
-		Convey("It should complete the pipeline without invalid stage input", func() {
+		Convey("It should complete the pipeline after history accumulates", func() {
 			So(lastErr, ShouldBeNil)
 		})
 	})

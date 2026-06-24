@@ -102,10 +102,10 @@ func TestCohort_evaluate(testingTB *testing.T) {
 		testCase := testCase
 
 		Convey("Given cohort payload "+testCase.name, testingTB, func() {
-			cohortStage := equation.NewCohort(nil)
-			writeErr := tests.WriteSamples(cohortStage, testCase.batch...)
+			cohortStage := equation.NewCohort(equation.CohortConfig())
+			err := tests.WriteSamples(cohortStage, testCase.batch...)
 
-			So(writeErr, ShouldBeNil)
+			So(err, ShouldBeNil)
 
 			outbound, err := readOutbound(cohortStage)
 

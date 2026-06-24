@@ -19,14 +19,6 @@ type Fluidflow struct {
 NewFluidflow returns a fluid-dynamics stage wired from config attributes.
 */
 func NewFluidflow(artifact *datura.Artifact) io.ReadWriteCloser {
-	if artifact == nil {
-		artifact = datura.Acquire("fluidflow", datura.APPJSON)
-	}
-
-	if len(datura.Peek[[]string](artifact, "inputs")) == 0 {
-		artifact.Poke(FluidflowInputKeys, "inputs")
-	}
-
 	return &Fluidflow{
 		artifact: artifact,
 	}

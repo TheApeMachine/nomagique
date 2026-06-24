@@ -60,8 +60,8 @@ func (solver *RidgeSolver) Solve(normal [][]float64, vector []float64) ([]float6
 	if cholesky.Factorize(symmetric) {
 		var solution mat.VecDense
 
-		if solveErr := cholesky.SolveVecTo(&solution, rightHand); solveErr != nil {
-			return nil, fmt.Errorf("statistic: cholesky solve: %w", solveErr)
+		if err := cholesky.SolveVecTo(&solution, rightHand); err != nil {
+			return nil, fmt.Errorf("statistic: cholesky solve: %w", err)
 		}
 
 		out := make([]float64, size)
@@ -80,8 +80,8 @@ func (solver *RidgeSolver) Solve(normal [][]float64, vector []float64) ([]float6
 
 	var solution mat.VecDense
 
-	if solveErr := qr.SolveVecTo(&solution, false, rightHand); solveErr != nil {
-		return nil, fmt.Errorf("statistic: qr solve: %w", solveErr)
+	if err := qr.SolveVecTo(&solution, false, rightHand); err != nil {
+		return nil, fmt.Errorf("statistic: qr solve: %w", err)
 	}
 
 	out := make([]float64, size)

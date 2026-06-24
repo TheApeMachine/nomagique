@@ -47,10 +47,13 @@ func (contagion *Contagion) Read(p []byte) (int, error) {
 	}
 
 	state := datura.Acquire("contagion-state", datura.APPJSON)
-	state.Inspect("correlation", "contagion", "Read()", "p")
 
 	if _, err := state.Write(contagion.artifact.DecryptPayload()); err != nil {
-		return 0, err
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"contagion: state write failed",
+			err,
+		))
 	}
 
 	memberField := datura.Peek[string](contagion.artifact, "memberKey")

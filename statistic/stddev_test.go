@@ -8,15 +8,27 @@ import (
 	"github.com/theapemachine/datura/transport"
 )
 
+func TestStdDevRead(t *testing.T) {
+	Convey("Given a StdDev", t, func() {
+		stdDev := NewStdDev(scalarStageConfig("stddev-config"))
+		artifact := datura.Acquire("test", datura.APPJSON)
+
+		err := transport.NewFlipFlop(ScalarWire(artifact, "sample", 1), stdDev)
+
+		Convey("When the first sample arrives", func() {
+			So(err, ShouldNotBeNil)
+		})
+	})
+}
+
 func TestStdDevSeries(t *testing.T) {
 	Convey("Given a StdDev stage", t, func() {
-		stdDev := NewStdDev(datura.Acquire("stddev-config", datura.APPJSON))
+		stdDev := NewStdDev(scalarStageConfig("stddev-config-series"))
 		artifact := datura.Acquire("test", datura.APPJSON)
 		var got float64
 
 		for _, sample := range []float64{1, 2, 3, 4} {
-			artifact.Poke(sample, "sample")
-			err := transport.NewFlipFlop(artifact, stdDev)
+			err := transport.NewFlipFlop(ScalarWire(artifact, "sample", sample), stdDev)
 
 			if err != nil {
 				continue
@@ -29,4 +41,15 @@ func TestStdDevSeries(t *testing.T) {
 			So(got, ShouldBeGreaterThan, 0)
 		})
 	})
+}
+
+func BenchmarkStdDevRead(testingTB *testing.B) {
+	stdDev := NewStdDev(scalarStageConfig("stddev-bench"))
+	artifact := datura.Acquire("stddev-bench", datura.APPJSON)
+
+	testingTB.ReportAllocs()
+
+	for testingTB.Loop() {
+		_ = transport.NewFlipFlop(ScalarWire(artifact, "sample", 2.0), stdDev)
+	}
 }

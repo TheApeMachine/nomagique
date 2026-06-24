@@ -8,14 +8,13 @@ import (
 	"github.com/theapemachine/datura/transport"
 )
 
-func TestMedianAbsoluteSeries(t *testing.T) {
+func TestMedianAbsoluteRead(t *testing.T) {
 	Convey("Given a MedianAbsolute stage", t, func() {
-		medianAbsolute := NewMedianAbsolute(datura.Acquire("median-absolute-config", datura.APPJSON))
+		medianAbsolute := NewMedianAbsolute(scalarStageConfig("median-absolute-config"))
 		artifact := datura.Acquire("test", datura.APPJSON)
 
 		for _, sample := range []float64{-1, 2, -3} {
-			artifact.Poke(sample, "sample")
-			err := transport.NewFlipFlop(artifact, medianAbsolute)
+			err := transport.NewFlipFlop(ScalarWire(artifact, "sample", sample), medianAbsolute)
 
 			So(err, ShouldBeNil)
 		}

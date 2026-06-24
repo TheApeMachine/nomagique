@@ -22,14 +22,6 @@ type Cohort struct {
 NewCohort returns a cross-section correlation stage wired from config attributes.
 */
 func NewCohort(artifact *datura.Artifact) io.ReadWriteCloser {
-	if artifact == nil {
-		artifact = datura.Acquire("cohort", datura.APPJSON)
-	}
-
-	if len(datura.Peek[[]string](artifact, "inputs")) == 0 {
-		artifact.Poke(CohortInputKeys, "inputs")
-	}
-
 	return &Cohort{
 		artifact: artifact,
 	}
@@ -50,13 +42,13 @@ func (cohort *Cohort) Read(p []byte) (int, error) {
 	inputKeys := EnsureFeatureSchema(state, cohort.artifact, CohortInputKeys)
 
 	if !cohortSchemaReady(inputKeys) || len(Features(state)) < len(CohortInputKeys) {
-		return skipStage(state)
+		return rejectStage(state, "cohort: incomplete feature schema")
 	}
 
 	outcome := evaluateCohort(state, inputKeys)
 
 	if !outcome.eligible || outcome.strength <= 0 {
-		return skipStage(state)
+		return rejectStage(state, "cohort: insufficient signal eligibility")
 	}
 
 	return emitOutput(state, p, datura.Map[float64]{

@@ -163,10 +163,13 @@ func (partition *ModePartition) Read(payload []byte) (int, error) {
 	state := datura.Acquire("mode-partition-state", datura.APPJSON)
 
 	if _, err := state.Write(partition.artifact.DecryptPayload()); err != nil {
-		return 0, err
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"mode-partition: state write failed",
+			err,
+		))
 	}
 
-	state.Inspect("geometry", "mode-partition", "Read()", "p")
 
 	participants, couplingFn, ok := partition.participantsAndCoupling()
 

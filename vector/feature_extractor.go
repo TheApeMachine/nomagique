@@ -39,10 +39,13 @@ func (extractor *FeatureExtractor) Read(payload []byte) (int, error) {
 	state := datura.Acquire("feature-extractor", datura.APPJSON)
 
 	if _, err := state.Write(extractor.artifact.DecryptPayload()); err != nil {
-		return 0, err
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"feature-extractor: state write failed",
+			err,
+		))
 	}
 
-	state.Inspect("feature-extractor", "Read()", "p")
 
 	role := datura.Peek[string](state, "channel")
 
@@ -76,7 +79,8 @@ func (extractor *FeatureExtractor) Read(payload []byte) (int, error) {
 	features := make([]float64, len(inputs))
 
 	for index, input := range inputs {
-		sample := datura.Peek[float64](state, rootKey, 0, input)
+		elementIndex := int(datura.Peek[float64](extractor.artifact, role, "elementIndex"))
+		sample := datura.Peek[float64](state, rootKey, elementIndex, input)
 
 		if math.IsNaN(sample) || math.IsInf(sample, 0) {
 			return 0, errnie.Error(errnie.Err(
@@ -97,25 +101,64 @@ func (extractor *FeatureExtractor) Read(payload []byte) (int, error) {
 			scratch.WithPayload(datura.Map[any]{"sample": sample}.Marshal())
 
 			config := datura.Acquire("feature-extractor-ema", datura.APPJSON)
-			scratch.Inspect("feature-extractor", "Read()", "transform", transform, "in")
 
-			if transformErr := transport.NewFlipFlop(scratch, transformer(config)); transformErr != nil {
+			if err := transport.NewFlipFlop(scratch, transformer(config)); err != nil {
 				scratch.Release()
 				config.Release()
 
-				return 0, transformErr
+				return 0, err
 			}
 
-			scratch.Inspect("feature-extractor", "Read()", "transform", transform, "out")
 			config.Release()
 
-			rootKey := datura.Peek[string](scratch, "root")
+			scratchRoot := datura.Peek[string](scratch, "root")
 
-			if rootKey == "" {
-				rootKey = "output"
+			if scratchRoot == "" {
+				scratch.Release()
+
+				return 0, errnie.Error(errnie.Err(
+					errnie.Validation,
+					"feature-extractor: transform root required",
+					nil,
+				))
 			}
 
-			sample = datura.Peek[float64](scratch, rootKey, "value")
+			scratchInputs := datura.Peek[[]string](scratch, "inputs")
+
+			if len(scratchInputs) == 0 {
+				scratch.Release()
+
+				return 0, errnie.Error(errnie.Err(
+					errnie.Validation,
+					"feature-extractor: transform inputs required",
+					nil,
+				))
+			}
+
+			transformOutput := ""
+			transformFound := false
+
+			for _, scratchInput := range scratchInputs {
+				if scratchInput != "value" {
+					continue
+				}
+
+				transformOutput = scratchInput
+				transformFound = true
+			}
+
+			if !transformFound {
+				scratch.Release()
+
+				return 0, errnie.Error(errnie.Err(
+					errnie.Validation,
+					"feature-extractor: transform value output required",
+					nil,
+				))
+			}
+
+			sample = datura.Peek[float64](scratch, scratchRoot, transformOutput)
+			scratch.Release()
 		}
 
 		features[index] = sample

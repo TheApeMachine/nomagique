@@ -20,14 +20,6 @@ type Conviction struct {
 NewConviction returns a market-breadth conviction stage wired from config attributes.
 */
 func NewConviction(artifact *datura.Artifact) io.ReadWriteCloser {
-	if artifact == nil {
-		artifact = datura.Acquire("conviction", datura.APPJSON)
-	}
-
-	if len(datura.Peek[[]string](artifact, "inputs")) == 0 {
-		artifact.Poke(ConvictionInputKeys, "inputs")
-	}
-
 	return &Conviction{
 		artifact: artifact,
 	}

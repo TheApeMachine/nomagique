@@ -31,10 +31,13 @@ func (geometricMean *GeometricMean) Read(p []byte) (int, error) {
 	if _, err := state.Write(geometricMean.artifact.DecryptPayload()); err != nil {
 		state.Release()
 
-		return 0, err
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"geometric-mean: state write failed",
+			err,
+		))
 	}
 
-	state.Inspect("geometry", "geometric-mean", "Read()", "p")
 
 	defer state.Release()
 

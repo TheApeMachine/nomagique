@@ -26,7 +26,7 @@ func TestIntegration(t *testing.T) {
 				Poke("sample", "input").
 				Poke(2, "period").
 				Poke(2, "smoothing"))
-			circuit := logic.NewCircuit(logic.Rules{
+			circuit := logic.NewCircuit(circuitConfig(), logic.Rules{
 				{
 					Condition: logic.GreaterThan{Right: logic.NewConstant(2)},
 					Then:      consequence,
@@ -62,7 +62,7 @@ func TestIntegration(t *testing.T) {
 		})
 
 		Convey("When Circuit falls through to default branch", func() {
-			circuit := logic.NewCircuit(logic.Rules{
+			circuit := logic.NewCircuit(circuitConfig(), logic.Rules{
 				{
 					Condition: logic.GreaterThan{Right: logic.NewConstant(10)},
 					Then:      logic.NewConstant(1),

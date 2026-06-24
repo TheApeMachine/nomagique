@@ -37,7 +37,11 @@ func (rollingZScore *RollingZScore) Read(payload []byte) (int, error) {
 	state := datura.Acquire("rolling-zscore-state", datura.APPJSON)
 
 	if _, err := state.Write(rollingZScore.artifact.DecryptPayload()); err != nil {
-		return 0, err
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"rolling-zscore: state write failed",
+			err,
+		))
 	}
 
 	rootKey := datura.Peek[string](state, "root")
@@ -60,21 +64,8 @@ func (rollingZScore *RollingZScore) Read(payload []byte) (int, error) {
 		))
 	}
 
-	stageKey := datura.Peek[string](rollingZScore.artifact, "stage")
 	configInput := datura.Peek[string](rollingZScore.artifact, "input")
 	outputKey := datura.Peek[string](rollingZScore.artifact, "outputKey")
-
-	if stageKey != "" {
-		outputKey = datura.Peek[string](rollingZScore.artifact, stageKey, "outputKey")
-
-		if rootKey == "output" {
-			configInput = outputKey
-		}
-
-		if rootKey == "features" {
-			configInput = datura.Peek[string](rollingZScore.artifact, stageKey, "input")
-		}
-	}
 
 	if configInput == "" {
 		return 0, errnie.Error(errnie.Err(
@@ -139,15 +130,6 @@ func (rollingZScore *RollingZScore) Read(payload []byte) (int, error) {
 
 	seriesKey := datura.Peek[string](rollingZScore.artifact, "seriesKey")
 
-	if seriesKey == "" && stageKey != "" {
-		seriesKey = stageKey
-		scope, _ := state.Scope()
-
-		if scope != "" {
-			seriesKey = stageKey + "/" + scope
-		}
-	}
-
 	if seriesKey == "" {
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
@@ -191,43 +173,45 @@ func (rollingZScore *RollingZScore) Read(payload []byte) (int, error) {
 	var score float64
 
 	if len(prior) == 0 {
-		score = 0
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"rolling-zscore: prior sample required",
+			nil,
+		))
 	}
 
-	if len(prior) > 0 {
-		meanSample := stat.Mean(prior, nil)
-		stdSample := stat.StdDev(prior, nil)
+	meanSample := stat.Mean(prior, nil)
+	stdSample := stat.StdDev(prior, nil)
 
-		if stdSample <= 0 {
-			meanAbsoluteDeviation := 0.0
+	if stdSample <= 0 {
+		meanAbsoluteDeviation := 0.0
 
-			for _, priorSample := range prior {
-				meanAbsoluteDeviation += math.Abs(priorSample - meanSample)
+		for _, priorSample := range prior {
+			meanAbsoluteDeviation += math.Abs(priorSample - meanSample)
+		}
+
+		meanAbsoluteDeviation /= float64(len(prior))
+
+		delta := sample - meanSample
+		scale := meanAbsoluteDeviation
+
+		if scale <= 0 {
+			if delta == 0 {
+				score = 0
 			}
 
-			meanAbsoluteDeviation /= float64(len(prior))
-
-			delta := sample - meanSample
-			scale := meanAbsoluteDeviation
-
-			if scale <= 0 {
-				if delta == 0 {
-					score = 0
-				}
-
-				if delta != 0 {
-					score = delta / math.Abs(delta)
-				}
-			}
-
-			if scale > 0 {
-				score = delta / scale
+			if delta != 0 {
+				score = delta / math.Abs(delta)
 			}
 		}
 
-		if stdSample > 0 {
-			score = (sample - meanSample) / stdSample
+		if scale > 0 {
+			score = delta / scale
 		}
+	}
+
+	if stdSample > 0 {
+		score = (sample - meanSample) / stdSample
 	}
 
 	rollingZScore.samples[seriesKey] = history

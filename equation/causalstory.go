@@ -20,10 +20,6 @@ type CausalStory struct {
 NewCausalStory returns a causal semantic scoring stage wired from config attributes.
 */
 func NewCausalStory(artifact *datura.Artifact) io.ReadWriteCloser {
-	if artifact == nil {
-		artifact = datura.Acquire("causal-story", datura.APPJSON)
-	}
-
 	return &CausalStory{
 		artifact: artifact,
 	}
@@ -72,10 +68,10 @@ func (causalStory *CausalStory) Read(payload []byte) (int, error) {
 	noiseScore := 0.0
 
 	if !inverted && uplift > 0 && intervention > 0 {
-		margin, marginErr := probability.CompetitionMargin(uplift, association+intervention)
+		margin, err := probability.CompetitionMargin(uplift, association+intervention)
 
-		if marginErr != nil {
-			return rejectStage(state, fmt.Sprintf("causalstory: alpha margin failed: %v", marginErr))
+		if err != nil {
+			return rejectStage(state, fmt.Sprintf("causalstory: alpha margin failed: %v", err))
 		}
 
 		alphaScore = margin * uplift
@@ -83,10 +79,10 @@ func (causalStory *CausalStory) Read(payload []byte) (int, error) {
 
 	if !inverted && association > intervention {
 		margin := association - intervention
-		score, marginErr := probability.CompetitionMargin(margin, association)
+		score, err := probability.CompetitionMargin(margin, association)
 
-		if marginErr != nil {
-			return rejectStage(state, fmt.Sprintf("causalstory: beta margin failed: %v", marginErr))
+		if err != nil {
+			return rejectStage(state, fmt.Sprintf("causalstory: beta margin failed: %v", err))
 		}
 
 		betaScore = score
@@ -111,10 +107,10 @@ func (causalStory *CausalStory) Read(payload []byte) (int, error) {
 	if rungTotal > 0 {
 		dominant := math.Max(association, math.Max(intervention, uplift))
 		residual := rungTotal - dominant
-		score, marginErr := probability.CompetitionMargin(residual, rungTotal)
+		score, err := probability.CompetitionMargin(residual, rungTotal)
 
-		if marginErr != nil {
-			return rejectStage(state, fmt.Sprintf("causalstory: noise margin failed: %v", marginErr))
+		if err != nil {
+			return rejectStage(state, fmt.Sprintf("causalstory: noise margin failed: %v", err))
 		}
 
 		noiseScore = score

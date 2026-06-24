@@ -29,10 +29,13 @@ func (graphStage *Graph) Read(p []byte) (int, error) {
 	state := datura.Acquire("graph-state", datura.APPJSON)
 
 	if _, err := state.Write(graphStage.artifact.DecryptPayload()); err != nil {
-		return 0, err
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"causal: state write failed",
+			err,
+		))
 	}
 
-	state.Inspect("causal", "graph", "Read()", "p")
 
 	dag, err := newDAGFromArtifact(graphStage.artifact)
 

@@ -17,7 +17,8 @@ var featureExtractorPayloadFixture = []byte(
 func featureExtractorSchema() *datura.Artifact {
 	return datura.Acquire("feature-extractor-test", datura.APPJSON).
 		Poke(map[string]any{
-			"root": "data",
+			"root":         "data",
+			"elementIndex": 0.0,
 			"inputs": []string{
 				"volume", "vwap", "last", "bid", "ask", "change_pct",
 			},
@@ -87,8 +88,8 @@ func TestFeatureExtractor_Read(t *testing.T) {
 			So(err, ShouldBeNil)
 
 			wire := make([]byte, 65536)
-			n, readErr := extractor.Read(wire)
-			So(readErr, ShouldEqual, io.EOF)
+			n, err := extractor.Read(wire)
+			So(err, ShouldEqual, io.EOF)
 
 			buffer := bytes.NewBuffer(wire[:n])
 
@@ -139,9 +140,9 @@ func TestFeatureExtractor_Read(t *testing.T) {
 		So(err, ShouldBeNil)
 
 		Convey("When Read is called", func() {
-			_, readErr := extractor.Read(make([]byte, 65536))
+			_, err := extractor.Read(make([]byte, 65536))
 
-			So(readErr, ShouldNotBeNil)
+			So(err, ShouldNotBeNil)
 		})
 	})
 }

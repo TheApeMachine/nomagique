@@ -36,10 +36,13 @@ func (priceRing *PriceRing) Read(payload []byte) (int, error) {
 	state := datura.Acquire("price-ring-state", datura.APPJSON)
 
 	if _, err := state.Write(priceRing.artifact.DecryptPayload()); err != nil {
-		return 0, err
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"price-ring: state write failed",
+			err,
+		))
 	}
 
-	state.Inspect("statistic", "price-ring", "Read()", "p")
 
 	rootKey := datura.Peek[string](state, "root")
 

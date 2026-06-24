@@ -13,8 +13,6 @@ import (
 	"github.com/theapemachine/nomagique/statistic"
 )
 
-const gateReadBufferSize = 65536
-
 const (
 	SideBid byte = 'b'
 	SideAsk byte = 'a'
@@ -211,7 +209,11 @@ func (gate *GateQuantile) Read(payload []byte) (int, error) {
 	if _, err := state.Write(gate.artifact.DecryptPayload()); err != nil {
 		state.Release()
 
-		return 0, err
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"algorithm: state write failed",
+			err,
+		))
 	}
 
 	defer state.Release()
@@ -274,9 +276,15 @@ func (gate *GateQuantile) value(percentileOverride float64) float64 {
 		return 0
 	}
 
-	value, ok := statistic.QuantileOf(percentile, history)
+	value, err := statistic.QuantileOf(percentile, history)
 
-	if !ok {
+	if err != nil {
+		errnie.Error(errnie.Err(
+			errnie.Validation,
+			"gate-quantile: quantile failed",
+			err,
+		))
+
 		return 0
 	}
 
@@ -315,14 +323,14 @@ func (gate *GateQuantile) observe(sample float64, percentileOverride float64) fl
 		return 0
 	}
 
-	if _, writeErr := gate.Write(packed); writeErr != nil {
+	if _, err := gate.Write(packed); err != nil {
 		return 0
 	}
 
-	buffer := make([]byte, gateReadBufferSize)
-	readCount, readErr := gate.Read(buffer)
+	buffer := make([]byte, max(len(packed)*2, len(packed)+1))
+	readCount, err := gate.Read(buffer)
 
-	if readErr != nil && readErr != io.EOF && readErr != io.ErrShortBuffer {
+	if err != nil && err != io.EOF && err != io.ErrShortBuffer {
 		return 0
 	}
 
@@ -347,7 +355,17 @@ func gateHistoryCapacity(values []float64, minSamples int) int {
 		return len(values) + 1
 	}
 
-	span := statistic.SpanOf(values)
+	span, err := statistic.SpanOf(values)
+
+	if err != nil {
+		errnie.Error(errnie.Err(
+			errnie.Validation,
+			"gate-quantile: span failed",
+			err,
+		))
+
+		return minSamples
+	}
 
 	if span <= 0 {
 		if minSamples > 3 {

@@ -77,14 +77,14 @@ func TestCalibrator_Observe(testingTB *testing.T) {
 }
 
 func TestCalibrator_ObserveSamples(testingTB *testing.T) {
-	Convey("Given a calibrator", testingTB, func() {
-		calibrator := SampleRatio(pairConfig("sample-ratio-config"))
+	Convey("Given a sample ratio state", testingTB, func() {
+		state := SampleRatioState{}
 		predicted := []float64{10, 10}
 		actual := []float64{10, 15}
 		out := make([]float64, len(predicted))
 
 		Convey("When observing samples in batch", func() {
-			calibrator.ObserveSamples(predicted, actual, out)
+			state.ObserveSamples(predicted, actual, out)
 
 			Convey("It should fill the output buffer", func() {
 				So(out[1], ShouldBeGreaterThan, 1)
@@ -100,7 +100,10 @@ func TestCalibrator_Reset(testingTB *testing.T) {
 		err := transport.NewFlipFlop(artifact, calibrator)
 
 		So(err, ShouldBeNil)
-		So(calibrator.Reset(), ShouldBeNil)
+
+		ratioState := sampleRatioStateFromArtifact(calibrator.artifact)
+		ratioState.Reset()
+		pokeSampleRatioState(calibrator.artifact, &ratioState, 0)
 
 		Convey("It should clear derived state", func() {
 			So(datura.Peek[float64](calibrator.artifact, "output", "ready"), ShouldEqual, 0)
@@ -134,7 +137,7 @@ func BenchmarkSampleRatio_Observe(testingTB *testing.B) {
 }
 
 func BenchmarkSampleRatio_ObserveSamples(testingTB *testing.B) {
-	calibrator := SampleRatio(pairConfig("sample-ratio-config-bench"))
+	state := SampleRatioState{}
 	predicted := make([]float64, 1024)
 	actual := make([]float64, len(predicted))
 	out := make([]float64, len(predicted))
@@ -142,7 +145,7 @@ func BenchmarkSampleRatio_ObserveSamples(testingTB *testing.B) {
 	testingTB.ReportAllocs()
 
 	for testingTB.Loop() {
-		_ = calibrator.Reset()
-		calibrator.ObserveSamples(predicted, actual, out)
+		state.Reset()
+		state.ObserveSamples(predicted, actual, out)
 	}
 }

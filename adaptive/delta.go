@@ -38,7 +38,6 @@ func (delta *Delta) Read(payload []byte) (int, error) {
 		))
 	}
 
-	state.Inspect("adaptive", "delta", "Read()", "p")
 
 	rootKey := datura.Peek[string](state, "root")
 

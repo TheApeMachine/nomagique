@@ -117,9 +117,9 @@ func TestMeasureFitFrenzy(testingTB *testing.T) {
 			false,
 			symbolState.bookTouchImbalance,
 		)
-		category, _, classifyErr := hawkes.ClassifyFit(fit, fitAsymmetry, false, gates)
+		category, _, err := hawkes.ClassifyFit(fit, fitAsymmetry, false, gates)
 
-		So(classifyErr, ShouldBeNil)
+		So(err, ShouldBeNil)
 
 		Convey("It should classify above the symbol frenzy gate", func() {
 			So(fitAsymmetry, ShouldBeGreaterThan, gates.FrenzyAsymmetry)

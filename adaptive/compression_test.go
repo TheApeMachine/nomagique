@@ -16,6 +16,7 @@ func compressionStageConfig() *datura.Artifact {
 		Poke(map[string]any{
 			"input":     "sample",
 			"outputKey": "value",
+			"seriesKey": "compression",
 		}, "compression")
 }
 
@@ -25,6 +26,7 @@ func TestCompressionZeroOutput(t *testing.T) {
 			Poke(map[string]any{
 				"input":     "spread",
 				"outputKey": "compression",
+				"seriesKey": "spread",
 			}, "compression")
 		compression := NewCompression(config)
 		warmup := datura.Acquire("compression-warmup-frame", datura.APPJSON)

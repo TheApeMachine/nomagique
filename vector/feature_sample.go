@@ -19,7 +19,6 @@ type FeatureSample struct {
 NewFeatureSample returns a feature-index selector configured on the artifact.
 */
 func NewFeatureSample(config *datura.Artifact) *FeatureSample {
-	config.Inspect("vector", "feature-sample", "NewFeatureSample()")
 
 	return &FeatureSample{
 		config: config,
@@ -28,10 +27,13 @@ func NewFeatureSample(config *datura.Artifact) *FeatureSample {
 
 func (featureSample *FeatureSample) Read(payload []byte) (int, error) {
 	state := datura.Acquire("feature-sample-state", datura.APPJSON)
-	state.Inspect("vector", "feature-sample", "Read()", "p")
 
 	if _, err := state.Write(featureSample.config.DecryptPayload()); err != nil {
-		return 0, err
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"feature-sample: state write failed",
+			err,
+		))
 	}
 
 	features := datura.Peek[[]float64](state, "features")

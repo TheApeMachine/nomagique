@@ -38,7 +38,6 @@ func (momentum *Momentum) Read(payload []byte) (int, error) {
 		))
 	}
 
-	state.Inspect("adaptive", "momentum", "Read()", "p")
 
 	rootKey := datura.Peek[string](state, "root")
 

@@ -75,8 +75,8 @@ func TestResonanceManifold_SettleAdvanceTemporal(testingTB *testing.T) {
 		firstInput := []float64{0.8, -0.2, 0.4, 0.1}
 		secondInput := []float64{-0.3, 0.6, -0.1, 0.2}
 
-		settleErr := manifold.Settle(firstInput, true)
-		So(settleErr, ShouldBeNil)
+		err = manifold.Settle(firstInput, true)
+		So(err, ShouldBeNil)
 
 		withHistoryErr := manifold.Settle(secondInput, true)
 		So(withHistoryErr, ShouldBeNil)

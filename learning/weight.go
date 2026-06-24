@@ -14,6 +14,13 @@ type TrustWeight struct {
 }
 
 /*
+NewTrustWeight returns a trust weight stage wired from config attributes on the artifact.
+*/
+func NewTrustWeight(artifact *datura.Artifact) *TrustWeight {
+	return Weight(artifact)
+}
+
+/*
 Weight returns a trust weight stage wired from config attributes on the artifact.
 */
 func Weight(artifact *datura.Artifact) *TrustWeight {
@@ -28,10 +35,13 @@ func (trustWeight *TrustWeight) Read(payload []byte) (int, error) {
 	if _, err := state.Write(trustWeight.artifact.DecryptPayload()); err != nil {
 		state.Release()
 
-		return 0, err
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"trust-weight: state write failed",
+			err,
+		))
 	}
 
-	state.Inspect("learning", "trust-weight", "Read()", "p")
 	defer state.Release()
 
 	predicted, actual, err := trustWeight.resolvePair(state)
@@ -75,34 +85,5 @@ func (trustWeight *TrustWeight) Write(payload []byte) (int, error) {
 }
 
 func (trustWeight *TrustWeight) Close() error {
-	return nil
-}
-
-/*
-ObserveSamples runs the exact batch kernel over pairs into out.
-*/
-func (trustWeight *TrustWeight) ObserveSamples(
-	predicted []float64, actual []float64, out []float64,
-) {
-	weightState := weightStateFromArtifact(trustWeight.artifact)
-	observeWeightSamples(&weightState, predicted, actual, out)
-
-	if len(out) > 0 {
-		pokeWeightState(trustWeight.artifact, &weightState, out[len(out)-1])
-	}
-}
-
-/*
-Reset clears derived state.
-*/
-func (trustWeight *TrustWeight) Reset() error {
-	trustWeight.artifact.Poke(0.0, "output", "trust")
-	trustWeight.artifact.Poke(0.0, "output", "prev")
-	trustWeight.artifact.Poke(0.0, "output", "min")
-	trustWeight.artifact.Poke(0.0, "output", "max")
-	trustWeight.artifact.Poke(0.0, "output", "rate")
-	trustWeight.artifact.Poke(0.0, "output", "ready")
-	trustWeight.artifact.Poke(0.0, "output", "value")
-
 	return nil
 }

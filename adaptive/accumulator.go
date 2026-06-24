@@ -36,7 +36,6 @@ func (accumulator *Accumulator) Read(payload []byte) (int, error) {
 		))
 	}
 
-	state.Inspect("adaptive", "accumulator", "Read()", "p")
 
 	rootKey := datura.Peek[string](state, "root")
 

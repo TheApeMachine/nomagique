@@ -3,6 +3,7 @@ package hawkes
 import (
 	"math"
 
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/statistic"
 )
 
@@ -33,7 +34,11 @@ func FitGatesFromHistory(spectralRadii, asymmetries []float64) (FitGates, bool) 
 
 	upperRank := 1 - 1/float64(longWindow)
 	lowerRank := 1 / float64(longWindow)
-	saturationRadius := quantileFromHistory(spectralRadii, upperRank)
+	saturationRadius, err := quantileFromHistory(spectralRadii, upperRank)
+
+	if err != nil {
+		return FitGates{}, false
+	}
 
 	absAsymmetries := make([]float64, len(asymmetries))
 
@@ -41,7 +46,11 @@ func FitGatesFromHistory(spectralRadii, asymmetries []float64) (FitGates, bool) 
 		absAsymmetries[index] = math.Abs(asymmetry)
 	}
 
-	frenzyAsymmetry := quantileFromHistory(absAsymmetries, lowerRank)
+	frenzyAsymmetry, err := quantileFromHistory(absAsymmetries, lowerRank)
+
+	if err != nil {
+		return FitGates{}, false
+	}
 
 	if saturationRadius <= 0 || frenzyAsymmetry <= 0 {
 		return FitGates{}, false
@@ -53,12 +62,16 @@ func FitGatesFromHistory(spectralRadii, asymmetries []float64) (FitGates, bool) 
 	}, true
 }
 
-func quantileFromHistory(history []float64, percentile float64) float64 {
-	value, ok := statistic.QuantileOf(percentile, history)
+func quantileFromHistory(history []float64, percentile float64) (float64, error) {
+	value, err := statistic.QuantileOf(percentile, history)
 
-	if !ok {
-		return 0
+	if err != nil {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"hawkes gates: quantile failed",
+			err,
+		))
 	}
 
-	return value
+	return value, nil
 }

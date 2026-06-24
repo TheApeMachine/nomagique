@@ -30,10 +30,13 @@ func (covariance *Covariance) Read(p []byte) (int, error) {
 	state := datura.Acquire("covariance-state", datura.APPJSON)
 
 	if _, err := state.Write(covariance.artifact.DecryptPayload()); err != nil {
-		return 0, err
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"correlation-covariance: state write failed",
+			err,
+		))
 	}
 
-	state.Inspect("correlation", "covariance", "Read()", "p")
 
 	values := datura.Peek[[]float64](state, "batch")
 

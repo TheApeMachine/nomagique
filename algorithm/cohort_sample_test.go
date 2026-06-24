@@ -108,13 +108,13 @@ func runCohortSample(frame *datura.Artifact, sample *CohortSample) error {
 	}
 
 	chunk := make([]byte, 262144)
-	readCount, readErr := sample.Read(chunk)
+	readCount, err := sample.Read(chunk)
 
-	if readErr != nil && (readErr != io.EOF || readCount == 0) {
-		return readErr
+	if err != nil && (err != io.EOF || readCount == 0) {
+		return err
 	}
 
-	_, writeErr := frame.Write(chunk[:readCount])
+	_, err = frame.Write(chunk[:readCount])
 
-	return writeErr
+	return err
 }

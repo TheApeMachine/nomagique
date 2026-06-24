@@ -49,7 +49,7 @@ func TestNewBookQualitySample(t *testing.T) {
 func TestBookQualitySample_Read(t *testing.T) {
 	Convey("Given a liquidity vacuum book replay", t, func() {
 		encoder := NewBookQualitySample(bookQualitySampleConfig())
-		bookQuality := equation.NewBookQuality(nil)
+		bookQuality := equation.NewBookQuality(equation.BookQualityConfig())
 		classifier := probability.NewClassifier(
 			datura.Acquire("toxicity-classifier", datura.APPJSON).WithAttributes(datura.Map[any]{
 				"inputs":    []string{"bluffScore", "vacuumScore", "supportScore"},

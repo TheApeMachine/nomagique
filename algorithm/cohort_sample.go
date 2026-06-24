@@ -2,7 +2,6 @@ package algorithm
 
 import (
 	"fmt"
-	"io"
 	"math"
 	"sort"
 	"time"
@@ -59,21 +58,29 @@ func (cohortSample *CohortSample) Read(payload []byte) (int, error) {
 	if _, err := state.Write(cohortSample.artifact.DecryptPayload()); err != nil {
 		state.Release()
 
-		return 0, err
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"cohort-sample: state write failed",
+			err,
+		))
 	}
 
 	defer state.Release()
 
-	sample, sampleErr := cohortSample.sample(state)
+	sample, err := cohortSample.sample(state)
 
-	if sampleErr != nil {
-		return 0, sampleErr
+	if err != nil {
+		return 0, err
 	}
 
 	window := cohortSample.window(sample.name)
 
 	if window < cohortMinimumWindow {
-		return 0, io.EOF
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"cohort-sample: window not calibrated",
+			nil,
+		))
 	}
 
 	symbolReturns := tailCohort(cohortSample.symbols[sample.name].returns, window)
@@ -82,7 +89,11 @@ func (cohortSample *CohortSample) Read(payload []byte) (int, error) {
 	if len(symbolReturns) < window ||
 		len(marketReturns) < window ||
 		len(peerCorrelations) < cohortMinimumPeers {
-		return 0, io.EOF
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"cohort-sample: insufficient cohort history",
+			nil,
+		))
 	}
 
 	features := cohortFeatures(

@@ -21,14 +21,6 @@ type Depth struct {
 NewDepth returns a cross-section liquidity depth stage wired from config attributes.
 */
 func NewDepth(artifact *datura.Artifact) io.ReadWriteCloser {
-	if artifact == nil {
-		artifact = datura.Acquire("depth", datura.APPJSON)
-	}
-
-	if len(datura.Peek[[]string](artifact, "inputs")) == 0 {
-		artifact.Poke(DepthInputKeys, "inputs")
-	}
-
 	return &Depth{
 		artifact: artifact,
 	}
@@ -51,7 +43,7 @@ func (depth *Depth) Read(p []byte) (int, error) {
 	fields, err := FeatureFields(state, inputKeys)
 
 	if err != nil || len(fields) < len(DepthInputKeys) {
-		return skipStage(state)
+		return rejectStage(state, "depth: incomplete feature fields")
 	}
 
 	scaledQuoteVol := fields[0]
@@ -61,20 +53,20 @@ func (depth *Depth) Read(p []byte) (int, error) {
 	peers, err := FeatureSlice(state, headerLen, peerCount)
 
 	if err != nil {
-		return skipStage(state)
+		return rejectStage(state, "depth: peer slice unavailable")
 	}
 
 	trailer, err := FeatureSlice(state, headerLen+peerCount, 2)
 
 	if err != nil {
-		return skipStage(state)
+		return rejectStage(state, "depth: trailer slice unavailable")
 	}
 
 	relativeVolume := trailer[0]
 	baselineReady := trailer[1] > 0
 
 	if peerCount < 2 {
-		return skipStage(state)
+		return rejectStage(state, "depth: insufficient peer count")
 	}
 
 	sortedPeers := append([]float64(nil), peers...)
@@ -85,7 +77,7 @@ func (depth *Depth) Read(p []byte) (int, error) {
 	median := stat.Quantile(0.5, stat.LinInterp, sortedPeers, nil)
 
 	if median <= 0 {
-		return skipStage(state)
+		return rejectStage(state, "depth: peer median must be positive")
 	}
 
 	peakScarcity := isPeakScarcity(scaledQuoteVol, peers)
@@ -105,7 +97,7 @@ func (depth *Depth) Read(p []byte) (int, error) {
 	)
 
 	if category == 0 {
-		return skipStage(state)
+		return rejectStage(state, "depth: unclassified liquidity state")
 	}
 
 	scarcityRaw := math.Max(0, (median-scaledQuoteVol)/median)
@@ -129,7 +121,7 @@ func (depth *Depth) Read(p []byte) (int, error) {
 	}
 
 	if strength <= 0 && category != 2 {
-		return skipStage(state)
+		return rejectStage(state, "depth: non-positive strength")
 	}
 
 	return emitOutput(state, p, datura.Map[float64]{

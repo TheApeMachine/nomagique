@@ -34,14 +34,14 @@ func TestRLSFilterObserve(testingTB *testing.T) {
 		for step := 0; step < 32; step++ {
 			feature := float64(step) / 32
 			target := 2*feature + 1
-			observeErr := filter.Observe([]float64{feature}, target)
-			So(observeErr, ShouldBeNil)
+			err := filter.Observe([]float64{feature}, target)
+			So(err, ShouldBeNil)
 		}
 
-		forecast, predictErr := filter.Predict([]float64{0.5})
+		forecast, err := filter.Predict([]float64{0.5})
 
 		Convey("It should learn the mapping", func() {
-			So(predictErr, ShouldBeNil)
+			So(err, ShouldBeNil)
 			So(forecast, ShouldAlmostEqual, 2, 0.25)
 		})
 	})
@@ -52,19 +52,19 @@ func TestRLSFilterObserve(testingTB *testing.T) {
 		So(filter.SetForgettingFactor(0.5), ShouldBeNil)
 
 		for step := 0; step < 16; step++ {
-			observeErr := filter.Observe([]float64{1}, 1)
-			So(observeErr, ShouldBeNil)
+			err := filter.Observe([]float64{1}, 1)
+			So(err, ShouldBeNil)
 		}
 
 		for step := 0; step < 16; step++ {
-			observeErr := filter.Observe([]float64{1}, 5)
-			So(observeErr, ShouldBeNil)
+			err := filter.Observe([]float64{1}, 5)
+			So(err, ShouldBeNil)
 		}
 
-		forecast, predictErr := filter.Predict([]float64{1})
+		forecast, err := filter.Predict([]float64{1})
 
 		Convey("It should adapt faster to the new target", func() {
-			So(predictErr, ShouldBeNil)
+			So(err, ShouldBeNil)
 			So(forecast, ShouldBeGreaterThan, 2.5)
 		})
 	})
@@ -82,14 +82,14 @@ func TestRLSFilterObserve(testingTB *testing.T) {
 
 		for step := 0; step < 4096; step++ {
 			target := 0.001 * float64(step%3-1)
-			observeErr := filter.Observe(features, target)
-			So(observeErr, ShouldBeNil)
+			err := filter.Observe(features, target)
+			So(err, ShouldBeNil)
 		}
 
-		forecast, predictErr := filter.Predict(features)
+		forecast, err := filter.Predict(features)
 
 		Convey("It should stay numerically stable after repair", func() {
-			So(predictErr, ShouldBeNil)
+			So(err, ShouldBeNil)
 			So(math.IsNaN(forecast), ShouldBeFalse)
 			So(math.IsInf(forecast, 0), ShouldBeFalse)
 		})
@@ -103,8 +103,8 @@ func TestRLSFilter_Reset(testingTB *testing.T) {
 
 		for step := 0; step < 8; step++ {
 			feature := float64(step) / 8
-			observeErr := filter.Observe([]float64{feature}, 2*feature+1)
-			So(observeErr, ShouldBeNil)
+			err := filter.Observe([]float64{feature}, 2*feature+1)
+			So(err, ShouldBeNil)
 		}
 
 		before := filter.Coefficients()
@@ -141,8 +141,8 @@ func BenchmarkRLSFilterObserve(b *testing.B) {
 	for b.Loop() {
 		target := 0.001 * float64(b.N%3-1)
 
-		if observeErr := filter.Observe(features, target); observeErr != nil {
-			b.Fatal(observeErr)
+		if err := filter.Observe(features, target); err != nil {
+			b.Fatal(err)
 		}
 	}
 }

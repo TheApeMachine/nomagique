@@ -32,10 +32,13 @@ func (logitScores *LogitScores) Read(payload []byte) (int, error) {
 	if _, err := state.Write(logitScores.config.DecryptPayload()); err != nil {
 		state.Release()
 
-		return 0, err
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"logit-scores: state write failed",
+			err,
+		))
 	}
 
-	state.Inspect("learning", "logit-scores", "Read()", "p")
 
 	defer state.Release()
 

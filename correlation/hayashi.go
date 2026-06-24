@@ -30,10 +30,13 @@ func (hayashi *HayashiYoshida) Read(p []byte) (int, error) {
 	state := datura.Acquire("hayashi-state", datura.APPJSON)
 
 	if _, err := state.Write(hayashi.artifact.DecryptPayload()); err != nil {
-		return 0, err
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"correlation-hayashi: state write failed",
+			err,
+		))
 	}
 
-	state.Inspect("correlation", "hayashi", "Read()", "p")
 
 	values := datura.Peek[[]float64](state, "batch")
 

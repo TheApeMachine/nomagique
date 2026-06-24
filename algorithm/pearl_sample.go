@@ -1,6 +1,7 @@
 package algorithm
 
 import (
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/nomagique/causal"
 )
@@ -46,10 +47,13 @@ func (pearlSample *PearlSample) Read(payload []byte) (int, error) {
 	if _, err := state.Write(pearlSample.artifact.DecryptPayload()); err != nil {
 		state.Release()
 
-		return 0, err
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"algorithm-pearl-sample: state write failed",
+			err,
+		))
 	}
 
-	state.Inspect("algorithm", "pearl-sample", "Read()", "p")
 
 	defer state.Release()
 

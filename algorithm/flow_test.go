@@ -11,13 +11,13 @@ import (
 
 func TestFlowEvaluate(testingTB *testing.T) {
 	Convey("Given aggressive buy flow with rising price", testingTB, func() {
-		flow := equation.NewFlow(nil)
-		writeErr := tests.WriteSamples(flow,
+		flow := equation.NewFlow(equation.FlowConfig())
+		err := tests.WriteSamples(flow,
 			500, 0, 5, 0, 100,
 			100, 100.01, 100.02, 100.03, 100.04,
 		)
 
-		So(writeErr, ShouldBeNil)
+		So(err, ShouldBeNil)
 
 		outbound, err := readOutbound(flow)
 
@@ -33,13 +33,13 @@ func TestFlowEvaluate(testingTB *testing.T) {
 	})
 
 	Convey("Given aggressive buy flow with flat price", testingTB, func() {
-		flow := equation.NewFlow(nil)
-		writeErr := tests.WriteSamples(flow,
+		flow := equation.NewFlow(equation.FlowConfig())
+		err := tests.WriteSamples(flow,
 			200, 0, 4, 0, 50,
 			50, 50.001, 50, 50.001,
 		)
 
-		So(writeErr, ShouldBeNil)
+		So(err, ShouldBeNil)
 
 		outbound, err := readOutbound(flow)
 
@@ -52,7 +52,7 @@ func TestFlowEvaluate(testingTB *testing.T) {
 }
 
 func BenchmarkFlowRead(b *testing.B) {
-	flow := equation.NewFlow(nil)
+	flow := equation.NewFlow(equation.FlowConfig())
 	samples := []float64{
 		500, 0, 5, 0, 100,
 		100, 100.01, 100.02, 100.03, 100.04,

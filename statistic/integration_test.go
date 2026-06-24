@@ -18,8 +18,8 @@ func TestIntegration(t *testing.T) {
 				Poke("sample", "sampleKey")
 			medianConfig := datura.Acquire("median-config", datura.APPJSON).
 				Poke("member", "memberKey")
-			crossSection := nomagique.Number(statistic.NewPanel(panelConfig), statistic.NewMedian(medianConfig))
-			var lastArtifact *datura.Artifact
+			panel := statistic.NewPanel(panelConfig)
+			crossSection := nomagique.Number(panel, statistic.NewMedian(medianConfig))
 
 			for _, member := range []struct {
 				key   float64
@@ -31,15 +31,10 @@ func TestIntegration(t *testing.T) {
 			} {
 				artifact := datura.Acquire("test", datura.APPJSON)
 				statistic.PanelWire(artifact, member.key, member.value)
-				err := transport.NewFlipFlop(artifact, crossSection)
+				err := transport.NewFlipFlop(artifact, panel)
 
 				So(err, ShouldBeNil)
-
-				if lastArtifact != nil {
-					lastArtifact.Release()
-				}
-
-				lastArtifact = artifact
+				artifact.Release()
 			}
 
 			artifact := datura.Acquire("test", datura.APPJSON)
@@ -48,10 +43,7 @@ func TestIntegration(t *testing.T) {
 
 			So(err, ShouldBeNil)
 			So(datura.Peek[float64](artifact, "output", "value"), ShouldEqual, 0.05)
-
-			if lastArtifact != nil {
-				lastArtifact.Release()
-			}
+			artifact.Release()
 		})
 
 		Convey("When Mean streams a uniform series", func() {

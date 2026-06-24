@@ -21,25 +21,19 @@ type HayashiYoshida struct {
 NewHayashiYoshida creates a Hayashi-Yoshida correlation stage wired from config attributes.
 */
 func NewHayashiYoshida(artifact *datura.Artifact) *HayashiYoshida {
-	artifact.Inspect("correlation", "hayashi", "NewHayashiYoshida()")
-
 	return &HayashiYoshida{
 		artifact: artifact,
 	}
 }
 
-func (hayashi *HayashiYoshida) Write(p []byte) (int, error) {
-	hayashi.artifact.WithPayload(p)
-	return len(p), nil
-}
-
 func (hayashi *HayashiYoshida) Read(p []byte) (int, error) {
 	state := datura.Acquire("hayashi-state", datura.APPJSON)
-	state.Inspect("correlation", "hayashi", "Read()", "p")
 
 	if _, err := state.Write(hayashi.artifact.DecryptPayload()); err != nil {
 		return 0, err
 	}
+
+	state.Inspect("correlation", "hayashi", "Read()", "p")
 
 	values := datura.Peek[[]float64](state, "batch")
 
@@ -64,8 +58,8 @@ func (hayashi *HayashiYoshida) Read(p []byte) (int, error) {
 
 			if ok {
 				state.MergeOutput("value", correlation)
-				state.Merge("root", "output")
-				state.Merge("inputs", []string{"value"})
+				state.Poke("output", "root")
+				state.Poke([]string{"value"}, "inputs")
 				return state.Read(p)
 			}
 
@@ -99,6 +93,11 @@ func (hayashi *HayashiYoshida) Read(p []byte) (int, error) {
 		errnie.Validation, "unable to compute Hayashi-Yoshida correlation",
 		HayashiError(HayashiErrorRequireAtLeastTwoInputs),
 	))
+}
+
+func (hayashi *HayashiYoshida) Write(p []byte) (int, error) {
+	hayashi.artifact.WithPayload(p)
+	return len(p), nil
 }
 
 func (hayashi *HayashiYoshida) Close() error {

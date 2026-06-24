@@ -4,7 +4,6 @@ import (
 	"github.com/bytedance/sonic"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/nomagique/statistic"
 )
 
 /*
@@ -22,11 +21,6 @@ attributes numStates and alpha.
 */
 func NewTransitionSurprise(artifact *datura.Artifact) *Transition {
 	return &Transition{artifact: artifact}
-}
-
-func (transition *Transition) Write(payload []byte) (int, error) {
-	transition.artifact.WithPayload(payload)
-	return len(payload), nil
 }
 
 func (transition *Transition) Read(payload []byte) (int, error) {
@@ -51,8 +45,8 @@ func (transition *Transition) Read(payload []byte) (int, error) {
 
 	defer state.Release()
 
-	numStates := int(statistic.ConfigFloat64(transition.artifact, state, "numStates"))
-	alpha := statistic.ConfigFloat64(transition.artifact, state, "alpha")
+	numStates := int(datura.Peek[float64](transition.artifact, "numStates"))
+	alpha := datura.Peek[float64](transition.artifact, "alpha")
 	inboundAlpha := datura.Peek[float64](state, "alpha")
 
 	if inboundAlpha > 0 {
@@ -66,8 +60,8 @@ func (transition *Transition) Read(payload []byte) (int, error) {
 			"alpha":     alpha,
 		})
 		state.MergeOutput("value", 0)
-		state.Merge("root", "output")
-		state.Merge("inputs", []string{"value"})
+		state.Poke("output", "root")
+		state.Poke([]string{"value"}, "inputs")
 		return state.Read(payload)
 	}
 
@@ -116,9 +110,14 @@ func (transition *Transition) Read(payload []byte) (int, error) {
 	state.MergeOutput("value", surprise)
 	state.MergeOutput("category", categoryIndex)
 	state.MergeOutput("probabilities", probabilities)
-	state.Merge("root", "output")
-	state.Merge("inputs", []string{"value"})
+	state.Poke("output", "root")
+	state.Poke([]string{"value"}, "inputs")
 	return state.Read(payload)
+}
+
+func (transition *Transition) Write(payload []byte) (int, error) {
+	transition.artifact.WithPayload(payload)
+	return len(payload), nil
 }
 
 func (transition *Transition) Close() error {

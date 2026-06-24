@@ -2,6 +2,7 @@ package statistic
 
 import (
 	"testing"
+	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
@@ -9,16 +10,32 @@ import (
 	"gonum.org/v1/gonum/stat"
 )
 
+func rollingZScoreConfig() *datura.Artifact {
+	return datura.Acquire("rolling-zscore-config", datura.APPJSON).
+		Poke("sample", "input").
+		Poke("value", "outputKey").
+		Poke("test", "seriesKey").
+		Poke("test", "seriesKey")
+}
+
+func rollingZScoreFrame(sample float64, timestamp int64) *datura.Artifact {
+	artifact := ScalarWire(datura.Acquire("rolling-zscore-test", datura.APPJSON), "sample", sample)
+	artifact.SetTimestamp(timestamp)
+
+	return artifact
+}
+
 func TestRollingZScoreRead(t *testing.T) {
 	Convey("Given a rolling z-score stage fed sequential samples", t, func() {
-		config := datura.Acquire("rolling-zscore-config", datura.APPJSON)
+		config := rollingZScoreConfig()
 		stage := NewRollingZScore(config)
 		samples := []float64{-0.01, 0.0, 0.01, 0.02, 0.03}
 		var lastArtifact *datura.Artifact
+		timestamp := time.Unix(0, 1).UnixNano()
 
 		for index, sample := range samples {
-			artifact := datura.Acquire("rolling-zscore-test", datura.APPJSON)
-			artifact.Merge("sample", sample)
+			artifact := rollingZScoreFrame(sample, timestamp)
+			timestamp += int64(time.Second)
 
 			err := transport.NewFlipFlop(artifact, stage)
 
@@ -68,13 +85,14 @@ func TestRollingZScoreRead(t *testing.T) {
 	})
 
 	Convey("Given a flat prior that later gains variance", t, func() {
-		config := datura.Acquire("rolling-zscore-flat-config", datura.APPJSON)
+		config := rollingZScoreConfig()
 		stage := NewRollingZScore(config)
 		var lastArtifact *datura.Artifact
+		timestamp := time.Unix(0, 1).UnixNano()
 
 		for range 6 {
-			artifact := datura.Acquire("rolling-zscore-flat-test", datura.APPJSON)
-			artifact.Merge("sample", 0.0)
+			artifact := rollingZScoreFrame(0.0, timestamp)
+			timestamp += int64(time.Second)
 
 			err := transport.NewFlipFlop(artifact, stage)
 
@@ -88,15 +106,14 @@ func TestRollingZScoreRead(t *testing.T) {
 			lastArtifact = artifact
 		}
 
-		breakout := datura.Acquire("rolling-zscore-breakout-test", datura.APPJSON)
-		breakout.Merge("sample", 0.05)
+		breakout := rollingZScoreFrame(0.05, timestamp)
+		timestamp += int64(time.Second)
 
 		err := transport.NewFlipFlop(breakout, stage)
 		So(err, ShouldBeNil)
 		So(datura.Peek[float64](breakout, "output", "value"), ShouldAlmostEqual, 1, 1e-9)
 
-		followThrough := datura.Acquire("rolling-zscore-follow-test", datura.APPJSON)
-		followThrough.Merge("sample", 0.06)
+		followThrough := rollingZScoreFrame(0.06, timestamp)
 
 		err = transport.NewFlipFlop(followThrough, stage)
 		breakout.Release()
@@ -122,14 +139,13 @@ func TestRollingZScoreRead(t *testing.T) {
 }
 
 func BenchmarkRollingZScoreRead(b *testing.B) {
-	config := datura.Acquire("rolling-zscore-bench", datura.APPJSON)
+	config := rollingZScoreConfig()
 	stage := NewRollingZScore(config)
 
 	b.ReportAllocs()
 
 	for b.Loop() {
-		artifact := datura.Acquire("rolling-zscore-bench-test", datura.APPJSON)
-		artifact.WithPayload(datura.Map[any]{"sample": 0.03}.Marshal())
+		artifact := rollingZScoreFrame(0.03, time.Unix(0, 1).UnixNano())
 		_ = transport.NewFlipFlop(artifact, stage)
 		artifact.Release()
 	}

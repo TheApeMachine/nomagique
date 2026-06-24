@@ -33,11 +33,223 @@ type contagionBranch struct {
 NewContagion creates an ensemble coupling stage wired from config attributes on the artifact.
 */
 func NewContagion(artifact *datura.Artifact) *Contagion {
-	artifact.Inspect("correlation", "contagion", "NewContagion()")
-
 	return &Contagion{
 		artifact: artifact,
 	}
+}
+
+func (contagion *Contagion) Read(p []byte) (int, error) {
+	if contagion == nil {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation, "unable to compute contagion",
+			ContagionError(ContagionErrorNilReceiver),
+		))
+	}
+
+	state := datura.Acquire("contagion-state", datura.APPJSON)
+	state.Inspect("correlation", "contagion", "Read()", "p")
+
+	if _, err := state.Write(contagion.artifact.DecryptPayload()); err != nil {
+		return 0, err
+	}
+
+	memberField := datura.Peek[string](contagion.artifact, "memberKey")
+
+	if memberField == "" {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"contagion: memberKey required",
+			nil,
+		))
+	}
+
+	sampleField := datura.Peek[string](contagion.artifact, "sampleKey")
+
+	if sampleField == "" {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"contagion: sampleKey required",
+			nil,
+		))
+	}
+
+	pairedField := datura.Peek[string](contagion.artifact, "pairedKey")
+
+	if pairedField == "" {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"contagion: pairedKey required",
+			nil,
+		))
+	}
+
+	wireRoot := datura.Peek[string](state, "root")
+
+	if wireRoot == "" {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"contagion: root required",
+			nil,
+		))
+	}
+
+	wireInputs := datura.Peek[[]string](state, "inputs")
+
+	if len(wireInputs) == 0 {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"contagion: inputs required",
+			nil,
+		))
+	}
+
+	var memberValue float64
+	memberFound := false
+
+	for wireIndex, wireInput := range wireInputs {
+		if wireInput != memberField {
+			continue
+		}
+
+		if wireRoot == "features" {
+			features := datura.Peek[[]float64](state, wireRoot)
+
+			if wireIndex >= len(features) {
+				return 0, errnie.Error(errnie.Err(
+					errnie.Validation,
+					"contagion: feature index out of range",
+					nil,
+				))
+			}
+
+			memberValue = features[wireIndex]
+		}
+
+		if wireRoot != "features" {
+			memberValue = datura.Peek[float64](state, wireRoot, wireInput)
+		}
+
+		memberFound = true
+	}
+
+	if !memberFound {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"contagion: memberKey not in inputs",
+			nil,
+		))
+	}
+
+	var levelValue float64
+	levelFound := false
+
+	for wireIndex, wireInput := range wireInputs {
+		if wireInput != pairedField {
+			continue
+		}
+
+		if wireRoot == "features" {
+			features := datura.Peek[[]float64](state, wireRoot)
+
+			if wireIndex >= len(features) {
+				return 0, errnie.Error(errnie.Err(
+					errnie.Validation,
+					"contagion: feature index out of range",
+					nil,
+				))
+			}
+
+			levelValue = features[wireIndex]
+		}
+
+		if wireRoot != "features" {
+			levelValue = datura.Peek[float64](state, wireRoot, wireInput)
+		}
+
+		levelFound = true
+	}
+
+	if !levelFound {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"contagion: pairedKey not in inputs",
+			nil,
+		))
+	}
+
+	var epochValue float64
+	epochFound := false
+
+	for wireIndex, wireInput := range wireInputs {
+		if wireInput != sampleField {
+			continue
+		}
+
+		if wireRoot == "features" {
+			features := datura.Peek[[]float64](state, wireRoot)
+
+			if wireIndex >= len(features) {
+				return 0, errnie.Error(errnie.Err(
+					errnie.Validation,
+					"contagion: feature index out of range",
+					nil,
+				))
+			}
+
+			epochValue = features[wireIndex]
+		}
+
+		if wireRoot != "features" {
+			epochValue = datura.Peek[float64](state, wireRoot, wireInput)
+		}
+
+		epochFound = true
+	}
+
+	if !epochFound {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"contagion: sampleKey not in inputs",
+			nil,
+		))
+	}
+
+	member := int(memberValue)
+	level := levelValue
+
+	if member > 0 && level > 0 {
+		epoch := int64(epochValue)
+		contagion.recordMember(member)
+		contagion.ingest(
+			contagion.memberCapacityFromArtifact(),
+			epoch,
+			level,
+			contagion.memberSegment(member),
+		)
+	}
+
+	snapshots := contagion.snapshots()
+
+	if len(snapshots) == 0 {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation, "unable to compute contagion",
+			ContagionError(ContagionErrorInsufficientSnapshots),
+		))
+	}
+
+	output, readings, err := contagion.observeSnapshots(snapshots)
+
+	if err != nil {
+		return 0, err
+	}
+
+	state.MergeOutput("value", output)
+	state.MergeOutput("tier.fast", readings.fast)
+	state.MergeOutput("tier.medium", readings.medium)
+	state.MergeOutput("tier.slow", readings.slow)
+	state.Poke("output", "root")
+	state.Poke([]string{"value", "tier.fast", "tier.medium", "tier.slow"}, "inputs")
+	return state.Read(p)
 }
 
 func (contagion *Contagion) Write(p []byte) (int, error) {
@@ -77,83 +289,6 @@ func (contagion *Contagion) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-func (contagion *Contagion) Read(p []byte) (int, error) {
-	if contagion == nil {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation, "unable to compute contagion",
-			ContagionError(ContagionErrorNilReceiver),
-		))
-	}
-
-	state := datura.Acquire("contagion-state", datura.APPJSON)
-	state.Inspect("correlation", "contagion", "Read()", "p")
-
-	if _, err := state.Write(contagion.artifact.DecryptPayload()); err != nil {
-		return 0, err
-	}
-
-	memberField := statistic.ConfigString(contagion.artifact, state, "memberKey")
-
-	if memberField == "" {
-		memberField = "member"
-	}
-
-	sampleField := statistic.ConfigString(contagion.artifact, state, "sampleKey")
-
-	if sampleField == "" {
-		sampleField = "sample"
-	}
-
-	pairedField := statistic.ConfigString(contagion.artifact, state, "pairedKey")
-
-	if pairedField == "" {
-		pairedField = "paired"
-	}
-
-	memberValue, memberErr := statistic.WireScalar(contagion.artifact, state, memberField)
-	levelValue, levelErr := statistic.WireScalar(contagion.artifact, state, pairedField)
-	epochValue, epochErr := statistic.WireScalar(contagion.artifact, state, sampleField)
-
-	if memberErr == nil && levelErr == nil && epochErr == nil {
-		member := int(memberValue)
-		level := levelValue
-
-		if member > 0 && level > 0 {
-			epoch := int64(epochValue)
-			contagion.recordMember(member)
-			contagion.ingest(
-				contagion.memberCapacityFromArtifact(),
-				epoch,
-				level,
-				contagion.memberSegment(member),
-			)
-		}
-	}
-
-	snapshots := contagion.snapshots()
-
-	if len(snapshots) == 0 {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation, "unable to compute contagion",
-			ContagionError(ContagionErrorInsufficientSnapshots),
-		))
-	}
-
-	output, readings, err := contagion.observeSnapshots(snapshots)
-
-	if err != nil {
-		return 0, err
-	}
-
-	state.MergeOutput("value", output)
-	state.MergeOutput("tier.fast", readings.fast)
-	state.MergeOutput("tier.medium", readings.medium)
-	state.MergeOutput("tier.slow", readings.slow)
-	state.Merge("root", "output")
-	state.Merge("inputs", []string{"value", "tier.fast", "tier.medium", "tier.slow"})
-	return state.Read(p)
-}
-
 func (contagion *Contagion) Close() error {
 	return nil
 }
@@ -188,7 +323,7 @@ func (contagion *Contagion) tiersFromArtifact() tierWindows {
 	}
 
 	maxLen := contagion.maxMemberRetLength()
-	fast, slow, err := statistic.RollingWindows(make([]float64, maxLen), tiers.fast, tiers.slow)
+	fast, slow, err := statistic.NewRollingWindow(tiers.fast, tiers.slow).Resolve(make([]float64, maxLen))
 
 	if err != nil {
 		if maxLen <= 0 {
@@ -267,7 +402,8 @@ func (contagion *Contagion) memberCapFromArtifact() int {
 }
 
 func (contagion *Contagion) adaptiveSigmaFromArtifact() (float64, error) {
-	if statistic.KeyPresent(contagion.artifact, "config", "adaptiveSigma") {
+	if datura.Peek[string](contagion.artifact, "config", "adaptiveSigma") != "" ||
+		datura.Peek[float64](contagion.artifact, "config", "adaptiveSigma") != 0 {
 		return datura.Peek[float64](contagion.artifact, "config", "adaptiveSigma"), nil
 	}
 

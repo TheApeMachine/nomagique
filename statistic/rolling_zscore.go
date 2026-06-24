@@ -2,6 +2,7 @@ package statistic
 
 import (
 	"math"
+	"time"
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
@@ -10,11 +11,13 @@ import (
 
 /*
 RollingZScore normalizes the current sample against its retained series on the stage instance.
-The constructor artifact holds config; Write buffers inbound wire on its payload.
 */
 type RollingZScore struct {
 	artifact *datura.Artifact
-	samples  map[string][]Observation
+	samples  map[string][]struct {
+		value float64
+		at    time.Time
+	}
 }
 
 /*
@@ -23,13 +26,11 @@ NewRollingZScore returns a rolling z-score stage wired from config attributes on
 func NewRollingZScore(artifact *datura.Artifact) *RollingZScore {
 	return &RollingZScore{
 		artifact: artifact,
-		samples:  map[string][]Observation{},
+		samples: map[string][]struct {
+			value float64
+			at    time.Time
+		}{},
 	}
-}
-
-func (rollingZScore *RollingZScore) Write(payload []byte) (int, error) {
-	rollingZScore.artifact.WithPayload(payload)
-	return len(payload), nil
 }
 
 func (rollingZScore *RollingZScore) Read(payload []byte) (int, error) {
@@ -39,39 +40,93 @@ func (rollingZScore *RollingZScore) Read(payload []byte) (int, error) {
 		return 0, err
 	}
 
-	state.Inspect("statistic", "rolling-zscore", "Read()", "p")
+	rootKey := datura.Peek[string](state, "root")
 
-	root := datura.Peek[string](state, "root")
+	if rootKey == "" {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"rolling-zscore: root required",
+			nil,
+		))
+	}
+
 	inputs := datura.Peek[[]string](state, "inputs")
-	stageKey := rollingZScore.stageKey()
-	outputKey := "value"
+
+	if len(inputs) == 0 {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"rolling-zscore: inputs required",
+			nil,
+		))
+	}
+
+	stageKey := datura.Peek[string](rollingZScore.artifact, "stage")
+	configInput := datura.Peek[string](rollingZScore.artifact, "input")
+	outputKey := datura.Peek[string](rollingZScore.artifact, "outputKey")
 
 	if stageKey != "" {
-		configuredKey := datura.Peek[string](rollingZScore.artifact, stageKey, "outputKey")
+		outputKey = datura.Peek[string](rollingZScore.artifact, stageKey, "outputKey")
 
-		if configuredKey != "" {
-			outputKey = configuredKey
+		if rootKey == "output" {
+			configInput = outputKey
+		}
+
+		if rootKey == "features" {
+			configInput = datura.Peek[string](rollingZScore.artifact, stageKey, "input")
 		}
 	}
 
-	inputKey := outputKey
-
-	if len(inputs) > 0 {
-		inputKey = inputs[0]
+	if configInput == "" {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"rolling-zscore: input required",
+			nil,
+		))
 	}
 
-	if len(inputs) == 0 && KeyPresent(state, "sample") {
-		inputKey = "sample"
+	if outputKey == "" {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"rolling-zscore: outputKey required",
+			nil,
+		))
 	}
 
 	var sample float64
+	found := false
 
-	if root != "" {
-		sample = datura.Peek[float64](state, root, inputKey)
+	for index, input := range inputs {
+		if input != configInput {
+			continue
+		}
+
+		if rootKey == "features" {
+			features := datura.Peek[[]float64](state, rootKey)
+
+			if index >= len(features) {
+				return 0, errnie.Error(errnie.Err(
+					errnie.Validation,
+					"rolling-zscore: feature index out of range",
+					nil,
+				))
+			}
+
+			sample = features[index]
+		}
+
+		if rootKey != "features" {
+			sample = datura.Peek[float64](state, rootKey, input)
+		}
+
+		found = true
 	}
 
-	if root == "" {
-		sample = datura.Peek[float64](state, inputKey)
+	if !found {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"rolling-zscore: input not in inputs",
+			nil,
+		))
 	}
 
 	if math.IsNaN(sample) || math.IsInf(sample, 0) {
@@ -82,27 +137,58 @@ func (rollingZScore *RollingZScore) Read(payload []byte) (int, error) {
 		))
 	}
 
-	longHint := 0
+	seriesKey := datura.Peek[string](rollingZScore.artifact, "seriesKey")
 
-	if stageKey != "" {
-		longHint = int(datura.Peek[float64](rollingZScore.artifact, stageKey, "longWindow"))
+	if seriesKey == "" && stageKey != "" {
+		seriesKey = stageKey
+		scope, _ := state.Scope()
+
+		if scope != "" {
+			seriesKey = stageKey + "/" + scope
+		}
+	}
+
+	if seriesKey == "" {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"rolling-zscore: seriesKey required",
+			nil,
+		))
+	}
+
+	timestamp := state.Timestamp()
+
+	if timestamp <= 0 {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"rolling-zscore: event timestamp required",
+			nil,
+		))
+	}
+
+	observed := time.Unix(0, timestamp)
+	history := rollingZScore.samples[seriesKey]
+
+	if len(history) > 0 && observed.Before(history[len(history)-1].at) {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"rolling-zscore: event timestamp must not regress",
+			nil,
+		))
+	}
+
+	history = append(history, struct {
+		value float64
+		at    time.Time
+	}{value: sample, at: observed})
+
+	prior := make([]float64, len(history)-1)
+
+	for index, point := range history[:len(history)-1] {
+		prior[index] = point.value
 	}
 
 	var score float64
-	seriesKey := SeriesKey(rollingZScore.artifact, state, stageKey)
-	observed, err := EventTime(rollingZScore.artifact, state)
-
-	if err != nil {
-		return 0, err
-	}
-
-	history, err := AppendObservation(rollingZScore.samples[seriesKey], sample, observed)
-
-	if err != nil {
-		return 0, err
-	}
-
-	prior := ObservationValues(history[:len(history)-1])
 
 	if len(prior) == 0 {
 		score = 0
@@ -144,17 +230,7 @@ func (rollingZScore *RollingZScore) Read(payload []byte) (int, error) {
 		}
 	}
 
-	_, longWindow, err := RollingObservationWindows(history, 0, longHint)
-
-	if err != nil {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"rolling-zscore: unable to resolve long window",
-			err,
-		))
-	}
-
-	rollingZScore.samples[seriesKey] = TrimObservations(history, longWindow)
+	rollingZScore.samples[seriesKey] = history
 	state.MergeOutput(outputKey, score)
 	state.Poke("output", "root")
 	state.Poke([]string{outputKey}, "inputs")
@@ -162,25 +238,9 @@ func (rollingZScore *RollingZScore) Read(payload []byte) (int, error) {
 	return state.Read(payload)
 }
 
-func (rollingZScore *RollingZScore) stageKey() string {
-	stageKey := datura.Peek[string](rollingZScore.artifact, "stage")
-
-	if stageKey != "" {
-		return stageKey
-	}
-
-	order := datura.Peek[[]string](rollingZScore.artifact, "order")
-	stageIndex := int(datura.Peek[float64](rollingZScore.artifact, "precursor", "stageIndex"))
-
-	if stageIndex <= 0 {
-		stageIndex = int(datura.Peek[float64](rollingZScore.artifact, "stageIndex"))
-	}
-
-	if stageIndex >= 0 && len(order) > stageIndex {
-		return order[stageIndex]
-	}
-
-	return ""
+func (rollingZScore *RollingZScore) Write(payload []byte) (int, error) {
+	rollingZScore.artifact.WithPayload(payload)
+	return len(payload), nil
 }
 
 func (rollingZScore *RollingZScore) Close() error {

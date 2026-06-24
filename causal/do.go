@@ -19,25 +19,19 @@ type Do struct {
 NewDo returns an interventional expectation stage wired from config attributes on the artifact.
 */
 func NewDo(artifact *datura.Artifact) *Do {
-	artifact.Inspect("causal", "do", "NewDo()")
-
 	return &Do{
 		artifact: artifact,
 	}
 }
 
-func (doStage *Do) Write(p []byte) (int, error) {
-	doStage.artifact.WithPayload(p)
-	return len(p), nil
-}
-
 func (doStage *Do) Read(p []byte) (int, error) {
 	state := datura.Acquire("do-state", datura.APPJSON)
-	state.Inspect("causal", "do", "Read()", "p")
 
 	if _, err := state.Write(doStage.artifact.DecryptPayload()); err != nil {
 		return 0, err
 	}
+
+	state.Inspect("causal", "do", "Read()", "p")
 
 	rows, ok := tableRows(state)
 
@@ -80,9 +74,14 @@ func (doStage *Do) Read(p []byte) (int, error) {
 	}
 
 	state.MergeOutput("value", expectation)
-	state.Merge("root", "output")
-	state.Merge("inputs", []string{"value"})
+	state.Poke("output", "root")
+	state.Poke([]string{"value"}, "inputs")
 	return state.Read(p)
+}
+
+func (doStage *Do) Write(p []byte) (int, error) {
+	doStage.artifact.WithPayload(p)
+	return len(p), nil
 }
 
 func (doStage *Do) Close() error {

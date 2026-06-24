@@ -24,11 +24,6 @@ func NewSpreadSample(config *datura.Artifact) *SpreadSample {
 	}
 }
 
-func (spreadSample *SpreadSample) Write(p []byte) (int, error) {
-	spreadSample.config.WithPayload(p)
-	return len(p), nil
-}
-
 func (spreadSample *SpreadSample) Read(p []byte) (int, error) {
 	state := datura.Acquire("spread-sample-state", datura.APPJSON)
 
@@ -94,6 +89,11 @@ func (spreadSample *SpreadSample) Read(p []byte) (int, error) {
 	state.Poke([]string{outputKey}, "inputs")
 
 	return state.Read(p)
+}
+
+func (spreadSample *SpreadSample) Write(p []byte) (int, error) {
+	spreadSample.config.WithPayload(p)
+	return len(p), nil
 }
 
 func (spreadSample *SpreadSample) Close() error {

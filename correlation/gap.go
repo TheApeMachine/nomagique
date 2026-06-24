@@ -26,25 +26,19 @@ type Gap struct {
 NewGap creates a dual-correlation gap stage wired from config attributes on the artifact.
 */
 func NewGap(artifact *datura.Artifact) *Gap {
-	artifact.Inspect("correlation", "gap", "NewGap()")
-
 	return &Gap{
 		artifact: artifact,
 	}
 }
 
-func (gap *Gap) Write(p []byte) (int, error) {
-	gap.artifact.WithPayload(p)
-	return len(p), nil
-}
-
 func (gap *Gap) Read(p []byte) (int, error) {
 	state := datura.Acquire("gap-state", datura.APPJSON)
-	state.Inspect("correlation", "gap", "Read()", "p")
 
 	if _, err := state.Write(gap.artifact.DecryptPayload()); err != nil {
 		return 0, err
 	}
+
+	state.Inspect("correlation", "gap", "Read()", "p")
 
 	batch := gapBatch(state)
 
@@ -87,9 +81,14 @@ func (gap *Gap) Read(p []byte) (int, error) {
 	state.MergeOutput("pearson", pearsonValue)
 	state.MergeOutput("hayashi", hayashiValue)
 	state.MergeOutput("gap", divergence)
-	state.Merge("root", "output")
-	state.Merge("inputs", []string{"value", "pearson", "hayashi", "gap"})
+	state.Poke("output", "root")
+	state.Poke([]string{"value", "pearson", "hayashi", "gap"}, "inputs")
 	return state.Read(p)
+}
+
+func (gap *Gap) Write(p []byte) (int, error) {
+	gap.artifact.WithPayload(p)
+	return len(p), nil
 }
 
 func (gap *Gap) Close() error {

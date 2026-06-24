@@ -245,8 +245,8 @@ func (gate *GateQuantile) Read(payload []byte) (int, error) {
 	gateValue := gate.value(percentile)
 
 	state.MergeOutput("value", gateValue)
-	state.Merge("root", "output")
-	state.Merge("inputs", []string{"value"})
+	state.Poke("output", "root")
+	state.Poke([]string{"value"}, "inputs")
 
 	return state.Read(payload)
 }

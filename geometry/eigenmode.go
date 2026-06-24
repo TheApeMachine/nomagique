@@ -150,8 +150,6 @@ func NewModePartition(
 	threshold float64,
 	origins, energies, coupling []float64,
 ) *ModePartition {
-	artifact.Inspect("geometry", "mode-partition", "NewModePartition()")
-
 	return &ModePartition{
 		artifact:  artifact,
 		threshold: threshold,
@@ -161,18 +159,14 @@ func NewModePartition(
 	}
 }
 
-func (partition *ModePartition) Write(payload []byte) (int, error) {
-	partition.artifact.WithPayload(payload)
-	return len(payload), nil
-}
-
 func (partition *ModePartition) Read(payload []byte) (int, error) {
 	state := datura.Acquire("mode-partition-state", datura.APPJSON)
-	state.Inspect("geometry", "mode-partition", "Read()", "p")
 
 	if _, err := state.Write(partition.artifact.DecryptPayload()); err != nil {
 		return 0, err
 	}
+
+	state.Inspect("geometry", "mode-partition", "Read()", "p")
 
 	participants, couplingFn, ok := partition.participantsAndCoupling()
 
@@ -204,9 +198,14 @@ func (partition *ModePartition) Read(payload []byte) (int, error) {
 	partition.output = modes[dominant].Energy()
 	partition.artifact.Poke(partition.output, "output", "value")
 	state.MergeOutput("value", partition.output)
-	state.Merge("root", "output")
-	state.Merge("inputs", []string{"value"})
+	state.Poke("output", "root")
+	state.Poke([]string{"value"}, "inputs")
 	return state.Read(payload)
+}
+
+func (partition *ModePartition) Write(payload []byte) (int, error) {
+	partition.artifact.WithPayload(payload)
+	return len(payload), nil
 }
 
 func (partition *ModePartition) Close() error {

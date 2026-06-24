@@ -2,6 +2,7 @@ package statistic
 
 import (
 	"testing"
+	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
@@ -10,22 +11,21 @@ import (
 
 func precursorConfig() *datura.Artifact {
 	return datura.Acquire("precursor-config", datura.APPJSON).
-		Poke([]string{"rvol", "precursor"}, "order").
-		Poke(1.0, "stageIndex").
+		Poke("precursor", "stage").
 		Poke(map[string]any{
 			"input":      "last",
 			"returnLag":  1.0,
 			"longWindow": 5.0,
 			"outputKey":  "precursor",
-			"stageIndex": 1.0,
 		}, "precursor")
 }
 
 func precursorState(last float64) *datura.Artifact {
 	artifact := datura.Acquire("precursor-state", datura.APPJSON)
-	artifact.Merge("root", "features")
-	artifact.Merge("inputs", []string{"volume", "last"})
+	artifact.Poke("features", "root")
+	artifact.Poke([]string{"volume", "last"}, "inputs")
 	artifact.Merge("features", []float64{100, last})
+	artifact.SetTimestamp(time.Unix(0, 1).UnixNano())
 
 	return artifact
 }
@@ -38,6 +38,7 @@ func TestPriceRingRead(t *testing.T) {
 
 		for _, last := range []float64{100, 101, 102} {
 			artifact := precursorState(last)
+			artifact.SetTimestamp(artifact.Timestamp() + int64(time.Second))
 			err := transport.NewFlipFlop(artifact, stage)
 			So(err, ShouldBeNil)
 			lastArtifact = artifact

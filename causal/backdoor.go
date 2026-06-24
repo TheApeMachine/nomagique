@@ -19,25 +19,19 @@ type Backdoor struct {
 NewBackdoor returns a backdoor stage wired from config attributes on the artifact.
 */
 func NewBackdoor(artifact *datura.Artifact) *Backdoor {
-	artifact.Inspect("causal", "backdoor", "NewBackdoor()")
-
 	return &Backdoor{
 		artifact: artifact,
 	}
 }
 
-func (backdoor *Backdoor) Write(p []byte) (int, error) {
-	backdoor.artifact.WithPayload(p)
-	return len(p), nil
-}
-
 func (backdoor *Backdoor) Read(p []byte) (int, error) {
 	state := datura.Acquire("backdoor-state", datura.APPJSON)
-	state.Inspect("causal", "backdoor", "Read()", "p")
 
 	if _, err := state.Write(backdoor.artifact.DecryptPayload()); err != nil {
 		return 0, err
 	}
+
+	state.Inspect("causal", "backdoor", "Read()", "p")
 
 	rows, ok := tableRows(state)
 
@@ -102,9 +96,14 @@ func (backdoor *Backdoor) Read(p []byte) (int, error) {
 	state.MergeOutput("association", association)
 	state.MergeOutput("effect", effect)
 	state.MergeOutput("condition", condition)
-	state.Merge("root", "output")
-	state.Merge("inputs", []string{"value", "association", "effect", "condition"})
+	state.Poke("output", "root")
+	state.Poke([]string{"value", "association", "effect", "condition"}, "inputs")
 	return state.Read(p)
+}
+
+func (backdoor *Backdoor) Write(p []byte) (int, error) {
+	backdoor.artifact.WithPayload(p)
+	return len(p), nil
 }
 
 func (backdoor *Backdoor) Close() error {

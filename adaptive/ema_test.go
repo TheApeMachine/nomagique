@@ -10,16 +10,17 @@ import (
 	"github.com/theapemachine/datura/transport"
 )
 
-var emaInput = datura.Acquire("test", datura.APPJSON).Poke(1, "sample")
-
-var emaConfig = datura.Acquire("ema-config", datura.APPJSON).
-	Poke(2, "period").
-	Poke(2, "smoothing")
+func emaConfigArtifact() *datura.Artifact {
+	return datura.Acquire("ema-config", datura.APPJSON).
+		Poke("sample", "input").
+		Poke(2, "period").
+		Poke(2, "smoothing")
+}
 
 func TestEMARead(t *testing.T) {
 	Convey("Given an EMA on the first sample", t, func() {
-		ema := NewEMA(emaConfig)
-		_, _ = io.Copy(ema, emaInput)
+		ema := NewEMA(emaConfigArtifact())
+		_, _ = io.Copy(ema, ScalarWire(datura.Acquire("test", datura.APPJSON), "sample", 1))
 
 		frame := make([]byte, 65536)
 		_, err := ema.Read(frame)
@@ -28,13 +29,10 @@ func TestEMARead(t *testing.T) {
 	})
 
 	Convey("Given a second EMA sample after bootstrap", t, func() {
-		ema := NewEMA(datura.Acquire("ema-config", datura.APPJSON).
-			Poke(2, "period").
-			Poke(2, "smoothing"),
-		)
-		_, _ = io.Copy(ema, datura.Acquire("test", datura.APPJSON).Poke(1, "sample"))
+		ema := NewEMA(emaConfigArtifact())
+		_, _ = io.Copy(ema, ScalarWire(datura.Acquire("test", datura.APPJSON), "sample", 1))
 		_, _ = ema.Read(make([]byte, 65536))
-		artifact := datura.Acquire("test", datura.APPJSON).Poke(2, "sample")
+		artifact := ScalarWire(datura.Acquire("test", datura.APPJSON), "sample", 2)
 		_, _ = io.Copy(ema, artifact)
 
 		frame := make([]byte, 65536)
@@ -50,13 +48,10 @@ func TestEMARead(t *testing.T) {
 	})
 
 	Convey("Given a repeated sample after bootstrap", t, func() {
-		ema := NewEMA(datura.Acquire("ema-config", datura.APPJSON).
-			Poke(2, "period").
-			Poke(2, "smoothing"),
-		)
-		_, _ = io.Copy(ema, datura.Acquire("test", datura.APPJSON).Poke(1, "sample"))
+		ema := NewEMA(emaConfigArtifact())
+		_, _ = io.Copy(ema, ScalarWire(datura.Acquire("test", datura.APPJSON), "sample", 1))
 		_, _ = ema.Read(make([]byte, 65536))
-		artifact := datura.Acquire("test", datura.APPJSON).Poke(1, "sample")
+		artifact := ScalarWire(datura.Acquire("test", datura.APPJSON), "sample", 1)
 		_, _ = io.Copy(ema, artifact)
 
 		frame := make([]byte, 65536)
@@ -67,11 +62,8 @@ func TestEMARead(t *testing.T) {
 	})
 
 	Convey("Given a non-finite sample", t, func() {
-		ema := NewEMA(datura.Acquire("ema-config", datura.APPJSON).
-			Poke(2, "period").
-			Poke(2, "smoothing"),
-		)
-		invalid := datura.Acquire("test", datura.APPJSON).Poke(math.NaN(), "sample")
+		ema := NewEMA(emaConfigArtifact())
+		invalid := ScalarWire(datura.Acquire("test", datura.APPJSON), "sample", math.NaN())
 		_, _ = io.Copy(ema, invalid)
 
 		_, err := ema.Read(make([]byte, 65536))
@@ -82,10 +74,10 @@ func TestEMARead(t *testing.T) {
 
 func TestEMAWrite(t *testing.T) {
 	Convey("Given an EMA", t, func() {
-		ema := NewEMA(emaConfig)
+		ema := NewEMA(emaConfigArtifact())
 
 		Convey("When Write is called", func() {
-			_, err := io.Copy(ema, emaInput)
+			_, err := io.Copy(ema, ScalarWire(datura.Acquire("test", datura.APPJSON), "sample", 1))
 			So(err, ShouldBeIn, nil, io.EOF)
 		})
 	})
@@ -93,13 +85,13 @@ func TestEMAWrite(t *testing.T) {
 
 func TestEMAFlipFlop(t *testing.T) {
 	Convey("Given an EMA fed through FlipFlop", t, func() {
-		ema := NewEMA(emaConfig)
-		bootstrap := datura.Acquire("test", datura.APPJSON).Poke(1, "sample")
+		ema := NewEMA(emaConfigArtifact())
+		bootstrap := ScalarWire(datura.Acquire("test", datura.APPJSON), "sample", 1)
 
-		So(transport.NewFlipFlop(bootstrap, ema), ShouldNotBeNil)
+		So(transport.NewFlipFlop(bootstrap, ema), ShouldBeIn, nil, io.EOF)
 		bootstrap.Release()
 
-		artifact := datura.Acquire("test", datura.APPJSON).Poke(2, "sample")
+		artifact := ScalarWire(datura.Acquire("test", datura.APPJSON), "sample", 2)
 
 		err := transport.NewFlipFlop(artifact, ema)
 
@@ -117,16 +109,13 @@ func TestEMAFlipFlop(t *testing.T) {
 }
 
 func BenchmarkEMARead(b *testing.B) {
-	ema := NewEMA(datura.Acquire("ema-config", datura.APPJSON).
-		Poke(2, "period").
-		Poke(2, "smoothing"),
-	)
+	ema := NewEMA(emaConfigArtifact())
 	buffer := make([]byte, 65536)
 
 	b.ReportAllocs()
 
-	for range b.N {
-		inbound := datura.Acquire("bench-inbound", datura.APPJSON).Poke(1, "sample")
+	for b.Loop() {
+		inbound := ScalarWire(datura.Acquire("bench-inbound", datura.APPJSON), "sample", 1)
 
 		if _, err := io.Copy(ema, inbound); err != nil {
 			b.Fatal(err)

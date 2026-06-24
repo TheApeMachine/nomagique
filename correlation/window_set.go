@@ -27,25 +27,9 @@ type windowBranch struct {
 NewWindowSet creates a bounded interval accumulator wired from config attributes on the artifact.
 */
 func NewWindowSet(artifact *datura.Artifact) *WindowSet {
-	artifact.Inspect("correlation", "window-set", "NewWindowSet()")
-
 	return &WindowSet{
 		artifact: artifact,
 	}
-}
-
-func (windowSet *WindowSet) Write(p []byte) (int, error) {
-	reset := inboundReset(p)
-	preserved := windowSet.preserveBranch()
-
-	windowSet.artifact.WithPayload(p)
-
-	if reset {
-		return len(p), nil
-	}
-
-	windowSet.restoreBranch(preserved)
-	return len(p), nil
 }
 
 func (windowSet *WindowSet) Read(p []byte) (int, error) {
@@ -85,9 +69,23 @@ func (windowSet *WindowSet) Read(p []byte) (int, error) {
 	}
 
 	state.MergeOutput("value", magnitude)
-	state.Merge("root", "output")
-	state.Merge("inputs", []string{"value"})
+	state.Poke("output", "root")
+	state.Poke([]string{"value"}, "inputs")
 	return state.Read(p)
+}
+
+func (windowSet *WindowSet) Write(p []byte) (int, error) {
+	reset := inboundReset(p)
+	preserved := windowSet.preserveBranch()
+
+	windowSet.artifact.WithPayload(p)
+
+	if reset {
+		return len(p), nil
+	}
+
+	windowSet.restoreBranch(preserved)
+	return len(p), nil
 }
 
 func (windowSet *WindowSet) Close() error {

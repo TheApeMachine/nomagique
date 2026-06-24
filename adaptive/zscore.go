@@ -25,21 +25,13 @@ type ZScore struct {
 NewZScore returns a z-score stage wired from config attributes on the artifact.
 */
 func NewZScore(artifact *datura.Artifact) *ZScore {
-	artifact.Inspect("adaptive", "zscore", "NewZScore()")
-
 	return &ZScore{
 		artifact: artifact,
 	}
 }
 
-func (surprise *ZScore) Write(p []byte) (int, error) {
-	surprise.artifact.WithPayload(p)
-	return len(p), nil
-}
-
 func (surprise *ZScore) Read(payload []byte) (int, error) {
 	state := datura.Acquire("zscore-state", datura.APPJSON)
-	state.Inspect("adaptive", "zscore", "Read()", "p")
 
 	if _, err := state.Write(surprise.artifact.DecryptPayload()); err != nil {
 		return 0, errnie.Error(errnie.Err(
@@ -49,18 +41,47 @@ func (surprise *ZScore) Read(payload []byte) (int, error) {
 		))
 	}
 
-	root := datura.Peek[string](state, "root")
+	state.Inspect("adaptive", "zscore", "Read()", "p")
+
+	rootKey := datura.Peek[string](state, "root")
+
+	if rootKey == "" {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"zscore: root required",
+			nil,
+		))
+	}
+
 	inputs := datura.Peek[[]string](state, "inputs")
 
 	if len(inputs) == 0 {
-		inputs = []string{"sample"}
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"zscore: inputs required",
+			nil,
+		))
 	}
 
-	for _, input := range inputs {
-		sample := datura.Peek[float64](state, root, input)
+	for index, input := range inputs {
+		var sample float64
 
-		if root == "" {
-			sample = datura.Peek[float64](state, input)
+		if rootKey == "features" {
+			features := datura.Peek[[]float64](state, rootKey)
+
+			if index >= len(features) {
+				return 0, errnie.Error(errnie.Err(
+					errnie.Validation,
+					"zscore: feature index out of range",
+					nil,
+				))
+			}
+
+			sample = features[index]
+		}
+
+		if rootKey != "features" {
+			sample = datura.Peek[float64](state, rootKey, input)
 		}
 
 		if math.IsNaN(sample) || math.IsInf(sample, 0) {
@@ -120,12 +141,9 @@ func (surprise *ZScore) Read(payload []byte) (int, error) {
 			surprise.min = sample
 			surprise.max = sample
 			surprise.bootstrapped = true
+			state.MergeOutput("value", 0)
 
-			return 0, errnie.Error(errnie.Err(
-				errnie.Validation,
-				"zscore: insufficient samples",
-				nil,
-			))
+			break
 		}
 
 		surprise.min = math.Min(surprise.min, sample)
@@ -177,12 +195,18 @@ func (surprise *ZScore) Read(payload []byte) (int, error) {
 			))
 		}
 
-		state.Poke("output", "root")
-		state.Poke([]string{"value"}, "inputs")
 		state.MergeOutput("value", value)
 	}
 
+	state.Poke("output", "root")
+	state.Poke([]string{"value"}, "inputs")
+
 	return state.Read(payload)
+}
+
+func (surprise *ZScore) Write(p []byte) (int, error) {
+	surprise.artifact.WithPayload(p)
+	return len(p), nil
 }
 
 func (surprise *ZScore) Close() error {

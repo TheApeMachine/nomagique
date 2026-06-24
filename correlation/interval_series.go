@@ -28,34 +28,19 @@ type intervalBranch struct {
 NewIntervalSeries creates a bounded interval accumulator wired from config attributes on the artifact.
 */
 func NewIntervalSeries(artifact *datura.Artifact) *IntervalSeries {
-	artifact.Inspect("correlation", "interval-series", "NewIntervalSeries()")
-
 	return &IntervalSeries{
 		artifact: artifact,
 	}
 }
 
-func (series *IntervalSeries) Write(p []byte) (int, error) {
-	reset := inboundReset(p)
-	preserved := series.preserveBranch()
-
-	series.artifact.WithPayload(p)
-
-	if reset {
-		return len(p), nil
-	}
-
-	series.restoreBranch(preserved)
-	return len(p), nil
-}
-
 func (series *IntervalSeries) Read(p []byte) (int, error) {
 	state := datura.Acquire("interval-series-state", datura.APPJSON)
-	state.Inspect("correlation", "interval-series", "Read()", "p")
 
 	if _, err := state.Write(series.artifact.DecryptPayload()); err != nil {
 		return 0, err
 	}
+
+	state.Inspect("correlation", "interval-series", "Read()", "p")
 
 	level := datura.Peek[float64](state, "paired")
 
@@ -79,9 +64,23 @@ func (series *IntervalSeries) Read(p []byte) (int, error) {
 	}
 
 	state.MergeOutput("value", magnitude)
-	state.Merge("root", "output")
-	state.Merge("inputs", []string{"value"})
+	state.Poke("output", "root")
+	state.Poke([]string{"value"}, "inputs")
 	return state.Read(p)
+}
+
+func (series *IntervalSeries) Write(p []byte) (int, error) {
+	reset := inboundReset(p)
+	preserved := series.preserveBranch()
+
+	series.artifact.WithPayload(p)
+
+	if reset {
+		return len(p), nil
+	}
+
+	series.restoreBranch(preserved)
+	return len(p), nil
 }
 
 func (series *IntervalSeries) Close() error {

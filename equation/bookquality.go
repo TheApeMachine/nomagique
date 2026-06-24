@@ -28,8 +28,6 @@ func NewBookQuality(artifact *datura.Artifact) io.ReadWriteCloser {
 		artifact = datura.Acquire("book-quality", datura.APPJSON)
 	}
 
-	artifact.Inspect("equation", "book-quality", "NewBookQuality()")
-
 	if len(datura.Peek[[]string](artifact, "inputs")) == 0 {
 		artifact.Poke(BookQualityInputKeys, "inputs")
 	}

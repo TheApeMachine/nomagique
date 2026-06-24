@@ -26,27 +26,19 @@ type NodeRing struct {
 NewNodeRing returns a bounded multi-node history accumulator wired from config attributes.
 */
 func NewNodeRing(artifact *datura.Artifact) *NodeRing {
-	artifact.Inspect("causal", "node-ring", "NewNodeRing()")
-
 	return &NodeRing{
 		artifact: artifact,
 	}
 }
 
-func (nodeRing *NodeRing) Write(p []byte) (int, error) {
-	preserved := nodeRing.preserveStreams()
-	nodeRing.artifact.WithPayload(p)
-	nodeRing.restoreStreams(preserved)
-	return len(p), nil
-}
-
 func (nodeRing *NodeRing) Read(p []byte) (int, error) {
 	state := datura.Acquire("node-ring-state", datura.APPJSON)
-	state.Inspect("causal", "node-ring", "Read()", "p")
 
 	if _, err := state.Write(nodeRing.artifact.DecryptPayload()); err != nil {
 		return 0, err
 	}
+
+	state.Inspect("causal", "node-ring", "Read()", "p")
 
 	nodeCount := nodeRing.nodeCountFromArtifact()
 	capacity := nodeRing.capacityFromArtifact()
@@ -89,10 +81,17 @@ func (nodeRing *NodeRing) Read(p []byte) (int, error) {
 
 	nodeRing.copyStreamsTo(state)
 	state.MergeOutput("value", output)
-	state.Merge("root", "output")
-	state.Merge("inputs", []string{"value"})
+	state.Poke("output", "root")
+	state.Poke([]string{"value"}, "inputs")
 
 	return state.Read(p)
+}
+
+func (nodeRing *NodeRing) Write(p []byte) (int, error) {
+	preserved := nodeRing.preserveStreams()
+	nodeRing.artifact.WithPayload(p)
+	nodeRing.restoreStreams(preserved)
+	return len(p), nil
 }
 
 func (nodeRing *NodeRing) Close() error {

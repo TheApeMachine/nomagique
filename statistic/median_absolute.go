@@ -19,25 +19,19 @@ type MedianAbsolute struct {
 NewMedianAbsolute returns a median-absolute stage wired from config attributes on the artifact.
 */
 func NewMedianAbsolute(artifact *datura.Artifact) *MedianAbsolute {
-	artifact.Inspect("statistic", "median-absolute", "NewMedianAbsolute()")
-
 	return &MedianAbsolute{
 		artifact: artifact,
 	}
 }
 
-func (medianAbsolute *MedianAbsolute) Write(payload []byte) (int, error) {
-	medianAbsolute.artifact.WithPayload(payload)
-	return len(payload), nil
-}
-
 func (medianAbsolute *MedianAbsolute) Read(payload []byte) (int, error) {
 	state := datura.Acquire("median-absolute-state", datura.APPJSON)
-	state.Inspect("statistic", "median-absolute", "Read()", "p")
 
 	if _, err := state.Write(medianAbsolute.artifact.DecryptPayload()); err != nil {
 		return 0, err
 	}
+
+	state.Inspect("statistic", "median-absolute", "Read()", "p")
 
 	sample := datura.Peek[float64](state, "sample")
 
@@ -64,9 +58,14 @@ func (medianAbsolute *MedianAbsolute) Read(payload []byte) (int, error) {
 	}
 
 	state.MergeOutput("value", value)
-	state.Merge("root", "output")
-	state.Merge("inputs", []string{"value"})
+	state.Poke("output", "root")
+	state.Poke([]string{"value"}, "inputs")
 	return state.Read(payload)
+}
+
+func (medianAbsolute *MedianAbsolute) Write(payload []byte) (int, error) {
+	medianAbsolute.artifact.WithPayload(payload)
+	return len(payload), nil
 }
 
 func (medianAbsolute *MedianAbsolute) Close() error {

@@ -29,8 +29,6 @@ type Procrustes struct {
 }
 
 func NewProcrustes(artifact *datura.Artifact, matA, matB mat.Matrix) *Procrustes {
-	artifact.Inspect("geometry", "procrustes", "NewProcrustes()")
-
 	return &Procrustes{
 		artifact: artifact,
 		matA:     matA,
@@ -58,18 +56,14 @@ func NewProcrustesFromRows(
 	return NewProcrustes(artifact, denseA, denseB), nil
 }
 
-func (procrustes *Procrustes) Write(payload []byte) (int, error) {
-	procrustes.artifact.WithPayload(payload)
-	return len(payload), nil
-}
-
 func (procrustes *Procrustes) Read(payload []byte) (int, error) {
 	state := datura.Acquire("procrustes-state", datura.APPJSON)
-	state.Inspect("geometry", "procrustes", "Read()", "p")
 
 	if _, err := state.Write(procrustes.artifact.DecryptPayload()); err != nil {
 		return 0, err
 	}
+
+	state.Inspect("geometry", "procrustes", "Read()", "p")
 
 	procrustes.result, procrustes.err = procrustes.align(procrustes.matA, procrustes.matB)
 
@@ -86,9 +80,14 @@ func (procrustes *Procrustes) Read(payload []byte) (int, error) {
 	procrustes.output = procrustes.result.Residual
 	procrustes.artifact.Poke(procrustes.output, "output", "value")
 	state.MergeOutput("value", procrustes.output)
-	state.Merge("root", "output")
-	state.Merge("inputs", []string{"value"})
+	state.Poke("output", "root")
+	state.Poke([]string{"value"}, "inputs")
 	return state.Read(payload)
+}
+
+func (procrustes *Procrustes) Write(payload []byte) (int, error) {
+	procrustes.artifact.WithPayload(payload)
+	return len(payload), nil
 }
 
 func (procrustes *Procrustes) Close() error {

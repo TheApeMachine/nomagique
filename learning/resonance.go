@@ -291,11 +291,6 @@ func (rm *ResonanceManifold) SetStreamAdvanceTemporal(enabled bool) {
 	rm.streamAdvanceTemporal = enabled
 }
 
-func (rm *ResonanceManifold) Write(payload []byte) (int, error) {
-	rm.artifact.WithPayload(payload)
-	return len(payload), nil
-}
-
 func (rm *ResonanceManifold) Read(payload []byte) (int, error) {
 	state := datura.Acquire("resonance-state", datura.APPJSON)
 	state.Inspect("learning", "resonance", "Read()", "p")
@@ -331,9 +326,14 @@ func (rm *ResonanceManifold) Read(payload []byte) (int, error) {
 
 	state.MergeOutput("value", reconstruction)
 	state.MergeOutput("latent", latent)
-	state.Merge("root", "output")
-	state.Merge("inputs", []string{"value", "latent"})
+	state.Poke("output", "root")
+	state.Poke([]string{"value", "latent"}, "inputs")
 	return state.Read(payload)
+}
+
+func (rm *ResonanceManifold) Write(payload []byte) (int, error) {
+	rm.artifact.WithPayload(payload)
+	return len(payload), nil
 }
 
 func (rm *ResonanceManifold) Close() error {

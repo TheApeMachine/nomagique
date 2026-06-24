@@ -9,7 +9,6 @@ import (
 
 /*
 Max tracks the largest streamed sample.
-The constructor artifact holds config; Write buffers inbound wire on its payload.
 */
 type Max struct {
 	artifact *datura.Artifact
@@ -19,36 +18,83 @@ type Max struct {
 NewMax returns a max stage wired from config attributes on the artifact.
 */
 func NewMax(artifact *datura.Artifact) *Max {
-	artifact.Inspect("statistic", "max", "NewMax()")
-
 	return &Max{
 		artifact: artifact,
 	}
 }
 
-func (max *Max) Write(payload []byte) (int, error) {
-	max.artifact.WithPayload(payload)
-	return len(payload), nil
-}
-
 func (max *Max) Read(payload []byte) (int, error) {
 	state := datura.Acquire("max-state", datura.APPJSON)
-	state.Inspect("statistic", "max", "Read()", "p")
 
 	if _, err := state.Write(max.artifact.DecryptPayload()); err != nil {
 		return 0, err
 	}
 
-	sampleKey, err := WireInputKey(max.artifact, state)
+	rootKey := datura.Peek[string](state, "root")
 
-	if err != nil {
-		return 0, err
+	if rootKey == "" {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"max: root required",
+			nil,
+		))
 	}
 
-	sample, err := WireScalar(max.artifact, state, sampleKey)
+	inputs := datura.Peek[[]string](state, "inputs")
 
-	if err != nil {
-		return 0, err
+	if len(inputs) == 0 {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"max: inputs required",
+			nil,
+		))
+	}
+
+	configInput := datura.Peek[string](max.artifact, "input")
+
+	if configInput == "" {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"max: input required",
+			nil,
+		))
+	}
+
+	var sample float64
+	found := false
+
+	for index, input := range inputs {
+		if input != configInput {
+			continue
+		}
+
+		if rootKey == "features" {
+			features := datura.Peek[[]float64](state, rootKey)
+
+			if index >= len(features) {
+				return 0, errnie.Error(errnie.Err(
+					errnie.Validation,
+					"max: feature index out of range",
+					nil,
+				))
+			}
+
+			sample = features[index]
+		}
+
+		if rootKey != "features" {
+			sample = datura.Peek[float64](state, rootKey, 0, input)
+		}
+
+		found = true
+	}
+
+	if !found {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"max: input not in inputs",
+			nil,
+		))
 	}
 
 	if math.IsNaN(sample) || math.IsInf(sample, 0) {
@@ -74,9 +120,15 @@ func (max *Max) Read(payload []byte) (int, error) {
 	max.artifact.Poke(count, "output", "count")
 	max.artifact.Poke(value, "output", "value")
 	state.MergeOutput("value", value)
-	state.Merge("root", "output")
-	state.Merge("inputs", []string{"value"})
+	state.Poke("output", "root")
+	state.Poke([]string{"value"}, "inputs")
+
 	return state.Read(payload)
+}
+
+func (max *Max) Write(payload []byte) (int, error) {
+	max.artifact.WithPayload(payload)
+	return len(payload), nil
 }
 
 func (max *Max) Close() error {

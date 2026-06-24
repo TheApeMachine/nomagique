@@ -12,32 +12,23 @@ Momentum tracks a signed unit-normalized move relative to the running range.
 The constructor artifact holds config; Write buffers inbound payload.
 */
 type Momentum struct {
-	artifact     *datura.Artifact
-	bootstrapped bool
-	min          float64
-	max          float64
-	prev         float64
+	artifact *datura.Artifact
+	min      float64
+	max      float64
+	prev     float64
 }
 
 /*
 NewMomentum returns a momentum stage wired from config attributes on the artifact.
 */
 func NewMomentum(artifact *datura.Artifact) *Momentum {
-	artifact.Inspect("adaptive", "momentum", "NewMomentum()")
-
 	return &Momentum{
 		artifact: artifact,
 	}
 }
 
-func (momentum *Momentum) Write(p []byte) (int, error) {
-	momentum.artifact.WithPayload(p)
-	return len(p), nil
-}
-
 func (momentum *Momentum) Read(payload []byte) (int, error) {
 	state := datura.Acquire("momentum-state", datura.APPJSON)
-	state.Inspect("adaptive", "momentum", "Read()", "p")
 
 	if _, err := state.Write(momentum.artifact.DecryptPayload()); err != nil {
 		return 0, errnie.Error(errnie.Err(
@@ -47,18 +38,64 @@ func (momentum *Momentum) Read(payload []byte) (int, error) {
 		))
 	}
 
-	root := datura.Peek[string](state, "root")
+	state.Inspect("adaptive", "momentum", "Read()", "p")
+
+	rootKey := datura.Peek[string](state, "root")
+
+	if rootKey == "" {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"momentum: root required",
+			nil,
+		))
+	}
+
 	inputs := datura.Peek[[]string](state, "inputs")
 
 	if len(inputs) == 0 {
-		inputs = []string{"sample"}
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"momentum: inputs required",
+			nil,
+		))
 	}
 
-	for _, input := range inputs {
-		sample := datura.Peek[float64](state, root, input)
+	configInput := datura.Peek[string](momentum.artifact, "input")
 
-		if root == "" {
-			sample = datura.Peek[float64](state, input)
+	if configInput == "" {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"momentum: input required",
+			nil,
+		))
+	}
+
+	var found bool
+
+	for index, input := range inputs {
+		if input != configInput {
+			continue
+		}
+
+		found = true
+		var sample float64
+
+		if rootKey == "features" {
+			features := datura.Peek[[]float64](state, rootKey)
+
+			if index >= len(features) {
+				return 0, errnie.Error(errnie.Err(
+					errnie.Validation,
+					"momentum: feature index out of range",
+					nil,
+				))
+			}
+
+			sample = features[index]
+		}
+
+		if rootKey != "features" {
+			sample = datura.Peek[float64](state, rootKey, input)
 		}
 
 		if math.IsNaN(sample) || math.IsInf(sample, 0) {
@@ -69,17 +106,16 @@ func (momentum *Momentum) Read(payload []byte) (int, error) {
 			))
 		}
 
-		if !momentum.bootstrapped {
+		count := datura.Peek[float64](momentum.artifact, "output", "count")
+
+		if count == 0 {
 			momentum.min = sample
 			momentum.max = sample
 			momentum.prev = sample
-			momentum.bootstrapped = true
+			momentum.artifact.Poke(1.0, "output", "count")
+			state.MergeOutput("value", 0)
 
-			return 0, errnie.Error(errnie.Err(
-				errnie.Validation,
-				"momentum: insufficient samples",
-				nil,
-			))
+			break
 		}
 
 		momentum.min = math.Min(momentum.min, sample)
@@ -99,13 +135,28 @@ func (momentum *Momentum) Read(payload []byte) (int, error) {
 
 		value := (sample - momentum.prev) / span
 		momentum.prev = sample
+		momentum.artifact.Poke(count+1, "output", "count")
 
-		state.Poke("output", "root")
-		state.Poke([]string{"value"}, "inputs")
 		state.MergeOutput("value", value)
 	}
 
+	if !found {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"momentum: input not in inputs",
+			nil,
+		))
+	}
+
+	state.Poke("output", "root")
+	state.Poke([]string{"value"}, "inputs")
+
 	return state.Read(payload)
+}
+
+func (momentum *Momentum) Write(p []byte) (int, error) {
+	momentum.artifact.WithPayload(p)
+	return len(p), nil
 }
 
 func (momentum *Momentum) Close() error {

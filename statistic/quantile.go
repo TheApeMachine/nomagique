@@ -22,25 +22,19 @@ NewQuantile returns a quantile stage wired from config attributes on the artifac
 Percentile and cumulant kind live under config.percentile and config.kind.
 */
 func NewQuantile(artifact *datura.Artifact) *Quantile {
-	artifact.Inspect("statistic", "quantile", "NewQuantile()")
-
 	return &Quantile{
 		artifact: artifact,
 	}
 }
 
-func (quantile *Quantile) Write(payload []byte) (int, error) {
-	quantile.artifact.WithPayload(payload)
-	return len(payload), nil
-}
-
 func (quantile *Quantile) Read(payload []byte) (int, error) {
 	state := datura.Acquire("quantile-state", datura.APPJSON)
-	state.Inspect("statistic", "quantile", "Read()", "p")
 
 	if _, err := state.Write(quantile.artifact.DecryptPayload()); err != nil {
 		return 0, err
 	}
+
+	state.Inspect("statistic", "quantile", "Read()", "p")
 
 	sample := datura.Peek[float64](state, "sample")
 
@@ -76,9 +70,14 @@ func (quantile *Quantile) Read(payload []byte) (int, error) {
 	}
 
 	state.MergeOutput("value", value)
-	state.Merge("root", "output")
-	state.Merge("inputs", []string{"value"})
+	state.Poke("output", "root")
+	state.Poke([]string{"value"}, "inputs")
 	return state.Read(payload)
+}
+
+func (quantile *Quantile) Write(payload []byte) (int, error) {
+	quantile.artifact.WithPayload(payload)
+	return len(payload), nil
 }
 
 func (quantile *Quantile) Close() error {

@@ -21,25 +21,19 @@ type Pearson struct {
 NewPearson creates a Pearson correlation stage wired from config attributes on the artifact.
 */
 func NewPearson(artifact *datura.Artifact) *Pearson {
-	artifact.Inspect("correlation", "pearson", "NewPearson()")
-
 	return &Pearson{
 		artifact: artifact,
 	}
 }
 
-func (pearson *Pearson) Write(p []byte) (int, error) {
-	pearson.artifact.WithPayload(p)
-	return len(p), nil
-}
-
 func (pearson *Pearson) Read(p []byte) (int, error) {
 	state := datura.Acquire("pearson-state", datura.APPJSON)
-	state.Inspect("correlation", "pearson", "Read()", "p")
 
 	if _, err := state.Write(pearson.artifact.DecryptPayload()); err != nil {
 		return 0, err
 	}
+
+	state.Inspect("correlation", "pearson", "Read()", "p")
 
 	values := datura.Peek[[]float64](state, "batch")
 
@@ -88,8 +82,8 @@ func (pearson *Pearson) Read(p []byte) (int, error) {
 		}
 
 		state.MergeOutput("value", correlation)
-		state.Merge("root", "output")
-		state.Merge("inputs", []string{"value"})
+		state.Poke("output", "root")
+		state.Poke([]string{"value"}, "inputs")
 		return state.Read(p)
 	}
 
@@ -111,6 +105,11 @@ func (pearson *Pearson) Read(p []byte) (int, error) {
 		errnie.Validation, "unable to compute Pearson correlation",
 		PearsonError(PearsonErrorRequireAtLeastTwoInputs),
 	))
+}
+
+func (pearson *Pearson) Write(p []byte) (int, error) {
+	pearson.artifact.WithPayload(p)
+	return len(p), nil
 }
 
 func (pearson *Pearson) Close() error {

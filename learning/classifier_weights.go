@@ -118,11 +118,10 @@ func balancedTermWeights(
 	total := 0.0
 
 	for _, featureKey := range terms {
-		scale := scales[featureKey]
+		scale, err := positiveScale(scales[featureKey], featureKey)
 
-		if scale <= 0 || math.IsNaN(scale) || math.IsInf(scale, 0) {
-			rawWeights[featureKey] = 0
-			continue
+		if err != nil {
+			return nil, err
 		}
 
 		rawWeights[featureKey] = 1.0 / scale
@@ -130,7 +129,9 @@ func balancedTermWeights(
 	}
 
 	if total <= 0 {
-		return rawWeights, nil
+		return nil, errnie.Error(fmt.Errorf(
+			"learning: balanced term weights require positive scales",
+		))
 	}
 
 	weights := make(map[string]float64, len(terms))

@@ -10,7 +10,7 @@ import (
 
 func TestBernoulli(testingTB *testing.T) {
 	Convey("Given Bernoulli constructor", testingTB, func() {
-		posterior := NewBernoulli(datura.Acquire("bernoulli-config", datura.APPJSON))
+		posterior := NewBernoulli(bernoulliConfig("bernoulli-config"))
 
 		Convey("It should return a usable dynamic", func() {
 			So(posterior, ShouldNotBeNil)
@@ -45,11 +45,11 @@ func TestPosterior_Observe(testingTB *testing.T) {
 		testCase := testCase
 
 		Convey("Given "+testCase.name, testingTB, func() {
-			posterior := NewBernoulli(datura.Acquire("bernoulli-config", datura.APPJSON))
+			posterior := NewBernoulli(bernoulliConfig("bernoulli-config"))
 			artifact := datura.Acquire("test", datura.APPJSON)
 
 			for _, sample := range testCase.inputs {
-				artifact.Poke(sample, "sample")
+				scalarWire(artifact, "sample", sample)
 				err := transport.NewFlipFlop(artifact, posterior)
 
 				So(err, ShouldBeNil)
@@ -64,7 +64,7 @@ func TestPosterior_Observe(testingTB *testing.T) {
 	}
 
 	Convey("Given empty Observe inputs", testingTB, func() {
-		posterior := NewBernoulli(datura.Acquire("bernoulli-config", datura.APPJSON))
+		posterior := NewBernoulli(bernoulliConfig("bernoulli-config"))
 		artifact := datura.Acquire("test", datura.APPJSON)
 		err := transport.NewFlipFlop(artifact, posterior)
 
@@ -74,10 +74,8 @@ func TestPosterior_Observe(testingTB *testing.T) {
 	})
 
 	Convey("Given a predicted and actual pair", testingTB, func() {
-		posterior := NewBernoulli(datura.Acquire("bernoulli-config", datura.APPJSON))
-		artifact := datura.Acquire("test", datura.APPJSON).
-			Poke(10, "sample").
-			Poke(15, "paired")
+		posterior := NewBernoulli(bernoulliPairConfig("bernoulli-config"))
+		artifact := pairWire(datura.Acquire("test", datura.APPJSON), "sample", "paired", 10, 15)
 		err := transport.NewFlipFlop(artifact, posterior)
 
 		So(err, ShouldBeNil)
@@ -90,9 +88,8 @@ func TestPosterior_Observe(testingTB *testing.T) {
 	})
 
 	Convey("Given an invalid outcome", testingTB, func() {
-		posterior := NewBernoulli(datura.Acquire("bernoulli-config", datura.APPJSON))
-		artifact := datura.Acquire("test", datura.APPJSON).
-			Poke(2, "sample")
+		posterior := NewBernoulli(bernoulliConfig("bernoulli-config"))
+		artifact := scalarWire(datura.Acquire("test", datura.APPJSON), "sample", 2)
 		err := transport.NewFlipFlop(artifact, posterior)
 
 		Convey("It should return a validation error", func() {
@@ -103,9 +100,8 @@ func TestPosterior_Observe(testingTB *testing.T) {
 
 func TestPosterior_Reset(testingTB *testing.T) {
 	Convey("Given an observed posterior", testingTB, func() {
-		posterior := NewBernoulli(datura.Acquire("bernoulli-config", datura.APPJSON))
-		artifact := datura.Acquire("test", datura.APPJSON).
-			Poke(1, "sample")
+		posterior := NewBernoulli(bernoulliConfig("bernoulli-config"))
+		artifact := scalarWire(datura.Acquire("test", datura.APPJSON), "sample", 1)
 
 		err := transport.NewFlipFlop(artifact, posterior)
 
@@ -124,16 +120,16 @@ func TestPosterior_Reset(testingTB *testing.T) {
 }
 
 func BenchmarkBernoulli_Observe(testingTB *testing.B) {
-	posterior := NewBernoulli(datura.Acquire("bernoulli-config-bench", datura.APPJSON))
+	posterior := NewBernoulli(bernoulliPairConfig("bernoulli-config-bench"))
 	artifact := datura.Acquire("test", datura.APPJSON)
 
-	artifact.Poke(1, "sample")
+	scalarWire(artifact, "sample", 1)
 	_ = transport.NewFlipFlop(artifact, posterior)
 
 	testingTB.ReportAllocs()
 
 	for testingTB.Loop() {
-		artifact.Poke(10, "sample").Poke(11, "paired")
+		pairWire(artifact, "sample", "paired", 10, 11)
 		_ = transport.NewFlipFlop(artifact, posterior)
 	}
 }

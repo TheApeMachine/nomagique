@@ -10,13 +10,28 @@ import (
 	"github.com/theapemachine/nomagique/learning"
 )
 
+func pairConfig(name string) *datura.Artifact {
+	return datura.Acquire(name, datura.APPJSON).
+		Poke("sample", "sampleKey").
+		Poke("paired", "pairedKey")
+}
+
+func pairWire(artifact *datura.Artifact, predicted float64, actual float64) *datura.Artifact {
+	artifact.Poke("wire", "root")
+	artifact.Poke([]string{"sample", "paired"}, "inputs")
+	artifact.Merge("wire", map[string]any{
+		"sample": predicted,
+		"paired": actual,
+	})
+
+	return artifact
+}
+
 func TestIntegration(t *testing.T) {
 	Convey("Given learning stages composed through nomagique.Number", t, func() {
 		Convey("When Weight observes a matched prediction", func() {
-			artifact := datura.Acquire("test", datura.APPJSON).
-				Poke(10, "sample").
-				Poke(10, "paired")
-			pipeline := nomagique.Number(learning.Weight(datura.Acquire("trust-weight-config", datura.APPJSON)))
+			artifact := pairWire(datura.Acquire("test", datura.APPJSON), 10, 10)
+			pipeline := nomagique.Number(learning.Weight(pairConfig("trust-weight-config")))
 			err := transport.NewFlipFlop(artifact, pipeline)
 
 			So(err, ShouldBeNil)
@@ -26,16 +41,18 @@ func TestIntegration(t *testing.T) {
 		Convey("When SampleRatio and Forecast run in sequence", func() {
 			artifact := datura.Acquire("test", datura.APPJSON)
 			pipeline := nomagique.Number(
-				learning.SampleRatio(datura.Acquire("sample-ratio-config", datura.APPJSON)),
-				learning.Forecast(datura.Acquire("forecast-config", datura.APPJSON)),
+				learning.SampleRatio(pairConfig("sample-ratio-config")),
+				learning.Forecast(datura.Acquire("forecast-config", datura.APPJSON).
+					Poke("predicted", "sampleKey").
+					Poke("actual", "pairedKey")),
 			)
 
-			artifact.Poke(10, "sample").Poke(10, "paired")
+			artifact = pairWire(artifact, 10, 10)
 			err := transport.NewFlipFlop(artifact, pipeline)
 
 			So(err, ShouldBeNil)
 
-			artifact.Poke(10, "sample").Poke(15, "paired")
+			artifact = pairWire(artifact, 10, 15)
 			err = transport.NewFlipFlop(artifact, pipeline)
 
 			So(err, ShouldBeNil)

@@ -8,17 +8,35 @@ import (
 )
 
 /*
-RollingWindows resolves short and long lookback counts from history when hints are
+RollingWindow resolves short and long lookback counts from history when hints are
 non-positive. Positive hints are returned unchanged so callers can pin windows.
-When history is empty and a hint is missing, RollingWindows returns an error.
+When history is empty and a hint is missing, Resolve returns an error.
 */
-func RollingWindows(history []float64, shortHint, longHint int) (shortWindow, longWindow int, err error) {
-	if shortHint > 0 {
-		shortWindow = shortHint
+type RollingWindow struct {
+	shortHint int
+	longHint  int
+}
+
+/*
+NewRollingWindow binds optional short and long window hints from config.
+*/
+func NewRollingWindow(shortHint, longHint int) *RollingWindow {
+	return &RollingWindow{
+		shortHint: shortHint,
+		longHint:  longHint,
+	}
+}
+
+/*
+Resolve derives short and long window sizes from bound hints and sample history.
+*/
+func (rolling *RollingWindow) Resolve(history []float64) (shortWindow, longWindow int, err error) {
+	if rolling.shortHint > 0 {
+		shortWindow = rolling.shortHint
 	}
 
-	if longHint > 0 {
-		longWindow = longHint
+	if rolling.longHint > 0 {
+		longWindow = rolling.longHint
 	}
 
 	if shortWindow > 0 && longWindow > 0 {
@@ -40,7 +58,7 @@ func RollingWindows(history []float64, shortHint, longHint int) (shortWindow, lo
 	}
 
 	if longWindow <= 0 {
-		spread := coefficientOfVariation(history)
+		spread := rolling.coefficientOfVariation(history)
 		longWindow = int(math.Ceil(float64(shortWindow) * (1.0 + spread)))
 
 		if longWindow < sampleCount {
@@ -60,23 +78,23 @@ func RollingWindows(history []float64, shortHint, longHint int) (shortWindow, lo
 }
 
 /*
-TargetLongWindow returns how many samples are required before a dynamic long-window
-baseline is calibrated. Positive longWindow hints are returned unchanged.
+TargetLong returns how many samples are required before a dynamic long-window
+baseline is calibrated. Positive long hints are returned unchanged.
 */
-func TargetLongWindow(history []float64, shortHint, longHint int) (int, error) {
-	if longHint > 0 {
-		return longHint, nil
+func (rolling *RollingWindow) TargetLong(history []float64) (int, error) {
+	if rolling.longHint > 0 {
+		return rolling.longHint, nil
 	}
 
 	sampleCount := len(history)
 
 	if sampleCount <= 0 {
-		_, longWindow, err := RollingWindows(nil, shortHint, longHint)
+		_, longWindow, err := NewRollingWindow(rolling.shortHint, rolling.longHint).Resolve(nil)
 
 		return longWindow, err
 	}
 
-	shortWindow := shortHint
+	shortWindow := rolling.shortHint
 
 	if shortWindow <= 0 {
 		shortWindow = int(math.Ceil(math.Sqrt(float64(sampleCount))))
@@ -86,7 +104,7 @@ func TargetLongWindow(history []float64, shortHint, longHint int) (int, error) {
 		}
 	}
 
-	spread := coefficientOfVariation(history)
+	spread := rolling.coefficientOfVariation(history)
 	longWindow := int(math.Ceil(float64(shortWindow) * (1.0 + spread)))
 
 	if longWindow < sampleCount {
@@ -108,7 +126,7 @@ func TargetLongWindow(history []float64, shortHint, longHint int) (int, error) {
 ReturnLag resolves a log-return lag from history when the hint is non-positive.
 Positive hints are returned unchanged.
 */
-func ReturnLag(history []float64, lagHint, longHint int) (int, error) {
+func (rolling *RollingWindow) ReturnLag(history []float64, lagHint int) (int, error) {
 	if lagHint > 0 {
 		return lagHint, nil
 	}
@@ -117,7 +135,7 @@ func ReturnLag(history []float64, lagHint, longHint int) (int, error) {
 		return 1, nil
 	}
 
-	_, longWindow, err := RollingWindows(history, 0, longHint)
+	_, longWindow, err := NewRollingWindow(0, rolling.longHint).Resolve(history)
 
 	if err != nil {
 		return 0, err
@@ -136,7 +154,7 @@ func ReturnLag(history []float64, lagHint, longHint int) (int, error) {
 	return lag, nil
 }
 
-func coefficientOfVariation(values []float64) float64 {
+func (rolling *RollingWindow) coefficientOfVariation(values []float64) float64 {
 	if len(values) < 2 {
 		return 0
 	}

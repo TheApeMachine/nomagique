@@ -24,7 +24,8 @@ func replayBookQuality(
 	bookQuality := equation.NewBookQuality(nil)
 	classifier := probability.NewClassifier(
 		datura.Acquire("toxicity-classifier", datura.APPJSON).WithAttributes(datura.Map[any]{
-			"inputs": []string{"bluffScore", "vacuumScore", "supportScore"},
+			"inputs":    []string{"bluffScore", "vacuumScore", "supportScore"},
+			"scoreRoot": "output",
 		}),
 	)
 	pipeline := transport.NewPipeline(encoder, bookQuality, classifier)

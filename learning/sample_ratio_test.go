@@ -10,7 +10,7 @@ import (
 
 func TestSampleRatio(testingTB *testing.T) {
 	Convey("Given SampleRatio constructor", testingTB, func() {
-		calibrator := SampleRatio(datura.Acquire("sample-ratio-config", datura.APPJSON))
+		calibrator := SampleRatio(pairConfig("sample-ratio-config"))
 
 		Convey("It should return a usable dynamic", func() {
 			So(calibrator, ShouldNotBeNil)
@@ -20,7 +20,7 @@ func TestSampleRatio(testingTB *testing.T) {
 
 func TestCalibrator_Observe(testingTB *testing.T) {
 	Convey("Given empty Observe inputs", testingTB, func() {
-		calibrator := SampleRatio(datura.Acquire("sample-ratio-config", datura.APPJSON))
+		calibrator := SampleRatio(pairConfig("sample-ratio-config"))
 		artifact := datura.Acquire("test", datura.APPJSON)
 		err := transport.NewFlipFlop(artifact, calibrator)
 
@@ -30,10 +30,8 @@ func TestCalibrator_Observe(testingTB *testing.T) {
 	})
 
 	Convey("Given a fresh calibrator", testingTB, func() {
-		calibrator := SampleRatio(datura.Acquire("sample-ratio-config", datura.APPJSON))
-		artifact := datura.Acquire("test", datura.APPJSON).
-			Poke(10, "sample").
-			Poke(10, "paired")
+		calibrator := SampleRatio(pairConfig("sample-ratio-config"))
+		artifact := pairWire(datura.Acquire("test", datura.APPJSON), 10, 10)
 		err := transport.NewFlipFlop(artifact, calibrator)
 
 		So(err, ShouldBeNil)
@@ -46,15 +44,15 @@ func TestCalibrator_Observe(testingTB *testing.T) {
 	})
 
 	Convey("Given a winning outcome", testingTB, func() {
-		calibrator := SampleRatio(datura.Acquire("sample-ratio-config", datura.APPJSON))
+		calibrator := SampleRatio(pairConfig("sample-ratio-config"))
 		artifact := datura.Acquire("test", datura.APPJSON)
 
-		artifact.Poke(10, "sample").Poke(10, "paired")
+		artifact = pairWire(artifact, 10, 10)
 		err := transport.NewFlipFlop(artifact, calibrator)
 
 		So(err, ShouldBeNil)
 
-		artifact.Poke(10, "sample").Poke(15, "paired")
+		artifact = pairWire(artifact, 10, 15)
 		err = transport.NewFlipFlop(artifact, calibrator)
 
 		So(err, ShouldBeNil)
@@ -68,10 +66,8 @@ func TestCalibrator_Observe(testingTB *testing.T) {
 	})
 
 	Convey("Given zero predicted", testingTB, func() {
-		calibrator := SampleRatio(datura.Acquire("sample-ratio-config", datura.APPJSON))
-		artifact := datura.Acquire("test", datura.APPJSON).
-			Poke(0, "sample").
-			Poke(10, "paired")
+		calibrator := SampleRatio(pairConfig("sample-ratio-config"))
+		artifact := pairWire(datura.Acquire("test", datura.APPJSON), 0, 10)
 		err := transport.NewFlipFlop(artifact, calibrator)
 
 		Convey("It should return a parse error", func() {
@@ -82,7 +78,7 @@ func TestCalibrator_Observe(testingTB *testing.T) {
 
 func TestCalibrator_ObserveSamples(testingTB *testing.T) {
 	Convey("Given a calibrator", testingTB, func() {
-		calibrator := SampleRatio(datura.Acquire("sample-ratio-config", datura.APPJSON))
+		calibrator := SampleRatio(pairConfig("sample-ratio-config"))
 		predicted := []float64{10, 10}
 		actual := []float64{10, 15}
 		out := make([]float64, len(predicted))
@@ -99,10 +95,8 @@ func TestCalibrator_ObserveSamples(testingTB *testing.T) {
 
 func TestCalibrator_Reset(testingTB *testing.T) {
 	Convey("Given a calibrator with state", testingTB, func() {
-		calibrator := SampleRatio(datura.Acquire("sample-ratio-config", datura.APPJSON))
-		artifact := datura.Acquire("test", datura.APPJSON).
-			Poke(10, "sample").
-			Poke(10, "paired")
+		calibrator := SampleRatio(pairConfig("sample-ratio-config"))
+		artifact := pairWire(datura.Acquire("test", datura.APPJSON), 10, 10)
 		err := transport.NewFlipFlop(artifact, calibrator)
 
 		So(err, ShouldBeNil)
@@ -112,9 +106,7 @@ func TestCalibrator_Reset(testingTB *testing.T) {
 			So(datura.Peek[float64](calibrator.artifact, "output", "ready"), ShouldEqual, 0)
 		})
 
-		fresh := datura.Acquire("test", datura.APPJSON).
-			Poke(10, "sample").
-			Poke(10, "paired")
+		fresh := pairWire(datura.Acquire("test", datura.APPJSON), 10, 10)
 		err = transport.NewFlipFlop(fresh, calibrator)
 
 		So(err, ShouldBeNil)
@@ -127,22 +119,22 @@ func TestCalibrator_Reset(testingTB *testing.T) {
 }
 
 func BenchmarkSampleRatio_Observe(testingTB *testing.B) {
-	calibrator := SampleRatio(datura.Acquire("sample-ratio-config-bench", datura.APPJSON))
+	calibrator := SampleRatio(pairConfig("sample-ratio-config-bench"))
 	artifact := datura.Acquire("test", datura.APPJSON)
 
-	artifact.Poke(10, "sample").Poke(10, "paired")
+	artifact = pairWire(artifact, 10, 10)
 	_ = transport.NewFlipFlop(artifact, calibrator)
 
 	testingTB.ReportAllocs()
 
 	for testingTB.Loop() {
-		artifact.Poke(10, "sample").Poke(11, "paired")
+		artifact = pairWire(artifact, 10, 11)
 		_ = transport.NewFlipFlop(artifact, calibrator)
 	}
 }
 
 func BenchmarkSampleRatio_ObserveSamples(testingTB *testing.B) {
-	calibrator := SampleRatio(datura.Acquire("sample-ratio-config-bench", datura.APPJSON))
+	calibrator := SampleRatio(pairConfig("sample-ratio-config-bench"))
 	predicted := make([]float64, 1024)
 	actual := make([]float64, len(predicted))
 	out := make([]float64, len(predicted))

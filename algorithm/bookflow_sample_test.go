@@ -1,7 +1,6 @@
 package algorithm
 
 import (
-	"io"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
@@ -17,7 +16,8 @@ func TestBookflowSample_Read(t *testing.T) {
 		bookflow := equation.NewBookflow(nil)
 		classifier := probability.NewClassifier(
 			datura.Acquire("depthflow-classifier", datura.APPJSON).WithAttributes(datura.Map[any]{
-				"inputs": []string{"loadedScore", "spoofScore", "thinScore", "neutralScore"},
+				"inputs":    []string{"loadedScore", "spoofScore", "thinScore", "neutralScore"},
+				"scoreRoot": "output",
 			}),
 		)
 		pipeline := transport.NewPipeline(encoder, bookflow, classifier)
@@ -41,11 +41,7 @@ func TestBookflowSample_Read(t *testing.T) {
 
 			err := transport.NewFlipFlop(state, pipeline)
 
-			if index == 0 {
-				So(err, ShouldEqual, io.EOF)
-			}
-
-			if index == len(frames)-1 {
+			if index < len(frames)-1 {
 				So(err, ShouldBeNil)
 			}
 

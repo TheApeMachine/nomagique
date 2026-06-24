@@ -189,25 +189,19 @@ type Rotor struct {
 NewRotor returns a rotor stage wired from config attributes on the artifact.
 */
 func NewRotor(artifact *datura.Artifact) *Rotor {
-	artifact.Inspect("geometry", "rotor", "NewRotor()")
-
 	return &Rotor{
 		artifact: artifact,
 	}
 }
 
-func (rotor *Rotor) Write(payload []byte) (int, error) {
-	rotor.artifact.WithPayload(payload)
-	return len(payload), nil
-}
-
 func (rotor *Rotor) Read(payload []byte) (int, error) {
 	state := datura.Acquire("rotor-state", datura.APPJSON)
-	state.Inspect("geometry", "rotor", "Read()", "p")
 
 	if _, err := state.Write(rotor.artifact.DecryptPayload()); err != nil {
 		return 0, err
 	}
+
+	state.Inspect("geometry", "rotor", "Read()", "p")
 
 	scalars := datura.Peek[[]float64](state, "batch")
 
@@ -216,11 +210,16 @@ func (rotor *Rotor) Read(payload []byte) (int, error) {
 		rotor.output = rotor.multivector[MvScalar]
 		rotor.artifact.Poke(rotor.output, "output", "value")
 		state.MergeOutput("value", rotor.output)
-		state.Merge("root", "output")
-		state.Merge("inputs", []string{"value"})
+		state.Poke("output", "root")
+		state.Poke([]string{"value"}, "inputs")
 	}
 
 	return state.Read(payload)
+}
+
+func (rotor *Rotor) Write(payload []byte) (int, error) {
+	rotor.artifact.WithPayload(payload)
+	return len(payload), nil
 }
 
 func (rotor *Rotor) Close() error {
@@ -256,25 +255,19 @@ type Translator struct {
 NewTranslator returns a translation stage wired from config attributes on the artifact.
 */
 func NewTranslator(artifact *datura.Artifact) *Translator {
-	artifact.Inspect("geometry", "translator", "NewTranslator()")
-
 	return &Translator{
 		artifact: artifact,
 	}
 }
 
-func (translator *Translator) Write(payload []byte) (int, error) {
-	translator.artifact.WithPayload(payload)
-	return len(payload), nil
-}
-
 func (translator *Translator) Read(payload []byte) (int, error) {
 	state := datura.Acquire("translator-state", datura.APPJSON)
-	state.Inspect("geometry", "translator", "Read()", "p")
 
 	if _, err := state.Write(translator.artifact.DecryptPayload()); err != nil {
 		return 0, err
 	}
+
+	state.Inspect("geometry", "translator", "Read()", "p")
 
 	scalars := datura.Peek[[]float64](state, "batch")
 
@@ -283,11 +276,16 @@ func (translator *Translator) Read(payload []byte) (int, error) {
 		translator.output = translator.multivector[MvScalar]
 		translator.artifact.Poke(translator.output, "output", "value")
 		state.MergeOutput("value", translator.output)
-		state.Merge("root", "output")
-		state.Merge("inputs", []string{"value"})
+		state.Poke("output", "root")
+		state.Poke([]string{"value"}, "inputs")
 	}
 
 	return state.Read(payload)
+}
+
+func (translator *Translator) Write(payload []byte) (int, error) {
+	translator.artifact.WithPayload(payload)
+	return len(payload), nil
 }
 
 func (translator *Translator) Close() error {
@@ -323,26 +321,20 @@ type Sandwich struct {
 NewSandwich returns a sandwich stage bound to motor and wired from config on the artifact.
 */
 func NewSandwich(artifact *datura.Artifact, motor Multivector) *Sandwich {
-	artifact.Inspect("geometry", "sandwich", "NewSandwich()")
-
 	return &Sandwich{
 		artifact: artifact,
 		motor:    motor,
 	}
 }
 
-func (sandwich *Sandwich) Write(payload []byte) (int, error) {
-	sandwich.artifact.WithPayload(payload)
-	return len(payload), nil
-}
-
 func (sandwich *Sandwich) Read(payload []byte) (int, error) {
 	state := datura.Acquire("sandwich-state", datura.APPJSON)
-	state.Inspect("geometry", "sandwich", "Read()", "p")
 
 	if _, err := state.Write(sandwich.artifact.DecryptPayload()); err != nil {
 		return 0, err
 	}
+
+	state.Inspect("geometry", "sandwich", "Read()", "p")
 
 	scalars := datura.Peek[[]float64](state, "batch")
 
@@ -354,11 +346,16 @@ func (sandwich *Sandwich) Read(payload []byte) (int, error) {
 		sandwich.output = result[MvScalar]
 		sandwich.artifact.Poke(sandwich.output, "output", "value")
 		state.MergeOutput("value", sandwich.output)
-		state.Merge("root", "output")
-		state.Merge("inputs", []string{"value"})
+		state.Poke("output", "root")
+		state.Poke([]string{"value"}, "inputs")
 	}
 
 	return state.Read(payload)
+}
+
+func (sandwich *Sandwich) Write(payload []byte) (int, error) {
+	sandwich.artifact.WithPayload(payload)
+	return len(payload), nil
 }
 
 func (sandwich *Sandwich) Close() error {

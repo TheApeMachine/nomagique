@@ -2,7 +2,6 @@ package algorithm
 
 import (
 	"fmt"
-	"io"
 	"testing"
 	"time"
 
@@ -26,7 +25,7 @@ func TestTradeExcitationSampleRead(testingTB *testing.T) {
 		err := transport.NewFlipFlop(frame, sample)
 
 		Convey("It should stage quietly without publishing features", func() {
-			So(err, ShouldEqual, io.EOF)
+			So(err, ShouldBeNil)
 			So(len(datura.Peek[[]float64](frame, "features")), ShouldEqual, 0)
 		})
 	})
@@ -159,7 +158,7 @@ func TestTradeExcitationSampleRead(testingTB *testing.T) {
 		err := transport.NewFlipFlop(book, sample)
 
 		Convey("It should buffer touch state without publishing or logging a validation error", func() {
-			So(err, ShouldEqual, io.EOF)
+			So(err, ShouldBeNil)
 			So(len(datura.Peek[[]float64](book, "features")), ShouldEqual, 0)
 		})
 	})

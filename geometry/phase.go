@@ -21,34 +21,33 @@ type Velocity struct {
 NewVelocity returns a velocity stage wired from config attributes on the artifact.
 */
 func NewVelocity(artifact *datura.Artifact) *Velocity {
-	artifact.Inspect("geometry", "velocity", "NewVelocity()")
-
 	return &Velocity{
 		artifact: artifact,
 	}
 }
 
-func (velocity *Velocity) Write(payload []byte) (int, error) {
-	velocity.artifact.WithPayload(payload)
-	return len(payload), nil
-}
-
 func (velocity *Velocity) Read(payload []byte) (int, error) {
 	state := datura.Acquire("velocity-state", datura.APPJSON)
-	state.Inspect("geometry", "velocity", "Read()", "p")
 
 	if _, err := state.Write(velocity.artifact.DecryptPayload()); err != nil {
 		return 0, err
 	}
+
+	state.Inspect("geometry", "velocity", "Read()", "p")
 
 	sample := datura.Peek[float64](state, "sample")
 
 	derived := velocity.observe(sample)
 	velocity.artifact.Poke(derived, "output", "value")
 	state.MergeOutput("value", derived)
-	state.Merge("root", "output")
-	state.Merge("inputs", []string{"value"})
+	state.Poke("output", "root")
+	state.Poke([]string{"value"}, "inputs")
 	return state.Read(payload)
+}
+
+func (velocity *Velocity) Write(payload []byte) (int, error) {
+	velocity.artifact.WithPayload(payload)
+	return len(payload), nil
 }
 
 func (velocity *Velocity) Close() error {
@@ -98,25 +97,19 @@ type Coupling struct {
 NewCoupling returns a coupling stage wired from config attributes on the artifact.
 */
 func NewCoupling(artifact *datura.Artifact) *Coupling {
-	artifact.Inspect("geometry", "coupling", "NewCoupling()")
-
 	return &Coupling{
 		artifact: artifact,
 	}
 }
 
-func (coupling *Coupling) Write(payload []byte) (int, error) {
-	coupling.artifact.WithPayload(payload)
-	return len(payload), nil
-}
-
 func (coupling *Coupling) Read(payload []byte) (int, error) {
-	state := datura.Acquire("coupling-state", datura.APPJSON)
-	state.Inspect("geometry", "coupling", "Read()", "p")
+	state := datura.Acquire("coupling-state", datura.APPJSON)	
 
 	if _, err := state.Write(coupling.artifact.DecryptPayload()); err != nil {
 		return 0, err
 	}
+
+	state.Inspect("geometry", "coupling", "Read()", "p")
 
 	values := datura.Peek[[]float64](state, "batch")
 
@@ -165,9 +158,14 @@ func (coupling *Coupling) Read(payload []byte) (int, error) {
 	derived := coupling.align(leftGrowth, rightGrowth)
 	coupling.artifact.Poke(derived, "output", "value")
 	state.MergeOutput("value", derived)
-	state.Merge("root", "output")
-	state.Merge("inputs", []string{"value"})
+	state.Poke("output", "root")
+	state.Poke([]string{"value"}, "inputs")
 	return state.Read(payload)
+}
+
+func (coupling *Coupling) Write(payload []byte) (int, error) {
+	coupling.artifact.WithPayload(payload)
+	return len(payload), nil
 }
 
 func (coupling *Coupling) Close() error {

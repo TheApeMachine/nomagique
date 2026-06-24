@@ -2,7 +2,6 @@ package algorithm
 
 import (
 	"fmt"
-	"io"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
@@ -18,7 +17,8 @@ func TestDecaySample_Read(t *testing.T) {
 		decay := equation.NewDecay(nil)
 		classifier := probability.NewClassifier(
 			datura.Acquire("exhaust-classifier", datura.APPJSON).WithAttributes(datura.Map[any]{
-				"inputs": []string{"mechanical", "fragile", "thermal", "reversal"},
+				"inputs":    []string{"mechanical", "fragile", "thermal", "reversal"},
+				"scoreRoot": "output",
 			}),
 		)
 		pipeline := transport.NewPipeline(encoder, decay, classifier)
@@ -39,8 +39,8 @@ func TestDecaySample_Read(t *testing.T) {
 
 			err := transport.NewFlipFlop(state, pipeline)
 
-			if index == 0 {
-				So(err, ShouldEqual, io.EOF)
+			if index < len(quantities)-1 {
+				So(err, ShouldBeNil)
 			}
 
 			if index == len(quantities)-1 {
@@ -68,7 +68,8 @@ func TestDecaySample_Read(t *testing.T) {
 		decay := equation.NewDecay(nil)
 		classifier := probability.NewClassifier(
 			datura.Acquire("exhaust-classifier", datura.APPJSON).WithAttributes(datura.Map[any]{
-				"inputs": []string{"mechanical", "fragile", "thermal", "reversal"},
+				"inputs":    []string{"mechanical", "fragile", "thermal", "reversal"},
+				"scoreRoot": "output",
 			}),
 		)
 		pipeline := transport.NewPipeline(encoder, decay, classifier)

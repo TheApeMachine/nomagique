@@ -9,7 +9,7 @@ import (
 )
 
 func matchCondition(condition logic.Condition, sample float64) bool {
-	artifact := datura.Acquire("test", datura.APPJSON).Poke(sample, "sample")
+	artifact := scalarWire(datura.Acquire("test", datura.APPJSON), sample)
 
 	return condition.Match(artifact)
 }

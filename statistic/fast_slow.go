@@ -21,8 +21,6 @@ type FastSlow struct {
 NewFastSlow returns a breakout-ratio stage wired from config attributes on the artifact.
 */
 func NewFastSlow(artifact *datura.Artifact) *FastSlow {
-	artifact.Inspect("statistic", "fast-slow", "NewFastSlow()")
-
 	return &FastSlow{
 		artifact: artifact,
 	}
@@ -37,18 +35,14 @@ func NewInvertedFastSlow(artifact *datura.Artifact) *FastSlow {
 	return NewFastSlow(artifact)
 }
 
-func (fastSlow *FastSlow) Write(payload []byte) (int, error) {
-	fastSlow.artifact.WithPayload(payload)
-	return len(payload), nil
-}
-
 func (fastSlow *FastSlow) Read(payload []byte) (int, error) {
 	state := datura.Acquire("fast-slow-state", datura.APPJSON)
-	state.Inspect("statistic", "fast-slow", "Read()", "p")
 
 	if _, err := state.Write(fastSlow.artifact.DecryptPayload()); err != nil {
 		return 0, err
 	}
+
+	state.Inspect("statistic", "fast-slow", "Read()", "p")
 
 	sample := datura.Peek[float64](state, "sample")
 
@@ -66,7 +60,7 @@ func (fastSlow *FastSlow) Read(payload []byte) (int, error) {
 
 	fastHint := int(datura.Peek[float64](fastSlow.artifact, "config", "fastWindow"))
 	invert := datura.Peek[float64](fastSlow.artifact, "config", "invert") > 0
-	fastWindow, _, err := RollingWindows(history, fastHint, 0)
+	fastWindow, _, err := NewRollingWindow(fastHint, 0).Resolve(history)
 
 	if err != nil {
 		return 0, errnie.Error(errnie.Err(
@@ -91,9 +85,14 @@ func (fastSlow *FastSlow) Read(payload []byte) (int, error) {
 	}
 
 	state.MergeOutput("value", value)
-	state.Merge("root", "output")
-	state.Merge("inputs", []string{"value"})
+	state.Poke("output", "root")
+	state.Poke([]string{"value"}, "inputs")
 	return state.Read(payload)
+}
+
+func (fastSlow *FastSlow) Write(payload []byte) (int, error) {
+	fastSlow.artifact.WithPayload(payload)
+	return len(payload), nil
 }
 
 func (fastSlow *FastSlow) Close() error {
@@ -106,7 +105,7 @@ func fastSlowRate(samples []float64, fastWindow int, invert bool) (float64, erro
 	if fastWindow <= 0 {
 		var err error
 
-		fastWindow, _, err = RollingWindows(samples, 0, 0)
+		fastWindow, _, err = NewRollingWindow(0, 0).Resolve(samples)
 
 		if err != nil {
 			return 0, err

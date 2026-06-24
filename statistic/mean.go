@@ -9,7 +9,6 @@ import (
 
 /*
 Mean computes a running arithmetic mean of streamed samples.
-The constructor artifact holds config; Write buffers inbound wire on its payload.
 */
 type Mean struct {
 	artifact *datura.Artifact
@@ -19,27 +18,84 @@ type Mean struct {
 NewMean returns a mean stage wired from config attributes on the artifact.
 */
 func NewMean(artifact *datura.Artifact) *Mean {
-	artifact.Inspect("statistic", "mean", "NewMean()")
-
 	return &Mean{
 		artifact: artifact,
 	}
 }
 
-func (mean *Mean) Write(payload []byte) (int, error) {
-	mean.artifact.WithPayload(payload)
-	return len(payload), nil
-}
-
 func (mean *Mean) Read(payload []byte) (int, error) {
 	state := datura.Acquire("mean-state", datura.APPJSON)
-	state.Inspect("statistic", "mean", "Read()", "p")
 
 	if _, err := state.Write(mean.artifact.DecryptPayload()); err != nil {
 		return 0, err
 	}
 
-	sample := datura.Peek[float64](state, "sample")
+	rootKey := datura.Peek[string](state, "root")
+
+	if rootKey == "" {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"mean: root required",
+			nil,
+		))
+	}
+
+	inputs := datura.Peek[[]string](state, "inputs")
+
+	if len(inputs) == 0 {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"mean: inputs required",
+			nil,
+		))
+	}
+
+	configInput := datura.Peek[string](mean.artifact, "input")
+
+	if configInput == "" {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"mean: input required",
+			nil,
+		))
+	}
+
+	var sample float64
+	found := false
+
+	for index, input := range inputs {
+		if input != configInput {
+			continue
+		}
+
+		if rootKey == "features" {
+			features := datura.Peek[[]float64](state, rootKey)
+
+			if index >= len(features) {
+				return 0, errnie.Error(errnie.Err(
+					errnie.Validation,
+					"mean: feature index out of range",
+					nil,
+				))
+			}
+
+			sample = features[index]
+		}
+
+		if rootKey != "features" {
+			sample = datura.Peek[float64](state, rootKey, 0, input)
+		}
+
+		found = true
+	}
+
+	if !found {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"mean: input not in inputs",
+			nil,
+		))
+	}
 
 	if math.IsNaN(sample) || math.IsInf(sample, 0) {
 		return 0, errnie.Error(errnie.Err(
@@ -61,9 +117,15 @@ func (mean *Mean) Read(payload []byte) (int, error) {
 	mean.artifact.Poke(sum, "output", "sum")
 	mean.artifact.Poke(value, "output", "value")
 	state.MergeOutput("value", value)
-	state.Merge("root", "output")
-	state.Merge("inputs", []string{"value"})
+	state.Poke("output", "root")
+	state.Poke([]string{"value"}, "inputs")
+
 	return state.Read(payload)
+}
+
+func (mean *Mean) Write(payload []byte) (int, error) {
+	mean.artifact.WithPayload(payload)
+	return len(payload), nil
 }
 
 func (mean *Mean) Close() error {

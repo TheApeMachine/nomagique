@@ -108,8 +108,8 @@ func (bookQualitySample *BookQualitySample) Read(payload []byte) (int, error) {
 	}
 
 	state.Merge("features", features)
-	state.Merge("root", "features")
-	state.Merge("inputs", equation.BookQualityInputKeys)
+	state.Poke("features", "root")
+	state.Poke(equation.BookQualityInputKeys, "inputs")
 
 	return state.Read(payload)
 }

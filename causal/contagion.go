@@ -19,21 +19,13 @@ type Contagion struct {
 NewContagion returns a contagion stage wired from config attributes on the artifact.
 */
 func NewContagion(artifact *datura.Artifact) *Contagion {
-	artifact.Inspect("causal", "contagion", "NewContagion()")
-
 	return &Contagion{
 		artifact: artifact,
 	}
 }
 
-func (contagion *Contagion) Write(p []byte) (int, error) {
-	contagion.artifact.WithPayload(p)
-	return len(p), nil
-}
-
 func (contagion *Contagion) Read(p []byte) (int, error) {
 	state := datura.Acquire("contagion-state", datura.APPJSON)
-	state.Inspect("causal", "contagion", "Read()", "p")
 
 	if _, err := state.Write(contagion.artifact.DecryptPayload()); err != nil {
 		return 0, err
@@ -52,6 +44,11 @@ func (contagion *Contagion) Read(p []byte) (int, error) {
 	state.Poke("output", "root")
 	state.Poke([]string{"value"}, "inputs")
 	return state.Read(p)
+}
+
+func (contagion *Contagion) Write(p []byte) (int, error) {
+	contagion.artifact.WithPayload(p)
+	return len(p), nil
 }
 
 func (contagion *Contagion) Close() error {

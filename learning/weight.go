@@ -3,7 +3,6 @@ package learning
 import (
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/nomagique/statistic"
 )
 
 /*
@@ -18,21 +17,13 @@ type TrustWeight struct {
 Weight returns a trust weight stage wired from config attributes on the artifact.
 */
 func Weight(artifact *datura.Artifact) *TrustWeight {
-	artifact.Inspect("learning", "trust-weight", "Weight()")
-
 	return &TrustWeight{
 		artifact: artifact,
 	}
 }
 
-func (trustWeight *TrustWeight) Write(payload []byte) (int, error) {
-	trustWeight.artifact.WithPayload(payload)
-	return len(payload), nil
-}
-
 func (trustWeight *TrustWeight) Read(payload []byte) (int, error) {
 	state := datura.Acquire("trust-weight-state", datura.APPJSON)
-	state.Inspect("learning", "trust-weight", "Read()", "p")
 
 	if _, err := state.Write(trustWeight.artifact.DecryptPayload()); err != nil {
 		state.Release()
@@ -40,6 +31,7 @@ func (trustWeight *TrustWeight) Read(payload []byte) (int, error) {
 		return 0, err
 	}
 
+	state.Inspect("learning", "trust-weight", "Read()", "p")
 	defer state.Release()
 
 	predicted, actual, err := trustWeight.resolvePair(state)
@@ -54,52 +46,16 @@ func (trustWeight *TrustWeight) Read(payload []byte) (int, error) {
 	state.MergeOutput("value", derived)
 	state.MergeOutput("predicted", predicted)
 	state.MergeOutput("actual", actual)
-	state.Merge("root", "output")
-	state.Merge("inputs", []string{"value", "predicted", "actual"})
+	state.Poke("output", "root")
+	state.Poke([]string{"value", "predicted", "actual"}, "inputs")
 	return state.Read(payload)
 }
 
 func (trustWeight *TrustWeight) resolvePair(state *datura.Artifact) (float64, float64, error) {
-	sampleKey := statistic.ConfigString(trustWeight.artifact, state, "sampleKey")
-
-	if sampleKey == "" {
-		sampleKey = "sample"
-	}
-
-	pairedKey := statistic.ConfigString(trustWeight.artifact, state, "pairedKey")
-
-	if pairedKey == "" {
-		pairedKey = "paired"
-	}
-
-	predicted := datura.Peek[float64](state, sampleKey)
-	actual := datura.Peek[float64](state, pairedKey)
-
-	if !attributeKeyPresent(state, sampleKey) && !attributeKeyPresent(state, pairedKey) {
-		features := datura.Peek[[]float64](state, "features")
-
-		if len(features) >= 2 {
-			predicted = features[0]
-			actual = features[1]
-		}
-	}
-
-	if !attributeKeyPresent(state, sampleKey) && !attributeKeyPresent(state, pairedKey) && len(datura.Peek[[]float64](state, "features")) < 2 {
-		return 0, 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"trust-weight: predicted and actual required",
-			nil,
-		))
-	}
-
-	parsedPredicted, parsedActual, err := parsePredictedActual(predicted, []float64{actual})
+	parsedPredicted, parsedActual, err := wirePair(trustWeight.artifact, state, "trust-weight")
 
 	if err != nil {
-		return 0, 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"trust-weight: unable to parse predicted and actual pair",
-			err,
-		))
+		return 0, 0, err
 	}
 
 	if parsedActual == 0 {
@@ -111,6 +67,11 @@ func (trustWeight *TrustWeight) resolvePair(state *datura.Artifact) (float64, fl
 	}
 
 	return parsedPredicted, parsedActual, nil
+}
+
+func (trustWeight *TrustWeight) Write(payload []byte) (int, error) {
+	trustWeight.artifact.WithPayload(payload)
+	return len(payload), nil
 }
 
 func (trustWeight *TrustWeight) Close() error {

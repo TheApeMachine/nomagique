@@ -20,25 +20,19 @@ type ObservationRing struct {
 NewObservationRing returns an observation ring stage wired from config attributes on the artifact.
 */
 func NewObservationRing(artifact *datura.Artifact) *ObservationRing {
-	artifact.Inspect("statistic", "observation-ring", "NewObservationRing()")
-
 	return &ObservationRing{
 		artifact: artifact,
 	}
 }
 
-func (ring *ObservationRing) Write(payload []byte) (int, error) {
-	ring.artifact.WithPayload(payload)
-	return len(payload), nil
-}
-
 func (ring *ObservationRing) Read(payload []byte) (int, error) {
 	state := datura.Acquire("observation-ring-state", datura.APPJSON)
-	state.Inspect("statistic", "observation-ring", "Read()", "p")
 
 	if _, err := state.Write(ring.artifact.DecryptPayload()); err != nil {
 		return 0, err
 	}
+
+	state.Inspect("statistic", "observation-ring", "Read()", "p")
 
 	sample := datura.Peek[float64](state, "sample")
 
@@ -69,9 +63,14 @@ func (ring *ObservationRing) Read(payload []byte) (int, error) {
 
 	ring.artifact.Poke(history, "history")
 	state.MergeOutput("value", sample)
-	state.Merge("root", "output")
-	state.Merge("inputs", []string{"value"})
+	state.Poke("output", "root")
+	state.Poke([]string{"value"}, "inputs")
 	return state.Read(payload)
+}
+
+func (ring *ObservationRing) Write(payload []byte) (int, error) {
+	ring.artifact.WithPayload(payload)
+	return len(payload), nil
 }
 
 func (ring *ObservationRing) Close() error {

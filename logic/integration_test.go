@@ -22,7 +22,10 @@ func TestIntegration(t *testing.T) {
 		})
 
 		Convey("When Circuit routes above threshold to consequence branch", func() {
-			consequence := adaptive.NewEMA(datura.Acquire("ema-config", datura.APPJSON).Poke(2, "period"))
+			consequence := adaptive.NewEMA(datura.Acquire("ema-config", datura.APPJSON).
+				Poke("sample", "input").
+				Poke(2, "period").
+				Poke(2, "smoothing"))
 			circuit := logic.NewCircuit(logic.Rules{
 				{
 					Condition: logic.GreaterThan{Right: logic.NewConstant(2)},
@@ -34,17 +37,21 @@ func TestIntegration(t *testing.T) {
 				},
 			})
 
-			artifact := datura.Acquire("test", datura.APPJSON).Poke(3.0, "sample")
+			artifact := scalarWire(datura.Acquire("test", datura.APPJSON), 3)
 			_ = transport.NewFlipFlop(artifact, nomagique.Number(circuit))
-			artifact.Poke(4.0, "sample")
+			artifact = scalarWire(datura.Acquire("test", datura.APPJSON), 4)
 			err := transport.NewFlipFlop(artifact, nomagique.Number(circuit))
 
 			So(err, ShouldBeNil)
 
-			expectedArtifact := datura.Acquire("test", datura.APPJSON).Poke(3.0, "sample")
-			_ = transport.NewFlipFlop(expectedArtifact, consequence)
-			expectedArtifact.Poke(4.0, "sample")
-			err = transport.NewFlipFlop(expectedArtifact, consequence)
+			expectedArtifact := scalarWire(datura.Acquire("test", datura.APPJSON), 3)
+			reference := adaptive.NewEMA(datura.Acquire("ema-config-reference", datura.APPJSON).
+				Poke("sample", "input").
+				Poke(2, "period").
+				Poke(2, "smoothing"))
+			_ = transport.NewFlipFlop(expectedArtifact, reference)
+			expectedArtifact = scalarWire(datura.Acquire("test", datura.APPJSON), 4)
+			err = transport.NewFlipFlop(expectedArtifact, reference)
 
 			So(err, ShouldBeNil)
 			So(
@@ -66,7 +73,7 @@ func TestIntegration(t *testing.T) {
 				},
 			})
 
-			artifact := datura.Acquire("test", datura.APPJSON).Poke(1.0, "sample")
+			artifact := scalarWire(datura.Acquire("test", datura.APPJSON), 1)
 			err := transport.NewFlipFlop(artifact, nomagique.Number(circuit))
 
 			So(err, ShouldBeNil)

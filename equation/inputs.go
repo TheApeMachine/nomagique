@@ -157,11 +157,11 @@ func EnsureFeatureSchema(state, config *datura.Artifact, defaultKeys []string) [
 			inputKeys = defaultKeys
 		}
 
-		state.Merge("inputs", inputKeys)
+		state.Poke(inputKeys, "inputs")
 	}
 
 	if datura.Peek[string](state, "root") == "" {
-		state.Merge("root", "features")
+		state.Poke("features", "root")
 	}
 
 	return inputKeys

@@ -11,13 +11,13 @@ import (
 
 func TestPanelObserve(t *testing.T) {
 	Convey("Given a Panel stage", t, func() {
-		panel := NewPanel(datura.Acquire("panel-config", datura.APPJSON))
+		config := datura.Acquire("panel-config", datura.APPJSON).
+			Poke("member", "memberKey").
+			Poke("sample", "sampleKey")
+		panel := NewPanel(config)
 
 		Convey("It should echo the registered sample", func() {
-			artifact := datura.Acquire("test", datura.APPJSON).
-				Poke(1, "member").
-				Poke(0.02, "sample")
-
+			artifact := PanelWire(datura.Acquire("test", datura.APPJSON), 1, 0.02)
 			err := transport.NewFlipFlop(artifact, panel)
 
 			So(err, ShouldBeNil)
@@ -28,10 +28,13 @@ func TestPanelObserve(t *testing.T) {
 
 func TestMedianPanelPeers(t *testing.T) {
 	Convey("Given Panel then Median in a pipeline", t, func() {
-		panelConfig := datura.Acquire("panel-config", datura.APPJSON)
-		medianConfig := datura.Acquire("median-config", datura.APPJSON)
+		panelConfig := datura.Acquire("panel-config", datura.APPJSON).
+			Poke("member", "memberKey").
+			Poke("sample", "sampleKey")
+		medianConfig := datura.Acquire("median-config", datura.APPJSON).
+			Poke("member", "memberKey")
 		crossSection := nomagique.Number(NewPanel(panelConfig), NewMedian(medianConfig))
-		artifact := datura.Acquire("test", datura.APPJSON)
+		var lastArtifact *datura.Artifact
 
 		for _, member := range []struct {
 			key   float64
@@ -41,16 +44,26 @@ func TestMedianPanelPeers(t *testing.T) {
 			{2, 0.04},
 			{3, 0.06},
 		} {
-			artifact.Poke(member.key, "member").Poke(member.value, "sample")
+			artifact := PanelWire(datura.Acquire("test", datura.APPJSON), member.key, member.value)
 			err := transport.NewFlipFlop(artifact, crossSection)
 
 			So(err, ShouldBeNil)
+
+			if lastArtifact != nil {
+				lastArtifact.Release()
+			}
+
+			lastArtifact = artifact
 		}
 
-		artifact.Poke(1, "member").Poke(0.01, "sample")
+		artifact := PanelWire(datura.Acquire("test", datura.APPJSON), 1, 0.01)
 		err := transport.NewFlipFlop(artifact, crossSection)
 
 		So(err, ShouldBeNil)
 		So(datura.Peek[float64](artifact, "output", "value"), ShouldEqual, 0.05)
+
+		if lastArtifact != nil {
+			lastArtifact.Release()
+		}
 	})
 }

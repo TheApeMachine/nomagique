@@ -2,6 +2,7 @@ package learning
 
 import (
 	"fmt"
+	"io"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
@@ -46,9 +47,10 @@ func TestPipelineWireChain(testingTB *testing.T) {
 		})
 
 		logitConfig := datura.Acquire("pipeline-logit", datura.APPJSON).WithAttributes(datura.Map[any]{
-			"root":   "output",
-			"inputs": []string{"rvol"},
-			"order":  []string{"rvol"},
+			"root":      "output",
+			"scoreRoot": "output",
+			"inputs":    []string{"rvol"},
+			"order":     []string{"rvol"},
 			"outputs": []string{
 				"ignition",
 				"exhaustion",
@@ -68,7 +70,8 @@ func TestPipelineWireChain(testingTB *testing.T) {
 		})
 
 		classifierConfig := datura.Acquire("pipeline-classifier", datura.APPJSON).
-			Poke([]string{"ignition", "exhaustion"}, "inputs")
+			Poke("output", "scoreRoot").
+			Poke([]string{"ignition", "exhaustion", "strength"}, "inputs")
 
 		pipeline := nomagique.Number(
 			vector.NewFeatureExtractor(extractorSchema),
@@ -85,7 +88,7 @@ func TestPipelineWireChain(testingTB *testing.T) {
 			err := transport.NewFlipFlop(frame, pipeline)
 
 			if index < 4 {
-				So(err, ShouldNotBeNil)
+				So(err, ShouldBeIn, nil, io.EOF)
 			}
 
 			if index >= 4 {

@@ -11,15 +11,17 @@ import (
 func TestPositiveOnlyRead(t *testing.T) {
 	Convey("Given a positive-only gate", t, func() {
 		config := datura.Acquire("positive-only-config", datura.APPJSON).
-			Poke([]string{"rvol", "precursor"}, "order").
-			Poke(1.0, "stageIndex").
+			Poke("precursor", "stage").
 			Poke(map[string]any{
 				"outputKey":    "precursor",
 				"positiveOnly": 1.0,
 			}, "precursor")
 
 		stage := NewPositiveOnly(config)
-		artifact := datura.Acquire("positive-only-test", datura.APPJSON).Poke(-2.0, "sample")
+		artifact := datura.Acquire("positive-only-test", datura.APPJSON)
+		artifact.Poke("output", "root")
+		artifact.Poke([]string{"precursor"}, "inputs")
+		artifact.Merge("output", map[string]any{"precursor": -2.0})
 
 		err := transport.NewFlipFlop(artifact, stage)
 
@@ -32,7 +34,7 @@ func TestPositiveOnlyRead(t *testing.T) {
 
 	Convey("Given missing stage config", t, func() {
 		stage := NewPositiveOnly(datura.Acquire("positive-only-missing", datura.APPJSON))
-		artifact := datura.Acquire("positive-only-test", datura.APPJSON).Poke(1.0, "sample")
+		artifact := ScalarWire(datura.Acquire("positive-only-test", datura.APPJSON), "sample", 1.0)
 
 		err := transport.NewFlipFlop(artifact, stage)
 
@@ -46,7 +48,7 @@ func TestPositiveOnlyRead(t *testing.T) {
 				"positiveOnly": 1.0,
 			}, "precursor")
 		stage := NewPositiveOnly(config)
-		artifact := datura.Acquire("positive-only-test", datura.APPJSON).Poke(1.0, "sample")
+		artifact := ScalarWire(datura.Acquire("positive-only-test", datura.APPJSON), "sample", 1.0)
 
 		err := transport.NewFlipFlop(artifact, stage)
 
@@ -56,14 +58,17 @@ func TestPositiveOnlyRead(t *testing.T) {
 
 func BenchmarkPositiveOnlyRead(b *testing.B) {
 	config := datura.Acquire("positive-only-bench", datura.APPJSON).
-		Poke([]string{"rvol", "precursor"}, "order").
+		Poke("precursor", "stage").
 		Poke(map[string]any{
 			"outputKey":    "precursor",
 			"positiveOnly": 1.0,
 		}, "precursor")
 
 	stage := NewPositiveOnly(config)
-	artifact := datura.Acquire("positive-only-bench-test", datura.APPJSON).Poke(1.5, "sample")
+	artifact := datura.Acquire("positive-only-bench-test", datura.APPJSON)
+	artifact.Poke("output", "root")
+	artifact.Poke([]string{"precursor"}, "inputs")
+	artifact.Merge("output", map[string]any{"precursor": 1.5})
 
 	b.ReportAllocs()
 

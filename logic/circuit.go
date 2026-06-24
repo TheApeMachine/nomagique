@@ -4,6 +4,8 @@ import (
 	"io"
 
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/datura/transport"
+	"github.com/theapemachine/errnie"
 )
 
 /*
@@ -25,7 +27,6 @@ Circuit walks rules and routes observations through the first matching Then stag
 type Circuit struct {
 	artifact *datura.Artifact
 	rules    Rules
-	output   float64
 }
 
 /*
@@ -38,64 +39,159 @@ func NewCircuit(rules Rules) *Circuit {
 	}
 }
 
-func (circuit *Circuit) Write(p []byte) (int, error) {
-	if inboundReset(p) {
-		circuit.output = 0
-
-		for _, rule := range circuit.rules {
-			resetCondition(rule.Condition)
-			writeResetToStage(rule.Then)
-		}
-	}
-
-	circuit.artifact.WithPayload(p)
-	return len(p), nil
-}
-
-func (circuit *Circuit) Read(p []byte) (int, error) {
+func (circuit *Circuit) Read(payload []byte) (int, error) {
 	state := datura.Acquire("circuit-state", datura.APPJSON)
 
 	if _, err := state.Write(circuit.artifact.DecryptPayload()); err != nil {
+		state.Release()
+
 		return 0, err
 	}
 
-	inbound, inboundOK := artifactBytes(state)
+	defer state.Release()
+
+	rootKey := datura.Peek[string](circuit.artifact, "root")
+	inputs := datura.Peek[[]string](circuit.artifact, "inputs")
+
+	matched := false
 
 	for _, rule := range circuit.rules {
 		if !rule.Condition.Match(state) {
 			continue
 		}
 
-		if constant, isConstant := rule.Then.(*Constant); isConstant {
-			circuit.output = constant.value
+		scratch := datura.Acquire("circuit-operand", datura.APPJSON)
+
+		packed, err := state.Message().MarshalPacked()
+
+		if err != nil {
+			scratch.Release()
+
+			return 0, errnie.Error(errnie.Err(
+				errnie.IO,
+				"logic: circuit scratch marshal failed",
+				err,
+			))
 		}
 
-		if !isConstantStage(rule.Then) && inboundOK {
-			value, valueOK := readOperand(rule.Then, inbound)
+		if _, err = scratch.Write(packed); err != nil {
+			scratch.Release()
 
-			if valueOK {
-				circuit.output = value
+			return 0, errnie.Error(errnie.Err(
+				errnie.IO,
+				"logic: circuit scratch write failed",
+				err,
+			))
+		}
+
+		if datura.Peek[string](scratch, "root") == "output" {
+			if rootKey == "" || len(inputs) == 0 {
+				scratch.Release()
+
+				return 0, errnie.Error(errnie.Err(
+					errnie.Validation,
+					"logic: circuit output stamp wire required",
+					nil,
+				))
 			}
+
+			scratch.Poke(rootKey, "root")
+			scratch.Poke(inputs, "inputs")
 		}
 
-		state.MergeOutput("value", circuit.output)
-		state.Merge("root", "output")
-		state.Merge("inputs", []string{"value"})
-		return state.Read(p)
+		if err = transport.NewFlipFlop(scratch, rule.Then); err != nil {
+			scratch.Release()
+
+			return 0, errnie.Error(errnie.Err(
+				errnie.IO,
+				"logic: circuit flipFlop through then stage failed",
+				err,
+			))
+		}
+
+		packed, err = scratch.Message().MarshalPacked()
+		scratch.Release()
+
+		if err != nil {
+			return 0, errnie.Error(errnie.Err(
+				errnie.IO,
+				"logic: circuit scratch marshal failed",
+				err,
+			))
+		}
+
+		if _, err = state.Write(packed); err != nil {
+			return 0, errnie.Error(errnie.Err(
+				errnie.IO,
+				"logic: circuit state write failed",
+				err,
+			))
+		}
+
+		matched = true
+		break
 	}
 
-	state.MergeOutput("value", circuit.output)
-	state.Merge("root", "output")
-	state.Merge("inputs", []string{"value"})
-	return state.Read(p)
+	if !matched {
+		state.MergeOutput("value", 0)
+		state.Poke("output", "root")
+		state.Poke([]string{"value"}, "inputs")
+	}
+
+	return state.Read(payload)
+}
+
+func (circuit *Circuit) Write(payload []byte) (int, error) {
+	inbound := datura.Acquire("logic-inbound", datura.APPJSON)
+
+	if _, err := inbound.Write(payload); err != nil {
+		errnie.Error(errnie.Err(
+			errnie.IO,
+			"logic: circuit inbound write failed",
+			err,
+		))
+	}
+
+	if datura.Peek[float64](inbound, "reset") != 0 {
+		for _, rule := range circuit.rules {
+			rule.Condition.ResetOperands()
+
+			if rule.Then == nil {
+				continue
+			}
+
+			reset := datura.Acquire("logic-reset", datura.APPJSON)
+			reset.Poke(1, "reset")
+
+			packed, err := reset.Message().MarshalPacked()
+			reset.Release()
+
+			if err != nil {
+				errnie.Error(errnie.Err(
+					errnie.IO,
+					"logic: reset frame marshal failed",
+					err,
+				))
+
+				continue
+			}
+
+			if _, err = rule.Then.Write(packed); err != nil {
+				errnie.Error(errnie.Err(
+					errnie.IO,
+					"logic: circuit reset stage failed",
+					err,
+				))
+			}
+		}
+	}
+
+	inbound.Release()
+
+	circuit.artifact.WithPayload(payload)
+	return len(payload), nil
 }
 
 func (circuit *Circuit) Close() error {
 	return nil
-}
-
-func isConstantStage(stage io.ReadWriteCloser) bool {
-	_, isConstant := stage.(*Constant)
-
-	return isConstant
 }

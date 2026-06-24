@@ -11,26 +11,32 @@ import (
 
 func TestVarianceRead(t *testing.T) {
 	Convey("Given a Variance", t, func() {
-		variance := NewVariance(datura.Acquire("variance-config", datura.APPJSON))
+		variance := NewVariance(datura.Acquire("variance-config", datura.APPJSON).Poke("sample", "input"))
 
 		Convey("When the first sample arrives", func() {
-			_, err := io.Copy(variance, datura.Acquire("test", datura.APPJSON).Poke(10, "sample"))
+			_, err := io.Copy(variance, ScalarWire(datura.Acquire("test", datura.APPJSON), "sample", 10))
 
 			So(err, ShouldBeIn, nil, io.EOF)
 
-			_, err = variance.Read(make([]byte, 65536))
+			frame := make([]byte, 65536)
+			readCount, err := variance.Read(frame)
 
-			So(err, ShouldNotBeNil)
+			So(err, ShouldBeIn, nil, io.EOF)
+			So(readCount, ShouldBeGreaterThan, 0)
+
+			outbound := datura.Acquire("variance-outbound", datura.APPJSON)
+			_, _ = outbound.Write(frame[:readCount])
+			So(datura.Peek[float64](outbound, "output", "value"), ShouldEqual, 0)
 		})
 
 		Convey("When warmed up with distinct samples", func() {
-			_, _ = io.Copy(variance, datura.Acquire("test", datura.APPJSON).Poke(10, "sample"))
+			_, _ = io.Copy(variance, ScalarWire(datura.Acquire("test", datura.APPJSON), "sample", 10))
 			_, _ = variance.Read(make([]byte, 65536))
-			_, _ = io.Copy(variance, datura.Acquire("test", datura.APPJSON).Poke(22, "sample"))
+			_, _ = io.Copy(variance, ScalarWire(datura.Acquire("test", datura.APPJSON), "sample", 22))
 			_, _ = variance.Read(make([]byte, 65536))
-			_, _ = io.Copy(variance, datura.Acquire("test", datura.APPJSON).Poke(30, "sample"))
+			_, _ = io.Copy(variance, ScalarWire(datura.Acquire("test", datura.APPJSON), "sample", 30))
 			_, _ = variance.Read(make([]byte, 65536))
-			artifact := datura.Acquire("test", datura.APPJSON).Poke(40, "sample")
+			artifact := ScalarWire(datura.Acquire("test", datura.APPJSON), "sample", 40)
 			_, _ = io.Copy(variance, artifact)
 
 			frame := make([]byte, 65536)
@@ -49,10 +55,10 @@ func TestVarianceRead(t *testing.T) {
 
 func TestVarianceWrite(t *testing.T) {
 	Convey("Given a Variance", t, func() {
-		variance := NewVariance(datura.Acquire("variance-config", datura.APPJSON))
+		variance := NewVariance(datura.Acquire("variance-config", datura.APPJSON).Poke("sample", "input"))
 
 		Convey("When Write is called", func() {
-			_, err := io.Copy(variance, datura.Acquire("test", datura.APPJSON).Poke(10, "sample"))
+			_, err := io.Copy(variance, ScalarWire(datura.Acquire("test", datura.APPJSON), "sample", 10))
 			So(err, ShouldBeIn, nil, io.EOF)
 		})
 	})

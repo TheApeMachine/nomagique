@@ -12,15 +12,21 @@ import (
 )
 
 var timeElasticConfig = datura.Acquire("time-elastic-config", datura.APPJSON).
+	Poke("sample", "input").
 	Poke(float64(time.Hour), "config", "halflife").
 	Poke(1e-6, "config", "epsilon")
+
+func timeElasticWire(sample float64, at time.Time) *datura.Artifact {
+	artifact := ScalarWire(datura.Acquire("test", datura.APPJSON), "sample", sample)
+	artifact.Merge("at", float64(at.UnixNano()))
+
+	return artifact
+}
 
 func TestTimeElasticRead(t *testing.T) {
 	Convey("Given a TimeElastic", t, func() {
 		timeElastic := NewTimeElastic(timeElasticConfig)
-		input := datura.Acquire("test", datura.APPJSON).
-			Poke(10, "sample").
-			Poke(float64(time.Unix(0, 1).UnixNano()), "at")
+		input := timeElasticWire(10, time.Unix(0, 1))
 		io.Copy(timeElastic, input)
 
 		Convey("When Read is called on the first sample", func() {
@@ -39,13 +45,9 @@ func TestTimeElasticRead(t *testing.T) {
 		})
 
 		Convey("When a later timestamp regresses", func() {
-			_, _ = io.Copy(timeElastic, datura.Acquire("test", datura.APPJSON).
-				Poke(10, "sample").
-				Poke(float64(time.Unix(0, 2).UnixNano()), "at"))
+			_, _ = io.Copy(timeElastic, timeElasticWire(10, time.Unix(0, 2)))
 			_, _ = timeElastic.Read(make([]byte, 65536))
-			_, _ = io.Copy(timeElastic, datura.Acquire("test", datura.APPJSON).
-				Poke(12, "sample").
-				Poke(float64(time.Unix(0, 1).UnixNano()), "at"))
+			_, _ = io.Copy(timeElastic, timeElasticWire(12, time.Unix(0, 1)))
 
 			_, err := timeElastic.Read(make([]byte, 65536))
 
@@ -54,10 +56,8 @@ func TestTimeElasticRead(t *testing.T) {
 	})
 
 	Convey("Given missing halflife or epsilon", t, func() {
-		timeElastic := NewTimeElastic(datura.Acquire("time-elastic-config-missing", datura.APPJSON))
-		input := datura.Acquire("test", datura.APPJSON).
-			Poke(10, "sample").
-			Poke(float64(time.Unix(0, 1).UnixNano()), "at")
+		timeElastic := NewTimeElastic(datura.Acquire("time-elastic-config-missing", datura.APPJSON).Poke("sample", "input"))
+		input := timeElasticWire(10, time.Unix(0, 1))
 		_, _ = io.Copy(timeElastic, input)
 
 		Convey("When Read is called", func() {
@@ -69,9 +69,8 @@ func TestTimeElasticRead(t *testing.T) {
 
 	Convey("Given a non-finite sample", t, func() {
 		timeElastic := NewTimeElastic(timeElasticConfig)
-		invalid := datura.Acquire("test", datura.APPJSON).
-			Poke(math.NaN(), "sample").
-			Poke(float64(time.Unix(0, 1).UnixNano()), "at")
+		invalid := ScalarWire(datura.Acquire("test", datura.APPJSON), "sample", math.NaN())
+		invalid.Merge("at", float64(time.Unix(0, 1).UnixNano()))
 		_, _ = io.Copy(timeElastic, invalid)
 
 		Convey("When Read is called", func() {
@@ -84,14 +83,10 @@ func TestTimeElasticRead(t *testing.T) {
 
 func TestTimeElasticWrite(t *testing.T) {
 	Convey("Given a TimeElastic", t, func() {
-		timeElastic := NewTimeElastic(datura.Acquire("time-elastic-config", datura.APPJSON).
-			Poke(float64(time.Hour), "config", "halflife").
-			Poke(1e-6, "config", "epsilon"))
+		timeElastic := NewTimeElastic(timeElasticConfig)
 
 		Convey("When Write is called", func() {
-			input := datura.Acquire("test", datura.APPJSON).
-				Poke(10, "sample").
-				Poke(float64(time.Unix(0, 1).UnixNano()), "at")
+			input := timeElasticWire(10, time.Unix(0, 1))
 			_, err := io.Copy(timeElastic, input)
 			So(err, ShouldBeNil)
 		})
@@ -101,21 +96,18 @@ func TestTimeElasticWrite(t *testing.T) {
 func TestTimeElasticFlipFlop(t *testing.T) {
 	Convey("Given a warmed TimeElastic through FlipFlop", t, func() {
 		config := datura.Acquire("time-elastic-flipflop", datura.APPJSON).
+			Poke("sample", "input").
 			Poke(float64(time.Hour), "config", "halflife").
 			Poke(1e-6, "config", "epsilon")
 		timeElastic := NewTimeElastic(config)
-		artifact := datura.Acquire("test", datura.APPJSON).
-			Poke(10, "sample").
-			Poke(float64(time.Unix(0, int64(time.Hour)).UnixNano()), "at")
+		artifact := timeElasticWire(10, time.Unix(0, int64(time.Hour)))
 
 		err := transport.NewFlipFlop(artifact, timeElastic)
 
 		So(err, ShouldBeIn, nil, io.EOF)
 		So(datura.Peek[float64](artifact, "output", "value"), ShouldEqual, 1)
 
-		second := datura.Acquire("test", datura.APPJSON).
-			Poke(14, "sample").
-			Poke(float64(time.Unix(0, int64(5*time.Hour)).UnixNano()), "at")
+		second := timeElasticWire(14, time.Unix(0, int64(5*time.Hour)))
 		err = transport.NewFlipFlop(second, timeElastic)
 
 		So(err, ShouldBeIn, nil, io.EOF)

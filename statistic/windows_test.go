@@ -6,9 +6,10 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 )
 
-func TestRollingWindows(t *testing.T) {
-	Convey("Given explicit window hints", t, func() {
-		shortWindow, longWindow, err := RollingWindows(nil, 5, 60)
+func TestRollingWindow_Resolve(testingTB *testing.T) {
+	Convey("Given explicit window hints", testingTB, func() {
+		rolling := NewRollingWindow(5, 60)
+		shortWindow, longWindow, err := rolling.Resolve(nil)
 
 		Convey("It should return the configured hints", func() {
 			So(err, ShouldBeNil)
@@ -17,9 +18,10 @@ func TestRollingWindows(t *testing.T) {
 		})
 	})
 
-	Convey("Given history without hints", t, func() {
+	Convey("Given history without hints", testingTB, func() {
 		history := []float64{1, 1, 1, 1, 10, 12, 9, 11}
-		shortWindow, longWindow, err := RollingWindows(history, 0, 0)
+		rolling := NewRollingWindow(0, 0)
+		shortWindow, longWindow, err := rolling.Resolve(history)
 
 		Convey("It should derive short and long windows from the sample spread", func() {
 			So(err, ShouldBeNil)
@@ -28,16 +30,20 @@ func TestRollingWindows(t *testing.T) {
 		})
 	})
 
-	Convey("Given empty history without hints", t, func() {
-		_, _, err := RollingWindows(nil, 0, 0)
+	Convey("Given empty history without hints", testingTB, func() {
+		rolling := NewRollingWindow(0, 0)
+		_, _, err := rolling.Resolve(nil)
 
 		Convey("It should reject missing history", func() {
 			So(err, ShouldNotBeNil)
 		})
 	})
+}
 
-	Convey("Given a single sample without hints", t, func() {
-		required, err := TargetLongWindow([]float64{10}, 0, 0)
+func TestRollingWindow_TargetLong(testingTB *testing.T) {
+	Convey("Given a single sample without hints", testingTB, func() {
+		rolling := NewRollingWindow(0, 0)
+		required, err := rolling.TargetLong([]float64{10})
 
 		Convey("It should require more than one sample before calibration", func() {
 			So(err, ShouldBeNil)
@@ -46,9 +52,10 @@ func TestRollingWindows(t *testing.T) {
 	})
 }
 
-func TestReturnLag(testingTB *testing.T) {
+func TestRollingWindow_ReturnLag(testingTB *testing.T) {
 	Convey("Given history without an explicit return lag hint", testingTB, func() {
-		lag, err := ReturnLag([]float64{1, 2, 3, 4, 5, 6, 7, 8}, 0, 0)
+		rolling := NewRollingWindow(0, 0)
+		lag, err := rolling.ReturnLag([]float64{1, 2, 3, 4, 5, 6, 7, 8}, 0)
 
 		Convey("It should derive a positive lag from the long window", func() {
 			So(err, ShouldBeNil)
@@ -57,16 +64,17 @@ func TestReturnLag(testingTB *testing.T) {
 	})
 }
 
-func BenchmarkRollingWindows(b *testing.B) {
+func BenchmarkRollingWindow_Resolve(testingTB *testing.B) {
 	history := make([]float64, 128)
+	rolling := NewRollingWindow(0, 0)
 
 	for index := range history {
 		history[index] = float64(index + 1)
 	}
 
-	b.ReportAllocs()
+	testingTB.ReportAllocs()
 
-	for b.Loop() {
-		_, _, _ = RollingWindows(history, 0, 0)
+	for testingTB.Loop() {
+		_, _, _ = rolling.Resolve(history)
 	}
 }

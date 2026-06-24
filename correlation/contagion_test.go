@@ -10,12 +10,38 @@ import (
 
 func contagionConfigArtifact() *datura.Artifact {
 	return datura.Acquire("test", datura.APPJSON).
-		Poke(1, "config", "minSamples").
-		Poke(2, "config", "memberCap").
-		Poke(2, "config", "adaptiveSigma").
-		Poke(8, "config", "tier", "fast").
-		Poke(8, "config", "tier", "medium").
-		Poke(8, "config", "tier", "slow")
+		WithAttributes(datura.Map[any]{
+			"memberKey": "member",
+			"sampleKey": "sample",
+			"pairedKey": "paired",
+			"config": datura.Map[any]{
+				"minSamples":    1.0,
+				"memberCap":     2.0,
+				"adaptiveSigma": 2.0,
+				"tier": datura.Map[any]{
+					"fast":   8.0,
+					"medium": 8.0,
+					"slow":   8.0,
+				},
+			},
+		})
+}
+
+func contagionWire(
+	artifact *datura.Artifact,
+	member int,
+	sample float64,
+	paired float64,
+) *datura.Artifact {
+	artifact.Poke("wire", "root")
+	artifact.Poke([]string{"member", "sample", "paired"}, "inputs")
+	artifact.Merge("wire", map[string]any{
+		"member": member,
+		"sample": sample,
+		"paired": paired,
+	})
+
+	return artifact
 }
 
 func TestMedianPairwiseAbsCorrelation(testingTB *testing.T) {
@@ -23,22 +49,22 @@ func TestMedianPairwiseAbsCorrelation(testingTB *testing.T) {
 		contagion := NewContagion(contagionConfigArtifact())
 		artifact := datura.Acquire("test", datura.APPJSON)
 
-		artifact.Poke(1, "member").Poke(float64(1_000), "sample").Poke(100.0, "paired")
+		contagionWire(artifact, 1, float64(1_000), 100.0)
 		err := transport.NewFlipFlop(artifact, contagion)
 
 		So(err, ShouldNotBeNil)
 
-		artifact.Poke(1, "member").Poke(float64(2_000), "sample").Poke(110.0, "paired")
+		contagionWire(artifact, 1, float64(2_000), 110.0)
 		err = transport.NewFlipFlop(artifact, contagion)
 
 		So(err, ShouldBeNil)
 
-		artifact.Poke(2, "member").Poke(float64(1_000), "sample").Poke(50.0, "paired")
+		contagionWire(artifact, 2, float64(1_000), 50.0)
 		err = transport.NewFlipFlop(artifact, contagion)
 
 		So(err, ShouldBeNil)
 
-		artifact.Poke(2, "member").Poke(float64(2_000), "sample").Poke(55.0, "paired")
+		contagionWire(artifact, 2, float64(2_000), 55.0)
 		err = transport.NewFlipFlop(artifact, contagion)
 
 		So(err, ShouldBeNil)
@@ -55,22 +81,22 @@ func TestContagionObserve(testingTB *testing.T) {
 		contagion := NewContagion(contagionConfigArtifact())
 		artifact := datura.Acquire("test", datura.APPJSON)
 
-		artifact.Poke(1, "member").Poke(float64(1_000), "sample").Poke(100.0, "paired")
+		contagionWire(artifact, 1, float64(1_000), 100.0)
 		err := transport.NewFlipFlop(artifact, contagion)
 
 		So(err, ShouldNotBeNil)
 
-		artifact.Poke(1, "member").Poke(float64(2_000), "sample").Poke(110.0, "paired")
+		contagionWire(artifact, 1, float64(2_000), 110.0)
 		err = transport.NewFlipFlop(artifact, contagion)
 
 		So(err, ShouldBeNil)
 
-		artifact.Poke(2, "member").Poke(float64(1_000), "sample").Poke(50.0, "paired")
+		contagionWire(artifact, 2, float64(1_000), 50.0)
 		err = transport.NewFlipFlop(artifact, contagion)
 
 		So(err, ShouldBeNil)
 
-		artifact.Poke(2, "member").Poke(float64(2_000), "sample").Poke(55.0, "paired")
+		contagionWire(artifact, 2, float64(2_000), 55.0)
 		err = transport.NewFlipFlop(artifact, contagion)
 
 		So(err, ShouldBeNil)
@@ -86,19 +112,31 @@ func TestContagionObserve(testingTB *testing.T) {
 func BenchmarkContagionObserve(testingTB *testing.B) {
 	contagion := NewContagion(
 		datura.Acquire("test", datura.APPJSON).
-			Poke(8, "config", "minSamples").
-			Poke(16, "config", "memberCap").
-			Poke(8, "config", "tier", "fast").
-			Poke(16, "config", "tier", "medium").
-			Poke(32, "config", "tier", "slow"),
+			WithAttributes(datura.Map[any]{
+				"memberKey": "member",
+				"sampleKey": "sample",
+				"pairedKey": "paired",
+				"config": datura.Map[any]{
+					"minSamples": 8.0,
+					"memberCap":  16.0,
+					"tier": datura.Map[any]{
+						"fast":   8.0,
+						"medium": 16.0,
+						"slow":   32.0,
+					},
+				},
+			}),
 	)
 	artifact := datura.Acquire("test", datura.APPJSON)
 
 	for member := range 16 {
 		for step := range 32 {
-			artifact.Poke(float64(member+1), "member").
-				Poke(float64((step+1)*1_000), "sample").
-				Poke(100+float64(member)+float64(step)*0.01, "paired")
+			contagionWire(
+				artifact,
+				member+1,
+				float64((step+1)*1_000),
+				100+float64(member)+float64(step)*0.01,
+			)
 			_ = transport.NewFlipFlop(artifact, contagion)
 		}
 	}

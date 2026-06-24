@@ -22,21 +22,13 @@ type Range struct {
 NewRange returns a range stage wired from config attributes on the artifact.
 */
 func NewRange(artifact *datura.Artifact) *Range {
-	artifact.Inspect("adaptive", "range", "NewRange()")
-
 	return &Range{
 		artifact: artifact,
 	}
 }
 
-func (extent *Range) Write(p []byte) (int, error) {
-	extent.artifact.WithPayload(p)
-	return len(p), nil
-}
-
 func (extent *Range) Read(payload []byte) (int, error) {
 	state := datura.Acquire("range-state", datura.APPJSON)
-	state.Inspect("adaptive", "range", "Read()", "p")
 
 	if _, err := state.Write(extent.artifact.DecryptPayload()); err != nil {
 		return 0, errnie.Error(errnie.Err(
@@ -46,18 +38,47 @@ func (extent *Range) Read(payload []byte) (int, error) {
 		))
 	}
 
-	root := datura.Peek[string](state, "root")
+	state.Inspect("adaptive", "range", "Read()", "p")
+
+	rootKey := datura.Peek[string](state, "root")
+
+	if rootKey == "" {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"range: root required",
+			nil,
+		))
+	}
+
 	inputs := datura.Peek[[]string](state, "inputs")
 
 	if len(inputs) == 0 {
-		inputs = []string{"sample"}
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"range: inputs required",
+			nil,
+		))
 	}
 
-	for _, input := range inputs {
-		sample := datura.Peek[float64](state, root, input)
+	for index, input := range inputs {
+		var sample float64
 
-		if root == "" {
-			sample = datura.Peek[float64](state, input)
+		if rootKey == "features" {
+			features := datura.Peek[[]float64](state, rootKey)
+
+			if index >= len(features) {
+				return 0, errnie.Error(errnie.Err(
+					errnie.Validation,
+					"range: feature index out of range",
+					nil,
+				))
+			}
+
+			sample = features[index]
+		}
+
+		if rootKey != "features" {
+			sample = datura.Peek[float64](state, rootKey, input)
 		}
 
 		if math.IsNaN(sample) || math.IsInf(sample, 0) {
@@ -72,12 +93,9 @@ func (extent *Range) Read(payload []byte) (int, error) {
 			extent.min = sample
 			extent.max = sample
 			extent.bootstrapped = true
+			state.MergeOutput("value", 0)
 
-			return 0, errnie.Error(errnie.Err(
-				errnie.Validation,
-				"range: insufficient samples",
-				nil,
-			))
+			break
 		}
 
 		extent.min = math.Min(extent.min, sample)
@@ -93,12 +111,18 @@ func (extent *Range) Read(payload []byte) (int, error) {
 			))
 		}
 
-		state.Poke("output", "root")
-		state.Poke([]string{"value"}, "inputs")
 		state.MergeOutput("value", span)
 	}
 
+	state.Poke("output", "root")
+	state.Poke([]string{"value"}, "inputs")
+
 	return state.Read(payload)
+}
+
+func (extent *Range) Write(p []byte) (int, error) {
+	extent.artifact.WithPayload(p)
+	return len(p), nil
 }
 
 func (extent *Range) Close() error {

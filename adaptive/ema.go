@@ -17,15 +17,12 @@ The constructor artifact holds config attributes; Write buffers wire on artifact
 type EMA struct {
 	artifact *datura.Artifact
 	inner    *trend.Ema[float64]
-	samples  []float64
 }
 
 /*
 NewEMA returns an EMA stage wired from config attributes on the artifact.
 */
 func NewEMA(artifact *datura.Artifact) *EMA {
-	artifact.Inspect("adaptive", "ema", "NewEMA()")
-
 	inner := trend.NewEma[float64]()
 
 	if period := int(datura.Peek[float64](artifact, "period")); period > 0 {
@@ -38,19 +35,12 @@ func NewEMA(artifact *datura.Artifact) *EMA {
 
 	return &EMA{
 		artifact: artifact,
-		samples:  []float64{},
 		inner:    inner,
 	}
 }
 
-func (ema *EMA) Write(p []byte) (int, error) {
-	ema.artifact.WithPayload(p)
-	return len(p), nil
-}
-
-func (ema *EMA) Read(p []byte) (int, error) {
+func (ema *EMA) Read(payload []byte) (int, error) {
 	state := datura.Acquire("ema-state", datura.APPJSON)
-	state.Inspect("adaptive", "ema", "Read()", "p")
 
 	if _, err := state.Write(ema.artifact.DecryptPayload()); err != nil {
 		return 0, errnie.Error(errnie.Err(
@@ -60,38 +50,96 @@ func (ema *EMA) Read(p []byte) (int, error) {
 		))
 	}
 
-	root := datura.Peek[string](state, "root")
+	state.Inspect("adaptive", "ema", "Read()", "p")
+
+	rootKey := datura.Peek[string](state, "root")
+
+	if rootKey == "" {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"ema: root required",
+			nil,
+		))
+	}
+
 	inputs := datura.Peek[[]string](state, "inputs")
 
 	if len(inputs) == 0 {
-		inputs = []string{"sample"}
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"ema: inputs required",
+			nil,
+		))
 	}
 
-	for _, input := range inputs {
-		sample := datura.Peek[float64](state, root, input)
+	configInput := datura.Peek[string](ema.artifact, "input")
 
-		if root == "" {
-			sample = datura.Peek[float64](state, input)
+	if configInput == "" {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"ema: input required",
+			nil,
+		))
+	}
+
+	currentSamples := make([]float64, 0, len(inputs))
+
+	for index, input := range inputs {
+		if input != configInput {
+			continue
 		}
 
-		ema.samples = append(ema.samples, sample)
+		sample := datura.Peek[float64](state, rootKey, input)
+
+		if rootKey == "features" {
+			features := datura.Peek[[]float64](state, rootKey)
+
+			if index >= len(features) {
+				return 0, errnie.Error(errnie.Err(
+					errnie.Validation,
+					"ema: feature index out of range",
+					nil,
+				))
+			}
+
+			sample = features[index]
+		}
+
+		currentSamples = append(currentSamples, sample)
 	}
 
-	inputChannel := helper.SliceToChanWithContext(context.Background(), ema.samples)
+	if len(currentSamples) == 0 {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"ema: input not in inputs",
+			nil,
+		))
+	}
+
+	inputChannel := helper.SliceToChanWithContext(context.Background(), currentSamples)
 	outputChannel := ema.inner.ComputeWithContext(context.Background(), inputChannel)
 	emaValues := helper.ChanToSlice(outputChannel)
 
-	if len(emaValues) == 0 {
+	if len(currentSamples) == 0 {
 		return 0, io.EOF
 	}
 
-	latestEMA := emaValues[len(emaValues)-1]
+	latestEMA := currentSamples[len(currentSamples)-1]
+
+	if len(emaValues) > 0 {
+		latestEMA = emaValues[len(emaValues)-1]
+	}
 
 	state.MergeOutput("value", latestEMA)
-	state.Merge("root", "output")
-	state.Merge("inputs", []string{"value"})
+	state.Poke("output", "root")
+	state.Poke([]string{"value"}, "inputs")
 
-	return state.Read(p)
+	return state.Read(payload)
+}
+
+func (ema *EMA) Write(payload []byte) (int, error) {
+	ema.artifact.WithPayload(payload)
+	return len(payload), nil
 }
 
 func (ema *EMA) Close() error {

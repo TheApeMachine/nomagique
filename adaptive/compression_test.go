@@ -9,7 +9,7 @@ import (
 	"github.com/theapemachine/datura/transport"
 )
 
-var compressionInput = datura.Acquire("test", datura.APPJSON).Poke(10, "sample")
+var compressionInput = ScalarWire(datura.Acquire("test", datura.APPJSON), "sample", 10)
 
 func compressionStageConfig() *datura.Artifact {
 	return datura.Acquire("compression-config", datura.APPJSON).
@@ -28,7 +28,8 @@ func TestCompressionZeroOutput(t *testing.T) {
 			}, "compression")
 		compression := NewCompression(config)
 		warmup := datura.Acquire("compression-warmup-frame", datura.APPJSON)
-		warmup.Merge("root", "output")
+		warmup.Poke("output", "root")
+		warmup.Poke([]string{"spread"}, "inputs")
 		warmup.Merge("output", map[string]any{"spread": 2.0})
 
 		err := transport.NewFlipFlop(warmup, compression)
@@ -36,7 +37,8 @@ func TestCompressionZeroOutput(t *testing.T) {
 		So(err, ShouldBeNil)
 
 		frame := datura.Acquire("compression-zero-frame", datura.APPJSON)
-		frame.Merge("root", "output")
+		frame.Poke("output", "root")
+		frame.Poke([]string{"spread"}, "inputs")
 		frame.Merge("output", map[string]any{"spread": 0.0})
 
 		err = transport.NewFlipFlop(frame, compression)
@@ -65,9 +67,9 @@ func TestCompressionRead(t *testing.T) {
 
 	Convey("Given a warmed Compression", t, func() {
 		compression := NewCompression(compressionStageConfig())
-		_, _ = io.Copy(compression, datura.Acquire("test", datura.APPJSON).Poke(10, "sample"))
+		_, _ = io.Copy(compression, ScalarWire(datura.Acquire("test", datura.APPJSON), "sample", 10))
 		_, _ = compression.Read(make([]byte, 65536))
-		_, _ = io.Copy(compression, datura.Acquire("test", datura.APPJSON).Poke(8, "sample"))
+		_, _ = io.Copy(compression, ScalarWire(datura.Acquire("test", datura.APPJSON), "sample", 8))
 
 		frame := make([]byte, 65536)
 		readCount, err := compression.Read(frame)

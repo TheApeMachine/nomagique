@@ -25,11 +25,6 @@ func NewGeometricMean(artifact *datura.Artifact) *GeometricMean {
 	}
 }
 
-func (geometricMean *GeometricMean) Write(p []byte) (int, error) {
-	geometricMean.artifact.WithPayload(p)
-	return len(p), nil
-}
-
 func (geometricMean *GeometricMean) Read(p []byte) (int, error) {
 	state := datura.Acquire("geometric-mean-state", datura.APPJSON)
 
@@ -93,6 +88,11 @@ func (geometricMean *GeometricMean) Read(p []byte) (int, error) {
 	state.Poke([]string{destinationKey}, "inputs")
 
 	return state.Read(p)
+}
+
+func (geometricMean *GeometricMean) Write(p []byte) (int, error) {
+	geometricMean.artifact.WithPayload(p)
+	return len(p), nil
 }
 
 func (geometricMean *GeometricMean) Close() error {

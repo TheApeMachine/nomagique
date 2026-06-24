@@ -2,8 +2,11 @@ package logic
 
 import (
 	"io"
+	"math"
 
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/datura/transport"
+	"github.com/theapemachine/errnie"
 )
 
 /*
@@ -31,19 +34,131 @@ func (trueCondition True) Match(artifact *datura.Artifact) bool {
 		return false
 	}
 
-	inbound, inboundOK := artifactBytes(artifact)
+	if constant, isConstant := trueCondition.Stage.(*Constant); isConstant {
+		return constant.value != 0
+	}
 
-	if !inboundOK {
+	operand := datura.Acquire("logic-operand", datura.APPJSON)
+
+	packed, err := artifact.Message().MarshalPacked()
+
+	if err != nil {
+		errnie.Error(errnie.Err(
+			errnie.IO,
+			"logic: true condition marshal failed",
+			err,
+		))
+		operand.Release()
+
 		return false
 	}
 
-	value, valueOK := readOperand(trueCondition.Stage, inbound)
+	if _, err = operand.Write(packed); err != nil {
+		errnie.Error(errnie.Err(
+			errnie.IO,
+			"logic: true condition write failed",
+			err,
+		))
+		operand.Release()
 
-	return valueOK && truthy(value)
+		return false
+	}
+
+	if err = transport.NewFlipFlop(operand, trueCondition.Stage); err != nil {
+		errnie.Error(errnie.Err(
+			errnie.IO,
+			"logic: true condition flipFlop failed",
+			err,
+		))
+		operand.Release()
+
+		return false
+	}
+
+	rootKey := datura.Peek[string](operand, "root")
+	inputKeys := datura.Peek[[]string](operand, "inputs")
+
+	if rootKey == "" || len(inputKeys) == 0 {
+		errnie.Error(errnie.Err(
+			errnie.Validation,
+			"logic: true condition wire required",
+			nil,
+		))
+		operand.Release()
+
+		return false
+	}
+
+	for _, inputKey := range inputKeys {
+		var value float64
+
+		for wireIndex, wireInput := range inputKeys {
+			if wireInput != inputKey {
+				continue
+			}
+
+			if rootKey == "features" {
+				features := datura.Peek[[]float64](operand, rootKey)
+
+				if wireIndex >= len(features) {
+					errnie.Error(errnie.Err(
+						errnie.Validation,
+						"logic: true condition feature index out of range",
+						nil,
+					))
+					operand.Release()
+
+					return false
+				}
+
+				value = features[wireIndex]
+			}
+
+			if rootKey != "features" {
+				value = datura.Peek[float64](operand, rootKey, wireInput)
+			}
+
+			if value != 0 {
+				operand.Release()
+
+				return true
+			}
+		}
+	}
+
+	operand.Release()
+
+	return false
 }
 
 func (trueCondition True) ResetOperands() {
-	writeResetToStage(trueCondition.Stage)
+	if trueCondition.Stage == nil {
+		return
+	}
+
+	reset := datura.Acquire("logic-reset", datura.APPJSON)
+	reset.Poke(1, "reset")
+
+	packed, err := reset.Message().MarshalPacked()
+	reset.Release()
+
+	if err != nil {
+		errnie.Error(errnie.Err(
+			errnie.IO,
+			"logic: true condition reset frame marshal failed",
+			err,
+		))
+
+		return
+	}
+
+	if _, err = trueCondition.Stage.Write(packed); err != nil {
+		errnie.Error(errnie.Err(
+			errnie.IO,
+			"logic: true condition reset stage failed",
+			err,
+		))
+	}
 }
 
 /*
@@ -127,92 +242,637 @@ func (xorCondition Xor) ResetOperands() {
 }
 
 /*
-GreaterThan compares a boundary sample against a wired operand stage.
+GreaterThan compares input samples against a wired operand stage.
 */
 type GreaterThan struct {
 	Right io.ReadWriteCloser
 }
 
 func (greaterThan GreaterThan) Match(artifact *datura.Artifact) bool {
-	sample, sampleOK := boundarySample(artifact)
+	rootKey := datura.Peek[string](artifact, "root")
+	inputKeys := datura.Peek[[]string](artifact, "inputs")
 
-	if !sampleOK {
+	if rootKey == "" || len(inputKeys) == 0 {
+		errnie.Error(errnie.Err(
+			errnie.Validation,
+			"logic: greaterThan wire required",
+			nil,
+		))
+
 		return false
 	}
 
-	inbound, inboundOK := artifactBytes(artifact)
+	samples := make([]float64, len(inputKeys))
 
-	if !inboundOK {
-		return false
+	for index, inputKey := range inputKeys {
+		var sample float64
+
+		for wireIndex, wireInput := range inputKeys {
+			if wireInput != inputKey {
+				continue
+			}
+
+			if rootKey == "features" {
+				features := datura.Peek[[]float64](artifact, rootKey)
+
+				if wireIndex >= len(features) {
+					errnie.Error(errnie.Err(
+						errnie.Validation,
+						"logic: greaterThan feature index out of range",
+						nil,
+					))
+
+					return false
+				}
+
+				sample = features[wireIndex]
+			}
+
+			if rootKey != "features" {
+				sample = datura.Peek[float64](artifact, rootKey, wireInput)
+			}
+		}
+
+		if math.IsNaN(sample) || math.IsInf(sample, 0) {
+			errnie.Error(errnie.Err(
+				errnie.Validation,
+				"logic: greaterThan input sample is non-finite",
+				nil,
+			))
+
+			return false
+		}
+
+		samples[index] = sample
 	}
 
-	right, rightOK := readOperand(greaterThan.Right, inbound)
+	var rightScalars []float64
 
-	return rightOK && sample > right
+	if constant, isConstant := greaterThan.Right.(*Constant); isConstant {
+		rightScalars = []float64{constant.value}
+	} else {
+		rightScratch := datura.Acquire("logic-operand-right", datura.APPJSON)
+
+		packed, err := artifact.Message().MarshalPacked()
+
+		if err != nil {
+			errnie.Error(errnie.Err(
+				errnie.IO,
+				"logic: greaterThan operand marshal failed",
+				err,
+			))
+			rightScratch.Release()
+
+			return false
+		}
+
+		if _, err = rightScratch.Write(packed); err != nil {
+			errnie.Error(errnie.Err(
+				errnie.IO,
+				"logic: greaterThan operand write failed",
+				err,
+			))
+			rightScratch.Release()
+
+			return false
+		}
+
+		if err = transport.NewFlipFlop(rightScratch, greaterThan.Right); err != nil {
+			errnie.Error(errnie.Err(
+				errnie.IO,
+				"logic: greaterThan operand flipFlop failed",
+				err,
+			))
+			rightScratch.Release()
+
+			return false
+		}
+
+		rightKeys := datura.Peek[[]string](rightScratch, "inputs")
+
+		if len(rightKeys) == 0 {
+			errnie.Error(errnie.Err(
+				errnie.Validation,
+				"logic: greaterThan operand wire required",
+				nil,
+			))
+			rightScratch.Release()
+
+			return false
+		}
+
+		rightRoot := datura.Peek[string](rightScratch, "root")
+
+		if rightRoot == "" {
+			errnie.Error(errnie.Err(
+				errnie.Validation,
+				"logic: greaterThan operand root required",
+				nil,
+			))
+			rightScratch.Release()
+
+			return false
+		}
+
+		rightScalars = make([]float64, len(rightKeys))
+
+		for index, rightKey := range rightKeys {
+			var right float64
+
+			for wireIndex, wireInput := range rightKeys {
+				if wireInput != rightKey {
+					continue
+				}
+
+				if rightRoot == "features" {
+					features := datura.Peek[[]float64](rightScratch, rightRoot)
+
+					if wireIndex >= len(features) {
+						errnie.Error(errnie.Err(
+							errnie.Validation,
+							"logic: greaterThan operand feature index out of range",
+							nil,
+						))
+						rightScratch.Release()
+
+						return false
+					}
+
+					right = features[wireIndex]
+				}
+
+				if rightRoot != "features" {
+					right = datura.Peek[float64](rightScratch, rightRoot, wireInput)
+				}
+			}
+
+			rightScalars[index] = right
+		}
+
+		rightScratch.Release()
+	}
+
+	for _, sample := range samples {
+		for _, right := range rightScalars {
+			if sample <= right {
+				return false
+			}
+		}
+	}
+
+	return true
 }
 
 func (greaterThan GreaterThan) ResetOperands() {
-	writeResetToStage(greaterThan.Right)
+	if greaterThan.Right == nil {
+		return
+	}
+
+	reset := datura.Acquire("logic-reset", datura.APPJSON)
+	reset.Poke(1, "reset")
+
+	packed, err := reset.Message().MarshalPacked()
+	reset.Release()
+
+	if err != nil {
+		errnie.Error(errnie.Err(
+			errnie.IO,
+			"logic: greaterThan reset frame marshal failed",
+			err,
+		))
+
+		return
+	}
+
+	if _, err = greaterThan.Right.Write(packed); err != nil {
+		errnie.Error(errnie.Err(
+			errnie.IO,
+			"logic: greaterThan reset stage failed",
+			err,
+		))
+	}
 }
 
 /*
-LessThan compares a boundary sample against a wired operand stage.
+LessThan compares input samples against a wired operand stage.
 */
 type LessThan struct {
 	Right io.ReadWriteCloser
 }
 
 func (lessThan LessThan) Match(artifact *datura.Artifact) bool {
-	sample, sampleOK := boundarySample(artifact)
+	rootKey := datura.Peek[string](artifact, "root")
+	inputKeys := datura.Peek[[]string](artifact, "inputs")
 
-	if !sampleOK {
+	if rootKey == "" || len(inputKeys) == 0 {
+		errnie.Error(errnie.Err(
+			errnie.Validation,
+			"logic: lessThan wire required",
+			nil,
+		))
+
 		return false
 	}
 
-	inbound, inboundOK := artifactBytes(artifact)
+	samples := make([]float64, len(inputKeys))
 
-	if !inboundOK {
-		return false
+	for index, inputKey := range inputKeys {
+		var sample float64
+
+		for wireIndex, wireInput := range inputKeys {
+			if wireInput != inputKey {
+				continue
+			}
+
+			if rootKey == "features" {
+				features := datura.Peek[[]float64](artifact, rootKey)
+
+				if wireIndex >= len(features) {
+					errnie.Error(errnie.Err(
+						errnie.Validation,
+						"logic: greaterThan feature index out of range",
+						nil,
+					))
+
+					return false
+				}
+
+				sample = features[wireIndex]
+			}
+
+			if rootKey != "features" {
+				sample = datura.Peek[float64](artifact, rootKey, wireInput)
+			}
+		}
+
+		if math.IsNaN(sample) || math.IsInf(sample, 0) {
+			errnie.Error(errnie.Err(
+				errnie.Validation,
+				"logic: lessThan input sample is non-finite",
+				nil,
+			))
+
+			return false
+		}
+
+		samples[index] = sample
 	}
 
-	right, rightOK := readOperand(lessThan.Right, inbound)
+	var rightScalars []float64
 
-	return rightOK && sample < right
+	if constant, isConstant := lessThan.Right.(*Constant); isConstant {
+		rightScalars = []float64{constant.value}
+	} else {
+		rightScratch := datura.Acquire("logic-operand-right", datura.APPJSON)
+
+		packed, err := artifact.Message().MarshalPacked()
+
+		if err != nil {
+			errnie.Error(errnie.Err(
+				errnie.IO,
+				"logic: lessThan operand marshal failed",
+				err,
+			))
+			rightScratch.Release()
+
+			return false
+		}
+
+		if _, err = rightScratch.Write(packed); err != nil {
+			errnie.Error(errnie.Err(
+				errnie.IO,
+				"logic: lessThan operand write failed",
+				err,
+			))
+			rightScratch.Release()
+
+			return false
+		}
+
+		if err = transport.NewFlipFlop(rightScratch, lessThan.Right); err != nil {
+			errnie.Error(errnie.Err(
+				errnie.IO,
+				"logic: lessThan operand flipFlop failed",
+				err,
+			))
+			rightScratch.Release()
+
+			return false
+		}
+
+		rightKeys := datura.Peek[[]string](rightScratch, "inputs")
+
+		if len(rightKeys) == 0 {
+			errnie.Error(errnie.Err(
+				errnie.Validation,
+				"logic: lessThan operand wire required",
+				nil,
+			))
+			rightScratch.Release()
+
+			return false
+		}
+
+		rightRoot := datura.Peek[string](rightScratch, "root")
+
+		if rightRoot == "" {
+			errnie.Error(errnie.Err(
+				errnie.Validation,
+				"logic: greaterThan operand root required",
+				nil,
+			))
+			rightScratch.Release()
+
+			return false
+		}
+
+		rightScalars = make([]float64, len(rightKeys))
+
+		for index, rightKey := range rightKeys {
+			var right float64
+
+			for wireIndex, wireInput := range rightKeys {
+				if wireInput != rightKey {
+					continue
+				}
+
+				if rightRoot == "features" {
+					features := datura.Peek[[]float64](rightScratch, rightRoot)
+
+					if wireIndex >= len(features) {
+						errnie.Error(errnie.Err(
+							errnie.Validation,
+							"logic: greaterThan operand feature index out of range",
+							nil,
+						))
+						rightScratch.Release()
+
+						return false
+					}
+
+					right = features[wireIndex]
+				}
+
+				if rightRoot != "features" {
+					right = datura.Peek[float64](rightScratch, rightRoot, wireInput)
+				}
+			}
+
+			rightScalars[index] = right
+		}
+
+		rightScratch.Release()
+	}
+
+	for _, sample := range samples {
+		for _, right := range rightScalars {
+			if sample >= right {
+				return false
+			}
+		}
+	}
+
+	return true
 }
 
 func (lessThan LessThan) ResetOperands() {
-	writeResetToStage(lessThan.Right)
+	if lessThan.Right == nil {
+		return
+	}
+
+	reset := datura.Acquire("logic-reset", datura.APPJSON)
+	reset.Poke(1, "reset")
+
+	packed, err := reset.Message().MarshalPacked()
+	reset.Release()
+
+	if err != nil {
+		errnie.Error(errnie.Err(
+			errnie.IO,
+			"logic: lessThan reset frame marshal failed",
+			err,
+		))
+
+		return
+	}
+
+	if _, err = lessThan.Right.Write(packed); err != nil {
+		errnie.Error(errnie.Err(
+			errnie.IO,
+			"logic: lessThan reset stage failed",
+			err,
+		))
+	}
 }
 
 /*
-Equal compares a boundary sample against a wired operand stage.
+Equal compares input samples against a wired operand stage.
 */
 type Equal struct {
 	Right io.ReadWriteCloser
 }
 
 func (equal Equal) Match(artifact *datura.Artifact) bool {
-	sample, sampleOK := boundarySample(artifact)
+	rootKey := datura.Peek[string](artifact, "root")
+	inputKeys := datura.Peek[[]string](artifact, "inputs")
 
-	if !sampleOK {
+	if rootKey == "" || len(inputKeys) == 0 {
+		errnie.Error(errnie.Err(
+			errnie.Validation,
+			"logic: equal wire required",
+			nil,
+		))
+
 		return false
 	}
 
-	inbound, inboundOK := artifactBytes(artifact)
+	samples := make([]float64, len(inputKeys))
 
-	if !inboundOK {
-		return false
+	for index, inputKey := range inputKeys {
+		var sample float64
+
+		for wireIndex, wireInput := range inputKeys {
+			if wireInput != inputKey {
+				continue
+			}
+
+			if rootKey == "features" {
+				features := datura.Peek[[]float64](artifact, rootKey)
+
+				if wireIndex >= len(features) {
+					errnie.Error(errnie.Err(
+						errnie.Validation,
+						"logic: greaterThan feature index out of range",
+						nil,
+					))
+
+					return false
+				}
+
+				sample = features[wireIndex]
+			}
+
+			if rootKey != "features" {
+				sample = datura.Peek[float64](artifact, rootKey, wireInput)
+			}
+		}
+
+		if math.IsNaN(sample) || math.IsInf(sample, 0) {
+			errnie.Error(errnie.Err(
+				errnie.Validation,
+				"logic: equal input sample is non-finite",
+				nil,
+			))
+
+			return false
+		}
+
+		samples[index] = sample
 	}
 
-	right, rightOK := readOperand(equal.Right, inbound)
+	var rightScalars []float64
 
-	return rightOK && sample == right
+	if constant, isConstant := equal.Right.(*Constant); isConstant {
+		rightScalars = []float64{constant.value}
+	} else {
+		rightScratch := datura.Acquire("logic-operand-right", datura.APPJSON)
+
+		packed, err := artifact.Message().MarshalPacked()
+
+		if err != nil {
+			errnie.Error(errnie.Err(
+				errnie.IO,
+				"logic: equal operand marshal failed",
+				err,
+			))
+			rightScratch.Release()
+
+			return false
+		}
+
+		if _, err = rightScratch.Write(packed); err != nil {
+			errnie.Error(errnie.Err(
+				errnie.IO,
+				"logic: equal operand write failed",
+				err,
+			))
+			rightScratch.Release()
+
+			return false
+		}
+
+		if err = transport.NewFlipFlop(rightScratch, equal.Right); err != nil {
+			errnie.Error(errnie.Err(
+				errnie.IO,
+				"logic: equal operand flipFlop failed",
+				err,
+			))
+			rightScratch.Release()
+
+			return false
+		}
+
+		rightKeys := datura.Peek[[]string](rightScratch, "inputs")
+
+		if len(rightKeys) == 0 {
+			errnie.Error(errnie.Err(
+				errnie.Validation,
+				"logic: equal operand wire required",
+				nil,
+			))
+			rightScratch.Release()
+
+			return false
+		}
+
+		rightRoot := datura.Peek[string](rightScratch, "root")
+
+		if rightRoot == "" {
+			errnie.Error(errnie.Err(
+				errnie.Validation,
+				"logic: greaterThan operand root required",
+				nil,
+			))
+			rightScratch.Release()
+
+			return false
+		}
+
+		rightScalars = make([]float64, len(rightKeys))
+
+		for index, rightKey := range rightKeys {
+			var right float64
+
+			for wireIndex, wireInput := range rightKeys {
+				if wireInput != rightKey {
+					continue
+				}
+
+				if rightRoot == "features" {
+					features := datura.Peek[[]float64](rightScratch, rightRoot)
+
+					if wireIndex >= len(features) {
+						errnie.Error(errnie.Err(
+							errnie.Validation,
+							"logic: greaterThan operand feature index out of range",
+							nil,
+						))
+						rightScratch.Release()
+
+						return false
+					}
+
+					right = features[wireIndex]
+				}
+
+				if rightRoot != "features" {
+					right = datura.Peek[float64](rightScratch, rightRoot, wireInput)
+				}
+			}
+
+			rightScalars[index] = right
+		}
+
+		rightScratch.Release()
+	}
+
+	for _, sample := range samples {
+		for _, right := range rightScalars {
+			if sample != right {
+				return false
+			}
+		}
+	}
+
+	return true
 }
 
 func (equal Equal) ResetOperands() {
-	writeResetToStage(equal.Right)
-}
+	if equal.Right == nil {
+		return
+	}
 
-func truthy(value float64) bool {
-	return value != 0
+	reset := datura.Acquire("logic-reset", datura.APPJSON)
+	reset.Poke(1, "reset")
+
+	packed, err := reset.Message().MarshalPacked()
+	reset.Release()
+
+	if err != nil {
+		errnie.Error(errnie.Err(
+			errnie.IO,
+			"logic: equal reset frame marshal failed",
+			err,
+		))
+
+		return
+	}
+
+	if _, err = equal.Right.Write(packed); err != nil {
+		errnie.Error(errnie.Err(
+			errnie.IO,
+			"logic: equal reset stage failed",
+			err,
+		))
+	}
 }

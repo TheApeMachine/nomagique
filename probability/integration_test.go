@@ -4,7 +4,6 @@ import (
 	"math"
 	"testing"
 
-	"github.com/bytedance/sonic"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/transport"
@@ -15,12 +14,8 @@ import (
 func TestIntegration(t *testing.T) {
 	Convey("Given probability stages composed through nomagique.Number", t, func() {
 		Convey("When Bernoulli observes a unit success", func() {
-			samplePayload, marshalErr := sonic.Marshal(datura.Map[any]{"sample": 1.0})
-
-			So(marshalErr, ShouldBeNil)
-
-			artifact := datura.Acquire("test", datura.APPJSON).WithPayload(samplePayload)
-			posterior := nomagique.Number(probability.NewBernoulli(datura.Acquire("bernoulli-config", datura.APPJSON)))
+			artifact := scalarWire(datura.Acquire("test", datura.APPJSON), "sample", 1)
+			posterior := nomagique.Number(probability.NewBernoulli(bernoulliConfig("bernoulli-config")))
 
 			err := transport.NewFlipFlop(artifact, posterior)
 
@@ -29,15 +24,11 @@ func TestIntegration(t *testing.T) {
 		})
 
 		Convey("When Rank streams two samples", func() {
-			empirical := nomagique.Number(probability.NewRank(datura.Acquire("rank-config", datura.APPJSON)))
+			empirical := nomagique.Number(probability.NewRank(rankConfig("rank-config")))
 			var artifact *datura.Artifact
 
 			for _, sample := range []float64{10, 5} {
-				samplePayload, marshalErr := sonic.Marshal(datura.Map[any]{"sample": sample})
-
-				So(marshalErr, ShouldBeNil)
-
-				artifact = datura.Acquire("test", datura.APPJSON).WithPayload(samplePayload)
+				artifact = scalarWire(datura.Acquire("test", datura.APPJSON), "sample", sample)
 				err := transport.NewFlipFlop(artifact, empirical)
 
 				So(err, ShouldBeNil)
@@ -52,6 +43,7 @@ func TestIntegration(t *testing.T) {
 		Convey("When Classifier and Transition run in sequence", func() {
 			classifier := probability.NewClassifier(
 				datura.Acquire("schema", datura.APPJSON).
+					Poke("output", "scoreRoot").
 					Poke(
 						[]string{"s0", "s1", "s2"},
 						"inputs",
@@ -66,18 +58,12 @@ func TestIntegration(t *testing.T) {
 				classifier,
 				transition,
 			)
-			payload, marshalErr := sonic.Marshal(datura.Map[any]{
-				"output": datura.Map[any]{
-					"s0":       0.1,
-					"s1":       0.8,
-					"s2":       0.2,
-					"strength": 0.8,
-				},
+			artifact := artifactWithScores(map[string]float64{
+				"s0":       0.1,
+				"s1":       0.8,
+				"s2":       0.2,
+				"strength": 0.8,
 			})
-
-			So(marshalErr, ShouldBeNil)
-
-			artifact := datura.Acquire("test", datura.APPJSON).WithPayload(payload)
 
 			err := transport.NewFlipFlop(artifact, pipeline)
 
@@ -90,4 +76,20 @@ func TestIntegration(t *testing.T) {
 			So(int(datura.Peek[float64](artifact, "output", "category")), ShouldEqual, 2)
 		})
 	})
+}
+
+func scalarWire(artifact *datura.Artifact, input string, sample float64) *datura.Artifact {
+	artifact.Poke("features", "root")
+	artifact.Poke([]string{input}, "inputs")
+	artifact.Merge("features", []float64{sample})
+
+	return artifact
+}
+
+func bernoulliConfig(name string) *datura.Artifact {
+	return datura.Acquire(name, datura.APPJSON).Poke("sample", "sampleKey")
+}
+
+func rankConfig(name string) *datura.Artifact {
+	return datura.Acquire(name, datura.APPJSON).Poke("sample", "sampleKey")
 }

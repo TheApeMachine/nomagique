@@ -46,26 +46,47 @@ func TestIntegration(t *testing.T) {
 			contagion := nomagique.Number(
 				correlation.NewContagion(
 					datura.Acquire("test", datura.APPJSON).
-						Poke(2, "config", "minSamples").
-						Poke(2, "config", "memberCap").
-						Poke(2, "config", "adaptiveSigma").
-						Poke(4, "config", "tier", "fast").
-						Poke(8, "config", "tier", "medium").
-						Poke(16, "config", "tier", "slow"),
+						WithAttributes(datura.Map[any]{
+							"memberKey": "member",
+							"sampleKey": "sample",
+							"pairedKey": "paired",
+							"config": datura.Map[any]{
+								"minSamples":    2.0,
+								"memberCap":     2.0,
+								"adaptiveSigma": 2.0,
+								"tier": datura.Map[any]{
+									"fast":   4.0,
+									"medium": 8.0,
+									"slow":   16.0,
+								},
+							},
+						}),
 				),
 			)
 			artifact := datura.Acquire("test", datura.APPJSON)
 
 			for step := range 16 {
 				epoch := float64((step + 1) * 1_000)
-				artifact.Poke(1, "member").Poke(epoch, "sample").Poke(100+float64(step)*0.1, "paired")
+				artifact.Poke("wire", "root")
+				artifact.Poke([]string{"member", "sample", "paired"}, "inputs")
+				artifact.Merge("wire", map[string]any{
+					"member": 1,
+					"sample": epoch,
+					"paired": 100 + float64(step)*0.1,
+				})
 				err := transport.NewFlipFlop(artifact, contagion)
 
 				if step == 0 {
 					So(err, ShouldNotBeNil)
 				}
 
-				artifact.Poke(2, "member").Poke(epoch, "sample").Poke(50+float64(step)*0.05, "paired")
+				artifact.Poke("wire", "root")
+				artifact.Poke([]string{"member", "sample", "paired"}, "inputs")
+				artifact.Merge("wire", map[string]any{
+					"member": 2,
+					"sample": epoch,
+					"paired": 50 + float64(step)*0.05,
+				})
 				err = transport.NewFlipFlop(artifact, contagion)
 
 				if step == 0 {

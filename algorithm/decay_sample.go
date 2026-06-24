@@ -92,8 +92,8 @@ func (decaySample *DecaySample) Read(payload []byte) (int, error) {
 
 	state.WithScope(symbol)
 	state.Merge("features", features)
-	state.Merge("root", "features")
-	state.Merge("inputs", equation.DecayInputKeys)
+	state.Poke("features", "root")
+	state.Poke(equation.DecayInputKeys, "inputs")
 
 	return state.Read(payload)
 }
@@ -220,7 +220,7 @@ func (decaySample *DecaySample) features(window *decayWindow) []float64 {
 		return nil
 	}
 
-	_, longWindow, err := statistic.RollingWindows(window.densityHist, 0, 0)
+	_, longWindow, err := statistic.NewRollingWindow(0, 0).Resolve(window.densityHist)
 
 	if err != nil || minLength < longWindow {
 		return nil

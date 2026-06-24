@@ -23,21 +23,13 @@ type TimeElastic struct {
 NewTimeElastic returns a time-elastic baseline stage wired from config attributes on the artifact.
 */
 func NewTimeElastic(artifact *datura.Artifact) *TimeElastic {
-	artifact.Inspect("adaptive", "time-elastic", "NewTimeElastic()")
-
 	return &TimeElastic{
 		artifact: artifact,
 	}
 }
 
-func (timeElastic *TimeElastic) Write(p []byte) (int, error) {
-	timeElastic.artifact.WithPayload(p)
-	return len(p), nil
-}
-
 func (timeElastic *TimeElastic) Read(payload []byte) (int, error) {
 	state := datura.Acquire("time-elastic-state", datura.APPJSON)
-	state.Inspect("adaptive", "time-elastic", "Read()", "p")
 
 	if _, err := state.Write(timeElastic.artifact.DecryptPayload()); err != nil {
 		return 0, errnie.Error(errnie.Err(
@@ -47,15 +39,73 @@ func (timeElastic *TimeElastic) Read(payload []byte) (int, error) {
 		))
 	}
 
-	root := datura.Peek[string](state, "root")
-	inputs := datura.Peek[[]string](state, "inputs")
+	state.Inspect("adaptive", "time-elastic", "Read()", "p")
 
-	if len(inputs) == 0 {
-		if root == "output" {
-			inputs = []string{"value"}
-		} else {
-			inputs = []string{"sample"}
+	configInput := datura.Peek[string](timeElastic.artifact, "input")
+
+	if configInput == "" {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"time-elastic: input required",
+			nil,
+		))
+	}
+
+	wireRoot := datura.Peek[string](state, "root")
+
+	if wireRoot == "" {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"time-elastic: root required",
+			nil,
+		))
+	}
+
+	wireInputs := datura.Peek[[]string](state, "inputs")
+
+	if len(wireInputs) == 0 {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"time-elastic: inputs required",
+			nil,
+		))
+	}
+
+	var sample float64
+	sampleFound := false
+
+	for wireIndex, wireInput := range wireInputs {
+		if wireInput != configInput {
+			continue
 		}
+
+		if wireRoot == "features" {
+			features := datura.Peek[[]float64](state, wireRoot)
+
+			if wireIndex >= len(features) {
+				return 0, errnie.Error(errnie.Err(
+					errnie.Validation,
+					"time-elastic: feature index out of range",
+					nil,
+				))
+			}
+
+			sample = features[wireIndex]
+		}
+
+		if wireRoot != "features" {
+			sample = datura.Peek[float64](state, wireRoot, wireInput)
+		}
+
+		sampleFound = true
+	}
+
+	if !sampleFound {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"time-elastic: input not in inputs",
+			nil,
+		))
 	}
 
 	halflife := time.Duration(datura.Peek[float64](timeElastic.artifact, "config", "halflife"))
@@ -69,41 +119,32 @@ func (timeElastic *TimeElastic) Read(payload []byte) (int, error) {
 		))
 	}
 
+	if math.IsNaN(sample) || math.IsInf(sample, 0) {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"time-elastic: sample is non-finite",
+			nil,
+		))
+	}
+
+	if sample < 0 {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"time-elastic: sample must be non-negative",
+			nil,
+		))
+	}
+
 	eventAt := time.Unix(0, int64(datura.Peek[float64](state, "at")))
 	value := 1.0
 
-	for _, input := range inputs {
-		sample := datura.Peek[float64](state, root, input)
+	if !timeElastic.ready {
+		timeElastic.baseline = sample
+		timeElastic.lastAt = eventAt
+		timeElastic.ready = true
+	}
 
-		if root == "" {
-			sample = datura.Peek[float64](state, input)
-		}
-
-		if math.IsNaN(sample) || math.IsInf(sample, 0) {
-			return 0, errnie.Error(errnie.Err(
-				errnie.Validation,
-				"time-elastic: sample is non-finite",
-				nil,
-			))
-		}
-
-		if sample < 0 {
-			return 0, errnie.Error(errnie.Err(
-				errnie.Validation,
-				"time-elastic: sample must be non-negative",
-				nil,
-			))
-		}
-
-		if !timeElastic.ready {
-			timeElastic.baseline = sample
-			timeElastic.lastAt = eventAt
-			timeElastic.ready = true
-			value = 1
-
-			continue
-		}
-
+	if timeElastic.ready && timeElastic.lastAt != eventAt {
 		if eventAt.IsZero() {
 			return 0, errnie.Error(errnie.Err(
 				errnie.Validation,
@@ -148,6 +189,11 @@ func (timeElastic *TimeElastic) Read(payload []byte) (int, error) {
 	state.MergeOutput("value", value)
 
 	return state.Read(payload)
+}
+
+func (timeElastic *TimeElastic) Write(p []byte) (int, error) {
+	timeElastic.artifact.WithPayload(p)
+	return len(p), nil
 }
 
 func (timeElastic *TimeElastic) Close() error {

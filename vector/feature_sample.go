@@ -26,11 +26,6 @@ func NewFeatureSample(config *datura.Artifact) *FeatureSample {
 	}
 }
 
-func (featureSample *FeatureSample) Write(payload []byte) (int, error) {
-	featureSample.config.WithPayload(payload)
-	return len(payload), nil
-}
-
 func (featureSample *FeatureSample) Read(payload []byte) (int, error) {
 	state := datura.Acquire("feature-sample-state", datura.APPJSON)
 	state.Inspect("vector", "feature-sample", "Read()", "p")
@@ -61,10 +56,15 @@ func (featureSample *FeatureSample) Read(payload []byte) (int, error) {
 	}
 
 	state.MergeOutput("value", sample)
-	state.Merge("root", "output")
-	state.Merge("inputs", []string{"value"})
+	state.Poke("output", "root")
+	state.Poke([]string{"value"}, "inputs")
 
 	return state.Read(payload)
+}
+
+func (featureSample *FeatureSample) Write(payload []byte) (int, error) {
+	featureSample.config.WithPayload(payload)
+	return len(payload), nil
 }
 
 func (featureSample *FeatureSample) Close() error {

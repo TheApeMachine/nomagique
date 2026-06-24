@@ -47,22 +47,30 @@ func (extractor *FeatureExtractor) Read(payload []byte) (int, error) {
 	role := datura.Peek[string](state, "channel")
 
 	if role == "" {
-		role, _ = state.Role()
-	}
-
-	if role == "" {
-		role, _ = extractor.artifact.Role()
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"feature-extractor: channel required",
+			nil,
+		))
 	}
 
 	rootKey := datura.Peek[string](extractor.artifact, role, "root")
 	inputs := datura.Peek[[]string](extractor.artifact, role, "inputs")
 
 	if rootKey == "" {
-		rootKey = datura.Peek[string](extractor.artifact, "root")
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"feature-extractor: root required",
+			nil,
+		))
 	}
 
 	if len(inputs) == 0 {
-		inputs = datura.Peek[[]string](extractor.artifact, "inputs")
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"feature-extractor: inputs required",
+			nil,
+		))
 	}
 
 	features := make([]float64, len(inputs))

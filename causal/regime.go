@@ -25,11 +25,6 @@ func NewRegime(artifact *datura.Artifact) *Regime {
 	}
 }
 
-func (regime *Regime) Write(p []byte) (int, error) {
-	regime.artifact.WithPayload(p)
-	return len(p), nil
-}
-
 func (regime *Regime) Read(p []byte) (int, error) {
 	state := datura.Acquire("regime-state", datura.APPJSON)
 
@@ -104,6 +99,11 @@ func (regime *Regime) Read(p []byte) (int, error) {
 	state.Poke("output", "root")
 	state.Poke([]string{"value", "condition", "rawInverted"}, "inputs")
 	return state.Read(p)
+}
+
+func (regime *Regime) Write(p []byte) (int, error) {
+	regime.artifact.WithPayload(p)
+	return len(p), nil
 }
 
 func (regime *Regime) Close() error {

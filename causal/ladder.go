@@ -2,7 +2,6 @@ package causal
 
 import (
 	"errors"
-	"io"
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
@@ -23,11 +22,6 @@ func NewLadder(artifact *datura.Artifact) *Ladder {
 	return &Ladder{
 		artifact: artifact,
 	}
-}
-
-func (ladder *Ladder) Write(p []byte) (int, error) {
-	ladder.artifact.WithPayload(p)
-	return len(p), nil
 }
 
 func (ladder *Ladder) Read(p []byte) (int, error) {
@@ -57,7 +51,11 @@ func (ladder *Ladder) Read(p []byte) (int, error) {
 	}
 
 	if len(rows) < minHistory {
-		return 0, io.EOF
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"causal ladder: insufficient table rows",
+			nil,
+		))
 	}
 
 	table, err := newNodeTable(rows, target, minHistory)
@@ -88,19 +86,31 @@ func (ladder *Ladder) Read(p []byte) (int, error) {
 	}
 
 	if bandwidth <= 0 {
-		return 0, io.EOF
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"causal ladder: kernel bandwidth required",
+			nil,
+		))
 	}
 
 	association, err := table.association(treatment)
 
 	if err != nil {
-		return 0, io.EOF
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"causal ladder: association failed",
+			err,
+		))
 	}
 
 	intervention, err := table.kernelBackdoorEffect(treatment, bandwidth, controls...)
 
 	if err != nil {
-		return 0, io.EOF
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"causal ladder: kernel backdoor failed",
+			err,
+		))
 	}
 
 	raw := intervention
@@ -190,6 +200,11 @@ func (ladder *Ladder) Read(p []byte) (int, error) {
 		"value", "association", "intervention", "uplift", "contagion", "condition", "inverted",
 	}, "inputs")
 	return state.Read(p)
+}
+
+func (ladder *Ladder) Write(p []byte) (int, error) {
+	ladder.artifact.WithPayload(p)
+	return len(p), nil
 }
 
 func (ladder *Ladder) Close() error {

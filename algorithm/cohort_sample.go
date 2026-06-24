@@ -95,8 +95,8 @@ func (cohortSample *CohortSample) Read(payload []byte) (int, error) {
 	)
 
 	state.Merge("features", features)
-	state.Merge("root", "features")
-	state.Merge("inputs", equation.CohortInputKeys)
+	state.Poke("features", "root")
+	state.Poke(equation.CohortInputKeys, "inputs")
 
 	return state.Read(payload)
 }
@@ -194,7 +194,7 @@ func (cohortSample *CohortSample) window(symbol string) int {
 		return 0
 	}
 
-	shortWindow, _, err := statistic.RollingWindows(symbolState.returns, 0, 0)
+	shortWindow, _, err := statistic.NewRollingWindow(0, 0).Resolve(symbolState.returns)
 
 	if err != nil {
 		return 0

@@ -24,11 +24,6 @@ func NewPositiveOnly(artifact *datura.Artifact) *PositiveOnly {
 	}
 }
 
-func (positiveOnly *PositiveOnly) Write(p []byte) (int, error) {
-	positiveOnly.artifact.WithPayload(p)
-	return len(p), nil
-}
-
 func (positiveOnly *PositiveOnly) Read(payload []byte) (int, error) {
 	state := datura.Acquire("positive-only-state", datura.APPJSON)
 
@@ -43,19 +38,6 @@ func (positiveOnly *PositiveOnly) Read(payload []byte) (int, error) {
 	state.Inspect("adaptive", "positive-only", "Read()", "p")
 
 	stageKey := datura.Peek[string](positiveOnly.artifact, "stage")
-
-	if stageKey == "" {
-		order := datura.Peek[[]string](positiveOnly.artifact, "order")
-		stageIndex := int(datura.Peek[float64](positiveOnly.artifact, "precursor", "stageIndex"))
-
-		if stageIndex <= 0 {
-			stageIndex = int(datura.Peek[float64](positiveOnly.artifact, "stageIndex"))
-		}
-
-		if stageIndex >= 0 && len(order) > stageIndex {
-			stageKey = order[stageIndex]
-		}
-	}
 
 	if stageKey == "" {
 		return 0, errnie.Error(errnie.Err(
@@ -78,13 +60,33 @@ func (positiveOnly *PositiveOnly) Read(payload []byte) (int, error) {
 	root := datura.Peek[string](state, "root")
 	inputs := datura.Peek[[]string](state, "inputs")
 
-	inputKey := outputKey
-
-	if len(inputs) > 0 {
-		inputKey = inputs[0]
+	if root == "" || len(inputs) == 0 {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"positive-only: wire required",
+			nil,
+		))
 	}
 
-	score := datura.Peek[float64](state, root, inputKey)
+	var score float64
+	found := false
+
+	for _, input := range inputs {
+		if input != outputKey {
+			continue
+		}
+
+		score = datura.Peek[float64](state, root, input)
+		found = true
+	}
+
+	if !found {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"positive-only: outputKey not in inputs",
+			nil,
+		))
+	}
 
 	if math.IsNaN(score) || math.IsInf(score, 0) {
 		return 0, errnie.Error(errnie.Err(
@@ -103,6 +105,11 @@ func (positiveOnly *PositiveOnly) Read(payload []byte) (int, error) {
 	state.Poke([]string{outputKey}, "inputs")
 
 	return state.Read(payload)
+}
+
+func (positiveOnly *PositiveOnly) Write(p []byte) (int, error) {
+	positiveOnly.artifact.WithPayload(p)
+	return len(p), nil
 }
 
 func (positiveOnly *PositiveOnly) Close() error {

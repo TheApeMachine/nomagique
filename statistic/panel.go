@@ -1,8 +1,8 @@
 package statistic
 
 import (
+	"maps"
 	"math"
-	"slices"
 	"strconv"
 
 	"github.com/theapemachine/datura"
@@ -11,74 +11,112 @@ import (
 
 /*
 Panel registers keyed samples for cross-section pipelines.
-The constructor artifact holds config; Write buffers inbound wire on its payload.
 */
 type Panel struct {
 	artifact *datura.Artifact
+	peers    map[string]float64
 }
 
 /*
 NewPanel returns a keyed sample registry wired from config attributes on the artifact.
 */
 func NewPanel(artifact *datura.Artifact) *Panel {
-	artifact.Inspect("statistic", "panel", "NewPanel()")
-
 	return &Panel{
 		artifact: artifact,
+		peers:    map[string]float64{},
 	}
-}
-
-func (panel *Panel) Write(payload []byte) (int, error) {
-	panel.artifact.WithPayload(payload)
-	return len(payload), nil
 }
 
 func (panel *Panel) Read(payload []byte) (int, error) {
 	state := datura.Acquire("panel-state", datura.APPJSON)
-	state.Inspect("statistic", "panel", "Read()", "p")
 
 	if _, err := state.Write(panel.artifact.DecryptPayload()); err != nil {
 		return 0, err
 	}
 
-	state.Inspect("statistic", "panel", "Read()", "p")
+	rootKey := datura.Peek[string](state, "root")
 
-	memberField := ConfigString(panel.artifact, state, "memberKey")
+	if rootKey == "" {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"panel: root required",
+			nil,
+		))
+	}
+
+	inputs := datura.Peek[[]string](state, "inputs")
+
+	if len(inputs) == 0 {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"panel: inputs required",
+			nil,
+		))
+	}
+
+	memberField := datura.Peek[string](panel.artifact, "memberKey")
 
 	if memberField == "" {
-		memberField = "member"
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"panel: memberKey required",
+			nil,
+		))
 	}
 
-	sampleField := ConfigString(panel.artifact, state, "sampleKey")
+	sampleField := datura.Peek[string](panel.artifact, "sampleKey")
 
 	if sampleField == "" {
-		sampleField = "sample"
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"panel: sampleKey required",
+			nil,
+		))
 	}
 
-	if datura.Peek[float64](state, "table", "rowCount") > 0 {
-		if !KeyPresent(state, memberField) && !KeyPresent(state, sampleField) {
-			return state.Read(payload)
+	var member float64
+	var sample float64
+	memberFound := false
+	sampleFound := false
+
+	for index, input := range inputs {
+		var value float64
+
+		if rootKey == "features" {
+			features := datura.Peek[[]float64](state, rootKey)
+
+			if index >= len(features) {
+				return 0, errnie.Error(errnie.Err(
+					errnie.Validation,
+					"panel: feature index out of range",
+					nil,
+				))
+			}
+
+			value = features[index]
+		}
+
+		if rootKey != "features" {
+			value = datura.Peek[float64](state, rootKey, input)
+		}
+
+		if input == memberField {
+			member = value
+			memberFound = true
+		}
+
+		if input == sampleField {
+			sample = value
+			sampleFound = true
 		}
 	}
 
-	if !KeyPresent(state, memberField) || !KeyPresent(state, sampleField) {
+	if !memberFound || !sampleFound {
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"panel: member and sample keys required on wire",
 			nil,
 		))
-	}
-
-	member, err := WireScalar(panel.artifact, state, memberField)
-
-	if err != nil {
-		return 0, err
-	}
-
-	sample, err := WireScalar(panel.artifact, state, sampleField)
-
-	if err != nil {
-		return 0, err
 	}
 
 	if math.IsNaN(sample) || math.IsInf(sample, 0) {
@@ -89,45 +127,27 @@ func (panel *Panel) Read(payload []byte) (int, error) {
 		))
 	}
 
-	key := memberKey(member)
-	peerKeys := datura.Peek[[]string](panel.artifact, "peerKeys")
+	key := strconv.FormatFloat(member, 'g', -1, 64)
+	panel.peers[key] = sample
+	peers := maps.Clone(panel.peers)
 
-	if !slices.Contains(peerKeys, key) {
-		peerKeys = append(peerKeys, key)
-		panel.artifact.Poke(peerKeys, "peerKeys")
-	}
-
-	panel.artifact.Poke(sample, "peers", key)
-
-	peers := map[string]float64{}
-
-	for _, peerKey := range peerKeys {
-		peers[peerKey] = datura.Peek[float64](panel.artifact, "peers", peerKey)
-	}
-
-	state.Merge("peerKeys", peerKeys)
 	state.Merge("peers", peers)
+	state.Merge("wire", map[string]any{
+		memberField: member,
+		sampleField: sample,
+	})
+	state.Poke("wire", "root")
+	state.Poke([]string{memberField, sampleField}, "inputs")
 	state.MergeOutput("value", sample)
-	state.Poke("output", "root")
-	state.Poke([]string{"value"}, "inputs")
+
 	return state.Read(payload)
+}
+
+func (panel *Panel) Write(payload []byte) (int, error) {
+	panel.artifact.WithPayload(payload)
+	return len(payload), nil
 }
 
 func (panel *Panel) Close() error {
 	return nil
-}
-
-func memberKey(member float64) string {
-	return strconv.FormatFloat(member, 'g', -1, 64)
-}
-
-func panelPeers(artifact *datura.Artifact) map[string]float64 {
-	peerKeys := datura.Peek[[]string](artifact, "peerKeys")
-	peers := map[string]float64{}
-
-	for _, peerKey := range peerKeys {
-		peers[peerKey] = datura.Peek[float64](artifact, "peers", peerKey)
-	}
-
-	return peers
 }

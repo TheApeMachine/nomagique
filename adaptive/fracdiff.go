@@ -29,21 +29,13 @@ type FracDiff struct {
 NewFracDiff returns a fractional differencing stage wired from config attributes on the artifact.
 */
 func NewFracDiff(artifact *datura.Artifact) *FracDiff {
-	artifact.Inspect("adaptive", "fracdiff", "NewFracDiff()")
-
 	return &FracDiff{
 		artifact: artifact,
 	}
 }
 
-func (fractional *FracDiff) Write(p []byte) (int, error) {
-	fractional.artifact.WithPayload(p)
-	return len(p), nil
-}
-
 func (fractional *FracDiff) Read(payload []byte) (int, error) {
 	state := datura.Acquire("fracdiff-state", datura.APPJSON)
-	state.Inspect("adaptive", "fracdiff", "Read()", "p")
 
 	if _, err := state.Write(fractional.artifact.DecryptPayload()); err != nil {
 		return 0, errnie.Error(errnie.Err(
@@ -53,18 +45,47 @@ func (fractional *FracDiff) Read(payload []byte) (int, error) {
 		))
 	}
 
-	root := datura.Peek[string](state, "root")
+	state.Inspect("adaptive", "fracdiff", "Read()", "p")
+
+	rootKey := datura.Peek[string](state, "root")
+
+	if rootKey == "" {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"fracdiff: root required",
+			nil,
+		))
+	}
+
 	inputs := datura.Peek[[]string](state, "inputs")
 
 	if len(inputs) == 0 {
-		inputs = []string{"sample"}
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"fracdiff: inputs required",
+			nil,
+		))
 	}
 
-	for _, input := range inputs {
-		sample := datura.Peek[float64](state, root, input)
+	for index, input := range inputs {
+		var sample float64
 
-		if root == "" {
-			sample = datura.Peek[float64](state, input)
+		if rootKey == "features" {
+			features := datura.Peek[[]float64](state, rootKey)
+
+			if index >= len(features) {
+				return 0, errnie.Error(errnie.Err(
+					errnie.Validation,
+					"fracdiff: feature index out of range",
+					nil,
+				))
+			}
+
+			sample = features[index]
+		}
+
+		if rootKey != "features" {
+			sample = datura.Peek[float64](state, rootKey, input)
 		}
 
 		if math.IsNaN(sample) || math.IsInf(sample, 0) {
@@ -88,12 +109,9 @@ func (fractional *FracDiff) Read(payload []byte) (int, error) {
 			fractional.count = 1
 			fractional.weights = []float64{1}
 			fractional.ready = true
+			state.MergeOutput("value", sample)
 
-			return 0, errnie.Error(errnie.Err(
-				errnie.Validation,
-				"fracdiff: insufficient samples",
-				nil,
-			))
+			break
 		}
 
 		fractional.min = math.Min(fractional.min, sample)
@@ -118,12 +136,18 @@ func (fractional *FracDiff) Read(payload []byte) (int, error) {
 		fractional.prev = sample
 		value := fractional.outputSum()
 
-		state.Poke("output", "root")
-		state.Poke([]string{"value"}, "inputs")
 		state.MergeOutput("value", value)
 	}
 
+	state.Poke("output", "root")
+	state.Poke([]string{"value"}, "inputs")
+
 	return state.Read(payload)
+}
+
+func (fractional *FracDiff) Write(p []byte) (int, error) {
+	fractional.artifact.WithPayload(p)
+	return len(p), nil
 }
 
 func (fractional *FracDiff) Close() error {

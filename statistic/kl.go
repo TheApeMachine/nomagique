@@ -21,25 +21,19 @@ NewKLDivergence returns a KL divergence stage wired from config attributes on th
 config.expectedSum and config.floor may be zero to derive them from each observation.
 */
 func NewKLDivergence(artifact *datura.Artifact) *KLDivergence {
-	artifact.Inspect("statistic", "kl", "NewKLDivergence()")
-
 	return &KLDivergence{
 		artifact: artifact,
 	}
 }
 
-func (kl *KLDivergence) Write(payload []byte) (int, error) {
-	kl.artifact.WithPayload(payload)
-	return len(payload), nil
-}
-
 func (kl *KLDivergence) Read(payload []byte) (int, error) {
 	state := datura.Acquire("kl-state", datura.APPJSON)
-	state.Inspect("statistic", "kl", "Read()", "p")
 
 	if _, err := state.Write(kl.artifact.DecryptPayload()); err != nil {
 		return 0, err
 	}
+
+	state.Inspect("statistic", "kl", "Read()", "p")
 
 	observedSample := datura.Peek[float64](state, "sample")
 	expectedSample := datura.Peek[float64](state, "paired")
@@ -87,10 +81,15 @@ func (kl *KLDivergence) Read(payload []byte) (int, error) {
 	}
 
 	state.MergeOutput("value", divergence)
-	state.Merge("root", "output")
-	state.Merge("inputs", []string{"value"})
+	state.Poke("output", "root")
+	state.Poke([]string{"value"}, "inputs")
 
 	return state.Read(payload)
+}
+
+func (kl *KLDivergence) Write(payload []byte) (int, error) {
+	kl.artifact.WithPayload(payload)
+	return len(payload), nil
 }
 
 func (kl *KLDivergence) Close() error {

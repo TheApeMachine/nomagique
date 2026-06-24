@@ -1,119 +1,174 @@
-package probability
+package probability_test
 
 import (
 	"math"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/datura"
+	"github.com/theapemachine/datura/transport"
+	"github.com/theapemachine/nomagique"
+	"github.com/theapemachine/nomagique/probability"
 )
 
-func TestSoftmaxScores(testingTB *testing.T) {
-	Convey("Given raw logits", testingTB, func() {
-		probabilities, err := SoftmaxScores([]float64{1, 2, 3})
+func softmaxSchema(inputs ...string) *datura.Artifact {
+	return datura.Acquire("schema", datura.APPJSON).
+		Poke("output", "scoreRoot").
+		Poke(inputs, "inputs")
+}
 
-		sum := 0.0
+func TestNewSoftmax(testingTB *testing.T) {
+	Convey("Given a schema artifact", testingTB, func() {
+		softmax := probability.NewSoftmax(softmaxSchema("s0", "s1"))
 
-		for _, probability := range probabilities {
-			sum += probability
-		}
-
-		Convey("It should normalize to unity", func() {
-			So(err, ShouldBeNil)
-			So(sum, ShouldAlmostEqual, 1.0, 1e-9)
-			So(ArgmaxIndex(probabilities), ShouldEqual, 2)
-		})
-	})
-
-	Convey("Given non-finite logits", testingTB, func() {
-		_, err := SoftmaxScores([]float64{1, math.NaN(), 3})
-
-		So(err, ShouldNotBeNil)
-
-		_, err = SoftmaxScores([]float64{1, math.Inf(1), 3})
-
-		So(err, ShouldNotBeNil)
-	})
-
-	Convey("Given uniform logits", testingTB, func() {
-		probabilities, err := SoftmaxScores([]float64{0, 0, 0, 0})
-
-		Convey("CategoryConfidence should match the uniform share", func() {
-			So(err, ShouldBeNil)
-			So(len(probabilities), ShouldEqual, 4)
-
-			confidence, err := CategoryConfidence(probabilities, 0)
-
-			So(err, ShouldBeNil)
-			So(confidence, ShouldAlmostEqual, 0.25, 1e-9)
+		Convey("It should return a usable stage", func() {
+			So(softmax, ShouldNotBeNil)
 		})
 	})
 }
 
-func TestSoftmaxScoresNormalized(testingTB *testing.T) {
-	Convey("Given a vector dominated by one unbounded score", testingTB, func() {
-		raw := []float64{50, 0.5, 10, -5}
+func TestSoftmax_Read(testingTB *testing.T) {
+	Convey("Given four output scores on the artifact", testingTB, func() {
+		softmax := probability.NewSoftmax(softmaxSchema("s0", "s1", "s2", "s3"))
 
-		plain, plainErr := SoftmaxScores(raw)
-		So(plainErr, ShouldBeNil)
-		plainConfidence, _ := CategoryConfidence(plain, 0)
-
-		normalized, normErr := SoftmaxScoresNormalized(raw)
-		So(normErr, ShouldBeNil)
-		normConfidence, _ := CategoryConfidence(normalized, 0)
-
-		Convey("Plain softmax saturates but normalized does not", func() {
-			So(plainConfidence, ShouldAlmostEqual, 1.0, 1e-6)
-			So(normConfidence, ShouldBeLessThan, plainConfidence)
-			So(normConfidence, ShouldBeLessThan, 0.95)
+		artifact := artifactWithScores(map[string]float64{
+			"s0": 0.2,
+			"s1": 0.1,
+			"s2": 0.9,
+			"s3": 0.05,
 		})
+		err := transport.NewFlipFlop(artifact, softmax)
 
-		Convey("The winning category is unchanged", func() {
-			So(ArgmaxIndex(normalized), ShouldEqual, ArgmaxIndex(plain))
-			So(ArgmaxIndex(normalized), ShouldEqual, 0)
-		})
+		So(err, ShouldBeNil)
 
-		Convey("It normalizes to unity", func() {
+		Convey("It should expose every class probability", func() {
+			probabilities := datura.Peek[[]float64](artifact, "output", "probabilities")
+
+			So(len(probabilities), ShouldEqual, 4)
+
 			sum := 0.0
-			for _, p := range normalized {
-				sum += p
+
+			for _, share := range probabilities {
+				sum += share
 			}
+
 			So(sum, ShouldAlmostEqual, 1.0, 1e-9)
+			So(datura.Peek[float64](artifact, "output", "s2"), ShouldBeGreaterThan, 0.2)
+			So(datura.Peek[float64](artifact, "output", "s0"), ShouldBeGreaterThan, 0)
+		})
+
+		Convey("It should propagate score keys on output wire", func() {
+			inputs := datura.Peek[[]string](artifact, "inputs")
+
+			So(inputs, ShouldContain, "s0")
+			So(inputs, ShouldContain, "s1")
+			So(inputs, ShouldContain, "s2")
+			So(inputs, ShouldContain, "s3")
+			So(inputs, ShouldContain, "probabilities")
 		})
 	})
 
-	Convey("Given a vector whose scale grows but whose shape is constant", testingTB, func() {
-		small, _ := SoftmaxScoresNormalized([]float64{2, 1, 0.5, 0})
-		large, _ := SoftmaxScoresNormalized([]float64{20, 10, 5, 0})
+	Convey("Given an empty score key in schema inputs", testingTB, func() {
+		softmax := probability.NewSoftmax(softmaxSchema("s0", ""))
+		artifact := artifactWithScores(map[string]float64{"s0": 1})
+		err := transport.NewFlipFlop(artifact, softmax)
 
-		Convey("Confidence is scale-invariant", func() {
-			smallConfidence, _ := CategoryConfidence(small, 0)
-			largeConfidence, _ := CategoryConfidence(large, 0)
-			So(smallConfidence, ShouldAlmostEqual, largeConfidence, 1e-9)
+		Convey("It should return a validation error", func() {
+			So(err, ShouldNotBeNil)
 		})
 	})
 
 	Convey("Given uniform scores", testingTB, func() {
-		probabilities, err := SoftmaxScoresNormalized([]float64{3, 3, 3, 3})
+		softmax := probability.NewSoftmax(softmaxSchema("s0", "s1", "s2", "s3"))
+		artifact := artifactWithScores(map[string]float64{
+			"s0": 3,
+			"s1": 3,
+			"s2": 3,
+			"s3": 3,
+		})
+		err := transport.NewFlipFlop(artifact, softmax)
 
-		Convey("It falls back to the uniform distribution", func() {
-			So(err, ShouldBeNil)
-			confidence, _ := CategoryConfidence(probabilities, 0)
-			So(confidence, ShouldAlmostEqual, 0.25, 1e-9)
+		So(err, ShouldBeNil)
+
+		Convey("It should emit the uniform distribution", func() {
+			So(datura.Peek[float64](artifact, "output", "s0"), ShouldAlmostEqual, 0.25, 1e-9)
+			So(datura.Peek[float64](artifact, "output", "s1"), ShouldAlmostEqual, 0.25, 1e-9)
 		})
 	})
 
 	Convey("Given non-finite scores", testingTB, func() {
-		_, err := SoftmaxScoresNormalized([]float64{1, math.Inf(1), 3})
-		So(err, ShouldNotBeNil)
+		softmax := probability.NewSoftmax(
+			datura.Acquire("schema", datura.APPJSON).
+				Poke("features", "scoreRoot").
+				Poke([]string{"s0", "s1", "s2"}, "inputs"),
+		)
+		artifact := datura.Acquire("test", datura.APPJSON)
+		artifact.Poke("features", "root")
+		artifact.Poke([]string{"s0", "s1", "s2"}, "inputs")
+		artifact.Merge("features", []float64{1, math.NaN(), 3})
+		err := transport.NewFlipFlop(artifact, softmax)
+
+		Convey("It should return a validation error", func() {
+			So(err, ShouldNotBeNil)
+		})
+	})
+
+	Convey("Given raw mode on the config artifact", testingTB, func() {
+		schema := datura.Acquire("schema", datura.APPJSON).
+			Poke("output", "scoreRoot").
+			Poke([]string{"s0", "s1", "s2"}, "inputs").
+			Poke(0.0, "normalize")
+		softmax := probability.NewSoftmax(schema)
+		artifact := artifactWithScores(map[string]float64{
+			"s0": 1,
+			"s1": 2,
+			"s2": 3,
+		})
+		err := transport.NewFlipFlop(artifact, softmax)
+
+		So(err, ShouldBeNil)
+
+		Convey("It should rank the largest logit highest", func() {
+			probabilities := datura.Peek[[]float64](artifact, "output", "probabilities")
+
+			So(probability.ArgmaxIndex(probabilities), ShouldEqual, 2)
+		})
 	})
 }
 
-func BenchmarkSoftmaxScores(testingTB *testing.B) {
-	scores := []float64{0.6, 0.4, 0.7, 0.3}
+func TestSoftmax_Number(testingTB *testing.T) {
+	Convey("Given Number composed with Softmax", testingTB, func() {
+		softmax := probability.NewSoftmax(softmaxSchema("s0", "s1", "s2"))
+		artifact := artifactWithScores(map[string]float64{
+			"s0": 0.1,
+			"s1": 0.8,
+			"s2": 0.2,
+		})
+		pipeline := nomagique.Number(softmax)
+		err := transport.NewFlipFlop(artifact, pipeline)
+
+		So(err, ShouldBeNil)
+
+		Convey("It should keep all class probabilities on the wire", func() {
+			So(datura.Peek[float64](artifact, "output", "s1"), ShouldBeGreaterThan, 0)
+			So(datura.Peek[float64](artifact, "output", "s0"), ShouldBeGreaterThan, 0)
+			So(datura.Peek[float64](artifact, "output", "s2"), ShouldBeGreaterThan, 0)
+		})
+	})
+}
+
+func BenchmarkSoftmax_Read(testingTB *testing.B) {
+	softmax := probability.NewSoftmax(softmaxSchema("s0", "s1", "s2", "s3"))
+	artifact := artifactWithScores(map[string]float64{
+		"s0": 0.2,
+		"s1": 0.4,
+		"s2": 0.7,
+		"s3": 0.1,
+	})
 
 	testingTB.ReportAllocs()
 
 	for testingTB.Loop() {
-		_, _ = SoftmaxScores(scores)
+		_ = transport.NewFlipFlop(artifact, softmax)
 	}
 }

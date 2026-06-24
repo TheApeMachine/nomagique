@@ -12,26 +12,32 @@ import (
 
 func TestZScoreRead(t *testing.T) {
 	Convey("Given a ZScore", t, func() {
-		surprise := NewZScore(datura.Acquire("zscore-config", datura.APPJSON))
+		surprise := NewZScore(datura.Acquire("zscore-config", datura.APPJSON).Poke("sample", "input"))
 
 		Convey("When the first sample arrives", func() {
-			_, err := io.Copy(surprise, datura.Acquire("test", datura.APPJSON).Poke(10, "sample"))
+			_, err := io.Copy(surprise, ScalarWire(datura.Acquire("test", datura.APPJSON), "sample", 10))
 
 			So(err, ShouldBeIn, nil, io.EOF)
 
-			_, err = surprise.Read(make([]byte, 65536))
+			frame := make([]byte, 65536)
+			readCount, err := surprise.Read(frame)
 
-			So(err, ShouldNotBeNil)
+			So(err, ShouldBeIn, nil, io.EOF)
+			So(readCount, ShouldBeGreaterThan, 0)
+
+			outbound := datura.Acquire("zscore-outbound", datura.APPJSON)
+			_, _ = outbound.Write(frame[:readCount])
+			So(datura.Peek[float64](outbound, "output", "value"), ShouldEqual, 0)
 		})
 
 		Convey("When warmed up with distinct samples", func() {
-			_, _ = io.Copy(surprise, datura.Acquire("test", datura.APPJSON).Poke(10, "sample"))
+			_, _ = io.Copy(surprise, ScalarWire(datura.Acquire("test", datura.APPJSON), "sample", 10))
 			_, _ = surprise.Read(make([]byte, 65536))
-			_, _ = io.Copy(surprise, datura.Acquire("test", datura.APPJSON).Poke(22, "sample"))
+			_, _ = io.Copy(surprise, ScalarWire(datura.Acquire("test", datura.APPJSON), "sample", 22))
 			_, _ = surprise.Read(make([]byte, 65536))
-			_, _ = io.Copy(surprise, datura.Acquire("test", datura.APPJSON).Poke(30, "sample"))
+			_, _ = io.Copy(surprise, ScalarWire(datura.Acquire("test", datura.APPJSON), "sample", 30))
 			_, _ = surprise.Read(make([]byte, 65536))
-			artifact := datura.Acquire("test", datura.APPJSON).Poke(40, "sample")
+			artifact := ScalarWire(datura.Acquire("test", datura.APPJSON), "sample", 40)
 			_, _ = io.Copy(surprise, artifact)
 
 			frame := make([]byte, 65536)
@@ -48,8 +54,8 @@ func TestZScoreRead(t *testing.T) {
 	})
 
 	Convey("Given a non-finite sample", t, func() {
-		surprise := NewZScore(datura.Acquire("zscore-config", datura.APPJSON))
-		invalid := datura.Acquire("test", datura.APPJSON).Poke(math.NaN(), "sample")
+		surprise := NewZScore(datura.Acquire("zscore-config", datura.APPJSON).Poke("sample", "input"))
+		invalid := ScalarWire(datura.Acquire("test", datura.APPJSON), "sample", math.NaN())
 		_, err := io.Copy(surprise, invalid)
 
 		So(err, ShouldBeNil)
@@ -62,16 +68,16 @@ func TestZScoreRead(t *testing.T) {
 	})
 
 	Convey("Given an explicit zero anchor", t, func() {
-		surprise := NewZScore(datura.Acquire("zscore-config", datura.APPJSON).
+		surprise := NewZScore(datura.Acquire("zscore-config", datura.APPJSON).Poke("sample", "input").
 			Poke("explicit", "anchorMode").
 			Poke(0.0, "anchor"))
-		_, _ = io.Copy(surprise, datura.Acquire("test", datura.APPJSON).Poke(10, "sample"))
+		_, _ = io.Copy(surprise, ScalarWire(datura.Acquire("test", datura.APPJSON), "sample", 10))
 		_, _ = surprise.Read(make([]byte, 65536))
-		_, _ = io.Copy(surprise, datura.Acquire("test", datura.APPJSON).Poke(22, "sample"))
+		_, _ = io.Copy(surprise, ScalarWire(datura.Acquire("test", datura.APPJSON), "sample", 22))
 		_, _ = surprise.Read(make([]byte, 65536))
-		_, _ = io.Copy(surprise, datura.Acquire("test", datura.APPJSON).Poke(30, "sample"))
+		_, _ = io.Copy(surprise, ScalarWire(datura.Acquire("test", datura.APPJSON), "sample", 30))
 		_, _ = surprise.Read(make([]byte, 65536))
-		artifact := datura.Acquire("test", datura.APPJSON).Poke(40, "sample")
+		artifact := ScalarWire(datura.Acquire("test", datura.APPJSON), "sample", 40)
 		_, _ = io.Copy(surprise, artifact)
 
 		frame := make([]byte, 65536)
@@ -91,10 +97,10 @@ func TestZScoreRead(t *testing.T) {
 
 func TestZScoreWrite(t *testing.T) {
 	Convey("Given a ZScore", t, func() {
-		surprise := NewZScore(datura.Acquire("zscore-config", datura.APPJSON))
+		surprise := NewZScore(datura.Acquire("zscore-config", datura.APPJSON).Poke("sample", "input"))
 
 		Convey("When Write is called", func() {
-			_, err := io.Copy(surprise, datura.Acquire("test", datura.APPJSON).Poke(10, "sample"))
+			_, err := io.Copy(surprise, ScalarWire(datura.Acquire("test", datura.APPJSON), "sample", 10))
 			So(err, ShouldBeIn, nil, io.EOF)
 		})
 	})
@@ -114,7 +120,7 @@ func BenchmarkZScore_Read(benchmark *testing.B) {
 	benchmark.ResetTimer()
 
 	for benchmark.Loop() {
-		artifact := datura.Acquire("zscore-bench", datura.APPJSON).Poke(40, "sample")
+		artifact := ScalarWire(datura.Acquire("zscore-bench", datura.APPJSON), "sample", 40)
 
 		if err := transport.NewFlipFlop(artifact, surprise); err != nil && err != io.EOF {
 			benchmark.Fatal(err)

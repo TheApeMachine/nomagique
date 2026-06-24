@@ -28,21 +28,9 @@ type couplingBranch struct {
 NewIntervalCoupling creates an interval-correlation stage wired from config attributes on the artifact.
 */
 func NewIntervalCoupling(artifact *datura.Artifact) *IntervalCoupling {
-	artifact.Inspect("correlation", "interval-coupling", "NewIntervalCoupling()")
-
 	return &IntervalCoupling{
 		artifact: artifact,
 	}
-}
-
-func (coupling *IntervalCoupling) Write(p []byte) (int, error) {
-	leftPreserved := coupling.preserveBranch("left")
-	rightPreserved := coupling.preserveBranch("right")
-
-	coupling.artifact.WithPayload(p)
-	coupling.restoreBranch(leftPreserved)
-	coupling.restoreBranch(rightPreserved)
-	return len(p), nil
 }
 
 func (coupling *IntervalCoupling) Read(p []byte) (int, error) {
@@ -83,9 +71,19 @@ func (coupling *IntervalCoupling) Read(p []byte) (int, error) {
 	}
 
 	state.MergeOutput("value", value)
-	state.Merge("root", "output")
-	state.Merge("inputs", []string{"value"})
+	state.Poke("output", "root")
+	state.Poke([]string{"value"}, "inputs")
 	return state.Read(p)
+}
+
+func (coupling *IntervalCoupling) Write(p []byte) (int, error) {
+	leftPreserved := coupling.preserveBranch("left")
+	rightPreserved := coupling.preserveBranch("right")
+
+	coupling.artifact.WithPayload(p)
+	coupling.restoreBranch(leftPreserved)
+	coupling.restoreBranch(rightPreserved)
+	return len(p), nil
 }
 
 func (coupling *IntervalCoupling) Close() error {

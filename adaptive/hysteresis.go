@@ -27,11 +27,6 @@ func NewHysteresis(artifact *datura.Artifact) *Hysteresis {
 	}
 }
 
-func (hysteresis *Hysteresis) Write(p []byte) (int, error) {
-	hysteresis.artifact.WithPayload(p)
-	return len(p), nil
-}
-
 func (hysteresis *Hysteresis) Read(payload []byte) (int, error) {
 	state := datura.Acquire("hysteresis-state", datura.APPJSON)
 
@@ -126,6 +121,11 @@ func (hysteresis *Hysteresis) Read(payload []byte) (int, error) {
 	state.MergeOutput("value", hysteresis.value)
 
 	return state.Read(payload)
+}
+
+func (hysteresis *Hysteresis) Write(p []byte) (int, error) {
+	hysteresis.artifact.WithPayload(p)
+	return len(p), nil
 }
 
 func (hysteresis *Hysteresis) Close() error {

@@ -8,9 +8,9 @@ import (
 	"github.com/theapemachine/datura/transport"
 )
 
-func TestRank(testingTB *testing.T) {
+func TestNewRank(testingTB *testing.T) {
 	Convey("Given Rank constructor", testingTB, func() {
-		empirical := NewRank(datura.Acquire("rank-config", datura.APPJSON))
+		empirical := NewRank(rankConfig("rank-config"))
 
 		Convey("It should return a usable dynamic", func() {
 			So(empirical, ShouldNotBeNil)
@@ -18,9 +18,9 @@ func TestRank(testingTB *testing.T) {
 	})
 }
 
-func TestEmpiricalRank_Observe(testingTB *testing.T) {
-	Convey("Given empty Observe inputs", testingTB, func() {
-		empirical := NewRank(datura.Acquire("rank-config", datura.APPJSON))
+func TestRank_Read(testingTB *testing.T) {
+	Convey("Given empty inbound wire", testingTB, func() {
+		empirical := NewRank(rankConfig("rank-config"))
 		artifact := datura.Acquire("test", datura.APPJSON)
 		err := transport.NewFlipFlop(artifact, empirical)
 
@@ -30,15 +30,15 @@ func TestEmpiricalRank_Observe(testingTB *testing.T) {
 	})
 
 	Convey("Given empirical rank history", testingTB, func() {
-		empirical := NewRank(datura.Acquire("rank-config", datura.APPJSON))
+		empirical := NewRank(rankConfig("rank-config"))
 		artifact := datura.Acquire("test", datura.APPJSON)
 
-		artifact.Poke(10, "sample")
+		scalarWire(artifact, "sample", 10)
 		err := transport.NewFlipFlop(artifact, empirical)
 
 		So(err, ShouldBeNil)
 
-		artifact.Poke(5, "sample")
+		scalarWire(artifact, "sample", 5)
 		err = transport.NewFlipFlop(artifact, empirical)
 
 		So(err, ShouldBeNil)
@@ -51,31 +51,31 @@ func TestEmpiricalRank_Observe(testingTB *testing.T) {
 		})
 	})
 
-	Convey("Given a combined scalar sample", testingTB, func() {
-		empirical := NewRank(datura.Acquire("rank-config", datura.APPJSON))
+	Convey("Given sequential scalar samples", testingTB, func() {
+		empirical := NewRank(rankConfig("rank-config"))
 		artifact := datura.Acquire("test", datura.APPJSON)
 
-		artifact.Poke(10, "sample")
+		scalarWire(artifact, "sample", 10)
 		err := transport.NewFlipFlop(artifact, empirical)
 
 		So(err, ShouldBeNil)
 
-		artifact.Poke(8, "sample")
+		scalarWire(artifact, "sample", 8)
 		err = transport.NewFlipFlop(artifact, empirical)
 
 		So(err, ShouldBeNil)
 
 		withWork := datura.Peek[float64](artifact, "output", "value")
 
-		combined := NewRank(datura.Acquire("rank-config-combined", datura.APPJSON))
+		combined := NewRank(rankConfig("rank-config-combined"))
 		reference := datura.Acquire("test", datura.APPJSON)
 
-		reference.Poke(10, "sample")
+		scalarWire(reference, "sample", 10)
 		err = transport.NewFlipFlop(reference, combined)
 
 		So(err, ShouldBeNil)
 
-		reference.Poke(8, "sample")
+		scalarWire(reference, "sample", 8)
 		err = transport.NewFlipFlop(reference, combined)
 
 		So(err, ShouldBeNil)
@@ -86,13 +86,10 @@ func TestEmpiricalRank_Observe(testingTB *testing.T) {
 			So(withWork, ShouldEqual, direct)
 		})
 	})
-}
 
-func TestEmpiricalRank_Reset(testingTB *testing.T) {
-	Convey("Given an observed rank", testingTB, func() {
-		empirical := NewRank(datura.Acquire("rank-config", datura.APPJSON))
-		artifact := datura.Acquire("test", datura.APPJSON).
-			Poke(10, "sample")
+	Convey("Given reset after observation", testingTB, func() {
+		empirical := NewRank(rankConfig("rank-config"))
+		artifact := scalarWire(datura.Acquire("test", datura.APPJSON), "sample", 10)
 
 		err := transport.NewFlipFlop(artifact, empirical)
 
@@ -110,17 +107,105 @@ func TestEmpiricalRank_Reset(testingTB *testing.T) {
 	})
 }
 
-func BenchmarkRank_Observe(testingTB *testing.B) {
-	empirical := NewRank(datura.Acquire("rank-config-bench", datura.APPJSON))
+func TestRankState_Observe(testingTB *testing.T) {
+	Convey("Given a fresh rank state", testingTB, func() {
+		state := RankState{}
+
+		Convey("When bootstrapping", func() {
+			rank := state.Observe(5)
+
+			Convey("It should return unit rank", func() {
+				So(state.Ready, ShouldBeTrue)
+				So(rank, ShouldEqual, 1)
+				So(state.Count, ShouldEqual, 1)
+			})
+		})
+	})
+
+	Convey("Given rank history", testingTB, func() {
+		state := RankState{}
+		_ = state.Observe(10)
+		value := state.Observe(5)
+
+		Convey("It should return a lower rank probability", func() {
+			So(value, ShouldBeLessThan, 1)
+			So(value, ShouldBeGreaterThan, 0)
+		})
+	})
+
+	Convey("Given ascending samples", testingTB, func() {
+		state := RankState{}
+		_ = state.Observe(1)
+		_ = state.Observe(2)
+		rank := state.Observe(3)
+
+		Convey("It should return maximum empirical rank", func() {
+			So(rank, ShouldEqual, 1)
+		})
+	})
+
+	Convey("Given a sample below history", testingTB, func() {
+		state := RankState{}
+		_ = state.Observe(10)
+		_ = state.Observe(20)
+		rank := state.Observe(5)
+
+		Convey("It should rank below all history", func() {
+			So(rank, ShouldEqual, 1.0/3.0)
+		})
+	})
+
+	Convey("Given a middle sample", testingTB, func() {
+		state := RankState{}
+		_ = state.Observe(1)
+		_ = state.Observe(3)
+		rank := state.Observe(2)
+
+		Convey("It should count at-or-below fraction", func() {
+			So(rank, ShouldEqual, 2.0/3.0)
+		})
+	})
+}
+
+func TestRankState_ObserveSamples(testingTB *testing.T) {
+	Convey("Given samples", testingTB, func() {
+		state := RankState{}
+		samples := []float64{10, 5, 15}
+		out := make([]float64, len(samples))
+
+		Convey("When observing in batch", func() {
+			state.ObserveSamples(samples, out)
+
+			Convey("It should match sequential observation", func() {
+				expect := RankState{}
+				for index, sample := range samples {
+					So(out[index], ShouldEqual, expect.Observe(sample))
+				}
+			})
+		})
+	})
+}
+
+func BenchmarkRank_Read(testingTB *testing.B) {
+	empirical := NewRank(rankConfig("rank-config-bench"))
 	artifact := datura.Acquire("test", datura.APPJSON)
 
-	artifact.Poke(10, "sample")
+	scalarWire(artifact, "sample", 10)
 	_ = transport.NewFlipFlop(artifact, empirical)
 
 	testingTB.ReportAllocs()
 
 	for testingTB.Loop() {
-		artifact.Poke(10.5, "sample")
+		scalarWire(artifact, "sample", 10.5)
 		_ = transport.NewFlipFlop(artifact, empirical)
+	}
+}
+
+func BenchmarkRankState_Observe(testingTB *testing.B) {
+	state := RankState{}
+	_ = state.Observe(10)
+
+	for testingTB.Loop() {
+		_ = state.Observe(10.5)
 	}
 }

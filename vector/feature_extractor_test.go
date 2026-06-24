@@ -16,8 +16,12 @@ var featureExtractorPayloadFixture = []byte(
 
 func featureExtractorSchema() *datura.Artifact {
 	return datura.Acquire("feature-extractor-test", datura.APPJSON).
-		Poke("data", "root").
-		Poke([]string{"volume", "vwap", "last", "bid", "ask", "change_pct"}, "inputs")
+		Poke(map[string]any{
+			"root": "data",
+			"inputs": []string{
+				"volume", "vwap", "last", "bid", "ask", "change_pct",
+			},
+		}, "ticker")
 }
 
 func TestNewFeatureExtractor(t *testing.T) {

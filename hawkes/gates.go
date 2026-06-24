@@ -25,7 +25,7 @@ func (gates FitGates) Ready() bool {
 FitGatesFromHistory derives saturation and frenzy gates from observed fit statistics.
 */
 func FitGatesFromHistory(spectralRadii, asymmetries []float64) (FitGates, bool) {
-	_, longWindow, err := statistic.RollingWindows(make([]float64, len(spectralRadii)), 0, 0)
+	_, longWindow, err := statistic.NewRollingWindow(0, 0).Resolve(make([]float64, len(spectralRadii)))
 
 	if err != nil || len(spectralRadii) < longWindow || len(asymmetries) < longWindow {
 		return FitGates{}, false

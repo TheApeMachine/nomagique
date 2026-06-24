@@ -96,8 +96,8 @@ func (bookflowSample *BookflowSample) Read(payload []byte) (int, error) {
 
 	state.WithScope(symbol)
 	state.Merge("features", features)
-	state.Merge("root", "features")
-	state.Merge("inputs", equation.BookflowInputKeys)
+	state.Poke("features", "root")
+	state.Poke(equation.BookflowInputKeys, "inputs")
 
 	return state.Read(payload)
 }
@@ -279,9 +279,7 @@ func (bookflowSample *BookflowSample) features(window *bookflowWindow) []float64
 		return nil
 	}
 
-	_, longWindow, err := statistic.RollingWindows(
-		window.weightedHist, 0, 0,
-	)
+	_, longWindow, err := statistic.NewRollingWindow(0, 0).Resolve(window.weightedHist)
 
 	if err != nil || historyCount < longWindow {
 		return nil
@@ -404,7 +402,7 @@ func bookflowFlatDepth(bids, asks map[float64]float64) int {
 		return 0
 	}
 
-	_, longWindow, err := statistic.RollingWindows(make([]float64, levelCount), 0, 0)
+	_, longWindow, err := statistic.NewRollingWindow(0, 0).Resolve(make([]float64, levelCount))
 
 	if err != nil {
 		return 2

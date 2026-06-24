@@ -25,21 +25,13 @@ type Variance struct {
 NewVariance returns a variance stage wired from config attributes on the artifact.
 */
 func NewVariance(artifact *datura.Artifact) *Variance {
-	artifact.Inspect("adaptive", "variance", "NewVariance()")
-
 	return &Variance{
 		artifact: artifact,
 	}
 }
 
-func (variance *Variance) Write(p []byte) (int, error) {
-	variance.artifact.WithPayload(p)
-	return len(p), nil
-}
-
 func (variance *Variance) Read(payload []byte) (int, error) {
 	state := datura.Acquire("variance-state", datura.APPJSON)
-	state.Inspect("adaptive", "variance", "Read()", "p")
 
 	if _, err := state.Write(variance.artifact.DecryptPayload()); err != nil {
 		return 0, errnie.Error(errnie.Err(
@@ -49,18 +41,47 @@ func (variance *Variance) Read(payload []byte) (int, error) {
 		))
 	}
 
-	root := datura.Peek[string](state, "root")
+	state.Inspect("adaptive", "variance", "Read()", "p")
+
+	rootKey := datura.Peek[string](state, "root")
+
+	if rootKey == "" {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"variance: root required",
+			nil,
+		))
+	}
+
 	inputs := datura.Peek[[]string](state, "inputs")
 
 	if len(inputs) == 0 {
-		inputs = []string{"sample"}
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"variance: inputs required",
+			nil,
+		))
 	}
 
-	for _, input := range inputs {
-		sample := datura.Peek[float64](state, root, input)
+	for index, input := range inputs {
+		var sample float64
 
-		if root == "" {
-			sample = datura.Peek[float64](state, input)
+		if rootKey == "features" {
+			features := datura.Peek[[]float64](state, rootKey)
+
+			if index >= len(features) {
+				return 0, errnie.Error(errnie.Err(
+					errnie.Validation,
+					"variance: feature index out of range",
+					nil,
+				))
+			}
+
+			sample = features[index]
+		}
+
+		if rootKey != "features" {
+			sample = datura.Peek[float64](state, rootKey, input)
 		}
 
 		if math.IsNaN(sample) || math.IsInf(sample, 0) {
@@ -78,12 +99,9 @@ func (variance *Variance) Read(payload []byte) (int, error) {
 			variance.min = sample
 			variance.max = sample
 			variance.bootstrapped = true
+			state.MergeOutput("value", 0)
 
-			return 0, errnie.Error(errnie.Err(
-				errnie.Validation,
-				"variance: insufficient samples",
-				nil,
-			))
+			break
 		}
 
 		variance.min = math.Min(variance.min, sample)
@@ -115,12 +133,18 @@ func (variance *Variance) Read(payload []byte) (int, error) {
 			))
 		}
 
-		state.Poke("output", "root")
-		state.Poke([]string{"value"}, "inputs")
 		state.MergeOutput("value", variance.variance)
 	}
 
+	state.Poke("output", "root")
+	state.Poke([]string{"value"}, "inputs")
+
 	return state.Read(payload)
+}
+
+func (variance *Variance) Write(p []byte) (int, error) {
+	variance.artifact.WithPayload(p)
+	return len(p), nil
 }
 
 func (variance *Variance) Close() error {

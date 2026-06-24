@@ -1,7 +1,6 @@
 package causal
 
 import (
-	"io"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
@@ -47,7 +46,7 @@ func TestLadder_ReadWarmup(testingTB *testing.T) {
 
 		err := transport.NewFlipFlop(artifact, ladder)
 
-		So(err, ShouldEqual, io.EOF)
+		So(err, ShouldNotBeNil)
 	})
 }
 
@@ -62,7 +61,7 @@ func TestLadder_ReadKernelMiss(testingTB *testing.T) {
 
 		err := transport.NewFlipFlop(artifact, ladder)
 
-		So(err, ShouldEqual, io.EOF)
+		So(err, ShouldNotBeNil)
 	})
 }
 

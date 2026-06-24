@@ -259,8 +259,8 @@ func (reading *ExcitationReading) Read(payload []byte) (int, error) {
 	}
 
 	state.MergeOutput("value", value)
-	state.Merge("root", "output")
-	state.Merge("inputs", []string{"value"})
+	state.Poke("output", "root")
+	state.Poke([]string{"value"}, "inputs")
 
 	return state.Read(payload)
 }
@@ -556,7 +556,7 @@ func fitGateHistoryCap(history []float64) int {
 		return minimumCap
 	}
 
-	_, longWindow, err := statistic.RollingWindows(history, 0, 0)
+	_, longWindow, err := statistic.NewRollingWindow(0, 0).Resolve(history)
 
 	if err != nil {
 		return minimumCap

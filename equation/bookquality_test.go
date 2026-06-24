@@ -60,7 +60,8 @@ func TestBookQuality_Read(testingTB *testing.T) {
 			equation.NewBookQuality(nil),
 			probability.NewClassifier(
 				datura.Acquire("toxicity-classifier", datura.APPJSON).WithAttributes(datura.Map[any]{
-					"inputs": []string{"bluffScore", "vacuumScore", "supportScore"},
+					"inputs":    []string{"bluffScore", "vacuumScore", "supportScore"},
+					"scoreRoot": "output",
 				}),
 			),
 		)
@@ -89,7 +90,8 @@ func TestBookQuality_Read(testingTB *testing.T) {
 			equation.NewBookQuality(nil),
 			probability.NewClassifier(
 				datura.Acquire("toxicity-classifier", datura.APPJSON).WithAttributes(datura.Map[any]{
-					"inputs": []string{"bluffScore", "vacuumScore", "supportScore"},
+					"inputs":    []string{"bluffScore", "vacuumScore", "supportScore"},
+					"scoreRoot": "output",
 				}),
 			),
 		)

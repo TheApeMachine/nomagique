@@ -20,25 +20,19 @@ type Graph struct {
 NewGraph returns a DAG admissibility stage wired from config attributes on the artifact.
 */
 func NewGraph(artifact *datura.Artifact) *Graph {
-	artifact.Inspect("causal", "graph", "NewGraph()")
-
 	return &Graph{
 		artifact: artifact,
 	}
 }
 
-func (graphStage *Graph) Write(p []byte) (int, error) {
-	graphStage.artifact.WithPayload(p)
-	return len(p), nil
-}
-
 func (graphStage *Graph) Read(p []byte) (int, error) {
 	state := datura.Acquire("graph-state", datura.APPJSON)
-	state.Inspect("causal", "graph", "Read()", "p")
 
 	if _, err := state.Write(graphStage.artifact.DecryptPayload()); err != nil {
 		return 0, err
 	}
+
+	state.Inspect("causal", "graph", "Read()", "p")
 
 	dag, err := newDAGFromArtifact(graphStage.artifact)
 
@@ -71,9 +65,14 @@ func (graphStage *Graph) Read(p []byte) (int, error) {
 
 	state.MergeOutput("value", value)
 	state.MergeOutput("admissible", value)
-	state.Merge("root", "output")
-	state.Merge("inputs", []string{"value", "admissible"})
+	state.Poke("output", "root")
+	state.Poke([]string{"value", "admissible"}, "inputs")
 	return state.Read(p)
+}
+
+func (graphStage *Graph) Write(p []byte) (int, error) {
+	graphStage.artifact.WithPayload(p)
+	return len(p), nil
 }
 
 func (graphStage *Graph) Close() error {

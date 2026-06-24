@@ -3,7 +3,6 @@ package probability_test
 import (
 	"testing"
 
-	"github.com/bytedance/sonic"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/transport"
@@ -13,17 +12,8 @@ import (
 
 func classifierSchema(inputs ...string) *datura.Artifact {
 	return datura.Acquire("schema", datura.APPJSON).
+		Poke("output", "scoreRoot").
 		Poke(inputs, "inputs")
-}
-
-func artifactWithScores(scores map[string]float64) *datura.Artifact {
-	payload, err := sonic.Marshal(datura.Map[any]{"output": scores})
-
-	if err != nil {
-		panic(err)
-	}
-
-	return datura.Acquire("test", datura.APPJSON).WithPayload(payload)
 }
 
 func TestNewClassifier(testingTB *testing.T) {

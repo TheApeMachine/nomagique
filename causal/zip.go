@@ -21,27 +21,13 @@ type Zip struct {
 NewZip returns a stream-to-table zip stage wired from config attributes on the artifact.
 */
 func NewZip(artifact *datura.Artifact) *Zip {
-	artifact.Inspect("causal", "zip", "NewZip()")
-
 	return &Zip{
 		artifact: artifact,
 	}
 }
 
-func (zipStage *Zip) Write(p []byte) (int, error) {
-	preserved := zipStage.preserveStreams()
-	zipStage.artifact.WithPayload(p)
-
-	if datura.Peek[float64](zipStage.artifact, "streams", "nodeCount") <= 0 {
-		zipStage.restoreStreams(preserved)
-	}
-
-	return len(p), nil
-}
-
 func (zipStage *Zip) Read(p []byte) (int, error) {
 	state := datura.Acquire("zip-state", datura.APPJSON)
-	state.Inspect("causal", "zip", "Read()", "p")
 
 	if _, err := state.Write(zipStage.artifact.DecryptPayload()); err != nil {
 		return 0, err
@@ -51,8 +37,8 @@ func (zipStage *Zip) Read(p []byte) (int, error) {
 
 	if rows, tableOK := tableRows(state); tableOK {
 		state.MergeOutput("value", float64(len(rows)))
-		state.Merge("root", "output")
-		state.Merge("inputs", []string{"value"})
+		state.Poke("output", "root")
+		state.Poke([]string{"value"}, "inputs")
 		return state.Read(p)
 	}
 
@@ -91,6 +77,17 @@ func (zipStage *Zip) Read(p []byte) (int, error) {
 	state.Poke("output", "root")
 	state.Poke([]string{"value"}, "inputs")
 	return state.Read(p)
+}
+
+func (zipStage *Zip) Write(p []byte) (int, error) {
+	preserved := zipStage.preserveStreams()
+	zipStage.artifact.WithPayload(p)
+
+	if datura.Peek[float64](zipStage.artifact, "streams", "nodeCount") <= 0 {
+		zipStage.restoreStreams(preserved)
+	}
+
+	return len(p), nil
 }
 
 func (zipStage *Zip) Close() error {

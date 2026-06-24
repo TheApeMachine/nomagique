@@ -31,11 +31,6 @@ func NewRLS(dimension int, initialVariance float64) (*RLS, error) {
 	}, nil
 }
 
-func (rls *RLS) Write(payload []byte) (int, error) {
-	rls.artifact.WithPayload(payload)
-	return len(payload), nil
-}
-
 func (rls *RLS) Read(payload []byte) (int, error) {
 	if rls == nil || rls.filter == nil {
 		return 0, nil
@@ -95,9 +90,14 @@ func (rls *RLS) Read(payload []byte) (int, error) {
 	}
 
 	state.MergeOutput("value", value)
-	state.Merge("root", "output")
-	state.Merge("inputs", []string{"value"})
+	state.Poke("output", "root")
+	state.Poke([]string{"value"}, "inputs")
 	return state.Read(payload)
+}
+
+func (rls *RLS) Write(payload []byte) (int, error) {
+	rls.artifact.WithPayload(payload)
+	return len(payload), nil
 }
 
 func (rls *RLS) Close() error {

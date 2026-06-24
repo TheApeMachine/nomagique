@@ -20,25 +20,19 @@ type StdDev struct {
 NewStdDev returns a standard-deviation stage wired from config attributes on the artifact.
 */
 func NewStdDev(artifact *datura.Artifact) *StdDev {
-	artifact.Inspect("statistic", "stddev", "NewStdDev()")
-
 	return &StdDev{
 		artifact: artifact,
 	}
 }
 
-func (stdDev *StdDev) Write(payload []byte) (int, error) {
-	stdDev.artifact.WithPayload(payload)
-	return len(payload), nil
-}
-
 func (stdDev *StdDev) Read(payload []byte) (int, error) {
 	state := datura.Acquire("stddev-state", datura.APPJSON)
-	state.Inspect("statistic", "stddev", "Read()", "p")
 
 	if _, err := state.Write(stdDev.artifact.DecryptPayload()); err != nil {
 		return 0, err
 	}
+
+	state.Inspect("statistic", "stddev", "Read()", "p")
 
 	sample := datura.Peek[float64](state, "sample")
 
@@ -60,9 +54,14 @@ func (stdDev *StdDev) Read(payload []byte) (int, error) {
 
 	value := stat.StdDev(history, nil)
 	state.MergeOutput("value", value)
-	state.Merge("root", "output")
-	state.Merge("inputs", []string{"value"})
+	state.Poke("output", "root")
+	state.Poke([]string{"value"}, "inputs")
 	return state.Read(payload)
+}
+
+func (stdDev *StdDev) Write(payload []byte) (int, error) {
+	stdDev.artifact.WithPayload(payload)
+	return len(payload), nil
 }
 
 func (stdDev *StdDev) Close() error {

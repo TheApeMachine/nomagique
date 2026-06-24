@@ -21,25 +21,19 @@ type Covariance struct {
 NewCovariance creates a covariance stage wired from config attributes on the artifact.
 */
 func NewCovariance(artifact *datura.Artifact) *Covariance {
-	artifact.Inspect("correlation", "covariance", "NewCovariance()")
-
 	return &Covariance{
 		artifact: artifact,
 	}
 }
 
-func (covariance *Covariance) Write(p []byte) (int, error) {
-	covariance.artifact.WithPayload(p)
-	return len(p), nil
-}
-
 func (covariance *Covariance) Read(p []byte) (int, error) {
 	state := datura.Acquire("covariance-state", datura.APPJSON)
-	state.Inspect("correlation", "covariance", "Read()", "p")
 
 	if _, err := state.Write(covariance.artifact.DecryptPayload()); err != nil {
 		return 0, err
 	}
+
+	state.Inspect("correlation", "covariance", "Read()", "p")
 
 	values := datura.Peek[[]float64](state, "batch")
 
@@ -88,8 +82,8 @@ func (covariance *Covariance) Read(p []byte) (int, error) {
 		}
 
 		state.MergeOutput("value", covarianceValue)
-		state.Merge("root", "output")
-		state.Merge("inputs", []string{"value"})
+		state.Poke("output", "root")
+		state.Poke([]string{"value"}, "inputs")
 		return state.Read(p)
 	}
 
@@ -111,6 +105,11 @@ func (covariance *Covariance) Read(p []byte) (int, error) {
 		errnie.Validation, "unable to compute covariance",
 		CovarianceError(CovarianceErrorRequireAtLeastTwoInputs),
 	))
+}
+
+func (covariance *Covariance) Write(p []byte) (int, error) {
+	covariance.artifact.WithPayload(p)
+	return len(p), nil
 }
 
 func (covariance *Covariance) Close() error {

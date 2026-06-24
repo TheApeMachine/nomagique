@@ -3,7 +3,6 @@ package learning
 import (
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/nomagique/statistic"
 )
 
 /*
@@ -18,28 +17,21 @@ type Forecaster struct {
 Forecast returns a scale-learning stage wired from config attributes on the artifact.
 */
 func Forecast(artifact *datura.Artifact) *Forecaster {
-	artifact.Inspect("learning", "forecast", "Forecast()")
-
 	return &Forecaster{
 		artifact: artifact,
 	}
 }
 
-func (forecaster *Forecaster) Write(payload []byte) (int, error) {
-	forecaster.artifact.WithPayload(payload)
-	return len(payload), nil
-}
-
 func (forecaster *Forecaster) Read(payload []byte) (int, error) {
 	state := datura.Acquire("forecast-state", datura.APPJSON)
-	state.Inspect("learning", "forecast", "Read()", "p")
-
+	
 	if _, err := state.Write(forecaster.artifact.DecryptPayload()); err != nil {
 		state.Release()
-
+		
 		return 0, err
 	}
-
+	
+	state.Inspect("learning", "forecast", "Read()", "p")
 	defer state.Release()
 
 	predicted, actual, err := forecaster.resolvePair(state)
@@ -52,52 +44,16 @@ func (forecaster *Forecaster) Read(payload []byte) (int, error) {
 	derived := ObserveForecast(&forecastState, predicted, actual)
 	pokeForecastState(forecaster.artifact, &forecastState, derived)
 	state.MergeOutput("value", derived)
-	state.Merge("root", "output")
-	state.Merge("inputs", []string{"value"})
+	state.Poke("output", "root")
+	state.Poke([]string{"value"}, "inputs")
 	return state.Read(payload)
 }
 
 func (forecaster *Forecaster) resolvePair(state *datura.Artifact) (float64, float64, error) {
-	sampleKey := statistic.ConfigString(forecaster.artifact, state, "sampleKey")
-
-	if sampleKey == "" {
-		sampleKey = "sample"
-	}
-
-	pairedKey := statistic.ConfigString(forecaster.artifact, state, "pairedKey")
-
-	if pairedKey == "" {
-		pairedKey = "paired"
-	}
-
-	predicted := datura.Peek[float64](state, sampleKey)
-	actual := datura.Peek[float64](state, pairedKey)
-
-	if !attributeKeyPresent(state, sampleKey) && !attributeKeyPresent(state, pairedKey) {
-		features := datura.Peek[[]float64](state, "features")
-
-		if len(features) >= 2 {
-			predicted = features[0]
-			actual = features[1]
-		}
-	}
-
-	if !attributeKeyPresent(state, sampleKey) && !attributeKeyPresent(state, pairedKey) && len(datura.Peek[[]float64](state, "features")) < 2 {
-		return 0, 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"forecast: predicted and actual required",
-			nil,
-		))
-	}
-
-	parsedPredicted, parsedActual, err := parsePredictedActual(predicted, []float64{actual})
+	parsedPredicted, parsedActual, err := wirePair(forecaster.artifact, state, "forecast")
 
 	if err != nil {
-		return 0, 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"forecast: unable to parse predicted and actual pair",
-			err,
-		))
+		return 0, 0, err
 	}
 
 	if parsedActual == 0 {
@@ -109,6 +65,11 @@ func (forecaster *Forecaster) resolvePair(state *datura.Artifact) (float64, floa
 	}
 
 	return parsedPredicted, parsedActual, nil
+}
+
+func (forecaster *Forecaster) Write(payload []byte) (int, error) {
+	forecaster.artifact.WithPayload(payload)
+	return len(payload), nil
 }
 
 func (forecaster *Forecaster) Close() error {

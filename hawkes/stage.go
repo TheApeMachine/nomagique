@@ -29,16 +29,9 @@ func NewMoment(artifact *datura.Artifact) *Moment {
 		artifact = datura.Acquire("hawkes-moment", datura.APPJSON)
 	}
 
-	artifact.Inspect("hawkes", "moment", "NewMoment()")
-
 	return &Moment{
 		artifact: artifact,
 	}
-}
-
-func (moment *Moment) Write(p []byte) (int, error) {
-	moment.artifact.WithPayload(p)
-	return len(p), nil
 }
 
 func (moment *Moment) Read(p []byte) (int, error) {
@@ -46,9 +39,10 @@ func (moment *Moment) Read(p []byte) (int, error) {
 
 	if _, err := state.Write(moment.artifact.DecryptPayload()); err != nil {
 		state.Release()
-
 		return 0, err
 	}
+
+	state.Inspect("hawkes", "moment", "Read()", "p")
 
 	xValues, yValues, weights, ok := momentSamples(state, moment.artifact)
 
@@ -64,8 +58,8 @@ func (moment *Moment) Read(p []byte) (int, error) {
 
 	params := bivariateParamsFromArtifact(moment.artifact)
 
-	if !statistic.KeyPresent(moment.artifact, "config", "momentR") ||
-		!statistic.KeyPresent(moment.artifact, "config", "momentS") {
+	if datura.Peek[float64](moment.artifact, "config", "momentR") == 0 ||
+		datura.Peek[float64](moment.artifact, "config", "momentS") == 0 {
 		state.Release()
 
 		return 0, errnie.Error(errnie.Err(
@@ -105,10 +99,15 @@ func (moment *Moment) Read(p []byte) (int, error) {
 	state.MergeOutput("empirical", empirical)
 	state.MergeOutput("theoretical", theoretical)
 	state.MergeOutput("confidence", confidence)
-	state.Merge("root", "output")
-	state.Merge("inputs", []string{"value", "empirical", "theoretical", "confidence"})
+	state.Poke("output", "root")
+	state.Poke([]string{"value", "empirical", "theoretical", "confidence"}, "inputs")
 
 	return state.Read(p)
+}
+
+func (moment *Moment) Write(p []byte) (int, error) {
+	moment.artifact.WithPayload(p)
+	return len(p), nil
 }
 
 func (moment *Moment) Close() error {
@@ -132,16 +131,9 @@ func NewFit(artifact *datura.Artifact) *Fit {
 		artifact = datura.Acquire("hawkes-fit", datura.APPJSON)
 	}
 
-	artifact.Inspect("hawkes", "fit", "NewFit()")
-
 	return &Fit{
 		artifact: artifact,
 	}
-}
-
-func (fit *Fit) Write(p []byte) (int, error) {
-	fit.artifact.WithPayload(p)
-	return len(p), nil
 }
 
 func (fit *Fit) Read(p []byte) (int, error) {
@@ -152,6 +144,8 @@ func (fit *Fit) Read(p []byte) (int, error) {
 
 		return 0, err
 	}
+
+	state.Inspect("hawkes", "fit", "Read()", "p")
 
 	xTimes, yTimes, ok := fitTimes(state, fit.artifact)
 
@@ -195,10 +189,15 @@ func (fit *Fit) Read(p []byte) (int, error) {
 	state.MergeOutput("excitationRatio", ratio)
 	state.MergeOutput("spectralRadius", fitted.SpectralRadius)
 	state.MergeOutput("asymmetry", asymmetry)
-	state.Merge("root", "output")
-	state.Merge("inputs", []string{"value", "excitationRatio", "spectralRadius", "asymmetry"})
+	state.Poke("output", "root")
+	state.Poke([]string{"value", "excitationRatio", "spectralRadius", "asymmetry"}, "inputs")
 
 	return state.Read(p)
+}
+
+func (fit *Fit) Write(p []byte) (int, error) {
+	fit.artifact.WithPayload(p)
+	return len(p), nil
 }
 
 func (fit *Fit) Close() error {

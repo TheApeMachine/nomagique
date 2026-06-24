@@ -19,25 +19,19 @@ type Abduction struct {
 NewAbduction returns an abduction stage wired from config attributes on the artifact.
 */
 func NewAbduction(artifact *datura.Artifact) *Abduction {
-	artifact.Inspect("causal", "abduction", "NewAbduction()")
-
 	return &Abduction{
 		artifact: artifact,
 	}
 }
 
-func (abduction *Abduction) Write(p []byte) (int, error) {
-	abduction.artifact.WithPayload(p)
-	return len(p), nil
-}
-
 func (abduction *Abduction) Read(p []byte) (int, error) {
 	state := datura.Acquire("abduction-state", datura.APPJSON)
-	state.Inspect("causal", "abduction", "Read()", "p")
 
 	if _, err := state.Write(abduction.artifact.DecryptPayload()); err != nil {
 		return 0, err
 	}
+
+	state.Inspect("causal", "abduction", "Read()", "p")
 
 	rows, ok := tableRows(state)
 
@@ -93,9 +87,14 @@ func (abduction *Abduction) Read(p []byte) (int, error) {
 	state.MergeOutput("uplift", uplift)
 	state.MergeOutput("counterfactual", counterfactual)
 	state.MergeOutput("noise", noise)
-	state.Merge("root", "output")
-	state.Merge("inputs", []string{"value", "uplift", "counterfactual", "noise"})
+	state.Poke("output", "root")
+	state.Poke([]string{"value", "uplift", "counterfactual", "noise"}, "inputs")
 	return state.Read(p)
+}
+
+func (abduction *Abduction) Write(p []byte) (int, error) {
+	abduction.artifact.WithPayload(p)
+	return len(p), nil
 }
 
 func (abduction *Abduction) Close() error {

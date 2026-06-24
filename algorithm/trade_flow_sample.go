@@ -105,8 +105,8 @@ func (tradeFlowSample *TradeFlowSample) Read(payload []byte) (int, error) {
 
 	state.WithScope(symbol)
 	state.Merge("features", features)
-	state.Merge("root", "features")
-	state.Merge("inputs", equation.FlowInputKeys)
+	state.Poke("features", "root")
+	state.Poke(equation.FlowInputKeys, "inputs")
 
 	return state.Read(payload)
 }
@@ -141,7 +141,7 @@ func (tradeFlowSample *TradeFlowSample) features(window *tradeFlowWindow) []floa
 		notionals[index] = tick.notional
 	}
 
-	_, longWindow, err := statistic.RollingWindows(notionals, 0, 0)
+	_, longWindow, err := statistic.NewRollingWindow(0, 0).Resolve(notionals)
 
 	if err != nil || tradeCount < longWindow {
 		return nil

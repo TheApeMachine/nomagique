@@ -58,8 +58,8 @@ func emitOutput(state *datura.Artifact, payload []byte, fields datura.Map[float6
 		}
 	}
 
-	state.Merge("root", "output")
-	state.Merge("inputs", outputInputs)
+	state.Poke("output", "root")
+	state.Poke(outputInputs, "inputs")
 
 	return state.Read(payload)
 }

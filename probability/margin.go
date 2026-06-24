@@ -3,6 +3,27 @@ package probability
 import "fmt"
 
 /*
+ArgmaxIndex returns the index of the largest value.
+*/
+func ArgmaxIndex(values []float64) int {
+	if len(values) == 0 {
+		return 0
+	}
+
+	bestIndex := 0
+	bestValue := values[0]
+
+	for index, value := range values[1:] {
+		if value > bestValue {
+			bestValue = value
+			bestIndex = index + 1
+		}
+	}
+
+	return bestIndex
+}
+
+/*
 CompetitionMargin scores how decisively excess separates from a reference span.
 */
 func CompetitionMargin(excess, span float64) (float64, error) {

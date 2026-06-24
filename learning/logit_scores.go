@@ -26,11 +26,6 @@ func NewLogitScores(config *datura.Artifact) *LogitScores {
 	}
 }
 
-func (logitScores *LogitScores) Write(payload []byte) (int, error) {
-	logitScores.config.WithPayload(payload)
-	return len(payload), nil
-}
-
 func (logitScores *LogitScores) Read(payload []byte) (int, error) {
 	state := datura.Acquire("logit-scores-state", datura.APPJSON)
 
@@ -44,8 +39,8 @@ func (logitScores *LogitScores) Read(payload []byte) (int, error) {
 
 	defer state.Release()
 
-	order := statistic.ConfigStringSlice(logitScores.config, state, "order")
-	outputs := statistic.ConfigStringSlice(logitScores.config, state, "outputs")
+	order := datura.Peek[[]string](logitScores.config, "order")
+	outputs := datura.Peek[[]string](logitScores.config, "outputs")
 
 	if len(order) == 0 {
 		return 0, errnie.Error(errnie.Err(
@@ -120,7 +115,11 @@ func (logitScores *LogitScores) Read(payload []byte) (int, error) {
 
 	state.MergeOutput("strength", strength)
 	state.Poke("output", "root")
-	state.Poke(outputs, "inputs")
+
+	outputInputs := make([]string, 0, len(outputs)+1)
+	outputInputs = append(outputInputs, outputs...)
+	outputInputs = append(outputInputs, "strength")
+	state.Poke(outputInputs, "inputs")
 
 	return state.Read(payload)
 }
@@ -128,6 +127,161 @@ func (logitScores *LogitScores) Read(payload []byte) (int, error) {
 func (logitScores *LogitScores) featureValues(
 	state *datura.Artifact,
 	order []string,
+) (map[string]float64, error) {
+	scoreRoot := datura.Peek[string](logitScores.config, "scoreRoot")
+
+	if scoreRoot != "" {
+		return logitScores.featureValuesFromScoreRoot(state, order, scoreRoot)
+	}
+
+	features := make(map[string]float64, len(order))
+
+	for _, key := range order {
+		wireKey := datura.Peek[string](logitScores.config, key, "source")
+
+		if wireKey == "" {
+			wireKey = key
+		}
+
+		rootKey := datura.Peek[string](logitScores.config, "root")
+
+		if rootKey == "" {
+			return nil, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"logit-scores: config root required",
+				nil,
+			))
+		}
+
+		var value float64
+		valueFound := false
+		wireInputs := datura.Peek[[]string](state, "inputs")
+
+		for wireIndex, wireInput := range wireInputs {
+			if wireInput != wireKey {
+				continue
+			}
+
+			if rootKey == "features" {
+				features := datura.Peek[[]float64](state, rootKey)
+
+				if wireIndex >= len(features) {
+					return nil, errnie.Error(errnie.Err(
+						errnie.Validation,
+						"logit-scores: feature index out of range",
+						nil,
+					))
+				}
+
+				value = features[wireIndex]
+			}
+
+			if rootKey != "features" {
+				value = datura.Peek[float64](state, rootKey, wireInput)
+			}
+
+			valueFound = true
+		}
+
+		if !valueFound {
+			return nil, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"logit-scores: wire key not in inputs",
+				nil,
+			))
+		}
+
+		features[key] = value
+	}
+
+	return features, nil
+}
+
+func (logitScores *LogitScores) readWireValue(
+	state *datura.Artifact,
+	wireKey string,
+) (float64, error) {
+	scoreRoot := datura.Peek[string](logitScores.config, "scoreRoot")
+
+	if scoreRoot != "" {
+		outputMap := datura.Peek[map[string]any](state, scoreRoot)
+
+		if _, ok := outputMap[wireKey]; !ok {
+			return 0, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"logit-scores: score key missing from "+scoreRoot,
+				nil,
+			))
+		}
+
+		value := datura.Peek[float64](state, scoreRoot, wireKey)
+
+		if math.IsNaN(value) || math.IsInf(value, 0) {
+			return 0, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"logit-scores: score is non-finite",
+				nil,
+			))
+		}
+
+		return value, nil
+	}
+
+	rootKey := datura.Peek[string](logitScores.config, "root")
+
+	if rootKey == "" {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"logit-scores: config root required",
+			nil,
+		))
+	}
+
+	wireInputs := datura.Peek[[]string](state, "inputs")
+
+	for wireIndex, wireInput := range wireInputs {
+		if wireInput != wireKey {
+			continue
+		}
+
+		if rootKey == "features" {
+			features := datura.Peek[[]float64](state, rootKey)
+
+			if wireIndex >= len(features) {
+				return 0, errnie.Error(errnie.Err(
+					errnie.Validation,
+					"logit-scores: feature index out of range",
+					nil,
+				))
+			}
+
+			return features[wireIndex], nil
+		}
+
+		value := datura.Peek[float64](state, rootKey, wireInput)
+
+		if math.IsNaN(value) || math.IsInf(value, 0) {
+			return 0, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"logit-scores: score is non-finite",
+				nil,
+			))
+		}
+
+		return value, nil
+	}
+
+	return 0, errnie.Error(errnie.Err(
+		errnie.Validation,
+		"logit-scores: wire key not in inputs",
+		nil,
+	))
+}
+
+func (logitScores *LogitScores) featureValuesFromScoreRoot(
+	state *datura.Artifact,
+	order []string,
+	scoreRoot string,
 ) (map[string]float64, error) {
 	features := make(map[string]float64, len(order))
 
@@ -138,20 +292,23 @@ func (logitScores *LogitScores) featureValues(
 			wireKey = key
 		}
 
-		rootKey := statistic.ConfigString(logitScores.config, state, "root")
+		value := datura.Peek[float64](state, scoreRoot, wireKey)
+		outputMap := datura.Peek[map[string]any](state, scoreRoot)
 
-		if rootKey == "" {
+		if _, ok := outputMap[wireKey]; !ok {
 			return nil, errnie.Error(errnie.Err(
 				errnie.Validation,
-				"logit-scores: config root required",
+				"logit-scores: score key missing from "+scoreRoot,
 				nil,
 			))
 		}
 
-		value, err := statistic.WireScalarAt(logitScores.config, state, rootKey, wireKey)
-
-		if err != nil {
-			return nil, err
+		if math.IsNaN(value) || math.IsInf(value, 0) {
+			return nil, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"logit-scores: score is non-finite",
+				nil,
+			))
 		}
 
 		features[key] = value
@@ -173,11 +330,52 @@ func (logitScores *LogitScores) resolveOutputScore(
 		return computed, nil
 	}
 
-	rootKey := statistic.ConfigString(logitScores.config, state, "root")
-	overrideValue, err := statistic.WireScalarAt(logitScores.config, state, rootKey, source)
+	rootKey := datura.Peek[string](logitScores.config, "root")
 
-	if err != nil {
-		return 0, err
+	if rootKey == "" {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"logit-scores: config root required",
+			nil,
+		))
+	}
+
+	var overrideValue float64
+	overrideFound := false
+	wireInputs := datura.Peek[[]string](state, "inputs")
+
+	for wireIndex, wireInput := range wireInputs {
+		if wireInput != source {
+			continue
+		}
+
+		if rootKey == "features" {
+			features := datura.Peek[[]float64](state, rootKey)
+
+			if wireIndex >= len(features) {
+				return 0, errnie.Error(errnie.Err(
+					errnie.Validation,
+					"logit-scores: feature index out of range",
+					nil,
+				))
+			}
+
+			overrideValue = features[wireIndex]
+		}
+
+		if rootKey != "features" {
+			overrideValue = datura.Peek[float64](state, rootKey, wireInput)
+		}
+
+		overrideFound = true
+	}
+
+	if !overrideFound {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"logit-scores: source not in inputs",
+			nil,
+		))
 	}
 
 	combine := datura.Peek[string](logitScores.config, outputKey, "combine")
@@ -248,8 +446,7 @@ func (logitScores *LogitScores) applyDecline(
 		return logitScores.applyGatedOutputs(state, config, scores)
 	}
 
-	rootKey := statistic.ConfigString(logitScores.config, state, "root")
-	declineValue, err := statistic.WireScalarAt(logitScores.config, state, rootKey, declineSource)
+	declineValue, err := logitScores.readWireValue(state, declineSource)
 
 	if err != nil {
 		return err
@@ -310,8 +507,7 @@ func (logitScores *LogitScores) applyGatedOutputs(
 			continue
 		}
 
-		rootKey := statistic.ConfigString(logitScores.config, state, "root")
-		gateValue, err := statistic.WireScalarAt(logitScores.config, state, rootKey, gateSource)
+		gateValue, err := logitScores.readWireValue(state, gateSource)
 
 		if err != nil {
 			return err
@@ -345,6 +541,11 @@ func outputIndex(config *datura.Artifact, outputKey string) (int, error) {
 		fmt.Sprintf("logit-scores: output %q not listed in config outputs", outputKey),
 		nil,
 	))
+}
+
+func (logitScores *LogitScores) Write(payload []byte) (int, error) {
+	logitScores.config.WithPayload(payload)
+	return len(payload), nil
 }
 
 func (logitScores *LogitScores) Close() error {
@@ -409,7 +610,7 @@ func (logitScores *LogitScores) resolveThreshold(
 	thresholdSource := datura.Peek[string](logitScores.config, "threshold", "source")
 
 	if thresholdSource != "" {
-		rootKey := statistic.ConfigString(logitScores.config, state, "root")
+		rootKey := datura.Peek[string](logitScores.config, "root")
 
 		if rootKey == "" {
 			return 0, errnie.Error(errnie.Err(
@@ -419,12 +620,42 @@ func (logitScores *LogitScores) resolveThreshold(
 			))
 		}
 
-		value, err := statistic.WireScalarAt(
-			logitScores.config, state, rootKey, thresholdSource,
-		)
+		var value float64
+		valueFound := false
+		wireInputs := datura.Peek[[]string](state, "inputs")
 
-		if err != nil {
-			return 0, err
+		for wireIndex, wireInput := range wireInputs {
+			if wireInput != thresholdSource {
+				continue
+			}
+
+			if rootKey == "features" {
+				features := datura.Peek[[]float64](state, rootKey)
+
+				if wireIndex >= len(features) {
+					return 0, errnie.Error(errnie.Err(
+						errnie.Validation,
+						"logit-scores: feature index out of range",
+						nil,
+					))
+				}
+
+				value = features[wireIndex]
+			}
+
+			if rootKey != "features" {
+				value = datura.Peek[float64](state, rootKey, wireInput)
+			}
+
+			valueFound = true
+		}
+
+		if !valueFound {
+			return 0, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"logit-scores: threshold source not in inputs",
+				nil,
+			))
 		}
 
 		if value <= 0 || math.IsNaN(value) || math.IsInf(value, 0) {

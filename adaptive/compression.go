@@ -5,12 +5,10 @@ import (
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/nomagique/statistic"
 )
 
 /*
 Compression scores how far below the running baseline the current sample sits.
-The constructor artifact holds config; Write buffers inbound payload.
 */
 type Compression struct {
 	artifact  *datura.Artifact
@@ -25,11 +23,6 @@ func NewCompression(artifact *datura.Artifact) *Compression {
 		artifact:  artifact,
 		baselines: map[string]float64{},
 	}
-}
-
-func (compression *Compression) Write(p []byte) (int, error) {
-	compression.artifact.WithPayload(p)
-	return len(p), nil
 }
 
 func (compression *Compression) Read(payload []byte) (int, error) {
@@ -56,11 +49,61 @@ func (compression *Compression) Read(payload []byte) (int, error) {
 		))
 	}
 
-	root := datura.Peek[string](state, "root")
-	sample := datura.Peek[float64](state, root, inputKey)
+	rootKey := datura.Peek[string](state, "root")
 
-	if root == "" {
-		sample = datura.Peek[float64](state, inputKey)
+	if rootKey == "" {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"compression: root required",
+			nil,
+		))
+	}
+
+	inputs := datura.Peek[[]string](state, "inputs")
+
+	if len(inputs) == 0 {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"compression: inputs required",
+			nil,
+		))
+	}
+
+	var sample float64
+	found := false
+
+	for index, input := range inputs {
+		if input != inputKey {
+			continue
+		}
+
+		if rootKey == "features" {
+			features := datura.Peek[[]float64](state, rootKey)
+
+			if index >= len(features) {
+				return 0, errnie.Error(errnie.Err(
+					errnie.Validation,
+					"compression: feature index out of range",
+					nil,
+				))
+			}
+
+			sample = features[index]
+		}
+
+		if rootKey != "features" {
+			sample = datura.Peek[float64](state, rootKey, input)
+		}
+
+		found = true
+	}
+
+	if !found {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"compression: input not in inputs",
+			nil,
+		))
 	}
 
 	if math.IsNaN(sample) || math.IsInf(sample, 0) {
@@ -71,7 +114,13 @@ func (compression *Compression) Read(payload []byte) (int, error) {
 		))
 	}
 
-	seriesKey := statistic.SeriesKey(compression.artifact, state, "compression")
+	seriesKey := "compression"
+	scope, _ := state.Scope()
+
+	if scope != "" {
+		seriesKey = "compression/" + scope
+	}
+
 	baseline := compression.baselines[seriesKey]
 
 	if baseline <= 0 {
@@ -99,6 +148,11 @@ func (compression *Compression) Read(payload []byte) (int, error) {
 	state.Poke([]string{outputKey}, "inputs")
 
 	return state.Read(payload)
+}
+
+func (compression *Compression) Write(payload []byte) (int, error) {
+	compression.artifact.WithPayload(payload)
+	return len(payload), nil
 }
 
 func (compression *Compression) Close() error {

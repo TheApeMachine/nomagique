@@ -2,7 +2,6 @@ package algorithm
 
 import (
 	"fmt"
-	"io"
 	"testing"
 	"time"
 
@@ -66,7 +65,7 @@ func TestTradeFlowSampleRead(testingTB *testing.T) {
 		err := transport.NewFlipFlop(frame, sample)
 
 		Convey("It should wait for more trade history without error", func() {
-			So(err, ShouldEqual, io.EOF)
+			So(err, ShouldBeNil)
 		})
 	})
 }

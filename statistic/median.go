@@ -3,6 +3,7 @@ package statistic
 import (
 	"math"
 	"sort"
+	"strconv"
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
@@ -10,7 +11,6 @@ import (
 
 /*
 Median computes the sample median over retained history or panel peers.
-The constructor artifact holds config; Write buffers inbound wire on its payload.
 */
 type Median struct {
 	artifact *datura.Artifact
@@ -20,65 +20,219 @@ type Median struct {
 NewMedian returns a median stage wired from config attributes on the artifact.
 */
 func NewMedian(artifact *datura.Artifact) *Median {
-	artifact.Inspect("statistic", "median", "NewMedian()")
-
 	return &Median{
 		artifact: artifact,
 	}
 }
 
-func (median *Median) Write(payload []byte) (int, error) {
-	median.artifact.WithPayload(payload)
-	return len(payload), nil
-}
-
 func (median *Median) Read(payload []byte) (int, error) {
 	state := datura.Acquire("median-state", datura.APPJSON)
-	state.Inspect("statistic", "median", "Read()", "p")
 
 	if _, err := state.Write(median.artifact.DecryptPayload()); err != nil {
 		return 0, err
 	}
 
-	state.Inspect("statistic", "median", "Read()", "p")
+	rawPeers := datura.Peek[map[string]any](state, "peers")
 
-	peers := panelPeers(state)
+	if len(rawPeers) > 0 {
+		memberField := datura.Peek[string](median.artifact, "memberKey")
 
-	if len(peers) == 0 {
-		peers = panelPeers(median.artifact)
-	}
+		if memberField == "" {
+			return 0, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"median: memberKey required",
+				nil,
+			))
+		}
 
-	if len(peers) > 0 {
-		member := datura.Peek[float64](state, "member")
-		peerSamples := make([]float64, 0, len(peers))
+		rootKey := datura.Peek[string](state, "root")
 
-		for memberLabel, peerSample := range peers {
-			if memberLabel == memberKey(member) {
+		if rootKey == "" {
+			return 0, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"median: root required",
+				nil,
+			))
+		}
+
+		inputs := datura.Peek[[]string](state, "inputs")
+
+		if len(inputs) == 0 {
+			return 0, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"median: inputs required",
+				nil,
+			))
+		}
+
+		var member float64
+		memberFound := false
+
+		for index, input := range inputs {
+			if input != memberField {
 				continue
+			}
+
+			if rootKey == "features" {
+				features := datura.Peek[[]float64](state, rootKey)
+
+				if index >= len(features) {
+					return 0, errnie.Error(errnie.Err(
+						errnie.Validation,
+						"median: feature index out of range",
+						nil,
+					))
+				}
+
+				member = features[index]
+			}
+
+			if rootKey != "features" {
+				member = datura.Peek[float64](state, rootKey, input)
+			}
+
+			memberFound = true
+		}
+
+		if !memberFound {
+			return 0, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"median: member not in inputs",
+				nil,
+			))
+		}
+
+		memberLabel := strconv.FormatFloat(member, 'g', -1, 64)
+		peerSamples := make([]float64, 0, len(rawPeers))
+
+		for peerKey, rawSample := range rawPeers {
+			if peerKey == memberLabel {
+				continue
+			}
+
+			peerSample, ok := rawSample.(float64)
+
+			if !ok {
+				return 0, errnie.Error(errnie.Err(
+					errnie.Validation,
+					"median: peer sample is invalid",
+					nil,
+				))
 			}
 
 			peerSamples = append(peerSamples, peerSample)
 		}
 
-		if len(peerSamples) > 0 {
-			value, ok := MedianOf(peerSamples)
+		if len(peerSamples) == 0 {
+			ownSample, ok := rawPeers[memberLabel].(float64)
 
 			if !ok {
+				return 0, errnie.Error(errnie.Err(
+					errnie.Validation,
+					"median: peer sample is invalid",
+					nil,
+				))
+			}
+
+			state.MergeOutput("value", ownSample)
+			state.Poke("output", "root")
+			state.Poke([]string{"value"}, "inputs")
+
+			return state.Read(payload)
+		}
+
+		for _, peerSample := range peerSamples {
+			if math.IsNaN(peerSample) || math.IsInf(peerSample, 0) {
 				return 0, errnie.Error(errnie.Err(
 					errnie.Validation,
 					"median: peer samples are invalid",
 					nil,
 				))
 			}
-
-			state.MergeOutput("value", value)
-			state.Poke("output", "root")
-			state.Poke([]string{"value"}, "inputs")
-			return state.Read(payload)
 		}
+
+		sorted := append([]float64(nil), peerSamples...)
+		sort.Float64s(sorted)
+		middle := len(sorted) / 2
+		value := sorted[middle]
+
+		if len(sorted)%2 == 0 {
+			value = (sorted[middle-1] + sorted[middle]) / 2
+		}
+
+		state.MergeOutput("value", value)
+		state.Poke("output", "root")
+		state.Poke([]string{"value"}, "inputs")
+
+		return state.Read(payload)
 	}
 
-	sample := datura.Peek[float64](state, "sample")
+	rootKey := datura.Peek[string](state, "root")
+
+	if rootKey == "" {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"median: root required",
+			nil,
+		))
+	}
+
+	inputs := datura.Peek[[]string](state, "inputs")
+
+	if len(inputs) == 0 {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"median: inputs required",
+			nil,
+		))
+	}
+
+	configInput := datura.Peek[string](median.artifact, "input")
+
+	if configInput == "" {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"median: input required",
+			nil,
+		))
+	}
+
+	var sample float64
+	found := false
+
+	for index, input := range inputs {
+		if input != configInput {
+			continue
+		}
+
+		if rootKey == "features" {
+			features := datura.Peek[[]float64](state, rootKey)
+
+			if index >= len(features) {
+				return 0, errnie.Error(errnie.Err(
+					errnie.Validation,
+					"median: feature index out of range",
+					nil,
+				))
+			}
+
+			sample = features[index]
+		}
+
+		if rootKey != "features" {
+			sample = datura.Peek[float64](state, rootKey, 0, input)
+		}
+
+		found = true
+	}
+
+	if !found {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"median: input not in inputs",
+			nil,
+		))
+	}
 
 	if math.IsNaN(sample) || math.IsInf(sample, 0) {
 		return 0, errnie.Error(errnie.Err(
@@ -92,20 +246,35 @@ func (median *Median) Read(payload []byte) (int, error) {
 	history = append(history, sample)
 	median.artifact.Poke(history, "history")
 
-	value, ok := MedianOf(history)
+	for _, historyValue := range history {
+		if math.IsNaN(historyValue) || math.IsInf(historyValue, 0) {
+			return 0, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"median: history is invalid",
+				nil,
+			))
+		}
+	}
 
-	if !ok {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"median: history is invalid",
-			nil,
-		))
+	sorted := append([]float64(nil), history...)
+	sort.Float64s(sorted)
+	middle := len(sorted) / 2
+	value := sorted[middle]
+
+	if len(sorted)%2 == 0 {
+		value = (sorted[middle-1] + sorted[middle]) / 2
 	}
 
 	state.MergeOutput("value", value)
-	state.Merge("root", "output")
-	state.Merge("inputs", []string{"value"})
+	state.Poke("output", "root")
+	state.Poke([]string{"value"}, "inputs")
+
 	return state.Read(payload)
+}
+
+func (median *Median) Write(payload []byte) (int, error) {
+	median.artifact.WithPayload(payload)
+	return len(payload), nil
 }
 
 func (median *Median) Close() error {

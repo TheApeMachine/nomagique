@@ -3,6 +3,7 @@ package adaptive
 import (
 	"math"
 	"testing"
+	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
@@ -11,8 +12,7 @@ import (
 
 func logReturnConfig() *datura.Artifact {
 	return datura.Acquire("log-return-config", datura.APPJSON).
-		Poke([]string{"rvol", "precursor"}, "order").
-		Poke(1.0, "stageIndex").
+		Poke("precursor", "stage").
 		Poke(map[string]any{
 			"input":      "last",
 			"returnLag":  1.0,
@@ -21,17 +21,36 @@ func logReturnConfig() *datura.Artifact {
 		}, "precursor")
 }
 
+func logReturnFrame(last float64, timestamp int64) *datura.Artifact {
+	artifact := datura.Acquire("log-return-test", datura.APPJSON)
+	artifact.Poke("features", "root")
+	artifact.Poke([]string{"volume", "last"}, "inputs")
+	artifact.Merge("features", []float64{100, last})
+	artifact.SetTimestamp(timestamp)
+
+	return artifact
+}
+
 func TestLogReturnRead(t *testing.T) {
 	Convey("Given a log-return stage fed sequential samples", t, func() {
 		config := logReturnConfig()
 		stage := NewLogReturn(config)
 		var lastArtifact *datura.Artifact
+		timestamp := time.Unix(0, 1).UnixNano()
 
-		for _, sample := range []float64{100, 101, 102} {
-			artifact := datura.Acquire("log-return-test", datura.APPJSON)
-			artifact.Merge("last", sample)
+		for index, sample := range []float64{100, 101, 102} {
+			artifact := logReturnFrame(sample, timestamp)
+			timestamp += int64(time.Second)
 
 			err := transport.NewFlipFlop(artifact, stage)
+
+			if index == 0 {
+				So(err, ShouldNotBeNil)
+
+				artifact.Release()
+
+				continue
+			}
 
 			So(err, ShouldBeNil)
 
@@ -64,12 +83,21 @@ func TestLogReturnReadLongReplayDoesNotGrowTraversal(t *testing.T) {
 		defer stage.Close()
 
 		var lastArtifact *datura.Artifact
+		timestamp := time.Unix(0, 1).UnixNano()
 
 		for index := range 2500 {
-			artifact := datura.Acquire("log-return-replay-test", datura.APPJSON)
-			artifact.Merge("last", 100.0+float64(index)*0.01)
+			artifact := logReturnFrame(100.0+float64(index)*0.01, timestamp)
+			timestamp += int64(time.Millisecond)
 
 			err := transport.NewFlipFlop(artifact, stage)
+
+			if index == 0 {
+				So(err, ShouldNotBeNil)
+
+				artifact.Release()
+
+				continue
+			}
 
 			So(err, ShouldBeNil)
 
@@ -91,10 +119,11 @@ func TestLogReturnReadLongReplayDoesNotGrowTraversal(t *testing.T) {
 func BenchmarkLogReturnRead(b *testing.B) {
 	config := logReturnConfig()
 	stage := NewLogReturn(config)
+	timestamp := time.Unix(0, 1).UnixNano()
 
 	for _, sample := range []float64{100, 101, 102} {
-		artifact := datura.Acquire("log-return-bench-test", datura.APPJSON)
-		artifact.WithPayload(datura.Map[any]{"last": sample}.Marshal())
+		artifact := logReturnFrame(sample, timestamp)
+		timestamp += int64(time.Second)
 		_ = transport.NewFlipFlop(artifact, stage)
 		artifact.Release()
 	}
@@ -102,8 +131,8 @@ func BenchmarkLogReturnRead(b *testing.B) {
 	b.ReportAllocs()
 
 	for b.Loop() {
-		artifact := datura.Acquire("log-return-bench-test", datura.APPJSON)
-		artifact.WithPayload(datura.Map[any]{"last": 103.0}.Marshal())
+		artifact := logReturnFrame(103.0, timestamp)
+		timestamp += int64(time.Second)
 		_ = transport.NewFlipFlop(artifact, stage)
 		artifact.Release()
 	}

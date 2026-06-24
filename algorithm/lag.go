@@ -44,8 +44,6 @@ type Lag struct {
 NewLag returns a lead-lag classification stage wired from config on the artifact.
 */
 func NewLag(artifact *datura.Artifact) *Lag {
-	artifact.Inspect("algorithm", "lag", "NewLag()")
-
 	return &Lag{
 		artifact: artifact,
 	}
@@ -58,11 +56,12 @@ func (lag *Lag) Write(payload []byte) (int, error) {
 
 func (lag *Lag) Read(payload []byte) (int, error) {
 	state := datura.Acquire("lag-state", datura.APPJSON)
-	state.Inspect("algorithm", "lag", "Read()", "p")
 
 	if _, err := state.Write(lag.artifact.DecryptPayload()); err != nil {
 		return 0, err
 	}
+
+	state.Inspect("algorithm", "lag", "Read()", "p")
 
 	inputKeys := equation.EnsureFeatureSchema(state, lag.artifact, equation.LagInputKeys)
 	fields, err := equation.FeatureFields(state, inputKeys)
@@ -91,8 +90,8 @@ func (lag *Lag) Read(payload []byte) (int, error) {
 	state.MergeOutput("stall", lag.outcome.StallScore)
 	state.MergeOutput("strength", lag.outcome.Strength)
 	state.MergeOutput("value", float64(lag.outcome.Category))
-	state.Merge("root", "output")
-	state.Merge("inputs", []string{"inefficient", "sync", "decoupled", "stall"})
+	state.Poke("output", "root")
+	state.Poke([]string{"inefficient", "sync", "decoupled", "stall"}, "inputs")
 
 	return state.Read(payload)
 }
@@ -293,7 +292,7 @@ func minLagFraction(maxBars int) float64 {
 }
 
 func lagMinSamples() int {
-	_, longWindow, err := statistic.RollingWindows(make([]float64, 1), 0, 0)
+	_, longWindow, err := statistic.NewRollingWindow(0, 0).Resolve(make([]float64, 1))
 
 	if err != nil {
 		return 1
@@ -303,7 +302,7 @@ func lagMinSamples() int {
 }
 
 func lagMaxBars() int {
-	_, longWindow, err := statistic.RollingWindows(make([]float64, 1), 0, 0)
+	_, longWindow, err := statistic.NewRollingWindow(0, 0).Resolve(make([]float64, 1))
 
 	if err != nil {
 		return 1
@@ -317,7 +316,7 @@ func maxLagBarsForSeries(sampleCount int) int {
 		return lagMaxBars()
 	}
 
-	_, longWindow, err := statistic.RollingWindows(make([]float64, sampleCount), 0, 0)
+	_, longWindow, err := statistic.NewRollingWindow(0, 0).Resolve(make([]float64, sampleCount))
 
 	if err != nil {
 		halfSeries := sampleCount / 2
@@ -398,8 +397,8 @@ func (reading *LagReading) Read(payload []byte) (int, error) {
 	}
 
 	state.MergeOutput("value", value)
-	state.Merge("root", "output")
-	state.Merge("inputs", []string{"value"})
+	state.Poke("output", "root")
+	state.Poke([]string{"value"}, "inputs")
 
 	return state.Read(payload)
 }

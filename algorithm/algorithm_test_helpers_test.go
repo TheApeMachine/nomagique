@@ -27,8 +27,8 @@ func (fixedScore *fixedScore) Read(p []byte) (int, error) {
 	}
 
 	state.MergeOutput("value", fixedScore.value)
-	state.Merge("root", "output")
-	state.Merge("inputs", []string{"value"})
+	state.Poke("output", "root")
+	state.Poke([]string{"value"}, "inputs")
 	return state.Read(p)
 }
 
@@ -102,10 +102,33 @@ func readScalar(stage io.ReadWriter, samples ...float64) float64 {
 	return datura.Peek[float64](outbound, "output", "value")
 }
 
-func observeInputs(stage io.ReadWriter, series ...float64) float64 {
-	return readScalar(stage, series...)
+func observeWithWork(stage io.ReadWriter, sample float64, work float64) float64 {
+	inbound := datura.Acquire("test-in", datura.Artifact_Type_json)
+	inbound.Poke("wire", "root")
+	inbound.Poke([]string{"sample", "paired"}, "inputs")
+	inbound.Merge("wire", map[string]any{
+		"sample": sample,
+		"paired": work,
+	})
+	buf := inbound.Pack()
+
+	if len(buf) == 0 {
+		return 0
+	}
+
+	_, _ = stage.Write(buf)
+
+	outbound, err := readOutbound(stage)
+
+	if err != nil {
+		return 0
+	}
+
+	defer outbound.Release()
+
+	return datura.Peek[float64](outbound, "output", "value")
 }
 
-func observeWithWork(stage io.ReadWriter, sample float64, work float64) float64 {
-	return readScalar(stage, sample, work)
+func observeInputs(stage io.ReadWriter, series ...float64) float64 {
+	return readScalar(stage, series...)
 }

@@ -1,4 +1,4 @@
-package causal
+package mcts
 
 import (
 	"errors"

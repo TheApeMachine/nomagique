@@ -1,7 +1,6 @@
 package learning
 
 import (
-	"github.com/bytedance/sonic"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 )
@@ -168,26 +167,4 @@ func wirePair(
 	}
 
 	return parsedPredicted, parsedActual, nil
-}
-
-func attributeKeyPresent(artifact *datura.Artifact, key string) bool {
-	rawAttributes, err := artifact.Attributes()
-
-	if err == nil && len(rawAttributes) > 0 {
-		node, err := sonic.Get(rawAttributes, key)
-
-		if err == nil && node.Exists() {
-			return true
-		}
-	}
-
-	payload := artifact.DecryptPayload()
-
-	if err != nil || len(payload) == 0 {
-		return false
-	}
-
-	node, err := sonic.Get(payload, key)
-
-	return err == nil && node.Exists()
 }

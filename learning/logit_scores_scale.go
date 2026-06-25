@@ -34,6 +34,8 @@ func (logitScores *LogitScores) resolveFeatureScale(
 	feature float64,
 	state *datura.Artifact,
 ) (float64, error) {
+	_ = state
+
 	configured := datura.Peek[float64](logitScores.config, stageKey, "scale")
 
 	if configured > 0 {

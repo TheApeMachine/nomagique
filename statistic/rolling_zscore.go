@@ -33,20 +33,6 @@ func NewRollingZScore(artifact *datura.Artifact) *RollingZScore {
 	}
 }
 
-func (rollingZScore *RollingZScore) stageKey() (string, error) {
-	stageKey := datura.Peek[string](rollingZScore.artifact, "stage")
-
-	if stageKey != "" {
-		return stageKey, nil
-	}
-
-	return "", errnie.Error(errnie.Err(
-		errnie.Validation,
-		"rolling-zscore: stage required",
-		nil,
-	))
-}
-
 func (rollingZScore *RollingZScore) Read(payload []byte) (int, error) {
 	state := datura.Acquire("rolling-zscore-state", datura.APPJSON)
 

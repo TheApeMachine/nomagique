@@ -19,19 +19,6 @@ func flipFlopCircuit(circuit *logic.Circuit, sample float64) float64 {
 	return datura.Peek[float64](artifact, "output", "value")
 }
 
-func flipFlopStage(stage interface {
-	Read([]byte) (int, error)
-	Write([]byte) (int, error)
-	Close() error
-}, sample float64) float64 {
-	artifact := scalarWire(datura.Acquire("test", datura.APPJSON), sample)
-	err := transport.NewFlipFlop(artifact, stage)
-
-	So(err, ShouldBeNil)
-
-	return datura.Peek[float64](artifact, "output", "value")
-}
-
 func TestNewCircuit(testingTB *testing.T) {
 	Convey("Given NewCircuit", testingTB, func() {
 		circuit := logic.NewCircuit(circuitConfig(), logic.Rules{

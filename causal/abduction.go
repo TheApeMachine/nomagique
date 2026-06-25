@@ -7,6 +7,34 @@ import (
 	"github.com/theapemachine/errnie"
 )
 
+// NodeTable wraps the package-private nodeTable
+type NodeTable struct {
+	Nt nodeTable
+}
+
+func NewNodeTableWrapper(rows [][]float64, target, minRows int) (NodeTable, error) {
+	nt, err := newNodeTable(rows, target, minRows)
+	if err != nil {
+		return NodeTable{}, err
+	}
+	return NodeTable{Nt: nt}, nil
+}
+
+func (wrapper NodeTable) DoExpectation(treatment int, level float64, controls ...int) (float64, error) {
+	return doExpectation(wrapper.Nt, treatment, level, controls...)
+}
+
+func (wrapper NodeTable) AbductiveCounterfactual(
+	features []int,
+	linear bool,
+	row []float64,
+	target int,
+	treatment int,
+	intervention float64,
+) (uplift, counterfactual, noise float64, err error) {
+	return abductiveCounterfactual(wrapper.Nt, features, linear, row, target, treatment, intervention)
+}
+
 /*
 Abduction runs abductive counterfactual inference from table.* and config on the artifact.
 The constructor artifact holds config; Write buffers inbound table wire on its payload.
@@ -34,7 +62,6 @@ func (abduction *Abduction) Read(p []byte) (int, error) {
 			err,
 		))
 	}
-
 
 	rows, err := tableRows(state)
 

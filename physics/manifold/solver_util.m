@@ -19,6 +19,9 @@ static const uint32_t kReduceThreads = 256u;
         commandBuffer = self.stepCommandBuffer;
     } else {
         commandBuffer = [self.queue commandBuffer];
+        if (priorActive) {
+            self.stepCommandBuffer = commandBuffer;
+        }
     }
 
     blitEncoder = [commandBuffer blitCommandEncoder];
@@ -48,6 +51,9 @@ static const uint32_t kReduceThreads = 256u;
         commandBuffer = self.stepCommandBuffer;
     } else {
         commandBuffer = [self.queue commandBuffer];
+        if (priorActive) {
+            self.stepCommandBuffer = commandBuffer;
+        }
     }
 
     blitEncoder = [commandBuffer blitCommandEncoder];
@@ -61,6 +67,7 @@ static const uint32_t kReduceThreads = 256u;
         [commandBuffer waitUntilCompleted];
     }
 }
+
 
 - (void)runCopyU32:(id<MTLBuffer>)src dst:(id<MTLBuffer>)dst count:(uint32_t)count {
     id<MTLBuffer> countBuf = [self.device newBufferWithBytes:&count length:sizeof(uint32_t) options:MTLResourceStorageModeShared];

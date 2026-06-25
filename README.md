@@ -13,6 +13,90 @@ Composable compute primitives behind `nomagique.Number(...)`. Each primitive is 
 
 Wire navigation: read `root`, loop `inputs`, match config `input`. No fallbacks, no silent zeros, no warmup/bootstrap, no static windows — parameters derive from the stream (timestamps, spread, history).
 
+---
+
+## Domain notes: crypto opportunity detection (symm)
+
+These notes record findings from live-market observation (Kraken Pro, Jun 2025). They connect nomagique's contract to what symm signals must actually measure. Update this section when new patterns are confirmed or refuted.
+
+### North star
+
+**Maximize the wallet. Minimize the time to do so.**
+
+No miracles are expected. What is expected is a highly principled system that detects as many opportunity types as the market actually presents — and that every threshold, window, and scale is derived from observed data, never copied from a tutorial repo (e.g. a hardcoded 60-second window).
+
+If the system fails after a best-effort principled design, that is acceptable. What is not acceptable is failing because we cut corners on semantics or data.
+
+### Why "no magic numbers" is not pedantry
+
+Crypto microstructure varies by asset, session, and regime. A pump on BTC and a pump on a microcap delisting candidate are different physical phenomena. Parameters that work on one must be **functions of what is on the wire**:
+
+| Instead of | Derive from |
+|------------|-------------|
+| `shortWindow: 5`, `longWindow: 60` | Median inter-arrival gap (`timeline`, `statutil.MedianCadence`) and `WindowDepth(stamps)` |
+| `scale: 2.5` | Peer leave-one-out median, symbol's own median baseline, or cross-section rank |
+| `returnLag: 1` | Cadence of the ingest role that triggers the signal |
+| Fixed % threshold | Spread-relative move, ATR-equivalent from recent log-return median, book touch depth |
+
+The question from AGENTS.md remains the gate for every primitive and every signal field: *given this ticker/book/trade frame, how do we derive shortWindow, longWindow, scale, and returnLag without guessing?*
+
+### Observed market patterns (ground truth for signal design)
+
+Real charts (UNFI, SRM, SLX, TITCOIN, Jun 2025) show that "pump" is not one event. It is a **recurring cycle**:
+
+```
+COILED → IGNITION → EXHAUSTION → (COILED again?) → IGNITION → …
+```
+
+Example (UNFI/EUR, 1m): first leg ~18:00 (0.02→0.06), consolidation 19:00–21:00, second leg ~21:00 (0.06→0.16), dump ~22:30, third grind ~04:00. **Multiple tradable opportunities on one symbol in one session.** A one-shot "+400% fired" detector misses the consolidation entry before leg 2 and any re-ignition after exhaustion.
+
+Two **distinct species** show up repeatedly and must not be collapsed into one scorer:
+
+| Species | Example | What moves price | Book signature | Cross-section |
+|---------|---------|------------------|----------------|---------------|
+| **Vertical ignition** | UNFI, SRM, SLX | Real interval volume + price vertical together | Spread moderate; bid depth often stacks at touch; sell walls ahead (SRM 129k @ 0.00896, SLX 8k @ 0.375) | May be idiosyncratic (SRM/SLX up while BTC/ETH flat) or sector-wide (UNFI + TITCOIN + ASRR all hot) |
+| **Thin-book percentage pump** | TITCOIN | Tiny dollar flow moves huge % | Spread 11–14%; hollow book; delisting/death-rattle | Same gainer board, but $7k USD volume — percentage lies |
+
+Ticker-only scoring cannot distinguish these. It needs **book** (touch spread, depth, walls), **trade** (executed interval volume), and **cross-section** (peer lift, breadth, dollar-volume rank).
+
+### What principled parameters look like on the wire
+
+For a pump/ignition perspective, derive — do not configure:
+
+- **Lift (RVOL):** interval trade qty (primary) or ticker volume delta (fallback), scaled by symbol median and peer median volume (`statistic.LeaveOneOutMedian`, cross-section volumes).
+- **Precursor:** log-return vs **leg anchor** (consolidation range), not only tick-to-tick `last/prevLast`; peer-relative via cross-section returns.
+- **Compression:** book touch spread tightening vs symbol's own book-spread median — not ticker bid/ask alone. Coiled Compression is a **book** story (energy building before snap).
+- **Exhaustion:** lift decline + trade flow drying up; leg reset when exhaustion category dominates (store `lastExhaustionStamp`, `legAnchorLow/High` on measurement artifacts for tree replay).
+- **Window depth:** `WindowDepth(stamps)` from observed timestamps — never a fixed second count.
+
+### nomagique ↔ symm production path
+
+Production scoring is **inline Go on signals** reading the tree (`symm/AGENTS.md`). nomagique primitives are reusable math where they fit; they are not a substitute for domain semantics.
+
+**Signals emit measurements; they do not decide.** Candidate actions come from `market.Story` + `logic`. **Only `trader/crypto.go` decides.** See `symm/AGENTS.md` § Measurements are not decisions (full funnel + end-to-end value tracking).
+
+When a signal comment block names a category (e.g. Coiled Compression = moderate lift + low precursor + spread tightening), the implementation checklist is:
+
+1. Read the comment block as a **state-machine spec**, not a one-shot alarm.
+2. List every **data source** the story requires (ticker, book, trade, cross-section, prior measurements).
+3. For each numeric gate, write the **derivation** from stream data (which primitive or `statutil` function).
+4. Confirm the measurement artifact stores enough replay fields for the next frame to rebuild baselines from the tree alone.
+5. Test against a **multi-leg** chart scenario, not a single spike fixture.
+
+Apply this checklist to **every** signal package, not only pumpdump.
+
+### Implementation strategy
+
+Phased plan, per-signal audit table (**12 core signals**), and Kraken backfill notes: **`symm/AGENTS.md` § Principled signal design → Implementation strategy**.
+
+**`manifold` and `resonance` are excluded** from that track — field/latent layers with a separate function; discussed later.
+
+Work order: (1) backfill OHLC + Trades for UNFI/SRM/SLX, (2) wire **L3 level3 ingest** for toxicity and book-honesty signals, (3) tree-only history for core microstructure signals, (4) finish pumpdump as reference, (5) fix remaining core packages against their comment blocks.
+
+L2 book aggregates price levels; **L3 order events** (add/delete + trade correlation) are required for principled toxicity and strongly benefit depthflow, exhaust, fluid, pumpdump, and hawkes. No public L3 historical backfill — forward websocket capture only.
+
+---
+
 Compose with `datura/transport`:
 
 ```go

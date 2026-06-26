@@ -5,7 +5,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/transport"
+	"github.com/theapemachine/nomagique"
 )
 
 func doConfig() *datura.Artifact {
@@ -42,7 +42,7 @@ func TestDo_Read(testingTB *testing.T) {
 	Convey("Given a linear causal table", testingTB, func() {
 		stage := NewDo(doConfig())
 		artifact := doTableInbound()
-		err := transport.NewFlipFlop(artifact, stage)
+		err := nomagique.RoundTripArtifact(artifact, stage)
 
 		So(err, ShouldBeNil)
 
@@ -61,6 +61,6 @@ func BenchmarkDo_Read(testingTB *testing.B) {
 	testingTB.ReportAllocs()
 
 	for testingTB.Loop() {
-		_ = transport.NewFlipFlop(artifact, stage)
+		_ = nomagique.RoundTripArtifact(artifact, stage)
 	}
 }

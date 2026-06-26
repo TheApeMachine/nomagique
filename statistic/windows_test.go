@@ -4,8 +4,8 @@ import (
 	"io"
 	"testing"
 
-	"github.com/theapemachine/datura"
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/datura"
 )
 
 func writeWindowsWire(stage *Windows, wire *datura.Artifact) error {
@@ -45,7 +45,7 @@ func TestWindowsRead(testingTB *testing.T) {
 			So(err, ShouldNotEqual, io.ErrShortBuffer)
 
 			out := datura.Acquire("windows-test-out", datura.APPJSON)
-			_, writeErr := out.Write(buffer[:readCount])
+			_, writeErr := out.Unpack(buffer[:readCount])
 			So(writeErr, ShouldBeNil)
 			So(datura.Peek[float64](out, "output", "shortWindow"), ShouldEqual, 5)
 			So(datura.Peek[float64](out, "output", "longWindow"), ShouldEqual, 60)
@@ -75,7 +75,7 @@ func TestWindowsRead(testingTB *testing.T) {
 			}
 
 			out := datura.Acquire("windows-test-out", datura.APPJSON)
-			_, writeErr := out.Write(buffer[:readCount])
+			_, writeErr := out.Unpack(buffer[:readCount])
 			So(writeErr, ShouldBeNil)
 			So(datura.Peek[float64](out, "output", "shortWindow"), ShouldEqual, 3)
 			So(datura.Peek[float64](out, "output", "longWindow"), ShouldEqual, float64(len(history)))

@@ -5,7 +5,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/transport"
+	"github.com/theapemachine/nomagique"
 )
 
 func TestMeanMedianRatioRead(testingTB *testing.T) {
@@ -25,7 +25,7 @@ func TestMeanMedianRatioRead(testingTB *testing.T) {
 			frame.Poke([]string{"volume"}, "inputs")
 			frame.Merge("features", []float64{sample})
 
-			err := transport.NewFlipFlop(frame, stage)
+			err := nomagique.RoundTripArtifact(frame, stage)
 
 			So(err, ShouldBeNil)
 
@@ -60,7 +60,7 @@ func TestMeanMedianRatioRead(testingTB *testing.T) {
 			frame.Poke([]string{"volume"}, "inputs")
 			frame.Merge("features", []float64{sample})
 
-			err := transport.NewFlipFlop(frame, stage)
+			err := nomagique.RoundTripArtifact(frame, stage)
 
 			So(err, ShouldBeNil)
 
@@ -110,7 +110,7 @@ func TestMeanMedianRatioRead(testingTB *testing.T) {
 			frame.Poke([]string{"volume"}, "inputs")
 			frame.Merge("features", []float64{sample})
 
-			err := transport.NewFlipFlop(frame, stage)
+			err := nomagique.RoundTripArtifact(frame, stage)
 
 			So(err, ShouldBeNil)
 
@@ -136,7 +136,7 @@ func TestMeanMedianRatioRead(testingTB *testing.T) {
 		artifact.Poke([]string{"volume"}, "inputs")
 		artifact.Merge("features", []float64{10})
 
-		err := transport.NewFlipFlop(artifact, stage)
+		err := nomagique.RoundTripArtifact(artifact, stage)
 
 		So(err, ShouldNotBeNil)
 	})
@@ -158,7 +158,7 @@ func TestMeanMedianRatioRead(testingTB *testing.T) {
 		artifact.Poke([]string{"volume"}, "inputs")
 		artifact.Merge("features", []float64{10})
 
-		err := transport.NewFlipFlop(artifact, stage)
+		err := nomagique.RoundTripArtifact(artifact, stage)
 
 		So(err, ShouldBeNil)
 		So(datura.Peek[float64](artifact, "output", "rvol"), ShouldEqual, 1)
@@ -185,7 +185,7 @@ func TestMeanMedianRatioRead(testingTB *testing.T) {
 			frame.Poke([]string{"volume"}, "inputs")
 			frame.Merge("features", []float64{sample})
 
-			err := transport.NewFlipFlop(frame, stage)
+			err := nomagique.RoundTripArtifact(frame, stage)
 
 			So(err, ShouldBeNil)
 
@@ -223,7 +223,7 @@ func BenchmarkMeanMedianRatioRead(b *testing.B) {
 		artifact.Poke("features", "root")
 		artifact.Poke([]string{"volume"}, "inputs")
 		artifact.WithPayload(datura.Map[any]{"features": []float64{10}}.Marshal())
-		_ = transport.NewFlipFlop(artifact, stage)
+		_ = nomagique.RoundTripArtifact(artifact, stage)
 		artifact.Release()
 	}
 }

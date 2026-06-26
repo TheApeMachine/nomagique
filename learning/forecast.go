@@ -27,7 +27,7 @@ func Forecast(artifact *datura.Artifact) *Forecaster {
 func (forecaster *Forecaster) Read(payload []byte) (int, error) {
 	state := datura.Acquire("forecast-state", datura.APPJSON)
 
-	if _, err := state.Write(forecaster.artifact.DecryptPayload()); err != nil {
+	if _, err := state.Unpack(forecaster.artifact.DecryptPayload()); err != nil {
 		state.Release()
 
 		return 0, errnie.Error(errnie.Err(
@@ -128,7 +128,7 @@ func (forecaster *Forecaster) Read(payload []byte) (int, error) {
 	state.Poke("output", "root")
 	state.Poke([]string{"value"}, "inputs")
 
-	return state.Read(payload)
+	return state.PackInto(payload)
 }
 
 func (forecaster *Forecaster) resolvePair(state *datura.Artifact) (float64, float64, error) {

@@ -25,14 +25,13 @@ func NewLadder(artifact *datura.Artifact) *Ladder {
 func (ladder *Ladder) Read(p []byte) (int, error) {
 	state := datura.Acquire("ladder-state", datura.APPJSON)
 
-	if _, err := state.Write(ladder.artifact.DecryptPayload()); err != nil {
+	if _, err := state.Unpack(ladder.artifact.DecryptPayload()); err != nil {
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"causal: state write failed",
 			err,
 		))
 	}
-
 
 	rows, err := tableRows(state)
 
@@ -208,7 +207,7 @@ func (ladder *Ladder) Read(p []byte) (int, error) {
 	state.Poke([]string{
 		"value", "association", "intervention", "uplift", "contagion", "condition", "inverted",
 	}, "inputs")
-	return state.Read(p)
+	return state.PackInto(p)
 }
 
 func (ladder *Ladder) Write(p []byte) (int, error) {

@@ -28,14 +28,13 @@ func NewAccumulator(artifact *datura.Artifact) *Accumulator {
 func (accumulator *Accumulator) Read(payload []byte) (int, error) {
 	state := datura.Acquire("accumulator-state", datura.APPJSON)
 
-	if _, err := state.Write(accumulator.artifact.DecryptPayload()); err != nil {
+	if _, err := state.Unpack(accumulator.artifact.DecryptPayload()); err != nil {
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"accumulator: state write failed",
 			err,
 		))
 	}
-
 
 	rootKey := datura.Peek[string](state, "root")
 
@@ -93,7 +92,7 @@ func (accumulator *Accumulator) Read(payload []byte) (int, error) {
 	state.Poke([]string{"value"}, "inputs")
 	state.MergeOutput("value", accumulator.total)
 
-	return state.Read(payload)
+	return state.PackInto(payload)
 }
 
 func (accumulator *Accumulator) Write(p []byte) (int, error) {

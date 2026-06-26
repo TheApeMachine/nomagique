@@ -5,7 +5,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/transport"
+	"github.com/theapemachine/nomagique"
 )
 
 func shiftWire(artifact *datura.Artifact, observed float64, expected float64) *datura.Artifact {
@@ -31,7 +31,7 @@ func TestShiftRead(testingTB *testing.T) {
 		artifact := datura.Acquire("shift-test", datura.APPJSON)
 
 		for range 4 {
-			_ = transport.NewFlipFlop(shiftWire(artifact, 1.0, 1.0), shift)
+			_ = nomagique.RoundTripArtifact(shiftWire(artifact, 1.0, 1.0), shift)
 		}
 
 		Convey("It should return zero drift", func() {
@@ -50,7 +50,7 @@ func TestShiftRead(testingTB *testing.T) {
 		}
 
 		for _, pair := range pairs {
-			_ = transport.NewFlipFlop(shiftWire(artifact, pair.observed, pair.expected), shift)
+			_ = nomagique.RoundTripArtifact(shiftWire(artifact, pair.observed, pair.expected), shift)
 		}
 
 		Convey("It should return positive drift", func() {
@@ -73,7 +73,7 @@ func BenchmarkShiftRead(testingTB *testing.B) {
 
 	for testingTB.Loop() {
 		for _, pair := range pairs {
-			_ = transport.NewFlipFlop(shiftWire(artifact, pair.observed, pair.expected), shift)
+			_ = nomagique.RoundTripArtifact(shiftWire(artifact, pair.observed, pair.expected), shift)
 		}
 	}
 }

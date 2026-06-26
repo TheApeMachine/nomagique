@@ -28,7 +28,7 @@ func NewClassifier(artifact *datura.Artifact) *Classifier {
 func (classifier *Classifier) Read(payload []byte) (int, error) {
 	state := datura.Acquire("classifier-state", datura.APPJSON)
 
-	if _, err := state.Write(classifier.artifact.DecryptPayload()); err != nil {
+	if _, err := state.Unpack(classifier.artifact.DecryptPayload()); err != nil {
 		state.Release()
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
@@ -36,7 +36,6 @@ func (classifier *Classifier) Read(payload []byte) (int, error) {
 			err,
 		))
 	}
-
 
 	defer state.Release()
 
@@ -220,7 +219,7 @@ func (classifier *Classifier) Read(payload []byte) (int, error) {
 	outputInputs = append(outputInputs, "probabilities", "category", "confidence", "strength", "value")
 	state.Poke(outputInputs, "inputs")
 
-	return state.Read(payload)
+	return state.PackInto(payload)
 }
 
 func (classifier *Classifier) Write(p []byte) (int, error) {

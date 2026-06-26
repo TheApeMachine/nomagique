@@ -30,7 +30,7 @@ func NewPanel(artifact *datura.Artifact) *Panel {
 func (panel *Panel) Read(payload []byte) (int, error) {
 	state := datura.Acquire("panel-state", datura.APPJSON)
 
-	if _, err := state.Write(panel.artifact.DecryptPayload()); err != nil {
+	if _, err := state.Unpack(panel.artifact.DecryptPayload()); err != nil {
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"panel: state write failed",
@@ -144,7 +144,7 @@ func (panel *Panel) Read(payload []byte) (int, error) {
 	state.Poke([]string{memberField, sampleField}, "inputs")
 	state.MergeOutput("value", sample)
 
-	return state.Read(payload)
+	return state.PackInto(payload)
 }
 
 func (panel *Panel) Write(payload []byte) (int, error) {

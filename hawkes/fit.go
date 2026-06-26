@@ -33,7 +33,7 @@ func NewFit(artifact *datura.Artifact) *Fit {
 func (fit *Fit) Read(p []byte) (int, error) {
 	state := datura.Acquire("hawkes-fit-state", datura.APPJSON)
 
-	if _, err := state.Write(fit.artifact.DecryptPayload()); err != nil {
+	if _, err := state.Unpack(fit.artifact.DecryptPayload()); err != nil {
 		state.Release()
 
 		return 0, errnie.Error(errnie.Err(
@@ -88,7 +88,7 @@ func (fit *Fit) Read(p []byte) (int, error) {
 	state.Poke("output", "root")
 	state.Poke([]string{"value", "excitationRatio", "spectralRadius", "asymmetry"}, "inputs")
 
-	return state.Read(p)
+	return state.PackInto(p)
 }
 
 func (fit *Fit) Write(p []byte) (int, error) {

@@ -28,7 +28,7 @@ func NewBernoulli(artifact *datura.Artifact) *Bernoulli {
 func (bernoulli *Bernoulli) Read(payload []byte) (int, error) {
 	state := datura.Acquire("bernoulli-state", datura.APPJSON)
 
-	if _, err := state.Write(bernoulli.artifact.DecryptPayload()); err != nil {
+	if _, err := state.Unpack(bernoulli.artifact.DecryptPayload()); err != nil {
 		state.Release()
 
 		return 0, errnie.Error(errnie.Err(
@@ -316,7 +316,7 @@ func (bernoulli *Bernoulli) Read(payload []byte) (int, error) {
 	state.Poke("output", "root")
 	state.Poke([]string{"value"}, "inputs")
 
-	return state.Read(payload)
+	return state.PackInto(payload)
 }
 
 func (bernoulli *Bernoulli) Write(payload []byte) (int, error) {

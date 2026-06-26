@@ -43,7 +43,7 @@ func (coupling *IntervalCoupling) Read(p []byte) (int, error) {
 
 	state := datura.Acquire("interval-coupling-state", datura.APPJSON)
 
-	if _, err := state.Write(coupling.artifact.DecryptPayload()); err != nil {
+	if _, err := state.Unpack(coupling.artifact.DecryptPayload()); err != nil {
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"correlation-interval-coupling: state write failed",
@@ -79,7 +79,7 @@ func (coupling *IntervalCoupling) Read(p []byte) (int, error) {
 	state.MergeOutput("value", value)
 	state.Poke("output", "root")
 	state.Poke([]string{"value"}, "inputs")
-	return state.Read(p)
+	return state.PackInto(p)
 }
 
 func (coupling *IntervalCoupling) Write(p []byte) (int, error) {

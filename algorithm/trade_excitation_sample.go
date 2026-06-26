@@ -43,7 +43,7 @@ func (tradeExcitationSample *TradeExcitationSample) Write(payload []byte) (int, 
 
 	state := datura.Acquire("trade-excitation-write-state", datura.APPJSON)
 
-	if _, err := state.Write(payload); err != nil {
+	if _, err := state.Unpack(payload); err != nil {
 		state.Release()
 
 		return 0, errnie.Error(errnie.Err(
@@ -69,7 +69,7 @@ func (tradeExcitationSample *TradeExcitationSample) Write(payload []byte) (int, 
 func (tradeExcitationSample *TradeExcitationSample) Read(payload []byte) (int, error) {
 	state := datura.Acquire("trade-excitation-sample-state", datura.APPJSON)
 
-	if _, err := state.Write(tradeExcitationSample.artifact.DecryptPayload()); err != nil {
+	if _, err := state.Unpack(tradeExcitationSample.artifact.DecryptPayload()); err != nil {
 		state.Release()
 
 		return 0, errnie.Error(errnie.Err(
@@ -78,7 +78,6 @@ func (tradeExcitationSample *TradeExcitationSample) Read(payload []byte) (int, e
 			err,
 		))
 	}
-
 
 	defer state.Release()
 
@@ -141,7 +140,7 @@ func (tradeExcitationSample *TradeExcitationSample) Read(payload []byte) (int, e
 	state.Poke(float64(len(window.buySeconds)), "config", "xCount")
 	state.Poke(float64(len(window.sellSeconds)), "config", "yCount")
 
-	return state.Read(payload)
+	return state.PackInto(payload)
 }
 
 func (tradeExcitationSample *TradeExcitationSample) Close() error {

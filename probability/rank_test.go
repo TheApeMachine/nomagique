@@ -5,7 +5,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/transport"
+	"github.com/theapemachine/nomagique"
 )
 
 func TestNewRank(testingTB *testing.T) {
@@ -22,7 +22,7 @@ func TestRankRead(testingTB *testing.T) {
 	Convey("Given empty inbound wire", testingTB, func() {
 		empirical := NewRank(rankConfig("rank-config"))
 		artifact := datura.Acquire("test", datura.APPJSON)
-		err := transport.NewFlipFlop(artifact, empirical)
+		err := nomagique.RoundTripArtifact(artifact, empirical)
 
 		Convey("It should return a validation error", func() {
 			So(err, ShouldNotBeNil)
@@ -34,12 +34,12 @@ func TestRankRead(testingTB *testing.T) {
 		artifact := datura.Acquire("test", datura.APPJSON)
 
 		scalarWire(artifact, "sample", 10)
-		err := transport.NewFlipFlop(artifact, empirical)
+		err := nomagique.RoundTripArtifact(artifact, empirical)
 
 		So(err, ShouldBeNil)
 
 		scalarWire(artifact, "sample", 5)
-		err = transport.NewFlipFlop(artifact, empirical)
+		err = nomagique.RoundTripArtifact(artifact, empirical)
 
 		So(err, ShouldBeNil)
 
@@ -56,12 +56,12 @@ func TestRankRead(testingTB *testing.T) {
 		artifact := datura.Acquire("test", datura.APPJSON)
 
 		scalarWire(artifact, "sample", 10)
-		err := transport.NewFlipFlop(artifact, empirical)
+		err := nomagique.RoundTripArtifact(artifact, empirical)
 
 		So(err, ShouldBeNil)
 
 		scalarWire(artifact, "sample", 8)
-		err = transport.NewFlipFlop(artifact, empirical)
+		err = nomagique.RoundTripArtifact(artifact, empirical)
 
 		So(err, ShouldBeNil)
 
@@ -71,12 +71,12 @@ func TestRankRead(testingTB *testing.T) {
 		reference := datura.Acquire("test", datura.APPJSON)
 
 		scalarWire(reference, "sample", 10)
-		err = transport.NewFlipFlop(reference, combined)
+		err = nomagique.RoundTripArtifact(reference, combined)
 
 		So(err, ShouldBeNil)
 
 		scalarWire(reference, "sample", 8)
-		err = transport.NewFlipFlop(reference, combined)
+		err = nomagique.RoundTripArtifact(reference, combined)
 
 		So(err, ShouldBeNil)
 
@@ -91,12 +91,12 @@ func TestRankRead(testingTB *testing.T) {
 		empirical := NewRank(rankConfig("rank-config"))
 		artifact := scalarWire(datura.Acquire("test", datura.APPJSON), "sample", 10)
 
-		err := transport.NewFlipFlop(artifact, empirical)
+		err := nomagique.RoundTripArtifact(artifact, empirical)
 
 		So(err, ShouldBeNil)
 
 		resetArtifact := datura.Acquire("test", datura.APPJSON).Poke(1, "reset")
-		err = transport.NewFlipFlop(resetArtifact, empirical)
+		err = nomagique.RoundTripArtifact(resetArtifact, empirical)
 
 		So(err, ShouldBeNil)
 
@@ -112,12 +112,12 @@ func BenchmarkRankRead(testingTB *testing.B) {
 	artifact := datura.Acquire("test", datura.APPJSON)
 
 	scalarWire(artifact, "sample", 10)
-	_ = transport.NewFlipFlop(artifact, empirical)
+	_ = nomagique.RoundTripArtifact(artifact, empirical)
 
 	testingTB.ReportAllocs()
 
 	for testingTB.Loop() {
 		scalarWire(artifact, "sample", 10.5)
-		_ = transport.NewFlipFlop(artifact, empirical)
+		_ = nomagique.RoundTripArtifact(artifact, empirical)
 	}
 }

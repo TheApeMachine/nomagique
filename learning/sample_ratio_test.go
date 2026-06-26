@@ -5,7 +5,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/transport"
+	"github.com/theapemachine/nomagique"
 )
 
 func TestSampleRatio(testingTB *testing.T) {
@@ -22,7 +22,7 @@ func TestCalibratorRead(testingTB *testing.T) {
 	Convey("Given empty inbound wire", testingTB, func() {
 		calibrator := SampleRatio(pairConfig("sample-ratio-config"))
 		artifact := datura.Acquire("test", datura.APPJSON)
-		err := transport.NewFlipFlop(artifact, calibrator)
+		err := nomagique.RoundTripArtifact(artifact, calibrator)
 
 		Convey("It should return a validation error", func() {
 			So(err, ShouldNotBeNil)
@@ -32,7 +32,7 @@ func TestCalibratorRead(testingTB *testing.T) {
 	Convey("Given a fresh calibrator", testingTB, func() {
 		calibrator := SampleRatio(pairConfig("sample-ratio-config"))
 		artifact := pairWire(datura.Acquire("test", datura.APPJSON), 10, 10)
-		err := transport.NewFlipFlop(artifact, calibrator)
+		err := nomagique.RoundTripArtifact(artifact, calibrator)
 
 		So(err, ShouldBeNil)
 
@@ -48,10 +48,10 @@ func TestCalibratorRead(testingTB *testing.T) {
 		artifact := datura.Acquire("test", datura.APPJSON)
 
 		artifact = pairWire(artifact, 10, 10)
-		_ = transport.NewFlipFlop(artifact, calibrator)
+		_ = nomagique.RoundTripArtifact(artifact, calibrator)
 
 		artifact = pairWire(artifact, 10, 15)
-		err := transport.NewFlipFlop(artifact, calibrator)
+		err := nomagique.RoundTripArtifact(artifact, calibrator)
 
 		So(err, ShouldBeNil)
 
@@ -66,7 +66,7 @@ func TestCalibratorRead(testingTB *testing.T) {
 	Convey("Given zero predicted", testingTB, func() {
 		calibrator := SampleRatio(pairConfig("sample-ratio-config"))
 		artifact := pairWire(datura.Acquire("test", datura.APPJSON), 0, 10)
-		err := transport.NewFlipFlop(artifact, calibrator)
+		err := nomagique.RoundTripArtifact(artifact, calibrator)
 
 		Convey("It should return a parse error", func() {
 			So(err, ShouldNotBeNil)
@@ -79,12 +79,12 @@ func BenchmarkSampleRatioRead(testingTB *testing.B) {
 	artifact := datura.Acquire("test", datura.APPJSON)
 
 	artifact = pairWire(artifact, 10, 10)
-	_ = transport.NewFlipFlop(artifact, calibrator)
+	_ = nomagique.RoundTripArtifact(artifact, calibrator)
 
 	testingTB.ReportAllocs()
 
 	for testingTB.Loop() {
 		artifact = pairWire(artifact, 10, 11)
-		_ = transport.NewFlipFlop(artifact, calibrator)
+		_ = nomagique.RoundTripArtifact(artifact, calibrator)
 	}
 }

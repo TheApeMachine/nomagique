@@ -33,7 +33,7 @@ func NewZScore(artifact *datura.Artifact) *ZScore {
 func (surprise *ZScore) Read(payload []byte) (int, error) {
 	state := datura.Acquire("zscore-state", datura.APPJSON)
 
-	if _, err := state.Write(surprise.artifact.DecryptPayload()); err != nil {
+	if _, err := state.Unpack(surprise.artifact.DecryptPayload()); err != nil {
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"zscore: state write failed",
@@ -200,7 +200,7 @@ func (surprise *ZScore) Read(payload []byte) (int, error) {
 	state.Poke("output", "root")
 	state.Poke([]string{"value"}, "inputs")
 
-	return state.Read(payload)
+	return state.PackInto(payload)
 }
 
 func (surprise *ZScore) Write(p []byte) (int, error) {

@@ -34,14 +34,13 @@ func NewNodeRing(artifact *datura.Artifact) *NodeRing {
 func (nodeRing *NodeRing) Read(p []byte) (int, error) {
 	state := datura.Acquire("node-ring-state", datura.APPJSON)
 
-	if _, err := state.Write(nodeRing.artifact.DecryptPayload()); err != nil {
+	if _, err := state.Unpack(nodeRing.artifact.DecryptPayload()); err != nil {
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"causal: state write failed",
 			err,
 		))
 	}
-
 
 	nodeCount := nodeRing.nodeCountFromArtifact()
 	capacity := nodeRing.capacityFromArtifact()
@@ -87,7 +86,7 @@ func (nodeRing *NodeRing) Read(p []byte) (int, error) {
 	state.Poke("output", "root")
 	state.Poke([]string{"value"}, "inputs")
 
-	return state.Read(p)
+	return state.PackInto(p)
 }
 
 func (nodeRing *NodeRing) Write(p []byte) (int, error) {

@@ -21,12 +21,22 @@ type LogReturnZScore struct {
 NewLogReturnZScore composes the precursor mini-pipeline from config attributes.
 */
 func NewLogReturnZScore(config *datura.Artifact) io.ReadWriteCloser {
+	stageConfig := config
+
+	if cloned, err := config.Clone(); err == nil {
+		stageConfig = cloned
+	}
+
+	if datura.Peek[string](stageConfig, "stage") == "" {
+		stageConfig.Poke("precursor", "stage")
+	}
+
 	return &LogReturnZScore{
 		inner: transport.NewPipeline(
-			statistic.NewPriceRing(config),
-			adaptive.NewLogReturn(config),
-			statistic.NewRollingZScore(config),
-			adaptive.NewPositiveOnly(config),
+			statistic.NewPriceRing(stageConfig),
+			adaptive.NewLogReturn(stageConfig),
+			statistic.NewRollingZScore(stageConfig),
+			adaptive.NewPositiveOnly(stageConfig),
 		),
 	}
 }

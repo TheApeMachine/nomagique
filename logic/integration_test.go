@@ -5,7 +5,6 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/transport"
 	"github.com/theapemachine/nomagique"
 	"github.com/theapemachine/nomagique/adaptive"
 	"github.com/theapemachine/nomagique/logic"
@@ -15,7 +14,7 @@ func TestIntegration(t *testing.T) {
 	Convey("Given logic stages composed through nomagique.Number", t, func() {
 		Convey("When Constant emits a fixed scalar", func() {
 			artifact := datura.Acquire("test", datura.APPJSON)
-			err := transport.NewFlipFlop(artifact, constantStage(42))
+			err := nomagique.RoundTripArtifact(artifact, constantStage(42))
 
 			So(err, ShouldBeNil)
 			So(datura.Peek[float64](artifact, "output", "value"), ShouldEqual, 42)
@@ -38,9 +37,9 @@ func TestIntegration(t *testing.T) {
 			})
 
 			artifact := scalarWire(datura.Acquire("test", datura.APPJSON), 3)
-			_ = transport.NewFlipFlop(artifact, nomagique.Number(circuit))
+			_ = nomagique.RoundTripArtifact(artifact, nomagique.Number(circuit))
 			artifact = scalarWire(datura.Acquire("test", datura.APPJSON), 4)
-			err := transport.NewFlipFlop(artifact, nomagique.Number(circuit))
+			err := nomagique.RoundTripArtifact(artifact, nomagique.Number(circuit))
 
 			So(err, ShouldBeNil)
 
@@ -49,9 +48,9 @@ func TestIntegration(t *testing.T) {
 				Poke("sample", "input").
 				Poke(2, "period").
 				Poke(2, "smoothing"))
-			_ = transport.NewFlipFlop(expectedArtifact, reference)
+			_ = nomagique.RoundTripArtifact(expectedArtifact, reference)
 			expectedArtifact = scalarWire(datura.Acquire("test", datura.APPJSON), 4)
-			err = transport.NewFlipFlop(expectedArtifact, reference)
+			err = nomagique.RoundTripArtifact(expectedArtifact, reference)
 
 			So(err, ShouldBeNil)
 			So(
@@ -74,7 +73,7 @@ func TestIntegration(t *testing.T) {
 			})
 
 			artifact := scalarWire(datura.Acquire("test", datura.APPJSON), 1)
-			err := transport.NewFlipFlop(artifact, nomagique.Number(circuit))
+			err := nomagique.RoundTripArtifact(artifact, nomagique.Number(circuit))
 
 			So(err, ShouldBeNil)
 			So(datura.Peek[float64](artifact, "output", "value"), ShouldEqual, 99)

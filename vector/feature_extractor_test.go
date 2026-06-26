@@ -8,6 +8,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/nomagique"
 )
 
 var featureExtractorPayloadFixture = []byte(
@@ -53,7 +54,7 @@ func TestFeatureExtractor_Write(t *testing.T) {
 			inbound := datura.Acquire("test", datura.APPJSON).WithPayload([]byte{1, 2, 3})
 
 			Convey("When the inbound artifact is copied into the extractor", func() {
-				_, err := io.Copy(extractor, inbound)
+				_, err := nomagique.WriteArtifact(extractor, inbound)
 
 				Convey("Then the inbound wire should be buffered without mutating schema config", func() {
 					So(err, ShouldBeNil)
@@ -84,7 +85,7 @@ func TestFeatureExtractor_Read(t *testing.T) {
 
 		Convey("When ticker payload is written then read", func() {
 			inbound := datura.Acquire("test", datura.APPJSON).WithPayload(featureExtractorPayloadFixture)
-			_, err := io.Copy(extractor, inbound)
+			_, err := nomagique.WriteArtifact(extractor, inbound)
 			So(err, ShouldBeNil)
 
 			wire := make([]byte, 65536)
@@ -95,7 +96,7 @@ func TestFeatureExtractor_Read(t *testing.T) {
 
 			Convey("Then the payload should carry root, inputs, and features", func() {
 				decoded := datura.Acquire("feature-extractor", datura.APPJSON)
-				_, err = decoded.Write(buffer.Bytes())
+				_, err = decoded.Unpack(buffer.Bytes())
 				So(err, ShouldBeNil)
 
 				So(datura.Peek[string](decoded, "root"), ShouldEqual, "features")
@@ -135,7 +136,7 @@ func TestFeatureExtractor_Read(t *testing.T) {
 		inbound := datura.Acquire("test", datura.APPJSON).
 			Poke("ticker", "channel").
 			Poke(math.NaN(), "data", 0, "volume")
-		_, err := io.Copy(extractor, inbound)
+		_, err := nomagique.WriteArtifact(extractor, inbound)
 
 		So(err, ShouldBeNil)
 
@@ -157,7 +158,7 @@ func BenchmarkFeatureExtractor_Read(b *testing.B) {
 		inbound := datura.Acquire("bench-inbound", datura.APPJSON).
 			WithPayload(featureExtractorPayloadFixture)
 
-		if _, err := io.Copy(extractor, inbound); err != nil {
+		if _, err := nomagique.WriteArtifact(extractor, inbound); err != nil {
 			b.Fatal(err)
 		}
 

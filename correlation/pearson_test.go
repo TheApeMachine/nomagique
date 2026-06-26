@@ -5,7 +5,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/transport"
+	"github.com/theapemachine/nomagique"
 )
 
 func pearsonConfig() *datura.Artifact {
@@ -42,7 +42,7 @@ func TestPearsonRead(testingTB *testing.T) {
 		Convey("Given "+testCase.name, testingTB, func() {
 			pearson := NewPearson(pearsonConfig())
 			artifact := pearsonWire(testCase.inputs)
-			err := transport.NewFlipFlop(artifact, pearson)
+			err := nomagique.RoundTripArtifact(artifact, pearson)
 
 			So(err, ShouldBeNil)
 
@@ -69,7 +69,7 @@ func TestPearsonRead(testingTB *testing.T) {
 		artifact := datura.Acquire("test", datura.APPJSON).
 			Poke("data", "root").
 			Poke([]string{"batch"}, "inputs")
-		err := transport.NewFlipFlop(artifact, pearson)
+		err := nomagique.RoundTripArtifact(artifact, pearson)
 
 		Convey("It should return a validation error", func() {
 			So(err, ShouldNotBeNil)
@@ -81,7 +81,7 @@ func TestPearsonRead(testingTB *testing.T) {
 		artifact := datura.Acquire("test", datura.APPJSON).
 			Poke("data", "root").
 			Poke([]string{"batch"}, "inputs").Poke(1, "data", "sample")
-		err := transport.NewFlipFlop(artifact, pearson)
+		err := nomagique.RoundTripArtifact(artifact, pearson)
 
 		Convey("It should return a validation error", func() {
 			So(err, ShouldNotBeNil)
@@ -93,7 +93,7 @@ func TestPearsonRead(testingTB *testing.T) {
 		artifact := datura.Acquire("test", datura.APPJSON).
 			Poke("data", "root").
 			Poke([]string{"batch"}, "inputs").Poke([]float64{1, 2, 3}, "data", "batch")
-		err := transport.NewFlipFlop(artifact, pearson)
+		err := nomagique.RoundTripArtifact(artifact, pearson)
 
 		Convey("It should return a validation error", func() {
 			So(err, ShouldNotBeNil)
@@ -105,19 +105,19 @@ func TestPearson_Reset(testingTB *testing.T) {
 	Convey("Given an observed Pearson stage", testingTB, func() {
 		pearson := NewPearson(pearsonConfig())
 		artifact := pearsonWire([]float64{1, 2, 1, 2})
-		err := transport.NewFlipFlop(artifact, pearson)
+		err := nomagique.RoundTripArtifact(artifact, pearson)
 
 		So(err, ShouldBeNil)
 
 		resetArtifact := datura.Acquire("test", datura.APPJSON).Poke(1, "reset")
-		err = transport.NewFlipFlop(resetArtifact, pearson)
+		err = nomagique.RoundTripArtifact(resetArtifact, pearson)
 
 		So(err, ShouldNotBeNil)
 
 		fresh := datura.Acquire("test", datura.APPJSON).
 			Poke("data", "root").
 			Poke([]string{"batch"}, "inputs")
-		err = transport.NewFlipFlop(fresh, pearson)
+		err = nomagique.RoundTripArtifact(fresh, pearson)
 
 		Convey("It should return a validation error", func() {
 			So(err, ShouldNotBeNil)
@@ -133,6 +133,6 @@ func BenchmarkPearsonRead(testingTB *testing.B) {
 		artifact.Poke("data", "root")
 		artifact.Poke([]string{"batch"}, "inputs")
 		artifact.Poke([]float64{1, 2, 3, 4, 2, 4, 6, 8}, "data", "batch")
-		_ = transport.NewFlipFlop(artifact, pearson)
+		_ = nomagique.RoundTripArtifact(artifact, pearson)
 	}
 }

@@ -5,7 +5,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/transport"
+	"github.com/theapemachine/nomagique"
 )
 
 func calibrateConfig(dimension int, initialVariance float64) *datura.Artifact {
@@ -36,7 +36,7 @@ func TestCalibrateRead(testingTB *testing.T) {
 	Convey("Given a non-positive dimension", testingTB, func() {
 		calibrate := NewCalibrate(calibrateConfig(0, 1000))
 		artifact := datura.Acquire("test", datura.APPJSON).Poke([]float64{1, 2}, "batch")
-		err := transport.NewFlipFlop(artifact, calibrate)
+		err := nomagique.RoundTripArtifact(artifact, calibrate)
 
 		Convey("It should return a validation error", func() {
 			So(err, ShouldNotBeNil)

@@ -6,7 +6,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/transport"
+	"github.com/theapemachine/nomagique"
 )
 
 func logitScoresConfig() *datura.Artifact {
@@ -78,7 +78,7 @@ func TestLogitScoresRead(testingTB *testing.T) {
 		artifact.MergeOutput("ignition", 2.7)
 		artifact.MergeOutput("rvolDecline", 0.0)
 
-		err := transport.NewFlipFlop(artifact, stage)
+		err := nomagique.RoundTripArtifact(artifact, stage)
 
 		So(err, ShouldBeNil)
 
@@ -115,7 +115,7 @@ func TestLogitScoresRead(testingTB *testing.T) {
 			artifact.MergeOutput("ignition", 0.0)
 			artifact.MergeOutput("rvolDecline", 0.0)
 
-			err := transport.NewFlipFlop(artifact, stage)
+			err := nomagique.RoundTripArtifact(artifact, stage)
 
 			So(err, ShouldBeNil)
 
@@ -176,7 +176,7 @@ func TestLogitScoresRead(testingTB *testing.T) {
 		artifact.MergeOutput("ignition", 0.0)
 		artifact.MergeOutput("rvolDecline", 0.0)
 
-		err := transport.NewFlipFlop(artifact, stage)
+		err := nomagique.RoundTripArtifact(artifact, stage)
 
 		So(err, ShouldBeNil)
 
@@ -201,7 +201,7 @@ func TestLogitScoresRead(testingTB *testing.T) {
 		artifact.MergeOutput("ignition", 0.1)
 		artifact.MergeOutput("rvolDecline", 0.95)
 
-		err := transport.NewFlipFlop(artifact, stage)
+		err := nomagique.RoundTripArtifact(artifact, stage)
 
 		So(err, ShouldBeNil)
 
@@ -232,7 +232,7 @@ func TestLogitScoresRead(testingTB *testing.T) {
 		artifact.MergeOutput("ignition", 2.7)
 		artifact.MergeOutput("rvolDecline", 0.0)
 
-		err := transport.NewFlipFlop(artifact, stage)
+		err := nomagique.RoundTripArtifact(artifact, stage)
 
 		So(err, ShouldBeNil)
 
@@ -284,7 +284,7 @@ func TestLogitScoresRead(testingTB *testing.T) {
 			artifact.MergeOutput("ignition", sample.ignition)
 			artifact.MergeOutput("rvolDecline", 0.0)
 
-			err := transport.NewFlipFlop(artifact, stage)
+			err := nomagique.RoundTripArtifact(artifact, stage)
 
 			So(err, ShouldBeNil)
 		}
@@ -319,6 +319,6 @@ func BenchmarkLogitScoresRead(testingTB *testing.B) {
 	}.Marshal())
 
 	for testingTB.Loop() {
-		_ = transport.NewFlipFlop(artifact, stage)
+		_ = nomagique.RoundTripArtifact(artifact, stage)
 	}
 }

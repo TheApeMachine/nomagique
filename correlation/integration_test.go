@@ -5,7 +5,6 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/transport"
 	"github.com/theapemachine/nomagique"
 	"github.com/theapemachine/nomagique/correlation"
 )
@@ -21,7 +20,7 @@ func TestIntegration(t *testing.T) {
 				correlation.NewPearson(datura.Acquire("pearson-config", datura.APPJSON).
 					Poke("batch", "input")),
 			)
-			err := transport.NewFlipFlop(artifact, pipeline)
+			err := nomagique.RoundTripArtifact(artifact, pipeline)
 
 			So(err, ShouldBeNil)
 			So(datura.Peek[float64](artifact, "output", "value"), ShouldEqual, 1)
@@ -34,12 +33,12 @@ func TestIntegration(t *testing.T) {
 			)
 
 			artifact = correlation.EpochLevelWire(artifact, float64(1_000), 100.0)
-			err := transport.NewFlipFlop(artifact, series)
+			err := nomagique.RoundTripArtifact(artifact, series)
 
 			So(err, ShouldNotBeNil)
 
 			artifact = correlation.EpochLevelWire(artifact, float64(2_000), 110.0)
-			err = transport.NewFlipFlop(artifact, series)
+			err = nomagique.RoundTripArtifact(artifact, series)
 
 			So(err, ShouldBeNil)
 			So(datura.Peek[float64](artifact, "output", "value"), ShouldBeGreaterThan, 0)
@@ -77,7 +76,7 @@ func TestIntegration(t *testing.T) {
 					"sample": epoch,
 					"paired": 100 + float64(step)*0.1,
 				})
-				err := transport.NewFlipFlop(artifact, contagion)
+				err := nomagique.RoundTripArtifact(artifact, contagion)
 
 				if step == 0 {
 					So(err, ShouldNotBeNil)
@@ -90,7 +89,7 @@ func TestIntegration(t *testing.T) {
 					"sample": epoch,
 					"paired": 50 + float64(step)*0.05,
 				})
-				err = transport.NewFlipFlop(artifact, contagion)
+				err = nomagique.RoundTripArtifact(artifact, contagion)
 
 				if step == 0 {
 					So(err, ShouldNotBeNil)

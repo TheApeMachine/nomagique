@@ -29,7 +29,7 @@ func NewTable(artifact *datura.Artifact) *Table {
 func (table *Table) Read(payload []byte) (int, error) {
 	state := datura.Acquire("table-state", datura.APPJSON)
 
-	if _, err := state.Write(table.artifact.DecryptPayload()); err != nil {
+	if _, err := state.Unpack(table.artifact.DecryptPayload()); err != nil {
 		state.Release()
 
 		return 0, errnie.Error(errnie.Err(
@@ -167,7 +167,7 @@ func (table *Table) Read(payload []byte) (int, error) {
 	state.Poke("output", "root")
 	state.Poke([]string{"value"}, "inputs")
 
-	return state.Read(payload)
+	return state.PackInto(payload)
 }
 
 func (table *Table) Write(payload []byte) (int, error) {

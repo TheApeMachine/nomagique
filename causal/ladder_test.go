@@ -5,7 +5,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/transport"
+	"github.com/theapemachine/nomagique"
 	"github.com/theapemachine/nomagique/adaptive"
 )
 
@@ -22,15 +22,15 @@ func TestLadder_Read(testingTB *testing.T) {
 		artifact := tableInbound(16, 1.0)
 		artifact.Poke(0.0, "paired")
 
-		err := transport.NewFlipFlop(artifact, regime)
+		err := nomagique.RoundTripArtifact(artifact, regime)
 
 		So(err, ShouldBeNil)
 
-		err = transport.NewFlipFlop(artifact, hysteresis)
+		err = nomagique.RoundTripArtifact(artifact, hysteresis)
 
 		So(err, ShouldBeNil)
 
-		err = transport.NewFlipFlop(artifact, ladder)
+		err = nomagique.RoundTripArtifact(artifact, ladder)
 
 		So(err, ShouldBeNil)
 		So(datura.Peek[float64](artifact, "output", "intervention"), ShouldBeGreaterThan, 0)
@@ -44,7 +44,7 @@ func TestLadder_ReadWarmup(testingTB *testing.T) {
 		ladder := NewLadder(config)
 		artifact := tableInbound(4, 1.0)
 
-		err := transport.NewFlipFlop(artifact, ladder)
+		err := nomagique.RoundTripArtifact(artifact, ladder)
 
 		So(err, ShouldNotBeNil)
 	})
@@ -59,7 +59,7 @@ func TestLadder_ReadKernelMiss(testingTB *testing.T) {
 		ladder := NewLadder(config)
 		artifact := tableInbound(16, 1.0)
 
-		err := transport.NewFlipFlop(artifact, ladder)
+		err := nomagique.RoundTripArtifact(artifact, ladder)
 
 		So(err, ShouldNotBeNil)
 	})
@@ -78,8 +78,8 @@ func BenchmarkLadder_Read(testingTB *testing.B) {
 	testingTB.ReportAllocs()
 
 	for testingTB.Loop() {
-		_ = transport.NewFlipFlop(artifact, regime)
-		_ = transport.NewFlipFlop(artifact, hysteresis)
-		_ = transport.NewFlipFlop(artifact, ladder)
+		_ = nomagique.RoundTripArtifact(artifact, regime)
+		_ = nomagique.RoundTripArtifact(artifact, hysteresis)
+		_ = nomagique.RoundTripArtifact(artifact, ladder)
 	}
 }

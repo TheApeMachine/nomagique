@@ -5,8 +5,8 @@ import (
 	"math"
 
 	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/transport"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/nomagique"
 	"github.com/theapemachine/nomagique/adaptive"
 )
 
@@ -38,7 +38,7 @@ func NewFeatureExtractor(artifact *datura.Artifact) *FeatureExtractor {
 func (extractor *FeatureExtractor) Read(payload []byte) (int, error) {
 	state := datura.Acquire("feature-extractor", datura.APPJSON)
 
-	if _, err := state.Write(extractor.artifact.DecryptPayload()); err != nil {
+	if _, err := state.Unpack(extractor.artifact.DecryptPayload()); err != nil {
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"feature-extractor: state write failed",
@@ -112,7 +112,7 @@ func (extractor *FeatureExtractor) Read(payload []byte) (int, error) {
 
 		config := datura.Acquire("feature-extractor-ema", datura.APPJSON)
 
-		if err := transport.NewFlipFlop(scratch, transformer(config)); err != nil {
+		if err := nomagique.RoundTripArtifact(scratch, transformer(config)); err != nil {
 			scratch.Release()
 			config.Release()
 
@@ -176,8 +176,11 @@ func (extractor *FeatureExtractor) Read(payload []byte) (int, error) {
 	state.Merge("features", features)
 	state.Poke("features", "root")
 	state.Poke(inputs, "inputs")
+	state.Poke(inputs, "featureInputs")
+	state.Poke(rootKey, "sourceRoot")
+	state.Poke(inputs, "sourceInputs")
 
-	return state.Read(payload)
+	return state.PackInto(payload)
 }
 
 func (extractor *FeatureExtractor) Write(p []byte) (int, error) {

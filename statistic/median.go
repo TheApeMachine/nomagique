@@ -28,7 +28,7 @@ func NewMedian(artifact *datura.Artifact) *Median {
 func (median *Median) Read(payload []byte) (int, error) {
 	state := datura.Acquire("median-state", datura.APPJSON)
 
-	if _, err := state.Write(median.artifact.DecryptPayload()); err != nil {
+	if _, err := state.Unpack(median.artifact.DecryptPayload()); err != nil {
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"median: state write failed",
@@ -143,7 +143,7 @@ func (median *Median) Read(payload []byte) (int, error) {
 				state.Poke("output", "root")
 				state.Poke([]string{"value"}, "inputs")
 
-				return state.Read(payload)
+				return state.PackInto(payload)
 			}
 
 			return 0, errnie.Error(errnie.Err(
@@ -176,7 +176,7 @@ func (median *Median) Read(payload []byte) (int, error) {
 		state.Poke("output", "root")
 		state.Poke([]string{"value"}, "inputs")
 
-		return state.Read(payload)
+		return state.PackInto(payload)
 	}
 
 	rootKey := datura.Peek[string](state, "root")
@@ -281,7 +281,7 @@ func (median *Median) Read(payload []byte) (int, error) {
 	state.Poke("output", "root")
 	state.Poke([]string{"value"}, "inputs")
 
-	return state.Read(payload)
+	return state.PackInto(payload)
 }
 
 func (median *Median) Write(payload []byte) (int, error) {

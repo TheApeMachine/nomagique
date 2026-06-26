@@ -5,7 +5,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/transport"
+	"github.com/theapemachine/nomagique"
 )
 
 func TestBernoulli(testingTB *testing.T) {
@@ -50,7 +50,7 @@ func TestBernoulliRead(testingTB *testing.T) {
 
 			for _, sample := range testCase.inputs {
 				scalarWire(artifact, "sample", sample)
-				err := transport.NewFlipFlop(artifact, posterior)
+				err := nomagique.RoundTripArtifact(artifact, posterior)
 
 				So(err, ShouldBeNil)
 			}
@@ -66,7 +66,7 @@ func TestBernoulliRead(testingTB *testing.T) {
 	Convey("Given empty Observe inputs", testingTB, func() {
 		posterior := NewBernoulli(bernoulliConfig("bernoulli-config"))
 		artifact := datura.Acquire("test", datura.APPJSON)
-		err := transport.NewFlipFlop(artifact, posterior)
+		err := nomagique.RoundTripArtifact(artifact, posterior)
 
 		Convey("It should return a validation error", func() {
 			So(err, ShouldNotBeNil)
@@ -76,7 +76,7 @@ func TestBernoulliRead(testingTB *testing.T) {
 	Convey("Given a predicted and actual pair", testingTB, func() {
 		posterior := NewBernoulli(bernoulliPairConfig("bernoulli-config"))
 		artifact := pairWire(datura.Acquire("test", datura.APPJSON), "sample", "paired", 10, 15)
-		err := transport.NewFlipFlop(artifact, posterior)
+		err := nomagique.RoundTripArtifact(artifact, posterior)
 
 		So(err, ShouldBeNil)
 
@@ -90,7 +90,7 @@ func TestBernoulliRead(testingTB *testing.T) {
 	Convey("Given an invalid outcome", testingTB, func() {
 		posterior := NewBernoulli(bernoulliConfig("bernoulli-config"))
 		artifact := scalarWire(datura.Acquire("test", datura.APPJSON), "sample", 2)
-		err := transport.NewFlipFlop(artifact, posterior)
+		err := nomagique.RoundTripArtifact(artifact, posterior)
 
 		Convey("It should return a validation error", func() {
 			So(err, ShouldNotBeNil)
@@ -103,12 +103,12 @@ func TestBernoulliReset(testingTB *testing.T) {
 		posterior := NewBernoulli(bernoulliConfig("bernoulli-config"))
 		artifact := scalarWire(datura.Acquire("test", datura.APPJSON), "sample", 1)
 
-		err := transport.NewFlipFlop(artifact, posterior)
+		err := nomagique.RoundTripArtifact(artifact, posterior)
 
 		So(err, ShouldBeNil)
 
 		resetArtifact := datura.Acquire("test", datura.APPJSON).Poke(1, "reset")
-		err = transport.NewFlipFlop(resetArtifact, posterior)
+		err = nomagique.RoundTripArtifact(resetArtifact, posterior)
 
 		So(err, ShouldNotBeNil)
 
@@ -124,12 +124,12 @@ func BenchmarkBernoulliRead(testingTB *testing.B) {
 	artifact := datura.Acquire("test", datura.APPJSON)
 
 	scalarWire(artifact, "sample", 1)
-	_ = transport.NewFlipFlop(artifact, posterior)
+	_ = nomagique.RoundTripArtifact(artifact, posterior)
 
 	testingTB.ReportAllocs()
 
 	for testingTB.Loop() {
 		pairWire(artifact, "sample", "paired", 10, 11)
-		_ = transport.NewFlipFlop(artifact, posterior)
+		_ = nomagique.RoundTripArtifact(artifact, posterior)
 	}
 }

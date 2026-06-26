@@ -5,7 +5,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/transport"
+	"github.com/theapemachine/nomagique"
 )
 
 func TestMedianAbsoluteRead(t *testing.T) {
@@ -14,7 +14,7 @@ func TestMedianAbsoluteRead(t *testing.T) {
 		artifact := datura.Acquire("test", datura.APPJSON)
 
 		for _, sample := range []float64{-1, 2, -3} {
-			err := transport.NewFlipFlop(ScalarWire(artifact, "sample", sample), medianAbsolute)
+			err := nomagique.RoundTripArtifact(ScalarWire(artifact, "sample", sample), medianAbsolute)
 
 			So(err, ShouldBeNil)
 		}

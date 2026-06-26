@@ -30,7 +30,7 @@ func NewHysteresis(artifact *datura.Artifact) *Hysteresis {
 func (hysteresis *Hysteresis) Read(payload []byte) (int, error) {
 	state := datura.Acquire("hysteresis-state", datura.APPJSON)
 
-	if _, err := state.Write(hysteresis.artifact.DecryptPayload()); err != nil {
+	if _, err := state.Unpack(hysteresis.artifact.DecryptPayload()); err != nil {
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"hysteresis: state write failed",
@@ -156,7 +156,7 @@ func (hysteresis *Hysteresis) Read(payload []byte) (int, error) {
 	state.Poke([]string{"value"}, "inputs")
 	state.MergeOutput("value", hysteresis.value)
 
-	return state.Read(payload)
+	return state.PackInto(payload)
 }
 
 func (hysteresis *Hysteresis) Write(p []byte) (int, error) {

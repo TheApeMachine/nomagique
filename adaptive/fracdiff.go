@@ -37,14 +37,13 @@ func NewFracDiff(artifact *datura.Artifact) *FracDiff {
 func (fractional *FracDiff) Read(payload []byte) (int, error) {
 	state := datura.Acquire("fracdiff-state", datura.APPJSON)
 
-	if _, err := state.Write(fractional.artifact.DecryptPayload()); err != nil {
+	if _, err := state.Unpack(fractional.artifact.DecryptPayload()); err != nil {
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"fracdiff: state write failed",
 			err,
 		))
 	}
-
 
 	rootKey := datura.Peek[string](state, "root")
 
@@ -141,7 +140,7 @@ func (fractional *FracDiff) Read(payload []byte) (int, error) {
 	state.Poke("output", "root")
 	state.Poke([]string{"value"}, "inputs")
 
-	return state.Read(payload)
+	return state.PackInto(payload)
 }
 
 func (fractional *FracDiff) Write(p []byte) (int, error) {

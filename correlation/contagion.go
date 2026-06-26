@@ -35,7 +35,7 @@ func (contagion *Contagion) Read(p []byte) (int, error) {
 
 	state := datura.Acquire("contagion-state", datura.APPJSON)
 
-	if _, err := state.Write(contagion.artifact.DecryptPayload()); err != nil {
+	if _, err := state.Unpack(contagion.artifact.DecryptPayload()); err != nil {
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"contagion: state write failed",
@@ -239,7 +239,7 @@ func (contagion *Contagion) Read(p []byte) (int, error) {
 	state.MergeOutput("tier.slow", readings.slow)
 	state.Poke("output", "root")
 	state.Poke([]string{"value", "tier.fast", "tier.medium", "tier.slow"}, "inputs")
-	return state.Read(p)
+	return state.PackInto(p)
 }
 
 func (contagion *Contagion) Write(p []byte) (int, error) {

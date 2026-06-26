@@ -27,7 +27,7 @@ func NewSandwich(artifact *datura.Artifact) *Sandwich {
 func (sandwich *Sandwich) Read(payload []byte) (int, error) {
 	state := datura.Acquire("sandwich-state", datura.APPJSON)
 
-	if _, err := state.Write(sandwich.artifact.DecryptPayload()); err != nil {
+	if _, err := state.Unpack(sandwich.artifact.DecryptPayload()); err != nil {
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"geometry-sandwich: state write failed",
@@ -67,7 +67,7 @@ func (sandwich *Sandwich) Read(payload []byte) (int, error) {
 	state.Poke("output", "root")
 	state.Poke([]string{"value"}, "inputs")
 
-	return state.Read(payload)
+	return state.PackInto(payload)
 }
 
 func (sandwich *Sandwich) Write(payload []byte) (int, error) {

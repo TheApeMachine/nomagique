@@ -27,7 +27,7 @@ func NewTranslator(artifact *datura.Artifact) *Translator {
 func (translator *Translator) Read(payload []byte) (int, error) {
 	state := datura.Acquire("translator-state", datura.APPJSON)
 
-	if _, err := state.Write(translator.artifact.DecryptPayload()); err != nil {
+	if _, err := state.Unpack(translator.artifact.DecryptPayload()); err != nil {
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"geometry-translator: state write failed",
@@ -54,7 +54,7 @@ func (translator *Translator) Read(payload []byte) (int, error) {
 	state.Poke("output", "root")
 	state.Poke([]string{"value", "motor"}, "inputs")
 
-	return state.Read(payload)
+	return state.PackInto(payload)
 }
 
 func (translator *Translator) Write(payload []byte) (int, error) {

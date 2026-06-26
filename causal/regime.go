@@ -27,14 +27,13 @@ func NewRegime(artifact *datura.Artifact) *Regime {
 func (regime *Regime) Read(p []byte) (int, error) {
 	state := datura.Acquire("regime-state", datura.APPJSON)
 
-	if _, err := state.Write(regime.artifact.DecryptPayload()); err != nil {
+	if _, err := state.Unpack(regime.artifact.DecryptPayload()); err != nil {
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"causal: state write failed",
 			err,
 		))
 	}
-
 
 	rows, err := tableRows(state)
 
@@ -104,7 +103,7 @@ func (regime *Regime) Read(p []byte) (int, error) {
 	state.MergeOutput("rawInverted", rawInverted)
 	state.Poke("output", "root")
 	state.Poke([]string{"value", "condition", "rawInverted"}, "inputs")
-	return state.Read(p)
+	return state.PackInto(p)
 }
 
 func (regime *Regime) Write(p []byte) (int, error) {

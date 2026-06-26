@@ -6,6 +6,7 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/transport"
+	"github.com/theapemachine/nomagique"
 	"github.com/theapemachine/nomagique/equation"
 	"github.com/theapemachine/nomagique/probability"
 )
@@ -81,7 +82,7 @@ func TestBookQualitySample_Read(t *testing.T) {
 				WithScope("update").
 				WithPayload(frame)
 
-			err := transport.NewFlipFlop(state, pipeline)
+			err := nomagique.RoundTripArtifact(state, pipeline)
 
 			if err != nil {
 				state.Release()

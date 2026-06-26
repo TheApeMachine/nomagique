@@ -26,7 +26,7 @@ func NewMin(artifact *datura.Artifact) *Min {
 func (min *Min) Read(payload []byte) (int, error) {
 	state := datura.Acquire("min-state", datura.APPJSON)
 
-	if _, err := state.Write(min.artifact.DecryptPayload()); err != nil {
+	if _, err := state.Unpack(min.artifact.DecryptPayload()); err != nil {
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"min: state write failed",
@@ -127,7 +127,7 @@ func (min *Min) Read(payload []byte) (int, error) {
 	state.Poke("output", "root")
 	state.Poke([]string{"value"}, "inputs")
 
-	return state.Read(payload)
+	return state.PackInto(payload)
 }
 
 func (min *Min) Write(payload []byte) (int, error) {

@@ -55,7 +55,7 @@ func (decaySample *DecaySample) Write(payload []byte) (int, error) {
 func (decaySample *DecaySample) Read(payload []byte) (int, error) {
 	state := datura.Acquire("decay-sample-state", datura.APPJSON)
 
-	if _, err := state.Write(decaySample.artifact.DecryptPayload()); err != nil {
+	if _, err := state.Unpack(decaySample.artifact.DecryptPayload()); err != nil {
 		state.Release()
 
 		return 0, errnie.Error(errnie.Err(
@@ -102,7 +102,7 @@ func (decaySample *DecaySample) Read(payload []byte) (int, error) {
 	state.Poke("features", "root")
 	state.Poke(equation.DecayInputKeys, "inputs")
 
-	return state.Read(payload)
+	return state.PackInto(payload)
 }
 
 func (decaySample *DecaySample) Close() error {

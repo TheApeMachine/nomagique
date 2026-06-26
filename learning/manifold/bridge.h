@@ -145,6 +145,20 @@ int batch_solver_read_outcomes(
     char *err_out, int err_cap
 );
 
+/*
+batch_solver_read_wire_layers copies settled per-layer state, prediction, and
+error norms for one slot. Call after settle/read_outcomes so prediction buffers
+reflect the current weights and state.
+*/
+int batch_solver_read_wire_layers(
+    void *handle,
+    uint32_t slot,
+    float *state, uint32_t state_len,
+    float *prediction, uint32_t prediction_len,
+    float *error_norm, uint32_t error_norm_len,
+    char *err_out, int err_cap
+);
+
 /* Read back symbol `slot`'s weights (same flat layout as seed). NULL to skip. */
 int batch_solver_read_weights(
     void *handle, uint32_t slot,
@@ -154,6 +168,5 @@ int batch_solver_read_weights(
     float *v_flat, size_t v_len,
     char *err_out, int err_cap
 );
-
 
 

@@ -8,7 +8,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/transport"
+	"github.com/theapemachine/nomagique"
 )
 
 var timeElasticConfig = datura.Acquire("time-elastic-config", datura.APPJSON).
@@ -27,7 +27,7 @@ func TestTimeElasticRead(t *testing.T) {
 	Convey("Given a TimeElastic", t, func() {
 		timeElastic := NewTimeElastic(timeElasticConfig)
 		input := timeElasticWire(10, time.Unix(0, 1))
-		io.Copy(timeElastic, input)
+		nomagique.WriteArtifact(timeElastic, input)
 
 		Convey("When Read is called on the first sample", func() {
 			frame := make([]byte, 65536)
@@ -35,7 +35,7 @@ func TestTimeElasticRead(t *testing.T) {
 			So(err, ShouldEqual, io.EOF)
 
 			outbound := datura.Acquire("test-out", datura.APPJSON)
-			_, err = outbound.Write(frame[:readCount])
+			_, err = outbound.Unpack(frame[:readCount])
 			So(err, ShouldBeNil)
 
 			rootKey := datura.Peek[string](outbound, "root")
@@ -45,9 +45,9 @@ func TestTimeElasticRead(t *testing.T) {
 		})
 
 		Convey("When a later timestamp regresses", func() {
-			_, _ = io.Copy(timeElastic, timeElasticWire(10, time.Unix(0, 2)))
+			_, _ = nomagique.WriteArtifact(timeElastic, timeElasticWire(10, time.Unix(0, 2)))
 			_, _ = timeElastic.Read(make([]byte, 65536))
-			_, _ = io.Copy(timeElastic, timeElasticWire(12, time.Unix(0, 1)))
+			_, _ = nomagique.WriteArtifact(timeElastic, timeElasticWire(12, time.Unix(0, 1)))
 
 			_, err := timeElastic.Read(make([]byte, 65536))
 
@@ -58,7 +58,7 @@ func TestTimeElasticRead(t *testing.T) {
 	Convey("Given missing halflife or epsilon", t, func() {
 		timeElastic := NewTimeElastic(datura.Acquire("time-elastic-config-missing", datura.APPJSON).Poke("sample", "input"))
 		input := timeElasticWire(10, time.Unix(0, 1))
-		_, _ = io.Copy(timeElastic, input)
+		_, _ = nomagique.WriteArtifact(timeElastic, input)
 
 		Convey("When Read is called", func() {
 			_, err := timeElastic.Read(make([]byte, 65536))
@@ -71,7 +71,7 @@ func TestTimeElasticRead(t *testing.T) {
 		timeElastic := NewTimeElastic(timeElasticConfig)
 		invalid := ScalarWire(datura.Acquire("test", datura.APPJSON), "sample", math.NaN())
 		invalid.Merge("at", float64(time.Unix(0, 1).UnixNano()))
-		_, _ = io.Copy(timeElastic, invalid)
+		_, _ = nomagique.WriteArtifact(timeElastic, invalid)
 
 		Convey("When Read is called", func() {
 			_, err := timeElastic.Read(make([]byte, 65536))
@@ -87,7 +87,7 @@ func TestTimeElasticWrite(t *testing.T) {
 
 		Convey("When Write is called", func() {
 			input := timeElasticWire(10, time.Unix(0, 1))
-			_, err := io.Copy(timeElastic, input)
+			_, err := nomagique.WriteArtifact(timeElastic, input)
 			So(err, ShouldBeNil)
 		})
 	})
@@ -102,13 +102,13 @@ func TestTimeElasticFlipFlop(t *testing.T) {
 		timeElastic := NewTimeElastic(config)
 		artifact := timeElasticWire(10, time.Unix(0, int64(time.Hour)))
 
-		err := transport.NewFlipFlop(artifact, timeElastic)
+		err := nomagique.RoundTripArtifact(artifact, timeElastic)
 
 		So(err, ShouldBeIn, nil, io.EOF)
 		So(datura.Peek[float64](artifact, "output", "value"), ShouldEqual, 1)
 
 		second := timeElasticWire(14, time.Unix(0, int64(5*time.Hour)))
-		err = transport.NewFlipFlop(second, timeElastic)
+		err = nomagique.RoundTripArtifact(second, timeElastic)
 
 		So(err, ShouldBeIn, nil, io.EOF)
 		So(datura.Peek[float64](second, "output", "value"), ShouldBeGreaterThan, 0)

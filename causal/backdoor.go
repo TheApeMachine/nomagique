@@ -25,14 +25,13 @@ func NewBackdoor(artifact *datura.Artifact) *Backdoor {
 func (backdoor *Backdoor) Read(p []byte) (int, error) {
 	state := datura.Acquire("backdoor-state", datura.APPJSON)
 
-	if _, err := state.Write(backdoor.artifact.DecryptPayload()); err != nil {
+	if _, err := state.Unpack(backdoor.artifact.DecryptPayload()); err != nil {
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"causal: state write failed",
 			err,
 		))
 	}
-
 
 	rows, err := tableRows(state)
 
@@ -103,7 +102,7 @@ func (backdoor *Backdoor) Read(p []byte) (int, error) {
 	state.MergeOutput("condition", condition)
 	state.Poke("output", "root")
 	state.Poke([]string{"value", "association", "effect", "condition"}, "inputs")
-	return state.Read(p)
+	return state.PackInto(p)
 }
 
 func (backdoor *Backdoor) Write(p []byte) (int, error) {

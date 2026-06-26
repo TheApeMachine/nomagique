@@ -5,7 +5,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/transport"
+	"github.com/theapemachine/nomagique"
 	"github.com/theapemachine/nomagique/equation"
 )
 
@@ -48,7 +48,7 @@ func TestRegimeLadder_Read(testingTB *testing.T) {
 	Convey("Given aligned node streams with causal structure", testingTB, func() {
 		regimeLadder := equation.NewRegimeLadder(regimeLadderConfig(0.8))
 		artifact := regimeLadderInbound()
-		err := transport.NewFlipFlop(artifact, regimeLadder)
+		err := nomagique.RoundTripArtifact(artifact, regimeLadder)
 
 		So(err, ShouldBeNil)
 		So(datura.Peek[float64](artifact, "output", "intervention"), ShouldBeGreaterThan, 0)
@@ -70,6 +70,6 @@ func BenchmarkRegimeLadder_Read(testingTB *testing.B) {
 
 	for testingTB.Loop() {
 		artifact := regimeLadderInbound()
-		_ = transport.NewFlipFlop(artifact, regimeLadder)
+		_ = nomagique.RoundTripArtifact(artifact, regimeLadder)
 	}
 }

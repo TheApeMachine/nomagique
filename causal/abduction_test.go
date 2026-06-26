@@ -5,7 +5,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/transport"
+	"github.com/theapemachine/nomagique"
 )
 
 func abductionConfig(linear bool, treatment int, intervention float64) *datura.Artifact {
@@ -73,7 +73,7 @@ func TestAbduction_Read_Linear(testingTB *testing.T) {
 		config := abductionConfig(true, 2, 20)
 		table := abductionTable(16, true)
 		stage := NewAbduction(config)
-		err := transport.NewFlipFlop(table, stage)
+		err := nomagique.RoundTripArtifact(table, stage)
 
 		So(err, ShouldBeNil)
 
@@ -81,7 +81,7 @@ func TestAbduction_Read_Linear(testingTB *testing.T) {
 			restoreConfig := abductionConfig(true, 2, lastRowTreatment(config, table))
 			restoreTable := abductionTable(16, true)
 			restoreStage := NewAbduction(restoreConfig)
-			err := transport.NewFlipFlop(restoreTable, restoreStage)
+			err := nomagique.RoundTripArtifact(restoreTable, restoreStage)
 
 			So(err, ShouldBeNil)
 			So(
@@ -104,7 +104,7 @@ func TestAbduction_Read_Linear(testingTB *testing.T) {
 			movedConfig := abductionConfig(true, 2, 20)
 			movedTable := abductionTable(16, true)
 			movedStage := NewAbduction(movedConfig)
-			err := transport.NewFlipFlop(movedTable, movedStage)
+			err := nomagique.RoundTripArtifact(movedTable, movedStage)
 
 			So(err, ShouldBeNil)
 			So(
@@ -122,7 +122,7 @@ func TestAbduction_Read_NonLinear(testingTB *testing.T) {
 		config := abductionConfig(false, 2, 2.0)
 		table := abductionTable(16, false)
 		stage := NewAbduction(config)
-		err := transport.NewFlipFlop(table, stage)
+		err := nomagique.RoundTripArtifact(table, stage)
 
 		So(err, ShouldBeNil)
 
@@ -146,6 +146,6 @@ func BenchmarkAbduction_Read(testingTB *testing.B) {
 	testingTB.ReportAllocs()
 
 	for testingTB.Loop() {
-		_ = transport.NewFlipFlop(table, stage)
+		_ = nomagique.RoundTripArtifact(table, stage)
 	}
 }

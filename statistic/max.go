@@ -26,7 +26,7 @@ func NewMax(artifact *datura.Artifact) *Max {
 func (max *Max) Read(payload []byte) (int, error) {
 	state := datura.Acquire("max-state", datura.APPJSON)
 
-	if _, err := state.Write(max.artifact.DecryptPayload()); err != nil {
+	if _, err := state.Unpack(max.artifact.DecryptPayload()); err != nil {
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"max: state write failed",
@@ -127,7 +127,7 @@ func (max *Max) Read(payload []byte) (int, error) {
 	state.Poke("output", "root")
 	state.Poke([]string{"value"}, "inputs")
 
-	return state.Read(payload)
+	return state.PackInto(payload)
 }
 
 func (max *Max) Write(payload []byte) (int, error) {

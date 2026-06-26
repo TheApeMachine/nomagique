@@ -7,7 +7,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/transport"
+	"github.com/theapemachine/nomagique"
 )
 
 func emaConfigArtifact() *datura.Artifact {
@@ -20,7 +20,7 @@ func emaConfigArtifact() *datura.Artifact {
 func TestEMARead(t *testing.T) {
 	Convey("Given an EMA on the first sample", t, func() {
 		ema := NewEMA(emaConfigArtifact())
-		_, _ = io.Copy(ema, ScalarWire(datura.Acquire("test", datura.APPJSON), "sample", 1))
+		_, _ = nomagique.WriteArtifact(ema, ScalarWire(datura.Acquire("test", datura.APPJSON), "sample", 1))
 
 		frame := make([]byte, 65536)
 		_, err := ema.Read(frame)
@@ -30,10 +30,10 @@ func TestEMARead(t *testing.T) {
 
 	Convey("Given a second EMA sample after bootstrap", t, func() {
 		ema := NewEMA(emaConfigArtifact())
-		_, _ = io.Copy(ema, ScalarWire(datura.Acquire("test", datura.APPJSON), "sample", 1))
+		_, _ = nomagique.WriteArtifact(ema, ScalarWire(datura.Acquire("test", datura.APPJSON), "sample", 1))
 		_, _ = ema.Read(make([]byte, 65536))
 		artifact := ScalarWire(datura.Acquire("test", datura.APPJSON), "sample", 2)
-		_, _ = io.Copy(ema, artifact)
+		_, _ = nomagique.WriteArtifact(ema, artifact)
 
 		frame := make([]byte, 65536)
 		readCount, err := ema.Read(frame)
@@ -41,7 +41,7 @@ func TestEMARead(t *testing.T) {
 		So(err, ShouldEqual, io.EOF)
 		So(readCount, ShouldBeGreaterThan, 0)
 
-		err = transport.NewFlipFlop(artifact, ema)
+		err = nomagique.RoundTripArtifact(artifact, ema)
 
 		So(err, ShouldBeIn, nil, io.EOF)
 		So(datura.Peek[float64](artifact, "output", "value"), ShouldBeGreaterThan, 0)
@@ -49,10 +49,10 @@ func TestEMARead(t *testing.T) {
 
 	Convey("Given a repeated sample after bootstrap", t, func() {
 		ema := NewEMA(emaConfigArtifact())
-		_, _ = io.Copy(ema, ScalarWire(datura.Acquire("test", datura.APPJSON), "sample", 1))
+		_, _ = nomagique.WriteArtifact(ema, ScalarWire(datura.Acquire("test", datura.APPJSON), "sample", 1))
 		_, _ = ema.Read(make([]byte, 65536))
 		artifact := ScalarWire(datura.Acquire("test", datura.APPJSON), "sample", 1)
-		_, _ = io.Copy(ema, artifact)
+		_, _ = nomagique.WriteArtifact(ema, artifact)
 
 		frame := make([]byte, 65536)
 		readCount, err := ema.Read(frame)
@@ -64,7 +64,7 @@ func TestEMARead(t *testing.T) {
 	Convey("Given a non-finite sample", t, func() {
 		ema := NewEMA(emaConfigArtifact())
 		invalid := ScalarWire(datura.Acquire("test", datura.APPJSON), "sample", math.NaN())
-		_, _ = io.Copy(ema, invalid)
+		_, _ = nomagique.WriteArtifact(ema, invalid)
 
 		_, err := ema.Read(make([]byte, 65536))
 
@@ -77,7 +77,7 @@ func TestEMAWrite(t *testing.T) {
 		ema := NewEMA(emaConfigArtifact())
 
 		Convey("When Write is called", func() {
-			_, err := io.Copy(ema, ScalarWire(datura.Acquire("test", datura.APPJSON), "sample", 1))
+			_, err := nomagique.WriteArtifact(ema, ScalarWire(datura.Acquire("test", datura.APPJSON), "sample", 1))
 			So(err, ShouldBeIn, nil, io.EOF)
 		})
 	})
@@ -88,12 +88,12 @@ func TestEMAFlipFlop(t *testing.T) {
 		ema := NewEMA(emaConfigArtifact())
 		bootstrap := ScalarWire(datura.Acquire("test", datura.APPJSON), "sample", 1)
 
-		So(transport.NewFlipFlop(bootstrap, ema), ShouldBeIn, nil, io.EOF)
+		So(nomagique.RoundTripArtifact(bootstrap, ema), ShouldBeIn, nil, io.EOF)
 		bootstrap.Release()
 
 		artifact := ScalarWire(datura.Acquire("test", datura.APPJSON), "sample", 2)
 
-		err := transport.NewFlipFlop(artifact, ema)
+		err := nomagique.RoundTripArtifact(artifact, ema)
 
 		So(err, ShouldBeIn, nil, io.EOF)
 		So(datura.Peek[float64](artifact, "output", "value"), ShouldBeGreaterThan, 0)
@@ -117,7 +117,7 @@ func BenchmarkEMARead(b *testing.B) {
 	for b.Loop() {
 		inbound := ScalarWire(datura.Acquire("bench-inbound", datura.APPJSON), "sample", 1)
 
-		if _, err := io.Copy(ema, inbound); err != nil {
+		if _, err := nomagique.WriteArtifact(ema, inbound); err != nil {
 			b.Fatal(err)
 		}
 

@@ -57,7 +57,7 @@ func NewProcrustesFromRows(
 func (procrustes *Procrustes) Read(payload []byte) (int, error) {
 	state := datura.Acquire("procrustes-state", datura.APPJSON)
 
-	if _, err := state.Write(procrustes.artifact.DecryptPayload()); err != nil {
+	if _, err := state.Unpack(procrustes.artifact.DecryptPayload()); err != nil {
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"procrustes: state write failed",
@@ -98,7 +98,7 @@ func (procrustes *Procrustes) Read(payload []byte) (int, error) {
 	state.Poke("output", "root")
 	state.Poke([]string{"value", "rotation", "nDim"}, "inputs")
 
-	return state.Read(payload)
+	return state.PackInto(payload)
 }
 
 func (procrustes *Procrustes) Write(payload []byte) (int, error) {

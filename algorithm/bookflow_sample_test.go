@@ -6,6 +6,7 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/transport"
+	"github.com/theapemachine/nomagique"
 	"github.com/theapemachine/nomagique/equation"
 	"github.com/theapemachine/nomagique/probability"
 )
@@ -39,7 +40,7 @@ func TestBookflowSample_Read(t *testing.T) {
 				WithScope("update").
 				WithPayload(frame)
 
-			err := transport.NewFlipFlop(state, pipeline)
+			err := nomagique.RoundTripArtifact(state, pipeline)
 
 			if index == len(frames)-1 {
 				So(err, ShouldBeNil)
@@ -68,7 +69,7 @@ func TestBookflowSample_ReadRejectsMissingSymbol(t *testing.T) {
 		frame := []byte(`{"channel":"book","type":"update","data":[{"bids":[{"price":100,"qty":10}],"asks":[{"price":101,"qty":10}]}]}`)
 		state := datura.Acquire("measurement", datura.APPJSON).WithPayload(frame)
 
-		err := transport.NewFlipFlop(state, encoder)
+		err := nomagique.RoundTripArtifact(state, encoder)
 
 		So(err, ShouldNotBeNil)
 		state.Release()

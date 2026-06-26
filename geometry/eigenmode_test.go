@@ -5,7 +5,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/transport"
+	"github.com/theapemachine/nomagique"
 )
 
 func TestEigenmodeMembers(t *testing.T) {
@@ -45,7 +45,7 @@ func TestModePartitionRead(t *testing.T) {
 			0.5, nil, nil, nil,
 		)
 		artifact := datura.Acquire("test", datura.APPJSON)
-		err := transport.NewFlipFlop(artifact, partition)
+		err := nomagique.RoundTripArtifact(artifact, partition)
 
 		So(err, ShouldNotBeNil)
 		So(partition.Snap(), ShouldBeNil)
@@ -64,7 +64,7 @@ func TestModePartitionRead(t *testing.T) {
 			},
 		)
 		artifact := datura.Acquire("test", datura.APPJSON)
-		err := transport.NewFlipFlop(artifact, partition)
+		err := nomagique.RoundTripArtifact(artifact, partition)
 
 		So(err, ShouldBeNil)
 
@@ -88,7 +88,7 @@ func TestModePartitionRead(t *testing.T) {
 			},
 		)
 		artifact := datura.Acquire("test", datura.APPJSON)
-		err := transport.NewFlipFlop(artifact, partition)
+		err := nomagique.RoundTripArtifact(artifact, partition)
 
 		So(err, ShouldBeNil)
 
@@ -109,7 +109,7 @@ func TestModePartitionRead(t *testing.T) {
 			[]float64{1, 0, 0, 1},
 		)
 		artifact := datura.Acquire("test", datura.APPJSON)
-		err := transport.NewFlipFlop(artifact, partition)
+		err := nomagique.RoundTripArtifact(artifact, partition)
 
 		So(err, ShouldNotBeNil)
 	})
@@ -129,7 +129,7 @@ func TestModePartition_WriteReset(t *testing.T) {
 			},
 		)
 		artifact := datura.Acquire("test", datura.APPJSON)
-		err := transport.NewFlipFlop(artifact, partition)
+		err := nomagique.RoundTripArtifact(artifact, partition)
 
 		So(err, ShouldBeNil)
 
@@ -178,6 +178,6 @@ func BenchmarkModePartitionRead(testingTB *testing.B) {
 	testingTB.ReportAllocs()
 
 	for testingTB.Loop() {
-		_ = transport.NewFlipFlop(artifact, partition)
+		_ = nomagique.RoundTripArtifact(artifact, partition)
 	}
 }

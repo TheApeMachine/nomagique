@@ -41,14 +41,13 @@ func NewEMA(artifact *datura.Artifact) *EMA {
 func (ema *EMA) Read(payload []byte) (int, error) {
 	state := datura.Acquire("ema-state", datura.APPJSON)
 
-	if _, err := state.Write(ema.artifact.DecryptPayload()); err != nil {
+	if _, err := state.Unpack(ema.artifact.DecryptPayload()); err != nil {
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"ema: state write failed",
 			err,
 		))
 	}
-
 
 	rootKey := datura.Peek[string](state, "root")
 
@@ -128,7 +127,7 @@ func (ema *EMA) Read(payload []byte) (int, error) {
 	state.Poke("output", "root")
 	state.Poke([]string{"value"}, "inputs")
 
-	return state.Read(payload)
+	return state.PackInto(payload)
 }
 
 func (ema *EMA) Write(payload []byte) (int, error) {

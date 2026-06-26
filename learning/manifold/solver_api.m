@@ -179,6 +179,35 @@ int batch_solver_read_outcomes(
     return 0;
 }
 
+int batch_solver_read_wire_layers(
+    void *handle,
+    uint32_t slot,
+    float *state, uint32_t state_len,
+    float *prediction, uint32_t prediction_len,
+    float *error_norm, uint32_t error_norm_len,
+    char *err_out, int err_cap
+) {
+    if (handle == NULL) {
+        resonance_write_error(err_out, err_cap, @"solver is not initialized");
+        return 1;
+    }
+    @autoreleasepool {
+        NSString *error = nil;
+        if (![from(handle) readWireSlot:slot
+                                  state:state
+                               stateLen:state_len
+                             prediction:prediction
+                          predictionLen:prediction_len
+                              errorNorm:error_norm
+                           errorNormLen:error_norm_len
+                                   error:&error]) {
+            resonance_write_error(err_out, err_cap, error ?: @"read wire layers failed");
+            return 1;
+        }
+    }
+    return 0;
+}
+
 int batch_solver_read_weights(
     void *handle, uint32_t slot,
     float *w, size_t wl, float *r, size_t rl, float *a, size_t al, float *v, size_t vl,
@@ -189,6 +218,5 @@ int batch_solver_read_weights(
     @autoreleasepool { [from(handle) readSlot:slot w:w r:r a:a v:v]; }
     return 0;
 }
-
 
 

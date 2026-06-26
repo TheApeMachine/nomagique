@@ -5,7 +5,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/transport"
+	"github.com/theapemachine/nomagique"
 	"github.com/theapemachine/nomagique/equation"
 )
 
@@ -20,7 +20,7 @@ func TestCausalStory_Read(testingTB *testing.T) {
 		inbound.MergeOutput("condition", 0.2)
 		inbound.MergeOutput("inverted", 0.0)
 
-		err := transport.NewFlipFlop(inbound, stage)
+		err := nomagique.RoundTripArtifact(inbound, stage)
 
 		So(err, ShouldBeNil)
 
@@ -44,6 +44,6 @@ func BenchmarkCausalStoryRead(b *testing.B) {
 	b.ReportAllocs()
 
 	for b.Loop() {
-		_ = transport.NewFlipFlop(inbound, stage)
+		_ = nomagique.RoundTripArtifact(inbound, stage)
 	}
 }

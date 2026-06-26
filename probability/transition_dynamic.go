@@ -37,7 +37,7 @@ func (transition *Transition) Read(payload []byte) (int, error) {
 		))
 	}
 
-	if _, err := state.Write(wire); err != nil {
+	if _, err := state.Unpack(wire); err != nil {
 		state.Release()
 
 		return 0, errnie.Error(errnie.Err(
@@ -66,7 +66,7 @@ func (transition *Transition) Read(payload []byte) (int, error) {
 		state.MergeOutput("value", 0)
 		state.Poke("output", "root")
 		state.Poke([]string{"value"}, "inputs")
-		return state.Read(payload)
+		return state.PackInto(payload)
 	}
 
 	if numStates <= 0 || alpha <= 0 {
@@ -116,7 +116,7 @@ func (transition *Transition) Read(payload []byte) (int, error) {
 	state.MergeOutput("probabilities", probabilities)
 	state.Poke("output", "root")
 	state.Poke([]string{"value"}, "inputs")
-	return state.Read(payload)
+	return state.PackInto(payload)
 }
 
 func (transition *Transition) Write(payload []byte) (int, error) {

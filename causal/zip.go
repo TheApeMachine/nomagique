@@ -29,7 +29,7 @@ func NewZip(artifact *datura.Artifact) *Zip {
 func (zipStage *Zip) Read(p []byte) (int, error) {
 	state := datura.Acquire("zip-state", datura.APPJSON)
 
-	if _, err := state.Write(zipStage.artifact.DecryptPayload()); err != nil {
+	if _, err := state.Unpack(zipStage.artifact.DecryptPayload()); err != nil {
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"causal: state write failed",
@@ -37,13 +37,12 @@ func (zipStage *Zip) Read(p []byte) (int, error) {
 		))
 	}
 
-
 	if rows, tableErr := tableRows(state); tableErr == nil {
 		state.MergeOutput("value", float64(len(rows)))
 		state.Poke("output", "root")
 		state.Poke([]string{"value"}, "inputs")
 
-		return state.Read(p)
+		return state.PackInto(p)
 	}
 
 	streams, ok := zipStage.streamsFromPayload(state)
@@ -80,7 +79,7 @@ func (zipStage *Zip) Read(p []byte) (int, error) {
 	state.MergeOutput("value", float64(rowCount))
 	state.Poke("output", "root")
 	state.Poke([]string{"value"}, "inputs")
-	return state.Read(p)
+	return state.PackInto(p)
 }
 
 func (zipStage *Zip) Write(p []byte) (int, error) {

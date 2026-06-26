@@ -5,8 +5,8 @@ import (
 	"math"
 
 	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/transport"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/nomagique"
 	"github.com/theapemachine/nomagique/adaptive"
 	"github.com/theapemachine/nomagique/statistic"
 )
@@ -42,7 +42,7 @@ func (mapper *Mapper) Read(payload []byte) (int, error) {
 	state := datura.Acquire("mapper-state", datura.APPJSON)
 	defer state.Release()
 
-	if _, err := state.Write(mapper.artifact.DecryptPayload()); err != nil {
+	if _, err := state.Unpack(mapper.artifact.DecryptPayload()); err != nil {
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation, "mapper: state write failed", err,
 		))
@@ -82,7 +82,7 @@ func (mapper *Mapper) Read(payload []byte) (int, error) {
 	state.Poke("output", "root")
 	state.Poke(inputs, "inputs")
 
-	return state.Read(payload)
+	return state.PackInto(payload)
 }
 
 /*
@@ -158,7 +158,7 @@ func (mapper *Mapper) apply(transform, outputKey string, value float64) (float64
 		"inputs":   []string{"sample"},
 	}.Marshal())
 
-	if err := transport.NewFlipFlop(scratch, stage); err != nil {
+	if err := nomagique.RoundTripArtifact(scratch, stage); err != nil {
 		return 0, err
 	}
 

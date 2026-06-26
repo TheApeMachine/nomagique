@@ -6,7 +6,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/transport"
+	"github.com/theapemachine/nomagique"
 )
 
 func TestMeanRead(t *testing.T) {
@@ -14,7 +14,7 @@ func TestMeanRead(t *testing.T) {
 		config := datura.Acquire("mean-config", datura.APPJSON).Poke("sample", "input")
 		mean := NewMean(config)
 		input := ScalarWire(datura.Acquire("test", datura.APPJSON), "sample", 1)
-		_, err := io.Copy(mean, input)
+		_, err := nomagique.WriteArtifact(mean, input)
 
 		So(err, ShouldBeNil)
 
@@ -35,7 +35,7 @@ func TestMeanWrite(t *testing.T) {
 
 		Convey("When Write is called", func() {
 			input := ScalarWire(datura.Acquire("test", datura.APPJSON), "sample", 1)
-			_, err := io.Copy(mean, input)
+			_, err := nomagique.WriteArtifact(mean, input)
 			So(err, ShouldBeNil)
 		})
 	})
@@ -49,7 +49,7 @@ func TestMeanSeries(t *testing.T) {
 
 		for _, sample := range []float64{1, 2, 3, 4} {
 			artifact := ScalarWire(datura.Acquire("test", datura.APPJSON), "sample", sample)
-			err := transport.NewFlipFlop(artifact, mean)
+			err := nomagique.RoundTripArtifact(artifact, mean)
 
 			So(err, ShouldBeNil)
 
@@ -74,7 +74,7 @@ func BenchmarkMeanRead(b *testing.B) {
 	config := datura.Acquire("mean-config-bench", datura.APPJSON).Poke("sample", "input")
 	mean := NewMean(config)
 	input := ScalarWire(datura.Acquire("test", datura.APPJSON), "sample", 1)
-	_, _ = io.Copy(mean, input)
+	_, _ = nomagique.WriteArtifact(mean, input)
 	frame := make([]byte, 65536)
 
 	b.ReportAllocs()

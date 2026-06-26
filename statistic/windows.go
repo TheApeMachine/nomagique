@@ -4,8 +4,8 @@ import (
 	"math"
 
 	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/transport"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/nomagique"
 	"gonum.org/v1/gonum/stat"
 )
 
@@ -28,7 +28,7 @@ func NewWindows(artifact *datura.Artifact) *Windows {
 func (windows *Windows) Read(payload []byte) (int, error) {
 	state := datura.Acquire("windows-state", datura.APPJSON)
 
-	if _, err := state.Write(windows.artifact.DecryptPayload()); err != nil {
+	if _, err := state.Unpack(windows.artifact.DecryptPayload()); err != nil {
 		state.Release()
 
 		return 0, errnie.Error(errnie.Err(
@@ -76,7 +76,7 @@ func (windows *Windows) Read(payload []byte) (int, error) {
 			"shortWindow", "longWindow", "returnLag", "targetLong",
 		}, "inputs")
 
-		return state.Read(payload)
+		return state.PackInto(payload)
 	}
 
 	if sampleCount <= 0 {
@@ -178,7 +178,7 @@ func (windows *Windows) Read(payload []byte) (int, error) {
 		"shortWindow", "longWindow", "returnLag", "targetLong",
 	}, "inputs")
 
-	return state.Read(payload)
+	return state.PackInto(payload)
 }
 
 func (windows *Windows) Write(payload []byte) (int, error) {
@@ -212,7 +212,7 @@ func ResolveWindows(
 	wire := datura.Acquire("windows-resolve-wire", datura.APPJSON)
 	wire.Poke(history, "history")
 
-	if flipErr := transport.NewFlipFlop(wire, stage); flipErr != nil {
+	if flipErr := nomagique.RoundTripArtifact(wire, stage); flipErr != nil {
 		wire.Release()
 		stage.Close()
 

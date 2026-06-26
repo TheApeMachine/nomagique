@@ -27,7 +27,7 @@ func SampleRatio(artifact *datura.Artifact) *Calibrator {
 func (calibrator *Calibrator) Read(payload []byte) (int, error) {
 	state := datura.Acquire("sample-ratio-state", datura.APPJSON)
 
-	if _, err := state.Write(calibrator.artifact.DecryptPayload()); err != nil {
+	if _, err := state.Unpack(calibrator.artifact.DecryptPayload()); err != nil {
 		state.Release()
 
 		return 0, errnie.Error(errnie.Err(
@@ -120,7 +120,7 @@ func (calibrator *Calibrator) Read(payload []byte) (int, error) {
 	state.Poke("output", "root")
 	state.Poke([]string{"value", "predicted", "actual"}, "inputs")
 
-	return state.Read(payload)
+	return state.PackInto(payload)
 }
 
 func (calibrator *Calibrator) resolvePair(state *datura.Artifact) (float64, float64, error) {

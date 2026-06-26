@@ -5,7 +5,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/transport"
+	"github.com/theapemachine/nomagique"
 )
 
 func TestWindowSetRead(testingTB *testing.T) {
@@ -19,7 +19,7 @@ func TestWindowSetRead(testingTB *testing.T) {
 				float64((index+1)*1_000),
 				100+float64(index),
 			)
-			err := transport.NewFlipFlop(artifact, windowSet)
+			err := nomagique.RoundTripArtifact(artifact, windowSet)
 
 			if index == 0 {
 				So(err, ShouldNotBeNil)

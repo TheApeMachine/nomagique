@@ -5,8 +5,8 @@ import (
 	"math"
 
 	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/transport"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/nomagique"
 )
 
 /*
@@ -94,7 +94,7 @@ func (lessThan LessThan) Match(artifact *datura.Artifact) bool {
 			return false
 		}
 
-		if _, err = rightScratch.Write(packed); err != nil {
+		if _, err = rightScratch.Unpack(packed); err != nil {
 			errnie.Error(errnie.Err(
 				errnie.IO,
 				"logic: lessThan operand write failed",
@@ -105,7 +105,7 @@ func (lessThan LessThan) Match(artifact *datura.Artifact) bool {
 			return false
 		}
 
-		if err = transport.NewFlipFlop(rightScratch, lessThan.Right); err != nil {
+		if err = nomagique.RoundTripArtifact(rightScratch, lessThan.Right); err != nil {
 			errnie.Error(errnie.Err(
 				errnie.IO,
 				"logic: lessThan operand flipFlop failed",

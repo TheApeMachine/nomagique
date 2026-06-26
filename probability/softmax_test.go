@@ -6,7 +6,6 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/transport"
 	"github.com/theapemachine/nomagique"
 	"github.com/theapemachine/nomagique/probability"
 )
@@ -37,7 +36,7 @@ func TestSoftmax_Read(testingTB *testing.T) {
 			"s2": 0.9,
 			"s3": 0.05,
 		})
-		err := transport.NewFlipFlop(artifact, softmax)
+		err := nomagique.RoundTripArtifact(artifact, softmax)
 
 		So(err, ShouldBeNil)
 
@@ -71,7 +70,7 @@ func TestSoftmax_Read(testingTB *testing.T) {
 	Convey("Given an empty score key in schema inputs", testingTB, func() {
 		softmax := probability.NewSoftmax(softmaxSchema("s0", ""))
 		artifact := artifactWithScores(map[string]float64{"s0": 1})
-		err := transport.NewFlipFlop(artifact, softmax)
+		err := nomagique.RoundTripArtifact(artifact, softmax)
 
 		Convey("It should return a validation error", func() {
 			So(err, ShouldNotBeNil)
@@ -86,7 +85,7 @@ func TestSoftmax_Read(testingTB *testing.T) {
 			"s2": 3,
 			"s3": 3,
 		})
-		err := transport.NewFlipFlop(artifact, softmax)
+		err := nomagique.RoundTripArtifact(artifact, softmax)
 
 		So(err, ShouldBeNil)
 
@@ -106,7 +105,7 @@ func TestSoftmax_Read(testingTB *testing.T) {
 		artifact.Poke("features", "root")
 		artifact.Poke([]string{"s0", "s1", "s2"}, "inputs")
 		artifact.Merge("features", []float64{1, math.NaN(), 3})
-		err := transport.NewFlipFlop(artifact, softmax)
+		err := nomagique.RoundTripArtifact(artifact, softmax)
 
 		Convey("It should return a validation error", func() {
 			So(err, ShouldNotBeNil)
@@ -124,7 +123,7 @@ func TestSoftmax_Read(testingTB *testing.T) {
 			"s1": 2,
 			"s2": 3,
 		})
-		err := transport.NewFlipFlop(artifact, softmax)
+		err := nomagique.RoundTripArtifact(artifact, softmax)
 
 		So(err, ShouldBeNil)
 
@@ -145,7 +144,7 @@ func TestSoftmax_Number(testingTB *testing.T) {
 			"s2": 0.2,
 		})
 		pipeline := nomagique.Number(softmax)
-		err := transport.NewFlipFlop(artifact, pipeline)
+		err := nomagique.RoundTripArtifact(artifact, pipeline)
 
 		So(err, ShouldBeNil)
 
@@ -169,6 +168,6 @@ func BenchmarkSoftmax_Read(testingTB *testing.B) {
 	testingTB.ReportAllocs()
 
 	for testingTB.Loop() {
-		_ = transport.NewFlipFlop(artifact, softmax)
+		_ = nomagique.RoundTripArtifact(artifact, softmax)
 	}
 }

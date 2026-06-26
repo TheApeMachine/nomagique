@@ -5,7 +5,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/transport"
+	"github.com/theapemachine/nomagique"
 	"github.com/theapemachine/nomagique/adaptive"
 )
 
@@ -23,7 +23,7 @@ func TestForecasterRead(testingTB *testing.T) {
 	Convey("Given empty inbound wire", testingTB, func() {
 		forecaster := Forecast(pairConfig("forecast-config"))
 		artifact := datura.Acquire("test", datura.APPJSON)
-		err := transport.NewFlipFlop(artifact, forecaster)
+		err := nomagique.RoundTripArtifact(artifact, forecaster)
 
 		Convey("It should return a validation error", func() {
 			So(err, ShouldNotBeNil)
@@ -33,7 +33,7 @@ func TestForecasterRead(testingTB *testing.T) {
 	Convey("Given a fresh forecaster", testingTB, func() {
 		forecaster := Forecast(pairConfig("forecast-config"))
 		artifact := pairWire(datura.Acquire("test", datura.APPJSON), 10, 10)
-		err := transport.NewFlipFlop(artifact, forecaster)
+		err := nomagique.RoundTripArtifact(artifact, forecaster)
 
 		So(err, ShouldBeNil)
 
@@ -50,10 +50,10 @@ func TestForecasterRead(testingTB *testing.T) {
 		artifact := datura.Acquire("test", datura.APPJSON)
 
 		artifact = pairWire(artifact, 10, 10)
-		_ = transport.NewFlipFlop(artifact, forecaster)
+		_ = nomagique.RoundTripArtifact(artifact, forecaster)
 
 		artifact = pairWire(artifact, 10, 15)
-		err := transport.NewFlipFlop(artifact, forecaster)
+		err := nomagique.RoundTripArtifact(artifact, forecaster)
 
 		So(err, ShouldBeNil)
 
@@ -65,7 +65,7 @@ func TestForecasterRead(testingTB *testing.T) {
 	Convey("Given zero actual with non-zero predicted", testingTB, func() {
 		forecaster := Forecast(pairConfig("forecast-config"))
 		artifact := pairWire(datura.Acquire("test", datura.APPJSON), 10, 0)
-		err := transport.NewFlipFlop(artifact, forecaster)
+		err := nomagique.RoundTripArtifact(artifact, forecaster)
 
 		Convey("It should return a validation error", func() {
 			So(err, ShouldNotBeNil)
@@ -75,7 +75,7 @@ func TestForecasterRead(testingTB *testing.T) {
 	Convey("Given zero predicted", testingTB, func() {
 		forecaster := Forecast(pairConfig("forecast-config"))
 		artifact := pairWire(datura.Acquire("test", datura.APPJSON), 0, 10)
-		err := transport.NewFlipFlop(artifact, forecaster)
+		err := nomagique.RoundTripArtifact(artifact, forecaster)
 
 		Convey("It should return a validation error", func() {
 			So(err, ShouldNotBeNil)
@@ -91,27 +91,27 @@ func TestForecaster_learningComposition(testingTB *testing.T) {
 		artifact := datura.Acquire("test", datura.APPJSON)
 
 		artifact = pairWire(artifact, 10, 10)
-		err := transport.NewFlipFlop(artifact, trustWeight)
+		err := nomagique.RoundTripArtifact(artifact, trustWeight)
 
 		So(err, ShouldBeNil)
 
 		artifact = pairWire(artifact, 10, 10)
-		err = transport.NewFlipFlop(artifact, calibrator)
+		err = nomagique.RoundTripArtifact(artifact, calibrator)
 
 		So(err, ShouldBeNil)
 
 		artifact = pairWire(artifact, 10, 15)
-		err = transport.NewFlipFlop(artifact, calibrator)
+		err = nomagique.RoundTripArtifact(artifact, calibrator)
 
 		So(err, ShouldBeNil)
 
 		artifact = pairWire(artifact, 10, 10)
-		err = transport.NewFlipFlop(artifact, forecaster)
+		err = nomagique.RoundTripArtifact(artifact, forecaster)
 
 		So(err, ShouldBeNil)
 
 		artifact = pairWire(artifact, 10, 15)
-		err = transport.NewFlipFlop(artifact, forecaster)
+		err = nomagique.RoundTripArtifact(artifact, forecaster)
 
 		So(err, ShouldBeNil)
 
@@ -126,9 +126,9 @@ func TestForecaster_withAdaptiveSignal(testingTB *testing.T) {
 		exponential := adaptive.NewEMA(datura.Acquire("ema-config", datura.APPJSON).Poke("sample", "input").Poke(2, "period").Poke(2, "smoothing"))
 		forecaster := Forecast(pairConfig("forecast-config"))
 		signal := scalarWire(datura.Acquire("test", datura.APPJSON), "sample", 10)
-		_ = transport.NewFlipFlop(signal, exponential)
+		_ = nomagique.RoundTripArtifact(signal, exponential)
 		signal = scalarWire(datura.Acquire("test", datura.APPJSON), "sample", 12)
-		err := transport.NewFlipFlop(signal, exponential)
+		err := nomagique.RoundTripArtifact(signal, exponential)
 
 		So(err, ShouldBeNil)
 
@@ -136,7 +136,7 @@ func TestForecaster_withAdaptiveSignal(testingTB *testing.T) {
 
 		Convey("When comparing EMA level to the outcome", func() {
 			outcome := pairWire(datura.Acquire("test", datura.APPJSON), level, 12)
-			err := transport.NewFlipFlop(outcome, forecaster)
+			err := nomagique.RoundTripArtifact(outcome, forecaster)
 
 			So(err, ShouldBeNil)
 			So(datura.Peek[float64](forecaster.artifact, "output", "scale"), ShouldBeGreaterThan, 0)
@@ -149,12 +149,12 @@ func BenchmarkForecastRead(testingTB *testing.B) {
 	artifact := datura.Acquire("test", datura.APPJSON)
 
 	artifact = pairWire(artifact, 10, 10)
-	_ = transport.NewFlipFlop(artifact, forecaster)
+	_ = nomagique.RoundTripArtifact(artifact, forecaster)
 
 	testingTB.ReportAllocs()
 
 	for testingTB.Loop() {
 		artifact = pairWire(artifact, 10, 11)
-		_ = transport.NewFlipFlop(artifact, forecaster)
+		_ = nomagique.RoundTripArtifact(artifact, forecaster)
 	}
 }

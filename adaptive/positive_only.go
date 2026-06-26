@@ -26,7 +26,7 @@ func NewPositiveOnly(artifact *datura.Artifact) *PositiveOnly {
 func (positiveOnly *PositiveOnly) Read(payload []byte) (int, error) {
 	state := datura.Acquire("positive-only-state", datura.APPJSON)
 
-	if _, err := state.Write(positiveOnly.artifact.DecryptPayload()); err != nil {
+	if _, err := state.Unpack(positiveOnly.artifact.DecryptPayload()); err != nil {
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"positive-only: state write failed",
@@ -35,16 +35,22 @@ func (positiveOnly *PositiveOnly) Read(payload []byte) (int, error) {
 	}
 
 	stageKey := datura.Peek[string](positiveOnly.artifact, "stage")
+	outputKey := datura.Peek[string](positiveOnly.artifact, "outputKey")
+	positiveOnlyFlag := datura.Peek[float64](positiveOnly.artifact, "positiveOnly")
 
 	if stageKey == "" {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"positive-only: stage required",
-			nil,
-		))
+		order := datura.Peek[[]string](positiveOnly.artifact, "order")
+		stageIndex := int(datura.Peek[float64](positiveOnly.artifact, "stageIndex"))
+
+		if stageIndex >= 0 && stageIndex < len(order) {
+			stageKey = order[stageIndex]
+		}
 	}
 
-	outputKey := datura.Peek[string](positiveOnly.artifact, stageKey, "outputKey")
+	if stageKey != "" {
+		outputKey = datura.Peek[string](positiveOnly.artifact, stageKey, "outputKey")
+		positiveOnlyFlag = datura.Peek[float64](positiveOnly.artifact, stageKey, "positiveOnly")
+	}
 
 	if outputKey == "" {
 		return 0, errnie.Error(errnie.Err(
@@ -93,7 +99,7 @@ func (positiveOnly *PositiveOnly) Read(payload []byte) (int, error) {
 		))
 	}
 
-	if datura.Peek[float64](positiveOnly.artifact, stageKey, "positiveOnly") > 0 {
+	if positiveOnlyFlag > 0 {
 		score = math.Max(0, score)
 	}
 
@@ -101,7 +107,7 @@ func (positiveOnly *PositiveOnly) Read(payload []byte) (int, error) {
 	state.Poke("output", "root")
 	state.Poke([]string{outputKey}, "inputs")
 
-	return state.Read(payload)
+	return state.PackInto(payload)
 }
 
 func (positiveOnly *PositiveOnly) Write(p []byte) (int, error) {

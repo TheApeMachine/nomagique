@@ -27,7 +27,7 @@ func NewStdDev(artifact *datura.Artifact) *StdDev {
 func (stdDev *StdDev) Read(payload []byte) (int, error) {
 	state := datura.Acquire("stddev-state", datura.APPJSON)
 
-	if _, err := state.Write(stdDev.artifact.DecryptPayload()); err != nil {
+	if _, err := state.Unpack(stdDev.artifact.DecryptPayload()); err != nil {
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"stddev: state write failed",
@@ -138,7 +138,7 @@ func (stdDev *StdDev) Read(payload []byte) (int, error) {
 	state.Poke("output", "root")
 	state.Poke([]string{outputKey}, "inputs")
 
-	return state.Read(payload)
+	return state.PackInto(payload)
 }
 
 func (stdDev *StdDev) Write(payload []byte) (int, error) {

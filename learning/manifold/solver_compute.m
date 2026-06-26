@@ -474,6 +474,71 @@ static inline NSUInteger bo(uint32_t scalarOffset) { return (NSUInteger)scalarOf
     return YES;
 }
 
+- (BOOL)readWireSlot:(uint32_t)slot
+               state:(float *)state
+            stateLen:(uint32_t)stateLen
+          prediction:(float *)prediction
+       predictionLen:(uint32_t)predictionLen
+           errorNorm:(float *)errorNorm
+        errorNormLen:(uint32_t)errorNormLen
+                error:(NSString **)errorOut {
+    if (slot >= self.batch) {
+        if (errorOut) *errorOut = @"slot out of range";
+        return NO;
+    }
+
+    if (state == NULL || stateLen != self.zTotal) {
+        if (errorOut) *errorOut = @"state buffer length mismatch";
+        return NO;
+    }
+
+    if (prediction == NULL || predictionLen != self.zTotal) {
+        if (errorOut) *errorOut = @"prediction buffer length mismatch";
+        return NO;
+    }
+
+    if (errorNorm == NULL || errorNormLen != self.archLen) {
+        if (errorOut) *errorOut = @"error norm buffer length mismatch";
+        return NO;
+    }
+
+    uint32_t N = self.batch;
+    const float *z = (const float *)self.bufZ.contents;
+    const float *pred = (const float *)self.bufPred.contents;
+    const float *err = (const float *)self.bufErr.contents;
+
+    memset(prediction, 0, (size_t)self.zTotal * sizeof(float));
+    memset(errorNorm, 0, (size_t)self.archLen * sizeof(float));
+
+    for (uint32_t layer = 0u; layer < self.archLen; ++layer) {
+        uint32_t rows = self.arch[layer];
+        uint32_t zBase = self.zOffset[layer];
+        uint32_t zDeviceBase = zBase * N;
+
+        for (uint32_t row = 0u; row < rows; ++row) {
+            state[zBase + row] = z[zDeviceBase + row * N + slot];
+        }
+    }
+
+    for (uint32_t layer = 0u; layer < self.numLinks; ++layer) {
+        uint32_t rows = self.arch[layer];
+        uint32_t zBase = self.zOffset[layer];
+        uint32_t predDeviceBase = self.predOffset[layer] * N;
+        float sumSquares = 0.0f;
+
+        for (uint32_t row = 0u; row < rows; ++row) {
+            uint32_t deviceIndex = predDeviceBase + row * N + slot;
+            float residual = err[deviceIndex];
+            prediction[zBase + row] = pred[deviceIndex];
+            sumSquares += residual * residual;
+        }
+
+        errorNorm[layer] = sqrtf(sumSquares);
+    }
+
+    return YES;
+}
+
 // ---- batched learn (one command buffer) -----------------------------------
 
 - (void)encOuter:(id<MTLComputeCommandEncoder>)enc matrix:(id<MTLBuffer>)matrix
@@ -623,6 +688,5 @@ static inline NSUInteger bo(uint32_t scalarOffset) { return (NSUInteger)scalarOf
 }
 
 @end
-
 
 

@@ -34,7 +34,7 @@ func Weight(artifact *datura.Artifact) *TrustWeight {
 func (trustWeight *TrustWeight) Read(payload []byte) (int, error) {
 	state := datura.Acquire("trust-weight-state", datura.APPJSON)
 
-	if _, err := state.Write(trustWeight.artifact.DecryptPayload()); err != nil {
+	if _, err := state.Unpack(trustWeight.artifact.DecryptPayload()); err != nil {
 		state.Release()
 
 		return 0, errnie.Error(errnie.Err(
@@ -118,7 +118,7 @@ func (trustWeight *TrustWeight) Read(payload []byte) (int, error) {
 	state.MergeOutput("actual", actual)
 	state.Poke("output", "root")
 	state.Poke([]string{"value", "predicted", "actual"}, "inputs")
-	return state.Read(payload)
+	return state.PackInto(payload)
 }
 
 func (trustWeight *TrustWeight) resolvePair(state *datura.Artifact) (float64, float64, error) {

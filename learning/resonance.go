@@ -288,7 +288,7 @@ func (rm *ResonanceManifold) SetStreamAdvanceTemporal(enabled bool) {
 func (rm *ResonanceManifold) Read(payload []byte) (int, error) {
 	state := datura.Acquire("resonance-state", datura.APPJSON)
 
-	if _, err := state.Write(rm.artifact.DecryptPayload()); err != nil {
+	if _, err := state.Unpack(rm.artifact.DecryptPayload()); err != nil {
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"resonance: state write failed",
@@ -325,7 +325,7 @@ func (rm *ResonanceManifold) Read(payload []byte) (int, error) {
 	state.MergeOutput("latent", latent)
 	state.Poke("output", "root")
 	state.Poke([]string{"value", "latent"}, "inputs")
-	return state.Read(payload)
+	return state.PackInto(payload)
 }
 
 func (rm *ResonanceManifold) Write(payload []byte) (int, error) {

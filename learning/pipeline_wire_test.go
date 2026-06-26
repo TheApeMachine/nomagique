@@ -7,7 +7,6 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/transport"
 	"github.com/theapemachine/nomagique"
 	"github.com/theapemachine/nomagique/probability"
 	"github.com/theapemachine/nomagique/statistic"
@@ -85,7 +84,7 @@ func TestPipelineWireChain(testingTB *testing.T) {
 
 		for index, volume := range volumes {
 			frame := tickerFrame(volume, 100+float64(index)*0.01)
-			err := transport.NewFlipFlop(frame, pipeline)
+			err := nomagique.RoundTripArtifact(frame, pipeline)
 
 			if index < 4 {
 				So(err, ShouldBeIn, nil, io.EOF)

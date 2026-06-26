@@ -129,7 +129,7 @@ func countField(wire *datura.Artifact, key string) float64 {
 }
 
 func fitFloatBatch(artifact *datura.Artifact) []float64 {
-	if !artifact.HasEncryptedPayload() {
+	if !artifact.HasPayload() {
 		return nil
 	}
 

@@ -5,7 +5,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/transport"
+	"github.com/theapemachine/nomagique"
 	"gonum.org/v1/gonum/stat"
 )
 
@@ -20,7 +20,7 @@ func TestQuantileRead(t *testing.T) {
 		artifact := datura.Acquire("test", datura.APPJSON)
 
 		for _, sample := range []float64{1, 2, 3, 4} {
-			err := transport.NewFlipFlop(ScalarWire(artifact, "sample", sample), quantile)
+			err := nomagique.RoundTripArtifact(ScalarWire(artifact, "sample", sample), quantile)
 
 			So(err, ShouldBeNil)
 		}

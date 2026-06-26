@@ -30,14 +30,13 @@ func NewDelta(artifact *datura.Artifact) *Delta {
 func (delta *Delta) Read(payload []byte) (int, error) {
 	state := datura.Acquire("delta-state", datura.APPJSON)
 
-	if _, err := state.Write(delta.artifact.DecryptPayload()); err != nil {
+	if _, err := state.Unpack(delta.artifact.DecryptPayload()); err != nil {
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"delta: state write failed",
 			err,
 		))
 	}
-
 
 	rootKey := datura.Peek[string](state, "root")
 
@@ -150,7 +149,7 @@ func (delta *Delta) Read(payload []byte) (int, error) {
 	state.Poke("output", "root")
 	state.Poke([]string{"value"}, "inputs")
 
-	return state.Read(payload)
+	return state.PackInto(payload)
 }
 
 func (delta *Delta) Write(p []byte) (int, error) {

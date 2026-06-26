@@ -52,7 +52,7 @@ func (logitScores *LogitScores) resolveFeatureScale(
 		derived = 0
 	}
 
-	if derived <= 0 && feature > 0 {
+	if derived <= 0 {
 		derived, ok = positiveMedian(samples)
 
 		if !ok {

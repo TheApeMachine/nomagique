@@ -6,7 +6,7 @@ import (
 
 	gc "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/transport"
+	"github.com/theapemachine/nomagique"
 )
 
 func TestRotorConstruction(t *testing.T) {
@@ -288,7 +288,7 @@ func TestRotorRead(testingTB *testing.T) {
 		stage := NewRotor(datura.Acquire("rotor-config", datura.APPJSON))
 		artifact := datura.Acquire("test", datura.APPJSON).
 			Poke([]float64{0, 1, 0, 0}, "batch")
-		err := transport.NewFlipFlop(artifact, stage)
+		err := nomagique.RoundTripArtifact(artifact, stage)
 
 		gc.So(err, gc.ShouldBeNil)
 
@@ -307,7 +307,7 @@ func TestTranslatorRead(testingTB *testing.T) {
 		stage := NewTranslator(datura.Acquire("translator-config", datura.APPJSON))
 		artifact := datura.Acquire("test", datura.APPJSON).
 			Poke([]float64{2, 4, 6}, "batch")
-		err := transport.NewFlipFlop(artifact, stage)
+		err := nomagique.RoundTripArtifact(artifact, stage)
 
 		gc.So(err, gc.ShouldBeNil)
 
@@ -330,7 +330,7 @@ func TestSandwichRead(testingTB *testing.T) {
 		)
 		artifact := datura.Acquire("test", datura.APPJSON).
 			Poke([]float64{1, 0, 0, 0, 0, 0, 0, 0}, "batch")
-		err := transport.NewFlipFlop(artifact, stage)
+		err := nomagique.RoundTripArtifact(artifact, stage)
 
 		gc.So(err, gc.ShouldBeNil)
 
@@ -350,7 +350,7 @@ func BenchmarkRotorRead(testingTB *testing.B) {
 
 	for testingTB.Loop() {
 		artifact.Poke([]float64{0, 1, 0, 0}, "batch")
-		_ = transport.NewFlipFlop(artifact, stage)
+		_ = nomagique.RoundTripArtifact(artifact, stage)
 	}
 }
 
@@ -366,7 +366,7 @@ func BenchmarkSandwichRead(testingTB *testing.B) {
 
 	for testingTB.Loop() {
 		artifact.Poke([]float64{1, 0, 0, 0, 0, 0, 0, 0}, "batch")
-		_ = transport.NewFlipFlop(artifact, stage)
+		_ = nomagique.RoundTripArtifact(artifact, stage)
 	}
 }
 

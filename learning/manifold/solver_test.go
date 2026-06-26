@@ -160,6 +160,9 @@ func TestBatchSolver_ReadOutcomesParity(t *testing.T) {
 			latentWorst := 0.0
 			energyWorst := 0.0
 			surpriseWorst := 0.0
+			wireStateWorst := 0.0
+			wirePredictionWorst := 0.0
+			wirePredictionMass := 0.0
 
 			for slot := 0; slot < batchSize; slot++ {
 				batchLatent, batchEnergy, batchSurprise, outcomeErr := solver.OutcomeSlot(slot)
@@ -182,11 +185,30 @@ func TestBatchSolver_ReadOutcomesParity(t *testing.T) {
 				latentWorst = math.Max(latentWorst, maxAbsDiff(batchLatent, referenceLatent))
 				energyWorst = math.Max(energyWorst, math.Abs(batchEnergy-references[slot].Energy()))
 				surpriseWorst = math.Max(surpriseWorst, math.Abs(batchSurprise-references[slot].ReconstructionError()))
+
+				wireLayers, wireErr := solver.WireLayers(slot)
+				convey.So(wireErr, convey.ShouldBeNil)
+				referenceLayers, _, _ := references[slot].WireSnapshot()
+				convey.So(len(wireLayers), convey.ShouldEqual, len(referenceLayers))
+
+				for layerIndex := range referenceLayers {
+					convey.So(len(wireLayers[layerIndex].State), convey.ShouldEqual, len(referenceLayers[layerIndex].State))
+					convey.So(len(wireLayers[layerIndex].Prediction), convey.ShouldEqual, len(referenceLayers[layerIndex].Prediction))
+					wireStateWorst = math.Max(wireStateWorst, maxAbsDiff(wireLayers[layerIndex].State, referenceLayers[layerIndex].State))
+					wirePredictionWorst = math.Max(wirePredictionWorst, maxAbsDiff(wireLayers[layerIndex].Prediction, referenceLayers[layerIndex].Prediction))
+
+					for _, value := range wireLayers[layerIndex].Prediction {
+						wirePredictionMass += math.Abs(value)
+					}
+				}
 			}
 
 			convey.So(latentWorst, convey.ShouldBeLessThan, 5e-2)
 			convey.So(energyWorst, convey.ShouldBeLessThan, 5e-1)
 			convey.So(surpriseWorst, convey.ShouldBeLessThan, 5e-1)
+			convey.So(wireStateWorst, convey.ShouldBeLessThan, 5e-2)
+			convey.So(wirePredictionWorst, convey.ShouldBeLessThan, 5e-1)
+			convey.So(wirePredictionMass, convey.ShouldBeGreaterThan, 0)
 		})
 	})
 }

@@ -5,7 +5,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/transport"
+	"github.com/theapemachine/nomagique"
 )
 
 func contagionConfig() *datura.Artifact {
@@ -18,7 +18,7 @@ func TestContagion_Read(testingTB *testing.T) {
 	Convey("Given a populated table", testingTB, func() {
 		stage := NewContagion(contagionConfig())
 		artifact := tableInbound(16, 1.0)
-		err := transport.NewFlipFlop(artifact, stage)
+		err := nomagique.RoundTripArtifact(artifact, stage)
 
 		So(err, ShouldBeNil)
 		So(datura.Peek[float64](artifact, "paired"), ShouldBeGreaterThan, 0)

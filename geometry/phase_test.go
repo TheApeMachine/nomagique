@@ -5,7 +5,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/transport"
+	"github.com/theapemachine/nomagique"
 )
 
 func TestCouplingRead(testingTB *testing.T) {
@@ -26,7 +26,7 @@ func TestCouplingRead(testingTB *testing.T) {
 		Convey("Given "+testCase.name, testingTB, func() {
 			stage := NewCoupling(couplingConfig("coupling-config"))
 			artifact := couplingWire(datura.Acquire("test", datura.APPJSON), testCase.left, testCase.right)
-			err := transport.NewFlipFlop(artifact, stage)
+			err := nomagique.RoundTripArtifact(artifact, stage)
 
 			So(err, ShouldBeNil)
 
@@ -41,7 +41,7 @@ func TestCouplingRead(testingTB *testing.T) {
 	Convey("Given empty inbound wire", testingTB, func() {
 		stage := NewCoupling(couplingConfig("coupling-config"))
 		artifact := datura.Acquire("test", datura.APPJSON)
-		err := transport.NewFlipFlop(artifact, stage)
+		err := nomagique.RoundTripArtifact(artifact, stage)
 
 		Convey("It should return a validation error", func() {
 			So(err, ShouldNotBeNil)
@@ -53,7 +53,7 @@ func TestVelocityRead(testingTB *testing.T) {
 	Convey("Given empty inbound wire", testingTB, func() {
 		stage := NewVelocity(velocityConfig("velocity-config"))
 		artifact := datura.Acquire("test", datura.APPJSON)
-		err := transport.NewFlipFlop(artifact, stage)
+		err := nomagique.RoundTripArtifact(artifact, stage)
 
 		Convey("It should return a validation error", func() {
 			So(err, ShouldNotBeNil)
@@ -63,7 +63,7 @@ func TestVelocityRead(testingTB *testing.T) {
 	Convey("Given a first velocity sample", testingTB, func() {
 		stage := NewVelocity(velocityConfig("velocity-config"))
 		artifact := velocityWire(datura.Acquire("test", datura.APPJSON), 1)
-		err := transport.NewFlipFlop(artifact, stage)
+		err := nomagique.RoundTripArtifact(artifact, stage)
 
 		Convey("It should return a span error", func() {
 			So(err, ShouldNotBeNil)
@@ -73,10 +73,10 @@ func TestVelocityRead(testingTB *testing.T) {
 	Convey("Given velocity history", testingTB, func() {
 		stage := NewVelocity(velocityConfig("velocity-config"))
 		artifact := velocityWire(datura.Acquire("test", datura.APPJSON), 1)
-		_ = transport.NewFlipFlop(artifact, stage)
+		_ = nomagique.RoundTripArtifact(artifact, stage)
 
 		artifact = velocityWire(datura.Acquire("test", datura.APPJSON), 1.5)
-		err := transport.NewFlipFlop(artifact, stage)
+		err := nomagique.RoundTripArtifact(artifact, stage)
 
 		So(err, ShouldBeNil)
 
@@ -96,19 +96,19 @@ func BenchmarkCouplingRead(testingTB *testing.B) {
 
 	for testingTB.Loop() {
 		couplingWire(artifact, 1.7, -0.9)
-		_ = transport.NewFlipFlop(artifact, stage)
+		_ = nomagique.RoundTripArtifact(artifact, stage)
 	}
 }
 
 func BenchmarkVelocityRead(testingTB *testing.B) {
 	stage := NewVelocity(velocityConfig("velocity-config-bench"))
 	artifact := velocityWire(datura.Acquire("test", datura.APPJSON), 1)
-	_ = transport.NewFlipFlop(artifact, stage)
+	_ = nomagique.RoundTripArtifact(artifact, stage)
 
 	testingTB.ReportAllocs()
 
 	for testingTB.Loop() {
 		velocityWire(artifact, 1.5)
-		_ = transport.NewFlipFlop(artifact, stage)
+		_ = nomagique.RoundTripArtifact(artifact, stage)
 	}
 }

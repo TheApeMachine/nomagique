@@ -5,7 +5,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/transport"
+	"github.com/theapemachine/nomagique"
 )
 
 func klConfig(name string) *datura.Artifact {
@@ -24,7 +24,7 @@ func TestKLDivergenceRead(t *testing.T) {
 
 		for index := 0; index < len(observed); index++ {
 			wired := PairWire(artifact, "sample", "paired", observed[index], expected[index])
-			err := transport.NewFlipFlop(wired, kl)
+			err := nomagique.RoundTripArtifact(wired, kl)
 
 			if index < 1 {
 				So(err, ShouldNotBeNil)
@@ -49,7 +49,7 @@ func TestKLDivergenceRead(t *testing.T) {
 
 		for index := range observed {
 			wired := PairWire(artifact, "sample", "paired", observed[index], expected[index])
-			err := transport.NewFlipFlop(wired, kl)
+			err := nomagique.RoundTripArtifact(wired, kl)
 
 			if index < 1 {
 				So(err, ShouldNotBeNil)

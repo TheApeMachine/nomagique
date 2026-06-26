@@ -5,7 +5,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/transport"
+	"github.com/theapemachine/nomagique"
 )
 
 func TestFeatureSampleRead(t *testing.T) {
@@ -16,7 +16,7 @@ func TestFeatureSampleRead(t *testing.T) {
 		frame := datura.Acquire("feature-sample-frame", datura.APPJSON)
 		frame.Merge("features", []float64{10, 20, 30})
 
-		err := transport.NewFlipFlop(frame, stage)
+		err := nomagique.RoundTripArtifact(frame, stage)
 
 		So(err, ShouldBeNil)
 		So(datura.Peek[float64](frame, "output", "value"), ShouldEqual, 20)
@@ -30,7 +30,7 @@ func TestFeatureSampleRead(t *testing.T) {
 		frame := datura.Acquire("feature-sample-frame", datura.APPJSON)
 		frame.Merge("features", []float64{10, 20})
 
-		err := transport.NewFlipFlop(frame, stage)
+		err := nomagique.RoundTripArtifact(frame, stage)
 
 		So(err, ShouldNotBeNil)
 	})
@@ -46,6 +46,6 @@ func BenchmarkFeatureSampleRead(testingTB *testing.B) {
 	testingTB.ReportAllocs()
 
 	for testingTB.Loop() {
-		_ = transport.NewFlipFlop(frame, stage)
+		_ = nomagique.RoundTripArtifact(frame, stage)
 	}
 }

@@ -4,8 +4,8 @@ import (
 	"io"
 
 	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/transport"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/nomagique"
 )
 
 /*
@@ -42,7 +42,7 @@ func NewCircuit(artifact *datura.Artifact, rules Rules) *Circuit {
 func (circuit *Circuit) Read(payload []byte) (int, error) {
 	state := datura.Acquire("circuit-state", datura.APPJSON)
 
-	if _, err := state.Write(circuit.artifact.DecryptPayload()); err != nil {
+	if _, err := state.Unpack(circuit.artifact.DecryptPayload()); err != nil {
 		state.Release()
 
 		return 0, errnie.Error(errnie.Err(
@@ -94,7 +94,7 @@ func (circuit *Circuit) Read(payload []byte) (int, error) {
 			))
 		}
 
-		if _, err = scratch.Write(packed); err != nil {
+		if _, err = scratch.Unpack(packed); err != nil {
 			scratch.Release()
 
 			return 0, errnie.Error(errnie.Err(
@@ -119,7 +119,7 @@ func (circuit *Circuit) Read(payload []byte) (int, error) {
 			scratch.Poke(inputs, "inputs")
 		}
 
-		if err = transport.NewFlipFlop(scratch, rule.Then); err != nil {
+		if err = nomagique.RoundTripArtifact(scratch, rule.Then); err != nil {
 			scratch.Release()
 
 			return 0, errnie.Error(errnie.Err(
@@ -140,7 +140,7 @@ func (circuit *Circuit) Read(payload []byte) (int, error) {
 			))
 		}
 
-		if _, err = state.Write(packed); err != nil {
+		if _, err = state.Unpack(packed); err != nil {
 			return 0, errnie.Error(errnie.Err(
 				errnie.IO,
 				"logic: circuit state write failed",
@@ -158,13 +158,13 @@ func (circuit *Circuit) Read(payload []byte) (int, error) {
 		state.Poke([]string{"value"}, "inputs")
 	}
 
-	return state.Read(payload)
+	return state.PackInto(payload)
 }
 
 func (circuit *Circuit) Write(payload []byte) (int, error) {
 	inbound := datura.Acquire("logic-inbound", datura.APPJSON)
 
-	if _, err := inbound.Write(payload); err != nil {
+	if _, err := inbound.Unpack(payload); err != nil {
 		errnie.Error(errnie.Err(
 			errnie.IO,
 			"logic: circuit inbound write failed",

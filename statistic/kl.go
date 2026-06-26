@@ -26,7 +26,7 @@ func NewKLDivergence(artifact *datura.Artifact) *KLDivergence {
 func (klDivergence *KLDivergence) Read(payload []byte) (int, error) {
 	state := datura.Acquire("kl-divergence-state", datura.APPJSON)
 
-	if _, err := state.Write(klDivergence.artifact.DecryptPayload()); err != nil {
+	if _, err := state.Unpack(klDivergence.artifact.DecryptPayload()); err != nil {
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"kl-divergence: state write failed",
@@ -202,7 +202,7 @@ func (klDivergence *KLDivergence) Read(payload []byte) (int, error) {
 	state.Poke("output", "root")
 	state.Poke([]string{outputKey}, "inputs")
 
-	return state.Read(payload)
+	return state.PackInto(payload)
 }
 
 func (klDivergence *KLDivergence) Write(payload []byte) (int, error) {

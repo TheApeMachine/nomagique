@@ -5,7 +5,6 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/transport"
 	"github.com/theapemachine/nomagique"
 	"github.com/theapemachine/nomagique/geometry"
 )
@@ -33,7 +32,7 @@ func TestIntegration(t *testing.T) {
 			pipeline := nomagique.Number(geometry.NewCoupling(datura.Acquire("coupling-config", datura.APPJSON).
 				Poke("sample", "sampleKey").
 				Poke("paired", "pairedKey")))
-			err := transport.NewFlipFlop(artifact, pipeline)
+			err := nomagique.RoundTripArtifact(artifact, pipeline)
 
 			So(err, ShouldBeNil)
 			So(datura.Peek[float64](artifact, "output", "value"), ShouldAlmostEqual, 1, 1e-9)
@@ -45,12 +44,12 @@ func TestIntegration(t *testing.T) {
 				Poke("sample", "input")))
 
 			velocityWire(artifact, 1)
-			err := transport.NewFlipFlop(artifact, pipeline)
+			err := nomagique.RoundTripArtifact(artifact, pipeline)
 
 			So(err, ShouldNotBeNil)
 
 			velocityWire(artifact, 1.5)
-			err = transport.NewFlipFlop(artifact, pipeline)
+			err = nomagique.RoundTripArtifact(artifact, pipeline)
 
 			So(err, ShouldBeNil)
 			So(datura.Peek[float64](artifact, "output", "value"), ShouldAlmostEqual, 0.5, 1e-12)
@@ -74,7 +73,7 @@ func TestIntegration(t *testing.T) {
 			So(err, ShouldBeNil)
 
 			artifact := datura.Acquire("test", datura.APPJSON)
-			err = transport.NewFlipFlop(artifact, nomagique.Number(stage))
+			err = nomagique.RoundTripArtifact(artifact, nomagique.Number(stage))
 
 			So(err, ShouldBeNil)
 			So(datura.Peek[float64](artifact, "output", "value"), ShouldBeLessThan, 1e-10)
@@ -85,7 +84,7 @@ func TestIntegration(t *testing.T) {
 			rotor := geometry.NewRotor(datura.Acquire("rotor-config", datura.APPJSON))
 
 			artifact.Poke([]float64{0, 1, 0, 0}, "batch")
-			err := transport.NewFlipFlop(artifact, rotor)
+			err := nomagique.RoundTripArtifact(artifact, rotor)
 
 			So(err, ShouldBeNil)
 
@@ -95,7 +94,7 @@ func TestIntegration(t *testing.T) {
 			)
 
 			artifact.Poke([]float64{1, 0, 0, 0, 0, 0, 0, 0}, "batch")
-			err = transport.NewFlipFlop(artifact, nomagique.Number(sandwich))
+			err = nomagique.RoundTripArtifact(artifact, nomagique.Number(sandwich))
 
 			So(err, ShouldBeNil)
 			So(datura.Peek[float64](artifact, "output", "value"), ShouldEqual, 1)

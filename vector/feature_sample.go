@@ -28,7 +28,7 @@ func NewFeatureSample(config *datura.Artifact) *FeatureSample {
 func (featureSample *FeatureSample) Read(payload []byte) (int, error) {
 	state := datura.Acquire("feature-sample-state", datura.APPJSON)
 
-	if _, err := state.Write(featureSample.config.DecryptPayload()); err != nil {
+	if _, err := state.Unpack(featureSample.config.DecryptPayload()); err != nil {
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"feature-sample: state write failed",
@@ -61,7 +61,7 @@ func (featureSample *FeatureSample) Read(payload []byte) (int, error) {
 	state.Poke("output", "root")
 	state.Poke([]string{"value"}, "inputs")
 
-	return state.Read(payload)
+	return state.PackInto(payload)
 }
 
 func (featureSample *FeatureSample) Write(payload []byte) (int, error) {

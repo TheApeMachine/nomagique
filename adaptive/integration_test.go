@@ -8,7 +8,6 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/transport"
 	"github.com/theapemachine/nomagique"
 	"github.com/theapemachine/nomagique/adaptive"
 )
@@ -28,18 +27,18 @@ func TestIntegration(t *testing.T) {
 			deltaConfig := datura.Acquire("delta-config", datura.APPJSON).Poke("value", "input")
 
 			pipeline := nomagique.Number(adaptive.NewEMA(emaConfig), adaptive.NewDelta(deltaConfig))
-			err := transport.NewFlipFlop(artifact, pipeline)
+			err := nomagique.RoundTripArtifact(artifact, pipeline)
 
 			So(err, ShouldBeIn, nil, io.EOF)
 
 			Convey("It should bootstrap then emit unit-normalized deltas", func() {
 				adaptive.ScalarWire(artifact, "sample", 20)
-				err := transport.NewFlipFlop(artifact, pipeline)
+				err := nomagique.RoundTripArtifact(artifact, pipeline)
 
 				So(err, ShouldBeIn, nil, io.EOF)
 
 				adaptive.ScalarWire(artifact, "sample", 30)
-				err = transport.NewFlipFlop(artifact, pipeline)
+				err = nomagique.RoundTripArtifact(artifact, pipeline)
 
 				So(err, ShouldBeIn, nil, io.EOF)
 
@@ -61,31 +60,31 @@ func TestIntegration(t *testing.T) {
 					adaptive.NewDelta(datura.Acquire("delta-ref-config", datura.APPJSON).Poke("value", "input")),
 				)
 
-				err := transport.NewFlipFlop(mainArtifact, mainPipeline)
+				err := nomagique.RoundTripArtifact(mainArtifact, mainPipeline)
 
 				So(err, ShouldBeIn, nil, io.EOF)
 
-				err = transport.NewFlipFlop(referenceArtifact, referencePipeline)
+				err = nomagique.RoundTripArtifact(referenceArtifact, referencePipeline)
 
 				So(err, ShouldBeIn, nil, io.EOF)
 
 				adaptive.ScalarWire(mainArtifact, "sample", 20)
 				adaptive.ScalarWire(referenceArtifact, "sample", 20)
-				err = transport.NewFlipFlop(mainArtifact, mainPipeline)
+				err = nomagique.RoundTripArtifact(mainArtifact, mainPipeline)
 
 				So(err, ShouldBeIn, nil, io.EOF)
 
-				err = transport.NewFlipFlop(referenceArtifact, referencePipeline)
+				err = nomagique.RoundTripArtifact(referenceArtifact, referencePipeline)
 
 				So(err, ShouldBeIn, nil, io.EOF)
 
 				adaptive.ScalarWire(mainArtifact, "sample", 30)
 				adaptive.ScalarWire(referenceArtifact, "sample", 30)
-				err = transport.NewFlipFlop(mainArtifact, mainPipeline)
+				err = nomagique.RoundTripArtifact(mainArtifact, mainPipeline)
 
 				So(err, ShouldBeIn, nil, io.EOF)
 
-				err = transport.NewFlipFlop(referenceArtifact, referencePipeline)
+				err = nomagique.RoundTripArtifact(referenceArtifact, referencePipeline)
 
 				So(err, ShouldBeIn, nil, io.EOF)
 				So(
@@ -99,12 +98,12 @@ func TestIntegration(t *testing.T) {
 				retained := adaptive.ScalarWire(datura.Acquire("test", datura.APPJSON), "sample", 10)
 				exponential := adaptive.NewEMA(emaConfigArtifact("ema-config"))
 
-				err := transport.NewFlipFlop(retained, exponential)
+				err := nomagique.RoundTripArtifact(retained, exponential)
 
 				So(err, ShouldBeIn, nil, io.EOF)
 
 				adaptive.ScalarWire(retained, "sample", 20)
-				err = transport.NewFlipFlop(retained, exponential)
+				err = nomagique.RoundTripArtifact(retained, exponential)
 
 				So(err, ShouldBeNil)
 				So(datura.Peek[float64](retained, "output", "value"), ShouldBeGreaterThan, 0)
@@ -122,23 +121,23 @@ func TestIntegration(t *testing.T) {
 				adaptive.NewVariance(varianceConfig),
 				adaptive.NewZScore(zscoreConfig),
 			)
-			err := transport.NewFlipFlop(artifact, pipeline)
+			err := nomagique.RoundTripArtifact(artifact, pipeline)
 
 			So(err, ShouldNotBeNil)
 
 			Convey("It should warm up then emit finite surprise scores", func() {
 				adaptive.ScalarWire(artifact, "sample", 22)
-				err := transport.NewFlipFlop(artifact, pipeline)
+				err := nomagique.RoundTripArtifact(artifact, pipeline)
 
 				So(err, ShouldNotBeNil)
 
 				adaptive.ScalarWire(artifact, "sample", 30)
-				err = transport.NewFlipFlop(artifact, pipeline)
+				err = nomagique.RoundTripArtifact(artifact, pipeline)
 
 				So(err, ShouldBeIn, nil, io.EOF)
 
 				adaptive.ScalarWire(artifact, "sample", 40)
-				err = transport.NewFlipFlop(artifact, pipeline)
+				err = nomagique.RoundTripArtifact(artifact, pipeline)
 
 				So(err, ShouldBeNil)
 
@@ -157,17 +156,17 @@ func TestIntegration(t *testing.T) {
 					adaptive.NewEMA(parallelEMA),
 					adaptive.NewVariance(parallelVariance),
 				)
-				err := transport.NewFlipFlop(varianceArtifact, variancePipeline)
+				err := nomagique.RoundTripArtifact(varianceArtifact, variancePipeline)
 
 				So(err, ShouldNotBeNil)
 
 				adaptive.ScalarWire(varianceArtifact, "sample", 22)
-				err = transport.NewFlipFlop(varianceArtifact, variancePipeline)
+				err = nomagique.RoundTripArtifact(varianceArtifact, variancePipeline)
 
 				So(err, ShouldBeIn, nil, io.EOF)
 
 				adaptive.ScalarWire(varianceArtifact, "sample", 30)
-				err = transport.NewFlipFlop(varianceArtifact, variancePipeline)
+				err = nomagique.RoundTripArtifact(varianceArtifact, variancePipeline)
 
 				So(err, ShouldBeNil)
 				So(datura.Peek[float64](varianceArtifact, "output", "value"), ShouldBeGreaterThan, 0)
@@ -180,16 +179,16 @@ func TestIntegration(t *testing.T) {
 			pipeline := nomagique.Number(adaptive.NewRange(rangeConfig), adaptive.NewMomentum(momentumConfig))
 
 			artifact := adaptive.ScalarWire(datura.Acquire("test", datura.APPJSON), "sample", 1)
-			err := transport.NewFlipFlop(artifact, pipeline)
+			err := nomagique.RoundTripArtifact(artifact, pipeline)
 
 			So(err, ShouldNotBeNil)
 
 			Convey("It should bootstrap then emit signed unit-normalized momentum", func() {
 				artifact = adaptive.ScalarWire(datura.Acquire("test", datura.APPJSON), "sample", 3)
-				So(transport.NewFlipFlop(artifact, pipeline), ShouldBeIn, nil, io.EOF)
+				So(nomagique.RoundTripArtifact(artifact, pipeline), ShouldBeIn, nil, io.EOF)
 
 				artifact = adaptive.ScalarWire(datura.Acquire("test", datura.APPJSON), "sample", 5)
-				err := transport.NewFlipFlop(artifact, pipeline)
+				err := nomagique.RoundTripArtifact(artifact, pipeline)
 
 				So(err, ShouldBeNil)
 
@@ -203,10 +202,10 @@ func TestIntegration(t *testing.T) {
 
 			Convey("It should accept a second FlipFlop on the same pipeline", func() {
 				artifact = adaptive.ScalarWire(datura.Acquire("test", datura.APPJSON), "sample", 3)
-				So(transport.NewFlipFlop(artifact, pipeline), ShouldBeIn, nil, io.EOF)
+				So(nomagique.RoundTripArtifact(artifact, pipeline), ShouldBeIn, nil, io.EOF)
 
 				artifact = adaptive.ScalarWire(datura.Acquire("test", datura.APPJSON), "sample", 5)
-				err := transport.NewFlipFlop(artifact, pipeline)
+				err := nomagique.RoundTripArtifact(artifact, pipeline)
 
 				So(err, ShouldBeNil)
 			})
@@ -225,14 +224,14 @@ func TestIntegration(t *testing.T) {
 				adaptive.NewRange(rangeConfig),
 				adaptive.NewTimeElastic(timeElasticConfig),
 			)
-			err := transport.NewFlipFlop(artifact, pipeline)
+			err := nomagique.RoundTripArtifact(artifact, pipeline)
 
 			So(err, ShouldNotBeNil)
 
 			Convey("It should bootstrap at unity then stay finite and positive", func() {
 				second := adaptive.ScalarWire(datura.Acquire("test", datura.APPJSON), "sample", 14)
 				second.Merge("at", float64(time.Unix(0, int64(5*time.Hour)).UnixNano()))
-				err := transport.NewFlipFlop(second, pipeline)
+				err := nomagique.RoundTripArtifact(second, pipeline)
 
 				So(err, ShouldBeIn, nil, io.EOF)
 				So(datura.Peek[float64](second, "output", "value"), ShouldBeGreaterThan, 0)

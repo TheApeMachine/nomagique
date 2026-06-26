@@ -5,7 +5,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/transport"
+	"github.com/theapemachine/nomagique"
 )
 
 func causalPipelineConfig(contagionBreak float64) *datura.Artifact {
@@ -45,7 +45,7 @@ func TestRegime_Read(testingTB *testing.T) {
 		stage := NewRegime(causalPipelineConfig(0.8))
 		artifact := tableInbound(16, 0.1)
 		artifact.Poke(0.1, "paired")
-		err := transport.NewFlipFlop(artifact, stage)
+		err := nomagique.RoundTripArtifact(artifact, stage)
 
 		So(err, ShouldBeNil)
 		So(datura.Peek[float64](artifact, "output", "rawInverted"), ShouldEqual, 0)
@@ -55,7 +55,7 @@ func TestRegime_Read(testingTB *testing.T) {
 		stage := NewRegime(causalPipelineConfig(0.5))
 		artifact := tableInbound(16, 0.1)
 		artifact.Poke(0.95, "paired")
-		err := transport.NewFlipFlop(artifact, stage)
+		err := nomagique.RoundTripArtifact(artifact, stage)
 
 		So(err, ShouldBeNil)
 		So(datura.Peek[float64](artifact, "output", "rawInverted"), ShouldEqual, 1)

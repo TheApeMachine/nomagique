@@ -5,7 +5,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/transport"
+	"github.com/theapemachine/nomagique"
 )
 
 func TestNewCUSUM(testingTB *testing.T) {
@@ -22,7 +22,7 @@ func TestCUSUMRead(testingTB *testing.T) {
 	Convey("Given empty inbound wire", testingTB, func() {
 		changeSum := NewCUSUM(cusumConfig("cusum-config"))
 		artifact := datura.Acquire("test", datura.APPJSON)
-		err := transport.NewFlipFlop(artifact, changeSum)
+		err := nomagique.RoundTripArtifact(artifact, changeSum)
 
 		Convey("It should return a validation error", func() {
 			So(err, ShouldNotBeNil)
@@ -34,7 +34,7 @@ func TestCUSUMRead(testingTB *testing.T) {
 		artifact := datura.Acquire("test", datura.APPJSON)
 
 		scalarWire(artifact, "sample", 10)
-		err := transport.NewFlipFlop(artifact, changeSum)
+		err := nomagique.RoundTripArtifact(artifact, changeSum)
 
 		Convey("It should return a span error", func() {
 			So(err, ShouldNotBeNil)
@@ -46,10 +46,10 @@ func TestCUSUMRead(testingTB *testing.T) {
 		artifact := datura.Acquire("test", datura.APPJSON)
 
 		scalarWire(artifact, "sample", 10)
-		_ = transport.NewFlipFlop(artifact, changeSum)
+		_ = nomagique.RoundTripArtifact(artifact, changeSum)
 
 		scalarWire(artifact, "sample", 25)
-		err := transport.NewFlipFlop(artifact, changeSum)
+		err := nomagique.RoundTripArtifact(artifact, changeSum)
 
 		So(err, ShouldBeNil)
 
@@ -65,10 +65,10 @@ func TestCUSUMRead(testingTB *testing.T) {
 		artifact := datura.Acquire("test", datura.APPJSON)
 
 		scalarWire(artifact, "sample", 10)
-		_ = transport.NewFlipFlop(artifact, changeSum)
+		_ = nomagique.RoundTripArtifact(artifact, changeSum)
 
 		scalarWire(artifact, "sample", 8)
-		err := transport.NewFlipFlop(artifact, changeSum)
+		err := nomagique.RoundTripArtifact(artifact, changeSum)
 
 		So(err, ShouldBeNil)
 
@@ -78,10 +78,10 @@ func TestCUSUMRead(testingTB *testing.T) {
 		reference := datura.Acquire("test", datura.APPJSON)
 
 		scalarWire(reference, "sample", 10)
-		_ = transport.NewFlipFlop(reference, combined)
+		_ = nomagique.RoundTripArtifact(reference, combined)
 
 		scalarWire(reference, "sample", 8)
-		err = transport.NewFlipFlop(reference, combined)
+		err = nomagique.RoundTripArtifact(reference, combined)
 
 		So(err, ShouldBeNil)
 
@@ -96,13 +96,13 @@ func TestCUSUMRead(testingTB *testing.T) {
 		changeSum := NewCUSUM(cusumConfig("cusum-config"))
 		artifact := scalarWire(datura.Acquire("test", datura.APPJSON), "sample", 10)
 
-		_ = transport.NewFlipFlop(artifact, changeSum)
+		_ = nomagique.RoundTripArtifact(artifact, changeSum)
 
 		scalarWire(artifact, "sample", 25)
-		_ = transport.NewFlipFlop(artifact, changeSum)
+		_ = nomagique.RoundTripArtifact(artifact, changeSum)
 
 		resetArtifact := datura.Acquire("test", datura.APPJSON).Poke(1, "reset")
-		err := transport.NewFlipFlop(resetArtifact, changeSum)
+		err := nomagique.RoundTripArtifact(resetArtifact, changeSum)
 
 		So(err, ShouldNotBeNil)
 
@@ -118,14 +118,14 @@ func BenchmarkCUSUMRead(testingTB *testing.B) {
 	artifact := datura.Acquire("test", datura.APPJSON)
 
 	scalarWire(artifact, "sample", 10)
-	_ = transport.NewFlipFlop(artifact, changeSum)
+	_ = nomagique.RoundTripArtifact(artifact, changeSum)
 	scalarWire(artifact, "sample", 10.5)
-	_ = transport.NewFlipFlop(artifact, changeSum)
+	_ = nomagique.RoundTripArtifact(artifact, changeSum)
 
 	testingTB.ReportAllocs()
 
 	for testingTB.Loop() {
 		scalarWire(artifact, "sample", 10.5)
-		_ = transport.NewFlipFlop(artifact, changeSum)
+		_ = nomagique.RoundTripArtifact(artifact, changeSum)
 	}
 }

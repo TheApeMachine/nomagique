@@ -27,7 +27,7 @@ func NewBivariateMoment(artifact *datura.Artifact) *BivariateMoment {
 func (bivariateMoment *BivariateMoment) Read(payload []byte) (int, error) {
 	state := datura.Acquire("bivariate-moment-state", datura.APPJSON)
 
-	if _, err := state.Write(bivariateMoment.artifact.DecryptPayload()); err != nil {
+	if _, err := state.Unpack(bivariateMoment.artifact.DecryptPayload()); err != nil {
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"bivariate-moment: state write failed",
@@ -166,7 +166,7 @@ func (bivariateMoment *BivariateMoment) Read(payload []byte) (int, error) {
 	state.Poke("output", "root")
 	state.Poke([]string{outputKey}, "inputs")
 
-	return state.Read(payload)
+	return state.PackInto(payload)
 }
 
 func (bivariateMoment *BivariateMoment) Write(payload []byte) (int, error) {

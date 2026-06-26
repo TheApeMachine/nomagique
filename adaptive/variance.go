@@ -33,7 +33,7 @@ func NewVariance(artifact *datura.Artifact) *Variance {
 func (variance *Variance) Read(payload []byte) (int, error) {
 	state := datura.Acquire("variance-state", datura.APPJSON)
 
-	if _, err := state.Write(variance.artifact.DecryptPayload()); err != nil {
+	if _, err := state.Unpack(variance.artifact.DecryptPayload()); err != nil {
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"variance: state write failed",
@@ -135,7 +135,7 @@ func (variance *Variance) Read(payload []byte) (int, error) {
 	state.Poke("output", "root")
 	state.Poke([]string{"value"}, "inputs")
 
-	return state.Read(payload)
+	return state.PackInto(payload)
 }
 
 func (variance *Variance) Write(p []byte) (int, error) {

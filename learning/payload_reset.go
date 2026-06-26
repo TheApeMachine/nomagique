@@ -9,7 +9,7 @@ func payloadHasReset(payload []byte) bool {
 
 	state := datura.Acquire("learning-inbound", datura.APPJSON)
 
-	if _, err := state.Write(payload); err != nil {
+	if _, err := state.Unpack(payload); err != nil {
 		return false
 	}
 

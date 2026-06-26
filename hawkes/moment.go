@@ -29,7 +29,7 @@ func NewMoment(artifact *datura.Artifact) *Moment {
 func (moment *Moment) Read(p []byte) (int, error) {
 	state := datura.Acquire("hawkes-moment-state", datura.APPJSON)
 
-	if _, err := state.Write(moment.artifact.DecryptPayload()); err != nil {
+	if _, err := state.Unpack(moment.artifact.DecryptPayload()); err != nil {
 		state.Release()
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
@@ -96,7 +96,7 @@ func (moment *Moment) Read(p []byte) (int, error) {
 	state.Poke("output", "root")
 	state.Poke([]string{"value", "empirical", "theoretical", "confidence"}, "inputs")
 
-	return state.Read(p)
+	return state.PackInto(p)
 }
 
 func (moment *Moment) Write(p []byte) (int, error) {

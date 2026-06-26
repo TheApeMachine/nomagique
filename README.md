@@ -97,7 +97,7 @@ L2 book aggregates price levels; **L3 order events** (add/delete + trade correla
 
 ---
 
-Compose with `datura/transport`:
+Compose with explicit packed artifact frames:
 
 ```go
 emaConfig := datura.Acquire("ema-config", datura.APPJSON).
@@ -111,7 +111,7 @@ wire.Poke([]string{"sample"}, "inputs")
 wire.Merge("features", []float64{10})
 
 pipeline := nomagique.Number(adaptive.NewEMA(emaConfig), adaptive.NewDelta(deltaConfig))
-err := transport.NewFlipFlop(wire, pipeline)
+err := nomagique.RoundTripArtifact(wire, pipeline)
 ```
 
 **Migration:** `learning/`, `probability/`, and parts of `geometry/` still expose legacy `Observe`/`Reset` APIs. Target primitives live in `adaptive/`, `statistic/`, `vector/`, and `correlation/Pearson`. See `core/dynamic.go`.
@@ -120,7 +120,7 @@ err := transport.NewFlipFlop(wire, pipeline)
 
 | Layer | Role | Example |
 |-------|------|---------|
-| Boundary | `transport.NewFlipFlop` — artifact in, artifact out | `transport.NewFlipFlop(wire, pipeline)` |
+| Boundary | packed artifact frame in, packed artifact frame out | `nomagique.RoundTripArtifact(wire, pipeline)` |
 | Pipeline | `nomagique.Number(stages...)` | `nomagique.Number(ema, delta)` |
 | Stage | Four-method primitive | `adaptive.NewEMA(configArtifact)` |
 

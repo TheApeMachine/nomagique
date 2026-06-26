@@ -35,7 +35,7 @@ func NewLogReturn(artifact *datura.Artifact) *LogReturn {
 func (logReturn *LogReturn) Read(payload []byte) (int, error) {
 	state := datura.Acquire("log-return-state", datura.APPJSON)
 
-	if _, err := state.Write(logReturn.artifact.DecryptPayload()); err != nil {
+	if _, err := state.Unpack(logReturn.artifact.DecryptPayload()); err != nil {
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"log-return: state write failed",
@@ -100,11 +100,7 @@ func (logReturn *LogReturn) Read(payload []byte) (int, error) {
 	}
 
 	if returnLag <= 0 {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"log-return: returnLag required",
-			nil,
-		))
+		returnLag = 1
 	}
 
 	var sample float64
@@ -155,11 +151,7 @@ func (logReturn *LogReturn) Read(payload []byte) (int, error) {
 	seriesKey := datura.Peek[string](logReturn.artifact, stageKey, "seriesKey")
 
 	if seriesKey == "" {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"log-return: seriesKey required",
-			nil,
-		))
+		seriesKey = outputKey
 	}
 
 	scope, _ := state.Scope()
@@ -237,7 +229,7 @@ func (logReturn *LogReturn) Read(payload []byte) (int, error) {
 	state.Poke("output", "root")
 	state.Poke([]string{outputKey}, "inputs")
 
-	return state.Read(payload)
+	return state.PackInto(payload)
 }
 
 func (logReturn *LogReturn) Write(p []byte) (int, error) {

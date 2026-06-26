@@ -5,7 +5,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/transport"
+	"github.com/theapemachine/nomagique"
 )
 
 func TestNodeRingRead(t *testing.T) {
@@ -19,7 +19,7 @@ func TestNodeRingRead(t *testing.T) {
 			artifact := datura.Acquire("node-ring-test", datura.APPJSON).
 				Poke([]float64{1.0, 2.0}, "batch")
 
-			err := transport.NewFlipFlop(artifact, ring)
+			err := nomagique.RoundTripArtifact(artifact, ring)
 
 			So(err, ShouldBeNil)
 			So(datura.Peek[float64](artifact, "output", "value"), ShouldEqual, 2.0)
@@ -38,6 +38,6 @@ func BenchmarkNodeRingRead(b *testing.B) {
 		Poke([]float64{1.0, 2.0}, "batch")
 
 	for b.Loop() {
-		_ = transport.NewFlipFlop(artifact, ring)
+		_ = nomagique.RoundTripArtifact(artifact, ring)
 	}
 }

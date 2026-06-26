@@ -7,7 +7,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/transport"
+	"github.com/theapemachine/nomagique"
 )
 
 func logReturnConfig() *datura.Artifact {
@@ -42,7 +42,7 @@ func TestLogReturnRead(t *testing.T) {
 			artifact := logReturnFrame(sample, timestamp)
 			timestamp += int64(time.Second)
 
-			err := transport.NewFlipFlop(artifact, stage)
+			err := nomagique.RoundTripArtifact(artifact, stage)
 
 			if index == 0 {
 				So(err, ShouldNotBeNil)
@@ -89,7 +89,7 @@ func TestLogReturnReadLongReplayDoesNotGrowTraversal(t *testing.T) {
 			artifact := logReturnFrame(100.0+float64(index)*0.01, timestamp)
 			timestamp += int64(time.Millisecond)
 
-			err := transport.NewFlipFlop(artifact, stage)
+			err := nomagique.RoundTripArtifact(artifact, stage)
 
 			if index == 0 {
 				So(err, ShouldNotBeNil)
@@ -124,7 +124,7 @@ func BenchmarkLogReturnRead(b *testing.B) {
 	for _, sample := range []float64{100, 101, 102} {
 		artifact := logReturnFrame(sample, timestamp)
 		timestamp += int64(time.Second)
-		_ = transport.NewFlipFlop(artifact, stage)
+		_ = nomagique.RoundTripArtifact(artifact, stage)
 		artifact.Release()
 	}
 
@@ -133,7 +133,7 @@ func BenchmarkLogReturnRead(b *testing.B) {
 	for b.Loop() {
 		artifact := logReturnFrame(103.0, timestamp)
 		timestamp += int64(time.Second)
-		_ = transport.NewFlipFlop(artifact, stage)
+		_ = nomagique.RoundTripArtifact(artifact, stage)
 		artifact.Release()
 	}
 }

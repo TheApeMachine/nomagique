@@ -268,9 +268,16 @@ early-stop run per column so symbols converge independently.
                    reconstruction:(float *)reconstruction
                          reconLen:(uint32_t)reconLen
                             error:(NSString **)errorOut;
+- (BOOL)readWireSlot:(uint32_t)slot
+               state:(float *)state
+            stateLen:(uint32_t)stateLen
+          prediction:(float *)prediction
+       predictionLen:(uint32_t)predictionLen
+           errorNorm:(float *)errorNorm
+        errorNormLen:(uint32_t)errorNormLen
+                error:(NSString **)errorOut;
 @end
 
 void resonance_write_error(char *err_out, int err_cap, NSString *message);
-
 
 

@@ -5,7 +5,6 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/transport"
 	"github.com/theapemachine/nomagique"
 	"github.com/theapemachine/nomagique/probability"
 )
@@ -39,7 +38,7 @@ func TestClassifier_Read(testingTB *testing.T) {
 			"s3":       0.05,
 			"strength": 0.9,
 		})
-		err := transport.NewFlipFlop(artifact, classifier)
+		err := nomagique.RoundTripArtifact(artifact, classifier)
 
 		So(err, ShouldBeNil)
 
@@ -75,7 +74,7 @@ func TestClassifier_Read(testingTB *testing.T) {
 		artifact := artifactWithScores(map[string]float64{
 			"s0": 1,
 		})
-		err := transport.NewFlipFlop(artifact, classifier)
+		err := nomagique.RoundTripArtifact(artifact, classifier)
 
 		Convey("It should return a validation error", func() {
 			So(err, ShouldNotBeNil)
@@ -94,7 +93,7 @@ func TestClassifier_Read(testingTB *testing.T) {
 			"s3":       0,
 			"strength": 0,
 		})
-		err := transport.NewFlipFlop(artifact, classifier)
+		err := nomagique.RoundTripArtifact(artifact, classifier)
 
 		So(err, ShouldBeNil)
 
@@ -118,7 +117,7 @@ func TestClassifier_Number(testingTB *testing.T) {
 			"strength": 0.8,
 		})
 		pipeline := nomagique.Number(classifier)
-		err := transport.NewFlipFlop(artifact, pipeline)
+		err := nomagique.RoundTripArtifact(artifact, pipeline)
 
 		So(err, ShouldBeNil)
 
@@ -146,6 +145,6 @@ func BenchmarkClassifier_Read(b *testing.B) {
 	b.ReportAllocs()
 
 	for b.Loop() {
-		_ = transport.NewFlipFlop(artifact, classifier)
+		_ = nomagique.RoundTripArtifact(artifact, classifier)
 	}
 }

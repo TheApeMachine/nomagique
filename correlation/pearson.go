@@ -29,7 +29,7 @@ func NewPearson(artifact *datura.Artifact) *Pearson {
 func (pearson *Pearson) Read(p []byte) (int, error) {
 	state := datura.Acquire("pearson-state", datura.APPJSON)
 
-	if _, err := state.Write(pearson.artifact.DecryptPayload()); err != nil {
+	if _, err := state.Unpack(pearson.artifact.DecryptPayload()); err != nil {
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"correlation-pearson: state write failed",
@@ -126,7 +126,7 @@ func (pearson *Pearson) Read(p []byte) (int, error) {
 		state.Poke("output", "root")
 		state.Poke([]string{"value"}, "inputs")
 
-		return state.Read(p)
+		return state.PackInto(p)
 	}
 
 	if count > 0 && count < 2 {
@@ -180,7 +180,7 @@ func inboundReset(payload []byte) bool {
 
 	state := datura.Acquire("inbound-reset", datura.APPJSON)
 
-	if _, err := state.Write(payload); err != nil {
+	if _, err := state.Unpack(payload); err != nil {
 		return false
 	}
 

@@ -54,7 +54,7 @@ func TestFitTimesFromBinaryPayload(testingTB *testing.T) {
 		So(err, ShouldBeNil)
 
 		state := datura.Acquire("hawkes-fit-decode-test", datura.APPJSON)
-		_, writeStateErr := state.Write(fitStage.artifact.DecryptPayload())
+		_, writeStateErr := state.Unpack(fitStage.artifact.DecryptPayload())
 
 		So(writeStateErr, ShouldBeNil)
 

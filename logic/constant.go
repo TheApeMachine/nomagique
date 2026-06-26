@@ -24,7 +24,7 @@ func NewConstant(artifact *datura.Artifact) *Constant {
 func (constant *Constant) Read(payload []byte) (int, error) {
 	state := datura.Acquire("constant-state", datura.APPJSON)
 
-	if _, err := state.Write(constant.artifact.DecryptPayload()); err != nil {
+	if _, err := state.Unpack(constant.artifact.DecryptPayload()); err != nil {
 		return 0, errnie.Error(errnie.Err(
 			errnie.IO,
 			"logic: constant state write failed",
@@ -37,7 +37,7 @@ func (constant *Constant) Read(payload []byte) (int, error) {
 	state.Poke("output", "root")
 	state.Poke([]string{"value"}, "inputs")
 
-	return state.Read(payload)
+	return state.PackInto(payload)
 }
 
 func (constant *Constant) Write(payload []byte) (int, error) {

@@ -5,7 +5,6 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/transport"
 	"github.com/theapemachine/nomagique"
 	"github.com/theapemachine/nomagique/learning"
 )
@@ -32,7 +31,7 @@ func TestIntegration(t *testing.T) {
 		Convey("When Weight observes a matched prediction", func() {
 			artifact := pairWire(datura.Acquire("test", datura.APPJSON), 10, 10)
 			pipeline := nomagique.Number(learning.Weight(pairConfig("trust-weight-config")))
-			err := transport.NewFlipFlop(artifact, pipeline)
+			err := nomagique.RoundTripArtifact(artifact, pipeline)
 
 			So(err, ShouldBeNil)
 			So(datura.Peek[float64](artifact, "output", "value"), ShouldEqual, 1)
@@ -48,12 +47,12 @@ func TestIntegration(t *testing.T) {
 			)
 
 			artifact = pairWire(artifact, 10, 10)
-			err := transport.NewFlipFlop(artifact, pipeline)
+			err := nomagique.RoundTripArtifact(artifact, pipeline)
 
 			So(err, ShouldBeNil)
 
 			artifact = pairWire(artifact, 10, 15)
-			err = transport.NewFlipFlop(artifact, pipeline)
+			err = nomagique.RoundTripArtifact(artifact, pipeline)
 
 			So(err, ShouldBeNil)
 			So(datura.Peek[float64](artifact, "output", "value"), ShouldBeGreaterThan, 1)
@@ -66,7 +65,7 @@ func TestIntegration(t *testing.T) {
 
 			artifact := datura.Acquire("test", datura.APPJSON).
 				Poke([]float64{2, 4}, "batch")
-			err := transport.NewFlipFlop(artifact, nomagique.Number(stage))
+			err := nomagique.RoundTripArtifact(artifact, nomagique.Number(stage))
 
 			So(err, ShouldBeNil)
 			So(datura.Peek[float64](artifact, "output", "value"), ShouldBeGreaterThan, 0)

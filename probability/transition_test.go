@@ -7,7 +7,7 @@ import (
 	"github.com/bytedance/sonic"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/transport"
+	"github.com/theapemachine/nomagique"
 )
 
 func transitionSchema(numStates int, alpha float64) *datura.Artifact {
@@ -138,7 +138,7 @@ func TestTransitionSurprise_Read(testingTB *testing.T) {
 
 		artifact := transitionInboundArtifact(observed, 1)
 
-		err = transport.NewFlipFlop(artifact, stage)
+		err = nomagique.RoundTripArtifact(artifact, stage)
 
 		So(err, ShouldBeNil)
 
@@ -160,7 +160,7 @@ func TestTransitionSurprise_Reset(testingTB *testing.T) {
 
 		artifact := transitionInboundArtifact(observed, 2)
 
-		err = transport.NewFlipFlop(artifact, stage)
+		err = nomagique.RoundTripArtifact(artifact, stage)
 
 		So(err, ShouldBeNil)
 		So(datura.Peek[float64](stage.artifact, "transition", "lastCategory"), ShouldEqual, 1)
@@ -170,7 +170,7 @@ func TestTransitionSurprise_Reset(testingTB *testing.T) {
 		So(marshalErr, ShouldBeNil)
 
 		artifact = datura.Acquire("transition-test", datura.APPJSON).WithPayload(resetPayload)
-		err = transport.NewFlipFlop(artifact, stage)
+		err = nomagique.RoundTripArtifact(artifact, stage)
 
 		So(err, ShouldBeNil)
 
@@ -195,7 +195,7 @@ func BenchmarkTransitionSurprise_Read(testingTB *testing.B) {
 	testingTB.ReportAllocs()
 
 	for testingTB.Loop() {
-		_ = transport.NewFlipFlop(artifact, stage)
+		_ = nomagique.RoundTripArtifact(artifact, stage)
 	}
 }
 

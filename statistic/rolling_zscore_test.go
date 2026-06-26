@@ -7,7 +7,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/transport"
+	"github.com/theapemachine/nomagique"
 	"gonum.org/v1/gonum/stat"
 )
 
@@ -38,7 +38,7 @@ func TestRollingZScoreRead(t *testing.T) {
 			artifact := rollingZScoreFrame(sample, timestamp)
 			timestamp += int64(time.Second)
 
-			err := transport.NewFlipFlop(artifact, stage)
+			err := nomagique.RoundTripArtifact(artifact, stage)
 
 			if index == 0 {
 				So(err, ShouldNotBeNil)
@@ -107,7 +107,7 @@ func TestRollingZScoreRead(t *testing.T) {
 			artifact := rollingZScoreFrame(0.0, timestamp)
 			timestamp += int64(time.Second)
 
-			err := transport.NewFlipFlop(artifact, stage)
+			err := nomagique.RoundTripArtifact(artifact, stage)
 
 			if index == 0 {
 				So(err, ShouldNotBeNil)
@@ -129,7 +129,7 @@ func TestRollingZScoreRead(t *testing.T) {
 
 		artifact := rollingZScoreFrame(0.1, timestamp)
 
-		err := transport.NewFlipFlop(artifact, stage)
+		err := nomagique.RoundTripArtifact(artifact, stage)
 
 		So(err, ShouldBeNil)
 		So(datura.Peek[float64](artifact, "output", "value"), ShouldNotEqual, 0)
@@ -154,6 +154,6 @@ func BenchmarkRollingZScoreRead(b *testing.B) {
 	for b.Loop() {
 		timestamp += int64(time.Second)
 		artifact.SetTimestamp(timestamp)
-		_ = transport.NewFlipFlop(artifact, stage)
+		_ = nomagique.RoundTripArtifact(artifact, stage)
 	}
 }

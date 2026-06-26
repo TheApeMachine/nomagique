@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/transport"
+	"github.com/theapemachine/nomagique"
 )
 
 // TestFeatureExtractorReplayRead drives the extractor the way a real pipeline
@@ -16,7 +16,7 @@ func TestFeatureExtractorReplayRead(t *testing.T) {
 	for tick := range 1000 {
 		datapoint := datura.Acquire("test", datura.APPJSON).WithPayload(featureExtractorPayloadFixture)
 
-		if err := transport.NewFlipFlop(datapoint, extractor); err != nil {
+		if err := nomagique.RoundTripArtifact(datapoint, extractor); err != nil {
 			t.Fatalf("tick %d: %v", tick, err)
 		}
 

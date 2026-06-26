@@ -7,7 +7,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/transport"
+	"github.com/theapemachine/nomagique"
 	"gonum.org/v1/gonum/mat"
 )
 
@@ -27,7 +27,7 @@ func TestProcrustes_Observe(t *testing.T) {
 			So(err, ShouldBeNil)
 
 			artifact := datura.Acquire("test", datura.APPJSON)
-			err = transport.NewFlipFlop(artifact, stage)
+			err = nomagique.RoundTripArtifact(artifact, stage)
 
 			So(err, ShouldBeNil)
 
@@ -66,7 +66,7 @@ func TestProcrustes_Observe(t *testing.T) {
 			So(err, ShouldBeNil)
 
 			artifact := datura.Acquire("test", datura.APPJSON)
-			err = transport.NewFlipFlop(artifact, stage)
+			err = nomagique.RoundTripArtifact(artifact, stage)
 
 			So(err, ShouldBeNil)
 
@@ -92,7 +92,7 @@ func TestProcrustes_Observe(t *testing.T) {
 					Poke([]float64{1, 2, 3, 4}, "rowsB")
 				stage := NewProcrustes(config)
 				artifact := datura.Acquire("test", datura.APPJSON)
-				err := transport.NewFlipFlop(artifact, stage)
+				err := nomagique.RoundTripArtifact(artifact, stage)
 
 				So(err, ShouldNotBeNil)
 			})
@@ -107,7 +107,7 @@ func TestProcrustes_Observe(t *testing.T) {
 					Poke(rowsToFlat(matB, 4, 2), "rowsB")
 				stage := NewProcrustes(config)
 				artifact := datura.Acquire("test", datura.APPJSON)
-				err := transport.NewFlipFlop(artifact, stage)
+				err := nomagique.RoundTripArtifact(artifact, stage)
 
 				So(err, ShouldNotBeNil)
 			})
@@ -192,7 +192,7 @@ func BenchmarkProcrustes_Observe(b *testing.B) {
 
 	for b.Loop() {
 		artifact := datura.Acquire("test", datura.APPJSON)
-		_ = transport.NewFlipFlop(artifact, stage)
+		_ = nomagique.RoundTripArtifact(artifact, stage)
 	}
 }
 

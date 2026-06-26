@@ -6,7 +6,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/transport"
+	"github.com/theapemachine/nomagique"
 )
 
 func rlsConfig(name string, dimension int, initialVariance float64) *datura.Artifact {
@@ -29,7 +29,7 @@ func TestRLSRead(testingTB *testing.T) {
 	Convey("Given a non-positive dimension", testingTB, func() {
 		stage := NewRLS(rlsConfig("rls-config", 0, 1000))
 		artifact := datura.Acquire("test", datura.APPJSON).Poke([]float64{1, 2}, "batch")
-		err := transport.NewFlipFlop(artifact, stage)
+		err := nomagique.RoundTripArtifact(artifact, stage)
 
 		Convey("It should return a validation error", func() {
 			So(err, ShouldNotBeNil)
@@ -39,7 +39,7 @@ func TestRLSRead(testingTB *testing.T) {
 	Convey("Given feature and target scalars", testingTB, func() {
 		stage := NewRLS(rlsConfig("rls-config", 1, 1000))
 		artifact := datura.Acquire("test", datura.APPJSON).Poke([]float64{2, 4}, "batch")
-		err := transport.NewFlipFlop(artifact, stage)
+		err := nomagique.RoundTripArtifact(artifact, stage)
 
 		So(err, ShouldBeNil)
 
@@ -60,13 +60,13 @@ func TestRLSRead(testingTB *testing.T) {
 			feature := float64(step) / 32
 			target := 2*feature + 1
 			artifact.Poke([]float64{feature, target}, "batch")
-			err := transport.NewFlipFlop(artifact, stage)
+			err := nomagique.RoundTripArtifact(artifact, stage)
 
 			So(err, ShouldBeNil)
 		}
 
 		artifact.Poke([]float64{0.5, 2}, "batch")
-		err := transport.NewFlipFlop(artifact, stage)
+		err := nomagique.RoundTripArtifact(artifact, stage)
 
 		So(err, ShouldBeNil)
 
@@ -85,14 +85,14 @@ func TestRLSRead(testingTB *testing.T) {
 
 		for step := 0; step < 16; step++ {
 			artifact.Poke([]float64{1, 1}, "batch")
-			err := transport.NewFlipFlop(artifact, stage)
+			err := nomagique.RoundTripArtifact(artifact, stage)
 
 			So(err, ShouldBeNil)
 		}
 
 		for step := 0; step < 16; step++ {
 			artifact.Poke([]float64{1, 5}, "batch")
-			err := transport.NewFlipFlop(artifact, stage)
+			err := nomagique.RoundTripArtifact(artifact, stage)
 
 			So(err, ShouldBeNil)
 		}
@@ -118,7 +118,7 @@ func TestRLSRead(testingTB *testing.T) {
 			target := 0.001 * float64(step%3-1)
 			batch := append(append([]float64(nil), features...), target)
 			artifact.Poke(batch, "batch")
-			err := transport.NewFlipFlop(artifact, stage)
+			err := nomagique.RoundTripArtifact(artifact, stage)
 
 			So(err, ShouldBeNil)
 		}
@@ -138,7 +138,7 @@ func TestRLSRead(testingTB *testing.T) {
 		for step := 0; step < 8; step++ {
 			feature := float64(step) / 8
 			artifact.Poke([]float64{feature, 2*feature + 1}, "batch")
-			err := transport.NewFlipFlop(artifact, stage)
+			err := nomagique.RoundTripArtifact(artifact, stage)
 
 			So(err, ShouldBeNil)
 		}
@@ -167,6 +167,6 @@ func BenchmarkRLSRead(b *testing.B) {
 		target := 0.001 * float64(b.N%3-1)
 		batch := append(append([]float64(nil), features...), target)
 		artifact.Poke(batch, "batch")
-		_ = transport.NewFlipFlop(artifact, stage)
+		_ = nomagique.RoundTripArtifact(artifact, stage)
 	}
 }

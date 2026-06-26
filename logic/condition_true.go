@@ -4,8 +4,8 @@ import (
 	"io"
 
 	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/transport"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/nomagique"
 )
 
 /*
@@ -44,7 +44,7 @@ func (trueCondition True) Match(artifact *datura.Artifact) bool {
 		return false
 	}
 
-	if _, err = operand.Write(packed); err != nil {
+	if _, err = operand.Unpack(packed); err != nil {
 		errnie.Error(errnie.Err(
 			errnie.IO,
 			"logic: true condition write failed",
@@ -55,7 +55,7 @@ func (trueCondition True) Match(artifact *datura.Artifact) bool {
 		return false
 	}
 
-	if err = transport.NewFlipFlop(operand, trueCondition.Stage); err != nil {
+	if err = nomagique.RoundTripArtifact(operand, trueCondition.Stage); err != nil {
 		errnie.Error(errnie.Err(
 			errnie.IO,
 			"logic: true condition flipFlop failed",

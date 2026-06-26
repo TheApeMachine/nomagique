@@ -6,7 +6,6 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/transport"
 	"github.com/theapemachine/nomagique"
 )
 
@@ -46,7 +45,7 @@ func TestZip_Read(testingTB *testing.T) {
 		Convey("Given zip with "+testCase.name, testingTB, func() {
 			zipStage := NewZip(datura.Acquire("zip-config", datura.APPJSON))
 			artifact := zipInbound(testCase.streams)
-			err := transport.NewFlipFlop(artifact, zipStage)
+			err := nomagique.RoundTripArtifact(artifact, zipStage)
 
 			if testCase.wantErr {
 				So(err, ShouldNotBeNil)
@@ -83,7 +82,7 @@ func TestNodeRingZip_Read(testingTB *testing.T) {
 				float64(index) * 0.5,
 				float64(index) * 0.05,
 			}, "batch")
-			err := transport.NewFlipFlop(artifact, pipeline)
+			err := nomagique.RoundTripArtifact(artifact, pipeline)
 
 			So(err, ShouldBeNil)
 		}
@@ -101,7 +100,7 @@ func TestNodeRingZip_Read(testingTB *testing.T) {
 		nodeRing := NewNodeRing(config)
 		artifact := datura.Acquire("node-ring-inbound", datura.APPJSON).
 			Poke([]float64{1}, "batch")
-		err := transport.NewFlipFlop(artifact, nodeRing)
+		err := nomagique.RoundTripArtifact(artifact, nodeRing)
 
 		Convey("It should reject misaligned rows", func() {
 			So(err, ShouldNotBeNil)
@@ -121,6 +120,6 @@ func BenchmarkZip_Read(testingTB *testing.B) {
 	testingTB.ReportAllocs()
 
 	for testingTB.Loop() {
-		_ = transport.NewFlipFlop(artifact, zipStage)
+		_ = nomagique.RoundTripArtifact(artifact, zipStage)
 	}
 }

@@ -75,7 +75,7 @@ func (excitation *Excitation) Read(payload []byte) (int, error) {
 	if len(excitation.packed) == 0 {
 		state := datura.Acquire("excitation-state", datura.APPJSON)
 
-		if _, err := state.Write(excitation.artifact.DecryptPayload()); err != nil {
+		if _, err := state.Unpack(excitation.artifact.DecryptPayload()); err != nil {
 			state.Release()
 
 			return 0, errnie.Error(errnie.Err(

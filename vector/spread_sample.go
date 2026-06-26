@@ -26,7 +26,7 @@ func NewSpreadSample(config *datura.Artifact) *SpreadSample {
 func (spreadSample *SpreadSample) Read(p []byte) (int, error) {
 	state := datura.Acquire("spread-sample-state", datura.APPJSON)
 
-	if _, err := state.Write(spreadSample.config.DecryptPayload()); err != nil {
+	if _, err := state.Unpack(spreadSample.config.DecryptPayload()); err != nil {
 		state.Release()
 
 		return 0, errnie.Error(errnie.Err(
@@ -111,7 +111,7 @@ func (spreadSample *SpreadSample) Read(p []byte) (int, error) {
 
 	state.Poke(inputs, "inputs")
 
-	return state.Read(p)
+	return state.PackInto(p)
 }
 
 func (spreadSample *SpreadSample) Write(p []byte) (int, error) {
@@ -124,6 +124,21 @@ func (spreadSample *SpreadSample) Close() error {
 }
 
 func spreadInputValue(state *datura.Artifact, inputKey string) (float64, error) {
+	featureSlice := datura.Peek[[]float64](state, "features")
+	featureInputs := datura.Peek[[]string](state, "featureInputs")
+
+	if len(featureInputs) == 0 {
+		featureInputs = datura.Peek[[]string](state, "inputs")
+	}
+
+	for featureIndex, featureInput := range featureInputs {
+		if featureInput != inputKey || featureIndex >= len(featureSlice) {
+			continue
+		}
+
+		return featureSlice[featureIndex], nil
+	}
+
 	rootKey := datura.Peek[string](state, "root")
 	wireInputs := datura.Peek[[]string](state, "inputs")
 

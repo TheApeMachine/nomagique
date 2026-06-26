@@ -5,7 +5,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/transport"
+	"github.com/theapemachine/nomagique"
 )
 
 func TestEntropyRead(t *testing.T) {
@@ -14,7 +14,7 @@ func TestEntropyRead(t *testing.T) {
 		uniformStage := NewEntropy(scalarStageConfig("entropy-config-uniform"))
 
 		for _, sample := range []float64{1, 1, 1, 1} {
-			err := transport.NewFlipFlop(ScalarWire(uniformArtifact, "sample", sample), uniformStage)
+			err := nomagique.RoundTripArtifact(ScalarWire(uniformArtifact, "sample", sample), uniformStage)
 
 			So(err, ShouldBeNil)
 		}
@@ -25,7 +25,7 @@ func TestEntropyRead(t *testing.T) {
 		peakedStage := NewEntropy(scalarStageConfig("entropy-config-peaked"))
 
 		for _, sample := range []float64{100, 1, 1, 1} {
-			err := transport.NewFlipFlop(ScalarWire(peakedArtifact, "sample", sample), peakedStage)
+			err := nomagique.RoundTripArtifact(ScalarWire(peakedArtifact, "sample", sample), peakedStage)
 
 			So(err, ShouldBeNil)
 		}

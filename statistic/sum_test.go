@@ -6,6 +6,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/nomagique"
 )
 
 func TestSumRead(t *testing.T) {
@@ -13,7 +14,7 @@ func TestSumRead(t *testing.T) {
 		config := datura.Acquire("sum-config", datura.APPJSON).Poke("sample", "input")
 		sum := NewSum(config)
 		input := ScalarWire(datura.Acquire("test", datura.APPJSON), "sample", 1)
-		_, err := io.Copy(sum, input)
+		_, err := nomagique.WriteArtifact(sum, input)
 
 		So(err, ShouldBeNil)
 
@@ -31,7 +32,7 @@ func BenchmarkSumRead(b *testing.B) {
 	config := datura.Acquire("sum-config-bench", datura.APPJSON).Poke("sample", "input")
 	sum := NewSum(config)
 	input := ScalarWire(datura.Acquire("test", datura.APPJSON), "sample", 1)
-	_, _ = io.Copy(sum, input)
+	_, _ = nomagique.WriteArtifact(sum, input)
 	frame := make([]byte, 65536)
 
 	b.ReportAllocs()

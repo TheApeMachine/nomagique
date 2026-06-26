@@ -5,7 +5,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/transport"
+	"github.com/theapemachine/nomagique"
 )
 
 func contagionConfigArtifact() *datura.Artifact {
@@ -50,22 +50,22 @@ func TestMedianPairwiseAbsCorrelation(testingTB *testing.T) {
 		artifact := datura.Acquire("test", datura.APPJSON)
 
 		contagionWire(artifact, 1, float64(1_000), 100.0)
-		err := transport.NewFlipFlop(artifact, contagion)
+		err := nomagique.RoundTripArtifact(artifact, contagion)
 
 		So(err, ShouldNotBeNil)
 
 		contagionWire(artifact, 1, float64(2_000), 110.0)
-		err = transport.NewFlipFlop(artifact, contagion)
+		err = nomagique.RoundTripArtifact(artifact, contagion)
 
 		So(err, ShouldBeNil)
 
 		contagionWire(artifact, 2, float64(1_000), 50.0)
-		err = transport.NewFlipFlop(artifact, contagion)
+		err = nomagique.RoundTripArtifact(artifact, contagion)
 
 		So(err, ShouldBeNil)
 
 		contagionWire(artifact, 2, float64(2_000), 55.0)
-		err = transport.NewFlipFlop(artifact, contagion)
+		err = nomagique.RoundTripArtifact(artifact, contagion)
 
 		So(err, ShouldBeNil)
 
@@ -82,22 +82,22 @@ func TestContagionRead(testingTB *testing.T) {
 		artifact := datura.Acquire("test", datura.APPJSON)
 
 		contagionWire(artifact, 1, float64(1_000), 100.0)
-		err := transport.NewFlipFlop(artifact, contagion)
+		err := nomagique.RoundTripArtifact(artifact, contagion)
 
 		So(err, ShouldNotBeNil)
 
 		contagionWire(artifact, 1, float64(2_000), 110.0)
-		err = transport.NewFlipFlop(artifact, contagion)
+		err = nomagique.RoundTripArtifact(artifact, contagion)
 
 		So(err, ShouldBeNil)
 
 		contagionWire(artifact, 2, float64(1_000), 50.0)
-		err = transport.NewFlipFlop(artifact, contagion)
+		err = nomagique.RoundTripArtifact(artifact, contagion)
 
 		So(err, ShouldBeNil)
 
 		contagionWire(artifact, 2, float64(2_000), 55.0)
-		err = transport.NewFlipFlop(artifact, contagion)
+		err = nomagique.RoundTripArtifact(artifact, contagion)
 
 		So(err, ShouldBeNil)
 
@@ -137,13 +137,13 @@ func BenchmarkContagionRead(testingTB *testing.B) {
 				float64((step+1)*1_000),
 				100+float64(member)+float64(step)*0.01,
 			)
-			_ = transport.NewFlipFlop(artifact, contagion)
+			_ = nomagique.RoundTripArtifact(artifact, contagion)
 		}
 	}
 
 	testingTB.ReportAllocs()
 
 	for testingTB.Loop() {
-		_ = transport.NewFlipFlop(artifact, contagion)
+		_ = nomagique.RoundTripArtifact(artifact, contagion)
 	}
 }

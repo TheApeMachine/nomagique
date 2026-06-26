@@ -50,7 +50,7 @@ func ReadOutputValue(stage io.Reader) (float64, error) {
 	}
 
 	outbound := datura.Acquire("test-out", datura.APPJSON)
-	_, _ = outbound.Write(out.Bytes())
+	_, _ = outbound.Unpack(out.Bytes())
 
 	return datura.Peek[float64](outbound, "output", "value"), nil
 }

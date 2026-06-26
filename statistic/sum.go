@@ -26,7 +26,7 @@ func NewSum(artifact *datura.Artifact) *Sum {
 func (sum *Sum) Read(payload []byte) (int, error) {
 	state := datura.Acquire("sum-state", datura.APPJSON)
 
-	if _, err := state.Write(sum.artifact.DecryptPayload()); err != nil {
+	if _, err := state.Unpack(sum.artifact.DecryptPayload()); err != nil {
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"sum: state write failed",
@@ -116,7 +116,7 @@ func (sum *Sum) Read(payload []byte) (int, error) {
 	state.Poke("output", "root")
 	state.Poke([]string{"value"}, "inputs")
 
-	return state.Read(payload)
+	return state.PackInto(payload)
 }
 
 func (sum *Sum) Write(payload []byte) (int, error) {

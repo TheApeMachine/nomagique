@@ -27,7 +27,7 @@ func NewRotor(artifact *datura.Artifact) *Rotor {
 func (rotor *Rotor) Read(payload []byte) (int, error) {
 	state := datura.Acquire("rotor-state", datura.APPJSON)
 
-	if _, err := state.Write(rotor.artifact.DecryptPayload()); err != nil {
+	if _, err := state.Unpack(rotor.artifact.DecryptPayload()); err != nil {
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"geometry-rotor: state write failed",
@@ -54,7 +54,7 @@ func (rotor *Rotor) Read(payload []byte) (int, error) {
 	state.Poke("output", "root")
 	state.Poke([]string{"value", "motor"}, "inputs")
 
-	return state.Read(payload)
+	return state.PackInto(payload)
 }
 
 func (rotor *Rotor) Write(payload []byte) (int, error) {

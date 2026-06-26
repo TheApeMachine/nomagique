@@ -24,9 +24,13 @@ func (logitScores *LogitScores) resolveOutputScore(
 	rootKey := datura.Peek[string](logitScores.config, "root")
 
 	if rootKey == "" {
+		rootKey = datura.Peek[string](state, "root")
+	}
+
+	if rootKey == "" {
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
-			"logit-scores: config root required",
+			"logit-scores: root required",
 			nil,
 		))
 	}

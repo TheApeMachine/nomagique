@@ -5,7 +5,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/transport"
+	"github.com/theapemachine/nomagique"
 )
 
 func covarianceConfig() *datura.Artifact {
@@ -17,7 +17,7 @@ func TestCovarianceRead(testingTB *testing.T) {
 		covariance := NewCovariance(covarianceConfig())
 		artifact := datura.Acquire("test", datura.APPJSON).
 			Poke([]float64{1, 2, 3, 4, 2, 4, 6, 8}, "batch")
-		err := transport.NewFlipFlop(artifact, covariance)
+		err := nomagique.RoundTripArtifact(artifact, covariance)
 
 		So(err, ShouldBeNil)
 
@@ -31,7 +31,7 @@ func TestCovarianceRead(testingTB *testing.T) {
 	Convey("Given empty Observe inputs", testingTB, func() {
 		covariance := NewCovariance(covarianceConfig())
 		artifact := datura.Acquire("test", datura.APPJSON)
-		err := transport.NewFlipFlop(artifact, covariance)
+		err := nomagique.RoundTripArtifact(artifact, covariance)
 
 		Convey("It should return a validation error", func() {
 			So(err, ShouldNotBeNil)
@@ -44,17 +44,17 @@ func TestCovariance_Reset(testingTB *testing.T) {
 		covariance := NewCovariance(covarianceConfig())
 		artifact := datura.Acquire("test", datura.APPJSON).
 			Poke([]float64{1, 2, 3, 4, 2, 4, 6, 8}, "batch")
-		err := transport.NewFlipFlop(artifact, covariance)
+		err := nomagique.RoundTripArtifact(artifact, covariance)
 
 		So(err, ShouldBeNil)
 
 		resetArtifact := datura.Acquire("test", datura.APPJSON).Poke(1, "reset")
-		err = transport.NewFlipFlop(resetArtifact, covariance)
+		err = nomagique.RoundTripArtifact(resetArtifact, covariance)
 
 		So(err, ShouldNotBeNil)
 
 		fresh := datura.Acquire("test", datura.APPJSON)
-		err = transport.NewFlipFlop(fresh, covariance)
+		err = nomagique.RoundTripArtifact(fresh, covariance)
 
 		Convey("It should return a validation error", func() {
 			So(err, ShouldNotBeNil)
@@ -68,6 +68,6 @@ func BenchmarkCovarianceRead(testingTB *testing.B) {
 
 	for testingTB.Loop() {
 		artifact.Poke([]float64{1, 2, 3, 4, 5, 6, 7, 8, 2, 4, 6, 8, 10, 12, 14, 16}, "batch")
-		_ = transport.NewFlipFlop(artifact, covariance)
+		_ = nomagique.RoundTripArtifact(artifact, covariance)
 	}
 }

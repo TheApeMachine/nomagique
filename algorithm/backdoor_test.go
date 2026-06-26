@@ -5,7 +5,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/transport"
+	"github.com/theapemachine/nomagique"
 	"github.com/theapemachine/nomagique/algorithm"
 )
 
@@ -40,7 +40,7 @@ func TestBackdoorRead(testingTB *testing.T) {
 	Convey("Given aligned node streams with causal structure", testingTB, func() {
 		backdoor := algorithm.NewBackdoor(backdoorConfig())
 		artifact := backdoorTable(16)
-		err := transport.NewFlipFlop(artifact, backdoor)
+		err := nomagique.RoundTripArtifact(artifact, backdoor)
 
 		So(err, ShouldBeNil)
 
@@ -57,6 +57,6 @@ func BenchmarkBackdoorRead(testingTB *testing.B) {
 	testingTB.ReportAllocs()
 
 	for testingTB.Loop() {
-		_ = transport.NewFlipFlop(artifact, backdoor)
+		_ = nomagique.RoundTripArtifact(artifact, backdoor)
 	}
 }

@@ -55,7 +55,7 @@ func (cohortSample *CohortSample) Write(payload []byte) (int, error) {
 func (cohortSample *CohortSample) Read(payload []byte) (int, error) {
 	state := datura.Acquire("cohort-sample-state", datura.APPJSON)
 
-	if _, err := state.Write(cohortSample.artifact.DecryptPayload()); err != nil {
+	if _, err := state.Unpack(cohortSample.artifact.DecryptPayload()); err != nil {
 		state.Release()
 
 		return 0, errnie.Error(errnie.Err(
@@ -109,7 +109,7 @@ func (cohortSample *CohortSample) Read(payload []byte) (int, error) {
 	state.Poke("features", "root")
 	state.Poke(equation.CohortInputKeys, "inputs")
 
-	return state.Read(payload)
+	return state.PackInto(payload)
 }
 
 func (cohortSample *CohortSample) Close() error {

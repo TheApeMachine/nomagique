@@ -5,7 +5,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/transport"
+	"github.com/theapemachine/nomagique"
 )
 
 func TestGeometricMeanRead(testingTB *testing.T) {
@@ -22,7 +22,7 @@ func TestGeometricMeanRead(testingTB *testing.T) {
 		artifact.Poke(4.0, "output", "left")
 		artifact.Poke(9.0, "output", "right")
 
-		err := transport.NewFlipFlop(artifact, stage)
+		err := nomagique.RoundTripArtifact(artifact, stage)
 
 		So(err, ShouldBeNil)
 
@@ -44,7 +44,7 @@ func TestGeometricMeanRead(testingTB *testing.T) {
 		artifact.Poke(4.0, "output", "left")
 		artifact.Poke(0.0, "output", "right")
 
-		err := transport.NewFlipFlop(artifact, stage)
+		err := nomagique.RoundTripArtifact(artifact, stage)
 
 		So(err, ShouldBeNil)
 
@@ -66,7 +66,7 @@ func TestGeometricMeanRead(testingTB *testing.T) {
 		artifact.Poke(4.0, "output", "left")
 		artifact.Poke(-1.0, "output", "right")
 
-		err := transport.NewFlipFlop(artifact, stage)
+		err := nomagique.RoundTripArtifact(artifact, stage)
 
 		Convey("It should return a validation error", func() {
 			So(err, ShouldNotBeNil)
@@ -90,6 +90,6 @@ func BenchmarkGeometricMeanRead(testingTB *testing.B) {
 	testingTB.ReportAllocs()
 
 	for testingTB.Loop() {
-		_ = transport.NewFlipFlop(artifact, stage)
+		_ = nomagique.RoundTripArtifact(artifact, stage)
 	}
 }

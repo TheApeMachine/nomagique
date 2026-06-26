@@ -6,6 +6,7 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/transport"
+	"github.com/theapemachine/nomagique"
 	"github.com/theapemachine/nomagique/statistic"
 )
 
@@ -41,7 +42,7 @@ func TestSpreadSampleAfterMeanMedianRatio(testingTB *testing.T) {
 			frame.Poke([]string{"volume", "last", "bid", "ask"}, "inputs")
 			frame.Merge("features", []float64{1000 + float64(index)*10, last, last - 1, last + 1})
 
-			_ = transport.NewFlipFlop(frame, stage)
+			_ = nomagique.RoundTripArtifact(frame, stage)
 			frame.Release()
 		}
 
@@ -50,7 +51,7 @@ func TestSpreadSampleAfterMeanMedianRatio(testingTB *testing.T) {
 		frame.Poke([]string{"volume", "last", "bid", "ask"}, "inputs")
 		frame.Merge("features", []float64{120, 10050, 10050.0001, 10050.0002})
 
-		err := transport.NewFlipFlop(frame, stage)
+		err := nomagique.RoundTripArtifact(frame, stage)
 
 		So(err, ShouldBeNil)
 		So(datura.Peek[float64](frame, "output", "spread"), ShouldBeGreaterThan, 0)
@@ -69,7 +70,7 @@ func TestSpreadSampleRead(testingTB *testing.T) {
 		frame.Poke([]string{"bid", "ask", "last"}, "inputs")
 		frame.Merge("features", []float64{10050.0001, 10050.0002, 10050})
 
-		err := transport.NewFlipFlop(frame, stage)
+		err := nomagique.RoundTripArtifact(frame, stage)
 
 		So(err, ShouldBeNil)
 		So(datura.Peek[float64](frame, "output", "spread"), ShouldBeGreaterThan, 0)

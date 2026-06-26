@@ -26,7 +26,7 @@ func NewMean(artifact *datura.Artifact) *Mean {
 func (mean *Mean) Read(payload []byte) (int, error) {
 	state := datura.Acquire("mean-state", datura.APPJSON)
 
-	if _, err := state.Write(mean.artifact.DecryptPayload()); err != nil {
+	if _, err := state.Unpack(mean.artifact.DecryptPayload()); err != nil {
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"mean: state write failed",
@@ -124,7 +124,7 @@ func (mean *Mean) Read(payload []byte) (int, error) {
 	state.Poke("output", "root")
 	state.Poke([]string{"value"}, "inputs")
 
-	return state.Read(payload)
+	return state.PackInto(payload)
 }
 
 func (mean *Mean) Write(payload []byte) (int, error) {

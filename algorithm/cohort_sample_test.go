@@ -114,7 +114,7 @@ func runCohortSample(frame *datura.Artifact, sample *CohortSample) error {
 		return err
 	}
 
-	_, err = frame.Write(chunk[:readCount])
+	_, err = frame.Unpack(chunk[:readCount])
 
 	return err
 }

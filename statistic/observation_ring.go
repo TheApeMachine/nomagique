@@ -26,7 +26,7 @@ func NewObservationRing(artifact *datura.Artifact) *ObservationRing {
 func (observationRing *ObservationRing) Read(payload []byte) (int, error) {
 	state := datura.Acquire("observation-ring-state", datura.APPJSON)
 
-	if _, err := state.Write(observationRing.artifact.DecryptPayload()); err != nil {
+	if _, err := state.Unpack(observationRing.artifact.DecryptPayload()); err != nil {
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"observation-ring: state write failed",
@@ -142,7 +142,7 @@ func (observationRing *ObservationRing) Read(payload []byte) (int, error) {
 	state.Poke("output", "root")
 	state.Poke([]string{outputKey}, "inputs")
 
-	return state.Read(payload)
+	return state.PackInto(payload)
 }
 
 func (observationRing *ObservationRing) Write(payload []byte) (int, error) {

@@ -42,7 +42,7 @@ func (windowSet *WindowSet) Read(p []byte) (int, error) {
 
 	state := datura.Acquire("window-set-state", datura.APPJSON)
 
-	if _, err := state.Write(windowSet.artifact.DecryptPayload()); err != nil {
+	if _, err := state.Unpack(windowSet.artifact.DecryptPayload()); err != nil {
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"correlation-window-set: state write failed",
@@ -77,7 +77,7 @@ func (windowSet *WindowSet) Read(p []byte) (int, error) {
 	state.MergeOutput("value", magnitude)
 	state.Poke("output", "root")
 	state.Poke([]string{"value"}, "inputs")
-	return state.Read(p)
+	return state.PackInto(p)
 }
 
 func (windowSet *WindowSet) Write(p []byte) (int, error) {

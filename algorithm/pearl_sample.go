@@ -1,8 +1,8 @@
 package algorithm
 
 import (
-	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/causal"
 )
 
@@ -44,7 +44,7 @@ func (pearlSample *PearlSample) Write(payload []byte) (int, error) {
 func (pearlSample *PearlSample) Read(payload []byte) (int, error) {
 	state := datura.Acquire("pearl-sample-state", datura.APPJSON)
 
-	if _, err := state.Write(pearlSample.artifact.DecryptPayload()); err != nil {
+	if _, err := state.Unpack(pearlSample.artifact.DecryptPayload()); err != nil {
 		state.Release()
 
 		return 0, errnie.Error(errnie.Err(
@@ -54,11 +54,10 @@ func (pearlSample *PearlSample) Read(payload []byte) (int, error) {
 		))
 	}
 
-
 	defer state.Release()
 
 	if datura.Peek[float64](state, "table", "rowCount") > 0 {
-		return state.Read(payload)
+		return state.PackInto(payload)
 	}
 
 	row := pearlSample.ingestRow(state)
@@ -79,7 +78,7 @@ func (pearlSample *PearlSample) Read(payload []byte) (int, error) {
 
 	pearlSample.nodeRing.CopyStreamsTo(state)
 
-	return state.Read(payload)
+	return state.PackInto(payload)
 }
 
 func (pearlSample *PearlSample) Close() error {

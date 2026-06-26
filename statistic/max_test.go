@@ -5,7 +5,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/transport"
+	"github.com/theapemachine/nomagique"
 )
 
 func TestMaxSeries(t *testing.T) {
@@ -16,7 +16,7 @@ func TestMaxSeries(t *testing.T) {
 
 		for _, sample := range []float64{3, 1, 2} {
 			artifact := ScalarWire(datura.Acquire("test", datura.APPJSON), "sample", sample)
-			err := transport.NewFlipFlop(artifact, maxStage)
+			err := nomagique.RoundTripArtifact(artifact, maxStage)
 			So(err, ShouldBeNil)
 
 			if lastArtifact != nil {

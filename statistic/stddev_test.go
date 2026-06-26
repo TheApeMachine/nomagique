@@ -5,7 +5,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/transport"
+	"github.com/theapemachine/nomagique"
 )
 
 func TestStdDevRead(t *testing.T) {
@@ -13,7 +13,7 @@ func TestStdDevRead(t *testing.T) {
 		stdDev := NewStdDev(scalarStageConfig("stddev-config"))
 		artifact := datura.Acquire("test", datura.APPJSON)
 
-		err := transport.NewFlipFlop(ScalarWire(artifact, "sample", 1), stdDev)
+		err := nomagique.RoundTripArtifact(ScalarWire(artifact, "sample", 1), stdDev)
 
 		Convey("When the first sample arrives", func() {
 			So(err, ShouldNotBeNil)
@@ -28,7 +28,7 @@ func TestStdDevSeries(t *testing.T) {
 		var got float64
 
 		for _, sample := range []float64{1, 2, 3, 4} {
-			err := transport.NewFlipFlop(ScalarWire(artifact, "sample", sample), stdDev)
+			err := nomagique.RoundTripArtifact(ScalarWire(artifact, "sample", sample), stdDev)
 
 			if err != nil {
 				continue
@@ -50,6 +50,6 @@ func BenchmarkStdDevRead(testingTB *testing.B) {
 	testingTB.ReportAllocs()
 
 	for testingTB.Loop() {
-		_ = transport.NewFlipFlop(ScalarWire(artifact, "sample", 2.0), stdDev)
+		_ = nomagique.RoundTripArtifact(ScalarWire(artifact, "sample", 2.0), stdDev)
 	}
 }

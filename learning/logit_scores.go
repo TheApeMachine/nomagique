@@ -1,6 +1,8 @@
 package learning
 
 import (
+	"math"
+
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 )
@@ -25,7 +27,7 @@ func NewLogitScores(config *datura.Artifact) *LogitScores {
 func (logitScores *LogitScores) Read(payload []byte) (int, error) {
 	state := datura.Acquire("logit-scores-state", datura.APPJSON)
 
-	if _, err := state.Write(logitScores.config.DecryptPayload()); err != nil {
+	if _, err := state.Unpack(logitScores.config.DecryptPayload()); err != nil {
 		state.Release()
 
 		return 0, errnie.Error(errnie.Err(
@@ -74,11 +76,19 @@ func (logitScores *LogitScores) Read(payload []byte) (int, error) {
 		return 0, err
 	}
 
-	weights, err := NewClassifierWeights(logitScores.config, threshold, scales)
+	weightScales, suppressedScales, err := logitWeightScales(scales, features)
 
 	if err != nil {
 		return 0, err
 	}
+
+	weights, err := NewClassifierWeights(logitScores.config, threshold, weightScales)
+
+	if err != nil {
+		return 0, err
+	}
+
+	suppressZeroScaleTerms(&weights, suppressedScales)
 
 	centeredFeatures := logitScores.centeredFeatures(features, scales)
 	scores := weights.Scores(centeredFeatures)
@@ -119,7 +129,7 @@ func (logitScores *LogitScores) Read(payload []byte) (int, error) {
 	outputInputs = append(outputInputs, "strength")
 	state.Poke(outputInputs, "inputs")
 
-	return state.Read(payload)
+	return state.PackInto(payload)
 }
 
 func (logitScores *LogitScores) Write(payload []byte) (int, error) {
@@ -129,4 +139,61 @@ func (logitScores *LogitScores) Write(payload []byte) (int, error) {
 
 func (logitScores *LogitScores) Close() error {
 	return nil
+}
+
+func logitWeightScales(
+	scales map[string]float64,
+	features map[string]float64,
+) (map[string]float64, map[string]bool, error) {
+	weightScales := make(map[string]float64, len(scales))
+	suppressed := make(map[string]bool)
+
+	for key, scale := range scales {
+		feature := features[key]
+
+		if scale == 0 && feature == 0 {
+			// Placeholder scale only lets the strict constructor build; the term is suppressed before scoring.
+			weightScales[key] = 1
+			suppressed[key] = true
+			continue
+		}
+
+		if scale <= 0 || math.IsNaN(scale) || math.IsInf(scale, 0) {
+			_, err := positiveScale(scale, key)
+			return nil, nil, err
+		}
+
+		weightScales[key] = scale
+	}
+
+	return weightScales, suppressed, nil
+}
+
+func suppressZeroScaleTerms(weights *ClassifierWeights, suppressed map[string]bool) {
+	if len(suppressed) == 0 {
+		return
+	}
+
+	for outputKey, termWeights := range weights.termWeights {
+		total := 0.0
+
+		for featureKey, weight := range termWeights {
+			if suppressed[featureKey] {
+				termWeights[featureKey] = 0
+				continue
+			}
+
+			total += weight
+		}
+
+		if total <= 0 {
+			continue
+		}
+
+		for featureKey, weight := range termWeights {
+			termWeights[featureKey] = weight / total
+		}
+
+		weights.termWeights[outputKey] = termWeights
+	}
 }

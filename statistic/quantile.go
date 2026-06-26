@@ -28,7 +28,7 @@ func NewQuantile(artifact *datura.Artifact) *Quantile {
 func (quantile *Quantile) Read(payload []byte) (int, error) {
 	state := datura.Acquire("quantile-state", datura.APPJSON)
 
-	if _, err := state.Write(quantile.artifact.DecryptPayload()); err != nil {
+	if _, err := state.Unpack(quantile.artifact.DecryptPayload()); err != nil {
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"quantile: state write failed",
@@ -158,7 +158,7 @@ func (quantile *Quantile) Read(payload []byte) (int, error) {
 	state.Poke("output", "root")
 	state.Poke([]string{outputKey}, "inputs")
 
-	return state.Read(payload)
+	return state.PackInto(payload)
 }
 
 func (quantile *Quantile) Write(payload []byte) (int, error) {

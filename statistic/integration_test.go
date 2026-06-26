@@ -5,7 +5,6 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/transport"
 	"github.com/theapemachine/nomagique"
 	"github.com/theapemachine/nomagique/statistic"
 )
@@ -31,7 +30,7 @@ func TestIntegration(t *testing.T) {
 			} {
 				artifact := datura.Acquire("test", datura.APPJSON)
 				statistic.PanelWire(artifact, member.key, member.value)
-				err := transport.NewFlipFlop(artifact, panel)
+				err := nomagique.RoundTripArtifact(artifact, panel)
 
 				So(err, ShouldBeNil)
 				artifact.Release()
@@ -39,7 +38,7 @@ func TestIntegration(t *testing.T) {
 
 			artifact := datura.Acquire("test", datura.APPJSON)
 			statistic.PanelWire(artifact, 1, 0.02)
-			err := transport.NewFlipFlop(artifact, crossSection)
+			err := nomagique.RoundTripArtifact(artifact, crossSection)
 
 			So(err, ShouldBeNil)
 			So(datura.Peek[float64](artifact, "output", "value"), ShouldEqual, 0.05)
@@ -54,7 +53,7 @@ func TestIntegration(t *testing.T) {
 			for _, sample := range []float64{1, 2, 3, 4} {
 				artifact := datura.Acquire("test", datura.APPJSON)
 				statistic.ScalarWire(artifact, "sample", sample)
-				err := transport.NewFlipFlop(artifact, mean)
+				err := nomagique.RoundTripArtifact(artifact, mean)
 
 				So(err, ShouldBeNil)
 

@@ -211,7 +211,7 @@ func (gate *GateQuantile) Write(payload []byte) (int, error) {
 func (gate *GateQuantile) Read(payload []byte) (int, error) {
 	state := datura.Acquire("gate-quantile-state", datura.APPJSON)
 
-	if _, err := state.Write(gate.artifact.DecryptPayload()); err != nil {
+	if _, err := state.Unpack(gate.artifact.DecryptPayload()); err != nil {
 		state.Release()
 
 		return 0, errnie.Error(errnie.Err(
@@ -255,7 +255,7 @@ func (gate *GateQuantile) Read(payload []byte) (int, error) {
 	state.Poke("output", "root")
 	state.Poke([]string{"value"}, "inputs")
 
-	return state.Read(payload)
+	return state.PackInto(payload)
 }
 
 /*
@@ -347,7 +347,7 @@ func (gate *GateQuantile) observe(sample float64, percentileOverride float64) fl
 	}
 
 	outbound := datura.Acquire("gate-read", datura.APPJSON)
-	_, _ = outbound.Write(buffer[:readCount])
+	_, _ = outbound.Unpack(buffer[:readCount])
 	value := datura.Peek[float64](outbound, "output", "value")
 	outbound.Release()
 

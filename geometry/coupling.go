@@ -27,7 +27,7 @@ func NewCoupling(artifact *datura.Artifact) *Coupling {
 func (coupling *Coupling) Read(payload []byte) (int, error) {
 	state := datura.Acquire("coupling-state", datura.APPJSON)
 
-	if _, err := state.Write(coupling.artifact.DecryptPayload()); err != nil {
+	if _, err := state.Unpack(coupling.artifact.DecryptPayload()); err != nil {
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"coupling: state write failed",
@@ -145,7 +145,7 @@ func (coupling *Coupling) Read(payload []byte) (int, error) {
 		state.Poke("output", "root")
 		state.Poke([]string{"value"}, "inputs")
 
-		return state.Read(payload)
+		return state.PackInto(payload)
 	}
 
 	denominator := absLeft + absRight
@@ -173,7 +173,7 @@ func (coupling *Coupling) Read(payload []byte) (int, error) {
 	state.Poke("output", "root")
 	state.Poke([]string{"value"}, "inputs")
 
-	return state.Read(payload)
+	return state.PackInto(payload)
 }
 
 func (coupling *Coupling) Write(payload []byte) (int, error) {

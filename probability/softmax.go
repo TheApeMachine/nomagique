@@ -30,7 +30,7 @@ func NewSoftmax(artifact *datura.Artifact) *Softmax {
 func (softmax *Softmax) Read(payload []byte) (int, error) {
 	state := datura.Acquire("softmax-state", datura.APPJSON)
 
-	if _, err := state.Write(softmax.artifact.DecryptPayload()); err != nil {
+	if _, err := state.Unpack(softmax.artifact.DecryptPayload()); err != nil {
 		state.Release()
 
 		return 0, errnie.Error(errnie.Err(
@@ -149,7 +149,7 @@ func (softmax *Softmax) Read(payload []byte) (int, error) {
 	outputInputs = append(outputInputs, "probabilities")
 	state.Poke(outputInputs, "inputs")
 
-	return state.Read(payload)
+	return state.PackInto(payload)
 }
 
 func (softmax *Softmax) Write(payload []byte) (int, error) {

@@ -6,7 +6,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/transport"
+	"github.com/theapemachine/nomagique"
 	"github.com/theapemachine/nomagique/equation"
 	"github.com/theapemachine/nomagique/hawkes"
 )
@@ -36,7 +36,7 @@ func TestExcitationMeasure(testingTB *testing.T) {
 		inbound := datura.Acquire("excitation-no-scope", datura.APPJSON)
 		inbound.WithPayload(equation.MarshalFeaturesPayload(samples))
 
-		err := transport.NewFlipFlop(inbound, excitation)
+		err := nomagique.RoundTripArtifact(inbound, excitation)
 
 		Convey("It should return a validation error", func() {
 			So(err, ShouldNotBeNil)
@@ -194,7 +194,7 @@ func BenchmarkExcitationRead(b *testing.B) {
 
 	for b.Loop() {
 		inbound := daturaBurstArtifact("ALT/EUR", samples)
-		_ = transport.NewFlipFlop(inbound, excitation)
+		_ = nomagique.RoundTripArtifact(inbound, excitation)
 		inbound.Release()
 	}
 }

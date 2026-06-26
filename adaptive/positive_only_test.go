@@ -5,7 +5,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/transport"
+	"github.com/theapemachine/nomagique"
 )
 
 func TestPositiveOnlyRead(t *testing.T) {
@@ -20,7 +20,7 @@ func TestPositiveOnlyRead(t *testing.T) {
 		artifact.Poke([]string{"precursor"}, "inputs")
 		artifact.Merge("output", map[string]any{"precursor": -2.0})
 
-		err := transport.NewFlipFlop(artifact, stage)
+		err := nomagique.RoundTripArtifact(artifact, stage)
 
 		Convey("It should clamp negative scores to zero", func() {
 			So(err, ShouldBeNil)
@@ -33,7 +33,7 @@ func TestPositiveOnlyRead(t *testing.T) {
 		stage := NewPositiveOnly(datura.Acquire("positive-only-missing", datura.APPJSON))
 		artifact := ScalarWire(datura.Acquire("positive-only-test", datura.APPJSON), "sample", 1.0)
 
-		err := transport.NewFlipFlop(artifact, stage)
+		err := nomagique.RoundTripArtifact(artifact, stage)
 
 		So(err, ShouldNotBeNil)
 	})
@@ -53,6 +53,6 @@ func BenchmarkPositiveOnlyRead(b *testing.B) {
 	b.ReportAllocs()
 
 	for b.Loop() {
-		_ = transport.NewFlipFlop(artifact, stage)
+		_ = nomagique.RoundTripArtifact(artifact, stage)
 	}
 }

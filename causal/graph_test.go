@@ -6,7 +6,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/transport"
+	"github.com/theapemachine/nomagique"
 )
 
 func graphConfig(
@@ -52,7 +52,7 @@ func TestGraph_Read(testingTB *testing.T) {
 			nil,
 		}, 1, 2, []int{0}))
 		artifact := datura.Acquire("graph-inbound", datura.APPJSON)
-		err := transport.NewFlipFlop(artifact, stage)
+		err := nomagique.RoundTripArtifact(artifact, stage)
 
 		So(err, ShouldBeNil)
 
@@ -69,7 +69,7 @@ func TestGraph_Read(testingTB *testing.T) {
 			nil,
 		}, 1, 2, nil))
 		artifact := datura.Acquire("graph-inbound", datura.APPJSON)
-		err := transport.NewFlipFlop(artifact, stage)
+		err := nomagique.RoundTripArtifact(artifact, stage)
 
 		So(err, ShouldBeNil)
 
@@ -88,7 +88,7 @@ func TestGraph_Read(testingTB *testing.T) {
 		artifact := datura.Acquire("graph-inbound", datura.APPJSON)
 
 		Convey("It should reject controls that descend from treatment", func() {
-			err := transport.NewFlipFlop(artifact, stage)
+			err := nomagique.RoundTripArtifact(artifact, stage)
 			So(err, ShouldBeNil)
 			So(datura.Peek[float64](artifact, "output", "admissible"), ShouldEqual, 0)
 		})
@@ -107,6 +107,6 @@ func BenchmarkGraph_Read(testingTB *testing.B) {
 	testingTB.ReportAllocs()
 
 	for testingTB.Loop() {
-		_ = transport.NewFlipFlop(artifact, stage)
+		_ = nomagique.RoundTripArtifact(artifact, stage)
 	}
 }

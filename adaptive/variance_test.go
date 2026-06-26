@@ -6,7 +6,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/transport"
+	"github.com/theapemachine/nomagique"
 )
 
 func TestVarianceRead(t *testing.T) {
@@ -14,7 +14,7 @@ func TestVarianceRead(t *testing.T) {
 		variance := NewVariance(datura.Acquire("variance-config", datura.APPJSON).Poke("sample", "input"))
 
 		Convey("When the first sample arrives", func() {
-			_, err := io.Copy(variance, ScalarWire(datura.Acquire("test", datura.APPJSON), "sample", 10))
+			_, err := nomagique.WriteArtifact(variance, ScalarWire(datura.Acquire("test", datura.APPJSON), "sample", 10))
 
 			So(err, ShouldBeIn, nil, io.EOF)
 
@@ -24,14 +24,14 @@ func TestVarianceRead(t *testing.T) {
 		})
 
 		Convey("When warmed up with distinct samples", func() {
-			_, _ = io.Copy(variance, ScalarWire(datura.Acquire("test", datura.APPJSON), "sample", 10))
+			_, _ = nomagique.WriteArtifact(variance, ScalarWire(datura.Acquire("test", datura.APPJSON), "sample", 10))
 			_, _ = variance.Read(make([]byte, 65536))
-			_, _ = io.Copy(variance, ScalarWire(datura.Acquire("test", datura.APPJSON), "sample", 22))
+			_, _ = nomagique.WriteArtifact(variance, ScalarWire(datura.Acquire("test", datura.APPJSON), "sample", 22))
 			_, _ = variance.Read(make([]byte, 65536))
-			_, _ = io.Copy(variance, ScalarWire(datura.Acquire("test", datura.APPJSON), "sample", 30))
+			_, _ = nomagique.WriteArtifact(variance, ScalarWire(datura.Acquire("test", datura.APPJSON), "sample", 30))
 			_, _ = variance.Read(make([]byte, 65536))
 			artifact := ScalarWire(datura.Acquire("test", datura.APPJSON), "sample", 40)
-			_, _ = io.Copy(variance, artifact)
+			_, _ = nomagique.WriteArtifact(variance, artifact)
 
 			frame := make([]byte, 65536)
 			readCount, err := variance.Read(frame)
@@ -39,7 +39,7 @@ func TestVarianceRead(t *testing.T) {
 			So(err, ShouldBeIn, nil, io.EOF)
 			So(readCount, ShouldBeGreaterThan, 0)
 
-			err = transport.NewFlipFlop(artifact, variance)
+			err = nomagique.RoundTripArtifact(artifact, variance)
 
 			So(err, ShouldBeIn, nil, io.EOF)
 			So(datura.Peek[float64](artifact, "output", "value"), ShouldBeGreaterThan, 0)
@@ -52,7 +52,7 @@ func TestVarianceWrite(t *testing.T) {
 		variance := NewVariance(datura.Acquire("variance-config", datura.APPJSON).Poke("sample", "input"))
 
 		Convey("When Write is called", func() {
-			_, err := io.Copy(variance, ScalarWire(datura.Acquire("test", datura.APPJSON), "sample", 10))
+			_, err := nomagique.WriteArtifact(variance, ScalarWire(datura.Acquire("test", datura.APPJSON), "sample", 10))
 			So(err, ShouldBeIn, nil, io.EOF)
 		})
 	})

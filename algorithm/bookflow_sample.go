@@ -59,7 +59,7 @@ func (bookflowSample *BookflowSample) Write(payload []byte) (int, error) {
 func (bookflowSample *BookflowSample) Read(payload []byte) (int, error) {
 	state := datura.Acquire("bookflow-sample-state", datura.APPJSON)
 
-	if _, err := state.Write(bookflowSample.artifact.DecryptPayload()); err != nil {
+	if _, err := state.Unpack(bookflowSample.artifact.DecryptPayload()); err != nil {
 		state.Release()
 
 		return 0, errnie.Error(errnie.Err(
@@ -106,7 +106,7 @@ func (bookflowSample *BookflowSample) Read(payload []byte) (int, error) {
 	state.Poke("features", "root")
 	state.Poke(equation.BookflowInputKeys, "inputs")
 
-	return state.Read(payload)
+	return state.PackInto(payload)
 }
 
 func (bookflowSample *BookflowSample) Close() error {

@@ -5,7 +5,6 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/transport"
 	"github.com/theapemachine/nomagique"
 )
 
@@ -18,7 +17,7 @@ func TestPanelRead(t *testing.T) {
 
 		Convey("It should echo the registered sample", func() {
 			artifact := PanelWire(datura.Acquire("test", datura.APPJSON), 1, 0.02)
-			err := transport.NewFlipFlop(artifact, panel)
+			err := nomagique.RoundTripArtifact(artifact, panel)
 
 			So(err, ShouldBeNil)
 			So(datura.Peek[float64](artifact, "output", "value"), ShouldEqual, 0.02)
@@ -45,14 +44,14 @@ func TestMedianPanelPeers(t *testing.T) {
 			{3, 0.06},
 		} {
 			artifact := PanelWire(datura.Acquire("test", datura.APPJSON), member.key, member.value)
-			err := transport.NewFlipFlop(artifact, panel)
+			err := nomagique.RoundTripArtifact(artifact, panel)
 
 			So(err, ShouldBeNil)
 			artifact.Release()
 		}
 
 		artifact := PanelWire(datura.Acquire("test", datura.APPJSON), 1, 0.01)
-		err := transport.NewFlipFlop(artifact, crossSection)
+		err := nomagique.RoundTripArtifact(artifact, crossSection)
 
 		So(err, ShouldBeNil)
 		So(datura.Peek[float64](artifact, "output", "value"), ShouldEqual, 0.05)

@@ -36,7 +36,7 @@ func NewRollingZScore(artifact *datura.Artifact) *RollingZScore {
 func (rollingZScore *RollingZScore) Read(payload []byte) (int, error) {
 	state := datura.Acquire("rolling-zscore-state", datura.APPJSON)
 
-	if _, err := state.Write(rollingZScore.artifact.DecryptPayload()); err != nil {
+	if _, err := state.Unpack(rollingZScore.artifact.DecryptPayload()); err != nil {
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"rolling-zscore: state write failed",
@@ -147,11 +147,7 @@ func (rollingZScore *RollingZScore) Read(payload []byte) (int, error) {
 	seriesKey := datura.Peek[string](rollingZScore.artifact, stageKey, "seriesKey")
 
 	if seriesKey == "" {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"rolling-zscore: seriesKey required",
-			nil,
-		))
+		seriesKey = outputKey
 	}
 
 	timestamp := state.Timestamp()
@@ -236,7 +232,7 @@ func (rollingZScore *RollingZScore) Read(payload []byte) (int, error) {
 	state.Poke("output", "root")
 	state.Poke([]string{outputKey}, "inputs")
 
-	return state.Read(payload)
+	return state.PackInto(payload)
 }
 
 func (rollingZScore *RollingZScore) Write(payload []byte) (int, error) {

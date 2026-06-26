@@ -27,14 +27,13 @@ func NewContagion(artifact *datura.Artifact) *Contagion {
 func (contagion *Contagion) Read(p []byte) (int, error) {
 	state := datura.Acquire("contagion-state", datura.APPJSON)
 
-	if _, err := state.Write(contagion.artifact.DecryptPayload()); err != nil {
+	if _, err := state.Unpack(contagion.artifact.DecryptPayload()); err != nil {
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"causal-contagion: state write failed",
 			err,
 		))
 	}
-
 
 	peak, err := contagion.peakFromTable(state)
 
@@ -46,7 +45,7 @@ func (contagion *Contagion) Read(p []byte) (int, error) {
 	state.MergeOutput("value", peak)
 	state.Poke("output", "root")
 	state.Poke([]string{"value"}, "inputs")
-	return state.Read(p)
+	return state.PackInto(p)
 }
 
 func (contagion *Contagion) Write(p []byte) (int, error) {

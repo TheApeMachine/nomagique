@@ -5,7 +5,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/transport"
+	"github.com/theapemachine/nomagique"
 )
 
 func gapConfig() *datura.Artifact {
@@ -38,7 +38,7 @@ func TestGap_Read(testingTB *testing.T) {
 		stage := NewGap(gapConfig())
 		artifact := datura.Acquire("gap-inbound", datura.APPJSON).
 			Poke(coupledGapBatch(), "batch")
-		err := transport.NewFlipFlop(artifact, stage)
+		err := nomagique.RoundTripArtifact(artifact, stage)
 
 		So(err, ShouldBeNil)
 
@@ -68,7 +68,7 @@ func TestGap_Read(testingTB *testing.T) {
 		stage := NewGap(gapConfig())
 		artifact := datura.Acquire("gap-inbound", datura.APPJSON).
 			Poke(coupledGapBatch(), "batch")
-		err := transport.NewFlipFlop(artifact, stage)
+		err := nomagique.RoundTripArtifact(artifact, stage)
 
 		So(err, ShouldBeNil)
 
@@ -90,6 +90,6 @@ func BenchmarkGap_Read(testingTB *testing.B) {
 
 	for testingTB.Loop() {
 		artifact.Poke(coupledGapBatch(), "batch")
-		_ = transport.NewFlipFlop(artifact, stage)
+		_ = nomagique.RoundTripArtifact(artifact, stage)
 	}
 }

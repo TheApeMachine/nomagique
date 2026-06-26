@@ -5,7 +5,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/transport"
+	"github.com/theapemachine/nomagique"
 )
 
 func hysteresisWire(sample float64, window int) *datura.Artifact {
@@ -27,7 +27,7 @@ func TestHysteresis_Read(testingTB *testing.T) {
 
 			for range 2 {
 				artifact := hysteresisWire(1.0, 3)
-				err := transport.NewFlipFlop(artifact, stage)
+				err := nomagique.RoundTripArtifact(artifact, stage)
 
 				So(err, ShouldBeNil)
 				So(datura.Peek[float64](artifact, "output", "value"), ShouldEqual, 0)
@@ -35,7 +35,7 @@ func TestHysteresis_Read(testingTB *testing.T) {
 			}
 
 			artifact := hysteresisWire(1.0, 3)
-			err := transport.NewFlipFlop(artifact, stage)
+			err := nomagique.RoundTripArtifact(artifact, stage)
 
 			So(err, ShouldBeNil)
 			So(datura.Peek[float64](artifact, "output", "value"), ShouldEqual, 1)
@@ -50,7 +50,7 @@ func TestHysteresis_Read(testingTB *testing.T) {
 
 			for range 2 {
 				artifact := hysteresisWire(0.75, 3)
-				err := transport.NewFlipFlop(artifact, thresholdStage)
+				err := nomagique.RoundTripArtifact(artifact, thresholdStage)
 
 				So(err, ShouldBeNil)
 				So(datura.Peek[float64](artifact, "output", "value"), ShouldEqual, 0)
@@ -58,7 +58,7 @@ func TestHysteresis_Read(testingTB *testing.T) {
 			}
 
 			artifact := hysteresisWire(0.75, 3)
-			err := transport.NewFlipFlop(artifact, thresholdStage)
+			err := nomagique.RoundTripArtifact(artifact, thresholdStage)
 
 			So(err, ShouldBeNil)
 			So(datura.Peek[float64](artifact, "output", "value"), ShouldEqual, 1)
@@ -76,7 +76,7 @@ func BenchmarkHysteresis_Read(b *testing.B) {
 
 	for b.Loop() {
 		artifact := hysteresisWire(1.0, 2)
-		_ = transport.NewFlipFlop(artifact, stage)
+		_ = nomagique.RoundTripArtifact(artifact, stage)
 		artifact.Release()
 	}
 }

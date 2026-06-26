@@ -6,7 +6,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/transport"
+	"github.com/theapemachine/nomagique"
 	"github.com/theapemachine/nomagique/algorithm"
 )
 
@@ -96,7 +96,7 @@ func TestPearl_Read(testingTB *testing.T) {
 	Convey("Given aligned node streams with causal structure", testingTB, func() {
 		pearl := algorithm.NewPearl(pearlConfig())
 		artifact := pearlInbound()
-		err := transport.NewFlipFlop(artifact, pearl)
+		err := nomagique.RoundTripArtifact(artifact, pearl)
 
 		So(err, ShouldBeNil)
 		So(datura.Peek[float64](artifact, "output", "intervention"), ShouldBeGreaterThan, 0)
@@ -110,7 +110,7 @@ func TestPearl_ReadsRawTickerFrames(testingTB *testing.T) {
 
 		for index := range 16 {
 			artifact = pearlTicker(index)
-			_ = transport.NewFlipFlop(artifact, sample)
+			_ = nomagique.RoundTripArtifact(artifact, sample)
 		}
 
 		Convey("It should retain aligned node streams", func() {
@@ -127,9 +127,9 @@ func TestPearl_ReadsRawTickerFrames(testingTB *testing.T) {
 
 		for index := range 16 {
 			artifact = pearlTicker(index)
-			_ = transport.NewFlipFlop(artifact, pearl)
+			_ = nomagique.RoundTripArtifact(artifact, pearl)
 			artifact = pearlTrade(index)
-			_ = transport.NewFlipFlop(artifact, pearl)
+			_ = nomagique.RoundTripArtifact(artifact, pearl)
 			streamCount = datura.Peek[float64](artifact, "streams", "nodeCount")
 			tableRows = datura.Peek[float64](artifact, "table", "rowCount")
 		}
@@ -150,6 +150,6 @@ func BenchmarkPearl_Read(testingTB *testing.B) {
 
 	for testingTB.Loop() {
 		artifact := pearlInbound()
-		_ = transport.NewFlipFlop(artifact, pearl)
+		_ = nomagique.RoundTripArtifact(artifact, pearl)
 	}
 }

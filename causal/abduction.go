@@ -55,7 +55,7 @@ func NewAbduction(artifact *datura.Artifact) *Abduction {
 func (abduction *Abduction) Read(p []byte) (int, error) {
 	state := datura.Acquire("abduction-state", datura.APPJSON)
 
-	if _, err := state.Write(abduction.artifact.DecryptPayload()); err != nil {
+	if _, err := state.Unpack(abduction.artifact.DecryptPayload()); err != nil {
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"causal: state write failed",
@@ -123,7 +123,7 @@ func (abduction *Abduction) Read(p []byte) (int, error) {
 	state.MergeOutput("noise", noise)
 	state.Poke("output", "root")
 	state.Poke([]string{"value", "uplift", "counterfactual", "noise"}, "inputs")
-	return state.Read(p)
+	return state.PackInto(p)
 }
 
 func (abduction *Abduction) Write(p []byte) (int, error) {

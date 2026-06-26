@@ -28,7 +28,7 @@ func NewMoveBaseline(artifact *datura.Artifact) *MoveBaseline {
 func (baseline *MoveBaseline) Read(payload []byte) (int, error) {
 	state := datura.Acquire("move-baseline-state", datura.APPJSON)
 
-	if _, err := state.Write(baseline.artifact.DecryptPayload()); err != nil {
+	if _, err := state.Unpack(baseline.artifact.DecryptPayload()); err != nil {
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"move-baseline: state write failed",
@@ -133,7 +133,7 @@ func (baseline *MoveBaseline) Read(payload []byte) (int, error) {
 	state.Poke("output", "root")
 	state.Poke([]string{"moved", "stallMargin", "ready", "value"}, "inputs")
 
-	return state.Read(payload)
+	return state.PackInto(payload)
 }
 
 func (baseline *MoveBaseline) Write(payload []byte) (int, error) {

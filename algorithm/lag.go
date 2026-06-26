@@ -55,7 +55,7 @@ func (lag *Lag) Write(payload []byte) (int, error) {
 func (lag *Lag) Read(payload []byte) (int, error) {
 	state := datura.Acquire("lag-state", datura.APPJSON)
 
-	if _, err := state.Write(lag.artifact.DecryptPayload()); err != nil {
+	if _, err := state.Unpack(lag.artifact.DecryptPayload()); err != nil {
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"lag: state write failed",
@@ -97,7 +97,7 @@ func (lag *Lag) Read(payload []byte) (int, error) {
 	state.Poke("output", "root")
 	state.Poke([]string{"inefficient", "sync", "decoupled", "stall", "strength"}, "inputs")
 
-	return state.Read(payload)
+	return state.PackInto(payload)
 }
 
 func (lag *Lag) Close() error {
@@ -403,7 +403,7 @@ func (reading *LagReading) Write(p []byte) (int, error) {
 func (reading *LagReading) Read(payload []byte) (int, error) {
 	state := datura.Acquire("lag-reading-state", datura.APPJSON)
 
-	if _, err := state.Write(reading.artifact.DecryptPayload()); err != nil {
+	if _, err := state.Unpack(reading.artifact.DecryptPayload()); err != nil {
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"lag: state write failed",
@@ -421,7 +421,7 @@ func (reading *LagReading) Read(payload []byte) (int, error) {
 	state.Poke("output", "root")
 	state.Poke([]string{"value"}, "inputs")
 
-	return state.Read(payload)
+	return state.PackInto(payload)
 }
 
 func (reading *LagReading) Close() error {

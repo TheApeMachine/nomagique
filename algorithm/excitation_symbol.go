@@ -268,8 +268,8 @@ func (symbol *excitationSymbol) rawBaseStep(sample float64) float64 {
 	}
 
 	outbound := datura.Acquire("excitation-ema-out", datura.Artifact_Type_json)
-	_, _ = outbound.Write(out[:readCount])
-	if outbound.HasEncryptedPayload() {
+	_, _ = outbound.Unpack(out[:readCount])
+	if outbound.HasPayload() {
 		payload := outbound.DecryptPayload()
 		value, ok := payloadScalar(payload)
 

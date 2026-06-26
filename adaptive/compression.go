@@ -26,7 +26,7 @@ func NewCompression(artifact *datura.Artifact) *Compression {
 func (compression *Compression) Read(payload []byte) (int, error) {
 	state := datura.Acquire("compression-state", datura.APPJSON)
 
-	if _, err := state.Write(compression.artifact.DecryptPayload()); err != nil {
+	if _, err := state.Unpack(compression.artifact.DecryptPayload()); err != nil {
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"compression: state write failed",
@@ -124,7 +124,7 @@ func (compression *Compression) Read(payload []byte) (int, error) {
 		state.Poke("output", "root")
 		state.Poke(appendInputs(inputs, outputKey), "inputs")
 
-		return state.Read(payload)
+		return state.PackInto(payload)
 	}
 
 	if sample > baseline {
@@ -133,7 +133,7 @@ func (compression *Compression) Read(payload []byte) (int, error) {
 		state.Poke("output", "root")
 		state.Poke(appendInputs(inputs, outputKey), "inputs")
 
-		return state.Read(payload)
+		return state.PackInto(payload)
 	}
 
 	value = (baseline - sample) / baseline
@@ -142,7 +142,7 @@ func (compression *Compression) Read(payload []byte) (int, error) {
 	state.Poke("output", "root")
 	state.Poke(appendInputs(inputs, outputKey), "inputs")
 
-	return state.Read(payload)
+	return state.PackInto(payload)
 }
 
 func appendInputs(inputs []string, key string) []string {

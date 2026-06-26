@@ -7,7 +7,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/transport"
+	"github.com/theapemachine/nomagique"
 	"github.com/theapemachine/nomagique/statistic"
 )
 
@@ -285,7 +285,7 @@ func TestGateQuantileObserveWireBus(testingTB *testing.T) {
 			inbound := datura.Acquire("gate-inbound", datura.APPJSON).
 				WithPayload([]byte(`{"sample":5}`))
 
-			So(transport.NewFlipFlop(inbound, gate), ShouldBeNil)
+			So(nomagique.RoundTripArtifact(inbound, gate), ShouldBeNil)
 			So(datura.Peek[float64](inbound, "output", "value"), ShouldBeGreaterThan, 0)
 			So(len(inbound.DecryptPayload()), ShouldBeGreaterThan, 0)
 		})
@@ -305,7 +305,7 @@ func TestObservationRingAdversarial(testingTB *testing.T) {
 			wired := artifact.Poke("features", "root").
 				Poke([]string{"sample"}, "inputs")
 			wired.Merge("features", []float64{value})
-			_ = transport.NewFlipFlop(wired, ring)
+			_ = nomagique.RoundTripArtifact(wired, ring)
 		}
 
 		Convey("It should ignore invalid samples", func() {

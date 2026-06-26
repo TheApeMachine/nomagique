@@ -7,7 +7,6 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/transport"
 	"github.com/theapemachine/nomagique"
 )
 
@@ -22,7 +21,7 @@ func TestTradeExcitationSampleRead(testingTB *testing.T) {
 			time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC).UnixNano(),
 		)
 
-		err := transport.NewFlipFlop(frame, sample)
+		err := nomagique.RoundTripArtifact(frame, sample)
 
 		Convey("It should stage quietly without publishing features", func() {
 			So(err, ShouldBeNil)
@@ -51,7 +50,7 @@ func TestTradeExcitationSampleRead(testingTB *testing.T) {
 				1,
 				base.Add(time.Duration(index)*100*time.Millisecond).UnixNano(),
 			)
-			lastErr = transport.NewFlipFlop(frame, sample)
+			lastErr = nomagique.RoundTripArtifact(frame, sample)
 			last = frame
 		}
 
@@ -87,7 +86,7 @@ func TestTradeExcitationSampleRead(testingTB *testing.T) {
 				base.Add(time.Duration(index)*100*time.Millisecond).UnixNano(),
 			)
 
-			_ = transport.NewFlipFlop(frame, pipeline)
+			_ = nomagique.RoundTripArtifact(frame, pipeline)
 			last = frame
 		}
 
@@ -124,7 +123,7 @@ func TestTradeExcitationSampleRead(testingTB *testing.T) {
 				base.Add(time.Duration(index)*100*time.Millisecond).UnixNano(),
 			)
 
-			if transport.NewFlipFlop(frame, sample) == nil {
+			if nomagique.RoundTripArtifact(frame, sample) == nil {
 				last = frame
 			}
 		}
@@ -155,7 +154,7 @@ func TestTradeExcitationSampleRead(testingTB *testing.T) {
 		sample := NewTradeExcitationSample(datura.Acquire("trade-excitation-config", datura.APPJSON))
 		book := bookTouchFrame("ALT/EUR", 1000, 200)
 
-		err := transport.NewFlipFlop(book, sample)
+		err := nomagique.RoundTripArtifact(book, sample)
 
 		Convey("It should buffer touch state without publishing or logging a validation error", func() {
 			So(err, ShouldBeNil)
@@ -191,7 +190,7 @@ func TestTradeExcitationSampleRead(testingTB *testing.T) {
 				base.Add(time.Duration(index)*100*time.Millisecond).UnixNano(),
 			)
 
-			if transport.NewFlipFlop(frame, pipeline) == nil {
+			if nomagique.RoundTripArtifact(frame, pipeline) == nil {
 				last = frame
 			}
 		}
@@ -228,7 +227,7 @@ func TestTradeExcitationSampleRead(testingTB *testing.T) {
 				1,
 				base.Add(time.Duration(index)*100*time.Millisecond).UnixNano(),
 			)
-			lastErr = transport.NewFlipFlop(frame, sample)
+			lastErr = nomagique.RoundTripArtifact(frame, sample)
 			last = frame
 		}
 
@@ -249,7 +248,7 @@ func BenchmarkTradeExcitationSampleRead(b *testing.B) {
 
 	for b.Loop() {
 		frame := tradeFrame("ALT/EUR", "buy", 1, 1, base.Add(time.Duration(b.N)*time.Millisecond).UnixNano())
-		_ = transport.NewFlipFlop(frame, sample)
+		_ = nomagique.RoundTripArtifact(frame, sample)
 	}
 }
 

@@ -27,7 +27,7 @@ func NewGeometricMean(artifact *datura.Artifact) *GeometricMean {
 func (geometricMean *GeometricMean) Read(p []byte) (int, error) {
 	state := datura.Acquire("geometric-mean-state", datura.APPJSON)
 
-	if _, err := state.Write(geometricMean.artifact.DecryptPayload()); err != nil {
+	if _, err := state.Unpack(geometricMean.artifact.DecryptPayload()); err != nil {
 		state.Release()
 
 		return 0, errnie.Error(errnie.Err(
@@ -43,6 +43,18 @@ func (geometricMean *GeometricMean) Read(p []byte) (int, error) {
 	leftKey := datura.Peek[string](geometricMean.artifact, "joint", "leftKey")
 	rightKey := datura.Peek[string](geometricMean.artifact, "joint", "rightKey")
 	destinationKey := datura.Peek[string](geometricMean.artifact, "joint", "destinationKey")
+
+	if leftKey == "" {
+		leftKey = datura.Peek[string](geometricMean.artifact, "ignition", "leftKey")
+	}
+
+	if rightKey == "" {
+		rightKey = datura.Peek[string](geometricMean.artifact, "ignition", "rightKey")
+	}
+
+	if destinationKey == "" {
+		destinationKey = datura.Peek[string](geometricMean.artifact, "ignition", "source")
+	}
 
 	if leftKey == "" || rightKey == "" || destinationKey == "" {
 		return 0, errnie.Error(errnie.Err(
@@ -80,7 +92,7 @@ func (geometricMean *GeometricMean) Read(p []byte) (int, error) {
 		state.Poke("output", "root")
 		state.Poke(appendOutputInput(inputs, destinationKey), "inputs")
 
-		return state.Read(p)
+		return state.PackInto(p)
 	}
 
 	mean := math.Sqrt(left * right)
@@ -90,7 +102,7 @@ func (geometricMean *GeometricMean) Read(p []byte) (int, error) {
 	state.Poke("output", "root")
 	state.Poke(appendOutputInput(inputs, destinationKey), "inputs")
 
-	return state.Read(p)
+	return state.PackInto(p)
 }
 
 func appendOutputInput(inputs []string, key string) []string {

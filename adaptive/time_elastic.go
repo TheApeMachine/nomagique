@@ -31,14 +31,13 @@ func NewTimeElastic(artifact *datura.Artifact) *TimeElastic {
 func (timeElastic *TimeElastic) Read(payload []byte) (int, error) {
 	state := datura.Acquire("time-elastic-state", datura.APPJSON)
 
-	if _, err := state.Write(timeElastic.artifact.DecryptPayload()); err != nil {
+	if _, err := state.Unpack(timeElastic.artifact.DecryptPayload()); err != nil {
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"time-elastic: state write failed",
 			err,
 		))
 	}
-
 
 	configInput := datura.Peek[string](timeElastic.artifact, "input")
 
@@ -187,7 +186,7 @@ func (timeElastic *TimeElastic) Read(payload []byte) (int, error) {
 	state.Poke([]string{"value"}, "inputs")
 	state.MergeOutput("value", value)
 
-	return state.Read(payload)
+	return state.PackInto(payload)
 }
 
 func (timeElastic *TimeElastic) Write(p []byte) (int, error) {

@@ -6,7 +6,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/transport"
+	"github.com/theapemachine/nomagique"
 )
 
 func precursorConfig() *datura.Artifact {
@@ -35,7 +35,7 @@ func TestPriceRingRead(t *testing.T) {
 		for _, last := range []float64{100, 101, 102} {
 			artifact := precursorState(last)
 			artifact.SetTimestamp(artifact.Timestamp() + int64(time.Second))
-			err := transport.NewFlipFlop(artifact, stage)
+			err := nomagique.RoundTripArtifact(artifact, stage)
 			So(err, ShouldBeNil)
 			lastArtifact = artifact
 		}
@@ -60,7 +60,7 @@ func BenchmarkPriceRingRead(b *testing.B) {
 		artifact.WithPayload(datura.Map[any]{
 			"features": []float64{100, 101},
 		}.Marshal())
-		_ = transport.NewFlipFlop(artifact, stage)
+		_ = nomagique.RoundTripArtifact(artifact, stage)
 		artifact.Release()
 	}
 }

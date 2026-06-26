@@ -6,7 +6,6 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/transport"
 	"github.com/theapemachine/nomagique"
 	"github.com/theapemachine/nomagique/probability"
 )
@@ -17,7 +16,7 @@ func TestIntegration(t *testing.T) {
 			artifact := scalarWire(datura.Acquire("test", datura.APPJSON), "sample", 1)
 			posterior := nomagique.Number(probability.NewBernoulli(bernoulliConfig("bernoulli-config")))
 
-			err := transport.NewFlipFlop(artifact, posterior)
+			err := nomagique.RoundTripArtifact(artifact, posterior)
 
 			So(err, ShouldBeNil)
 			So(datura.Peek[float64](artifact, "output", "value"), ShouldBeGreaterThan, 0.5)
@@ -29,7 +28,7 @@ func TestIntegration(t *testing.T) {
 
 			for _, sample := range []float64{10, 5} {
 				artifact = scalarWire(datura.Acquire("test", datura.APPJSON), "sample", sample)
-				err := transport.NewFlipFlop(artifact, empirical)
+				err := nomagique.RoundTripArtifact(artifact, empirical)
 
 				So(err, ShouldBeNil)
 			}
@@ -65,7 +64,7 @@ func TestIntegration(t *testing.T) {
 				"strength": 0.8,
 			})
 
-			err := transport.NewFlipFlop(artifact, pipeline)
+			err := nomagique.RoundTripArtifact(artifact, pipeline)
 
 			So(err, ShouldBeNil)
 

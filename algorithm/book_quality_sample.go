@@ -87,7 +87,7 @@ func (bookQualitySample *BookQualitySample) Read(payload []byte) (int, error) {
 
 	state := datura.Acquire("book-quality-sample-state", datura.APPJSON)
 
-	if _, err := state.Write(bookQualitySample.artifact.DecryptPayload()); err != nil {
+	if _, err := state.Unpack(bookQualitySample.artifact.DecryptPayload()); err != nil {
 		state.Release()
 
 		return 0, errnie.Error(errnie.Err(
@@ -119,7 +119,7 @@ func (bookQualitySample *BookQualitySample) Read(payload []byte) (int, error) {
 	state.Poke("features", "root")
 	state.Poke(equation.BookQualityInputKeys, "inputs")
 
-	return state.Read(payload)
+	return state.PackInto(payload)
 }
 
 func (bookQualitySample *BookQualitySample) ingestBook(state *datura.Artifact) {

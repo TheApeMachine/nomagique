@@ -5,7 +5,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/transport"
+	"github.com/theapemachine/nomagique"
 )
 
 func backdoorConfig() *datura.Artifact {
@@ -20,7 +20,7 @@ func TestBackdoor_Read(testingTB *testing.T) {
 	Convey("Given config on the constructor artifact and table rows on inbound wire", testingTB, func() {
 		stage := NewBackdoor(backdoorConfig())
 		artifact := tableInbound(16, 1.0)
-		err := transport.NewFlipFlop(artifact, stage)
+		err := nomagique.RoundTripArtifact(artifact, stage)
 
 		So(err, ShouldBeNil)
 
@@ -36,7 +36,7 @@ func TestLadder_Read_KernelBackdoor(testingTB *testing.T) {
 		config.Poke(0.35, "kernelBandwidth")
 		stage := NewLadder(config)
 		artifact := tableInbound(16, 1.0)
-		err := transport.NewFlipFlop(artifact, stage)
+		err := nomagique.RoundTripArtifact(artifact, stage)
 
 		So(err, ShouldBeNil)
 
@@ -53,6 +53,6 @@ func BenchmarkBackdoor_Read(testingTB *testing.B) {
 	testingTB.ReportAllocs()
 
 	for testingTB.Loop() {
-		_ = transport.NewFlipFlop(artifact, stage)
+		_ = nomagique.RoundTripArtifact(artifact, stage)
 	}
 }

@@ -29,7 +29,7 @@ func NewVelocity(artifact *datura.Artifact) *Velocity {
 func (velocity *Velocity) Read(payload []byte) (int, error) {
 	state := datura.Acquire("velocity-state", datura.APPJSON)
 
-	if _, err := state.Write(velocity.artifact.DecryptPayload()); err != nil {
+	if _, err := state.Unpack(velocity.artifact.DecryptPayload()); err != nil {
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"velocity: state write failed",
@@ -134,7 +134,7 @@ func (velocity *Velocity) Read(payload []byte) (int, error) {
 	state.Poke("output", "root")
 	state.Poke([]string{"value"}, "inputs")
 
-	return state.Read(payload)
+	return state.PackInto(payload)
 }
 
 func (velocity *Velocity) Write(payload []byte) (int, error) {

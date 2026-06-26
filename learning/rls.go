@@ -34,7 +34,7 @@ func (rls *RLS) Read(payload []byte) (int, error) {
 
 	state := datura.Acquire("rls-state", datura.APPJSON)
 
-	if _, err := state.Write(rls.artifact.DecryptPayload()); err != nil {
+	if _, err := state.Unpack(rls.artifact.DecryptPayload()); err != nil {
 		state.Release()
 
 		return 0, errnie.Error(errnie.Err(
@@ -92,7 +92,7 @@ func (rls *RLS) Read(payload []byte) (int, error) {
 	state.Poke("output", "root")
 	state.Poke([]string{"value"}, "inputs")
 
-	return state.Read(payload)
+	return state.PackInto(payload)
 }
 
 func (rls *RLS) Write(payload []byte) (int, error) {

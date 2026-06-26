@@ -26,7 +26,7 @@ func NewMedianAbsolute(artifact *datura.Artifact) *MedianAbsolute {
 func (medianAbsolute *MedianAbsolute) Read(payload []byte) (int, error) {
 	state := datura.Acquire("median-absolute-state", datura.APPJSON)
 
-	if _, err := state.Write(medianAbsolute.artifact.DecryptPayload()); err != nil {
+	if _, err := state.Unpack(medianAbsolute.artifact.DecryptPayload()); err != nil {
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"median-absolute: state write failed",
@@ -137,7 +137,7 @@ func (medianAbsolute *MedianAbsolute) Read(payload []byte) (int, error) {
 	state.Poke("output", "root")
 	state.Poke([]string{outputKey}, "inputs")
 
-	return state.Read(payload)
+	return state.PackInto(payload)
 }
 
 func (medianAbsolute *MedianAbsolute) Write(payload []byte) (int, error) {

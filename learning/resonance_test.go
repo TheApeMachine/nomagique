@@ -6,7 +6,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/transport"
+	"github.com/theapemachine/nomagique"
 	"gonum.org/v1/gonum/mat"
 )
 
@@ -157,7 +157,7 @@ func TestResonanceManifold_Read(testingTB *testing.T) {
 
 		artifact := datura.Acquire("test", datura.APPJSON).
 			Poke([]float64{0.2, -0.4, 0.8}, "batch")
-		err = transport.NewFlipFlop(artifact, manifold)
+		err = nomagique.RoundTripArtifact(artifact, manifold)
 
 		So(err, ShouldBeNil)
 

@@ -26,7 +26,7 @@ func NewPriceRing(artifact *datura.Artifact) *PriceRing {
 func (priceRing *PriceRing) Read(payload []byte) (int, error) {
 	state := datura.Acquire("price-ring-state", datura.APPJSON)
 
-	if _, err := state.Write(priceRing.artifact.DecryptPayload()); err != nil {
+	if _, err := state.Unpack(priceRing.artifact.DecryptPayload()); err != nil {
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"price-ring: state write failed",
@@ -57,14 +57,11 @@ func (priceRing *PriceRing) Read(payload []byte) (int, error) {
 	stageKey := datura.Peek[string](priceRing.artifact, "block")
 
 	if stageKey == "" {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"price-ring: block required",
-			nil,
-		))
+		stageKey = datura.Peek[string](priceRing.artifact, "stage")
 	}
 
-	configInput := datura.Peek[string](priceRing.artifact, stageKey, "input")
+	stageKey = stageConfigKey(priceRing.artifact, stageKey)
+	configInput := configString(priceRing.artifact, stageKey, "input")
 
 	if configInput == "" {
 		return 0, errnie.Error(errnie.Err(
@@ -77,7 +74,27 @@ func (priceRing *PriceRing) Read(payload []byte) (int, error) {
 	var sample float64
 	sampleFound := false
 
+	featureSlice := datura.Peek[[]float64](state, "features")
+	featureInputs := datura.Peek[[]string](state, "featureInputs")
+
+	if len(featureInputs) == 0 {
+		featureInputs = inputs
+	}
+
+	for index, input := range featureInputs {
+		if input != configInput || index >= len(featureSlice) {
+			continue
+		}
+
+		sample = featureSlice[index]
+		sampleFound = true
+	}
+
 	for index, input := range inputs {
+		if sampleFound {
+			break
+		}
+
 		if input != configInput {
 			continue
 		}
@@ -123,7 +140,7 @@ func (priceRing *PriceRing) Read(payload []byte) (int, error) {
 	state.Poke("output", "root")
 	state.Poke([]string{configInput}, "inputs")
 
-	return state.Read(payload)
+	return state.PackInto(payload)
 }
 
 func (priceRing *PriceRing) Write(payload []byte) (int, error) {

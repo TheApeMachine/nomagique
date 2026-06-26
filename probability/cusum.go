@@ -27,7 +27,7 @@ func NewCUSUM(artifact *datura.Artifact) *CUSUM {
 func (cusum *CUSUM) Read(payload []byte) (int, error) {
 	state := datura.Acquire("cusum-state", datura.APPJSON)
 
-	if _, err := state.Write(cusum.artifact.DecryptPayload()); err != nil {
+	if _, err := state.Unpack(cusum.artifact.DecryptPayload()); err != nil {
 		state.Release()
 
 		return 0, errnie.Error(errnie.Err(
@@ -208,7 +208,7 @@ func (cusum *CUSUM) Read(payload []byte) (int, error) {
 	state.Poke("output", "root")
 	state.Poke([]string{"value"}, "inputs")
 
-	return state.Read(payload)
+	return state.PackInto(payload)
 }
 
 func (cusum *CUSUM) Write(payload []byte) (int, error) {

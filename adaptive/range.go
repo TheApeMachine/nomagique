@@ -30,7 +30,7 @@ func NewRange(artifact *datura.Artifact) *Range {
 func (extent *Range) Read(payload []byte) (int, error) {
 	state := datura.Acquire("range-state", datura.APPJSON)
 
-	if _, err := state.Write(extent.artifact.DecryptPayload()); err != nil {
+	if _, err := state.Unpack(extent.artifact.DecryptPayload()); err != nil {
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"range: state write failed",
@@ -113,7 +113,7 @@ func (extent *Range) Read(payload []byte) (int, error) {
 	state.Poke("output", "root")
 	state.Poke([]string{"value"}, "inputs")
 
-	return state.Read(payload)
+	return state.PackInto(payload)
 }
 
 func (extent *Range) Write(p []byte) (int, error) {

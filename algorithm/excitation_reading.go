@@ -57,7 +57,7 @@ func (reading *ExcitationReading) Write(p []byte) (int, error) {
 func (reading *ExcitationReading) Read(payload []byte) (int, error) {
 	state := datura.Acquire("excitation-reading-state", datura.APPJSON)
 
-	if _, err := state.Write(reading.artifact.DecryptPayload()); err != nil {
+	if _, err := state.Unpack(reading.artifact.DecryptPayload()); err != nil {
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"excitation: state write failed",
@@ -75,7 +75,7 @@ func (reading *ExcitationReading) Read(payload []byte) (int, error) {
 	state.Poke("output", "root")
 	state.Poke([]string{"value"}, "inputs")
 
-	return state.Read(payload)
+	return state.PackInto(payload)
 }
 
 func (reading *ExcitationReading) Close() error {

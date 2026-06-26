@@ -162,14 +162,13 @@ func NewModePartition(
 func (partition *ModePartition) Read(payload []byte) (int, error) {
 	state := datura.Acquire("mode-partition-state", datura.APPJSON)
 
-	if _, err := state.Write(partition.artifact.DecryptPayload()); err != nil {
+	if _, err := state.Unpack(partition.artifact.DecryptPayload()); err != nil {
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"mode-partition: state write failed",
 			err,
 		))
 	}
-
 
 	participants, couplingFn, ok := partition.participantsAndCoupling()
 
@@ -203,7 +202,7 @@ func (partition *ModePartition) Read(payload []byte) (int, error) {
 	state.MergeOutput("value", partition.output)
 	state.Poke("output", "root")
 	state.Poke([]string{"value"}, "inputs")
-	return state.Read(payload)
+	return state.PackInto(payload)
 }
 
 func (partition *ModePartition) Write(payload []byte) (int, error) {

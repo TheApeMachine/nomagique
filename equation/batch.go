@@ -15,7 +15,7 @@ func Features(artifact *datura.Artifact) []float64 {
 func stageState(bytes []byte) (*datura.Artifact, error) {
 	state := datura.Acquire("equation-state", datura.APPJSON)
 
-	if _, err := state.Write(bytes); err != nil {
+	if _, err := state.Unpack(bytes); err != nil {
 		state.Release()
 
 		return nil, errnie.Error(errnie.Err(
@@ -57,7 +57,7 @@ func emitOutput(state *datura.Artifact, payload []byte, fields datura.Map[float6
 	state.Poke("output", "root")
 	state.Poke(outputInputs, "inputs")
 
-	return state.Read(payload)
+	return state.PackInto(payload)
 }
 
 /*

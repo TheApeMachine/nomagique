@@ -30,14 +30,13 @@ func NewMomentum(artifact *datura.Artifact) *Momentum {
 func (momentum *Momentum) Read(payload []byte) (int, error) {
 	state := datura.Acquire("momentum-state", datura.APPJSON)
 
-	if _, err := state.Write(momentum.artifact.DecryptPayload()); err != nil {
+	if _, err := state.Unpack(momentum.artifact.DecryptPayload()); err != nil {
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"momentum: state write failed",
 			err,
 		))
 	}
-
 
 	rootKey := datura.Peek[string](state, "root")
 
@@ -150,7 +149,7 @@ func (momentum *Momentum) Read(payload []byte) (int, error) {
 	state.Poke("output", "root")
 	state.Poke([]string{"value"}, "inputs")
 
-	return state.Read(payload)
+	return state.PackInto(payload)
 }
 
 func (momentum *Momentum) Write(p []byte) (int, error) {

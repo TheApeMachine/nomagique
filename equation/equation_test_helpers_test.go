@@ -45,7 +45,7 @@ func readStageOutput(stage io.Reader) (*datura.Artifact, error) {
 	}
 
 	outbound := datura.Acquire("equation-test-out", datura.Artifact_Type_json)
-	_, err = outbound.Write(chunk[:readCount])
+	_, err = outbound.Unpack(chunk[:readCount])
 
 	if err != nil {
 		outbound.Release()
@@ -56,7 +56,7 @@ func readStageOutput(stage io.Reader) (*datura.Artifact, error) {
 		))
 	}
 
-	if !outbound.HasEncryptedPayload() {
+	if !outbound.HasPayload() {
 		outbound.Release()
 
 		return nil, errnie.Error(errnie.Err(

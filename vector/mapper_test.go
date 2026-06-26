@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/transport"
+	"github.com/theapemachine/nomagique"
 )
 
 func mapperFrame() *datura.Artifact {
@@ -28,15 +28,15 @@ func TestMapperRenameCombineInvert(testingTB *testing.T) {
 	frame := mapperFrame()
 	defer frame.Release()
 
-	if err := transport.NewFlipFlop(frame, NewMapper(config)); err != nil {
+	if err := nomagique.RoundTripArtifact(frame, NewMapper(config)); err != nil {
 		testingTB.Fatalf("flipflop: %v", err)
 	}
 
 	checks := map[string]float64{
-		"lift":    4.0,       // rename
-		"energy":  8.0,       // 4 * 2
-		"balance": 2.0,       // 4 / 2
-		"net":     3.5,       // 4 + (-0.5)
+		"lift":    4.0, // rename
+		"energy":  8.0, // 4 * 2
+		"balance": 2.0, // 4 / 2
+		"net":     3.5, // 4 + (-0.5)
 	}
 
 	for key, want := range checks {
@@ -68,7 +68,7 @@ func TestMapperEMATransformAccumulates(testingTB *testing.T) {
 		frame.Poke([]string{"rvol"}, "inputs")
 		frame.Merge("features", []float64{value})
 
-		if err := transport.NewFlipFlop(frame, mapper); err != nil {
+		if err := nomagique.RoundTripArtifact(frame, mapper); err != nil {
 			testingTB.Fatalf("flipflop: %v", err)
 		}
 

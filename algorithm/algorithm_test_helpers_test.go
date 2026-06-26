@@ -22,14 +22,14 @@ func (fixedScore *fixedScore) Write(p []byte) (int, error) {
 func (fixedScore *fixedScore) Read(p []byte) (int, error) {
 	state := datura.Acquire("fixed-score-state", datura.APPJSON)
 
-	if _, err := state.Write(fixedScore.artifact.DecryptPayload()); err != nil {
+	if _, err := state.Unpack(fixedScore.artifact.DecryptPayload()); err != nil {
 		return 0, err
 	}
 
 	state.MergeOutput("value", fixedScore.value)
 	state.Poke("output", "root")
 	state.Poke([]string{"value"}, "inputs")
-	return state.Read(p)
+	return state.PackInto(p)
 }
 
 func (fixedScore *fixedScore) Close() error {
@@ -83,7 +83,7 @@ func readOutbound(stage io.Reader) (*datura.Artifact, error) {
 	}
 
 	outbound := datura.Acquire("test-out", datura.Artifact_Type_json)
-	_, err := outbound.Write(frame)
+	_, err := outbound.Unpack(frame)
 
 	if err != nil {
 		outbound.Release()
@@ -91,7 +91,7 @@ func readOutbound(stage io.Reader) (*datura.Artifact, error) {
 		return nil, errnie.Error(errnie.Err(errnie.IO, "readOutbound: outbound write failed", err))
 	}
 
-	if !outbound.HasEncryptedPayload() {
+	if !outbound.HasPayload() {
 		outbound.Release()
 
 		return nil, errnie.Error(errnie.Err(errnie.Validation, "readOutbound: stage produced no output", nil))
@@ -135,7 +135,7 @@ func flopArtifact(inbound *datura.Artifact, stage io.ReadWriter) error {
 
 	defer outbound.Release()
 
-	_, err = inbound.Write(outbound.Pack())
+	_, err = inbound.Unpack(outbound.Pack())
 
 	return err
 }

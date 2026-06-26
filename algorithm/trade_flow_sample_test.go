@@ -8,6 +8,7 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/transport"
+	"github.com/theapemachine/nomagique"
 )
 
 func tradeFrame(symbol, side string, price, quantity float64, timestamp int64) *datura.Artifact {
@@ -33,7 +34,7 @@ func TestTradeFlowSampleRead(testingTB *testing.T) {
 
 		for index := range 30 {
 			frame := tradeFrame("BTC/USD", "buy", 100+float64(index)*0.01, 1, base+int64(index))
-			lastErr = transport.NewFlipFlop(frame, flow)
+			lastErr = nomagique.RoundTripArtifact(frame, flow)
 			last = frame
 		}
 
@@ -50,7 +51,7 @@ func TestTradeFlowSampleRead(testingTB *testing.T) {
 		frame := datura.Acquire("trade-flow-ticker", datura.APPJSON)
 		frame.WithPayload([]byte(payload))
 
-		err := transport.NewFlipFlop(frame, sample)
+		err := nomagique.RoundTripArtifact(frame, sample)
 
 		Convey("It should return a validation error", func() {
 			So(err, ShouldNotBeNil)
@@ -62,7 +63,7 @@ func TestTradeFlowSampleRead(testingTB *testing.T) {
 		base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC).UnixNano()
 		frame := tradeFrame("BTC/USD", "buy", 100, 1, base)
 
-		err := transport.NewFlipFlop(frame, sample)
+		err := nomagique.RoundTripArtifact(frame, sample)
 
 		Convey("It should reject until trade history warms", func() {
 			So(err, ShouldNotBeNil)
@@ -78,6 +79,6 @@ func BenchmarkTradeFlowSampleRead(b *testing.B) {
 
 	for b.Loop() {
 		frame := tradeFrame("BTC/USD", "buy", 100, 1, base+int64(b.N))
-		_ = transport.NewFlipFlop(frame, sample)
+		_ = nomagique.RoundTripArtifact(frame, sample)
 	}
 }

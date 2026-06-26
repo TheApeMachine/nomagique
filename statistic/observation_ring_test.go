@@ -5,7 +5,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/transport"
+	"github.com/theapemachine/nomagique"
 )
 
 func observationRingConfig(name string, capacity float64) *datura.Artifact {
@@ -21,7 +21,7 @@ func TestObservationRingRead(t *testing.T) {
 		artifact := datura.Acquire("test", datura.APPJSON)
 
 		for _, sample := range []float64{0.7, 0.8, 0.9, 0.95} {
-			err := transport.NewFlipFlop(ScalarWire(artifact, "sample", sample), ring)
+			err := nomagique.RoundTripArtifact(ScalarWire(artifact, "sample", sample), ring)
 
 			So(err, ShouldBeNil)
 		}
@@ -46,7 +46,7 @@ func TestObservationRingRead(t *testing.T) {
 
 		for index := range 100 {
 			sample := 1.0 + float64(index%3)*0.01
-			err := transport.NewFlipFlop(ScalarWire(artifact, "sample", sample), ring)
+			err := nomagique.RoundTripArtifact(ScalarWire(artifact, "sample", sample), ring)
 
 			So(err, ShouldBeNil)
 		}
@@ -63,7 +63,7 @@ func TestObservationRingRead(t *testing.T) {
 		artifact := datura.Acquire("test", datura.APPJSON)
 
 		for _, value := range []float64{0, -1} {
-			err := transport.NewFlipFlop(ScalarWire(artifact, "sample", value), ring)
+			err := nomagique.RoundTripArtifact(ScalarWire(artifact, "sample", value), ring)
 
 			So(err, ShouldNotBeNil)
 		}

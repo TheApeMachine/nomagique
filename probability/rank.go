@@ -27,7 +27,7 @@ func NewRank(artifact *datura.Artifact) *Rank {
 func (rank *Rank) Read(payload []byte) (int, error) {
 	state := datura.Acquire("rank-state", datura.APPJSON)
 
-	if _, err := state.Write(rank.artifact.DecryptPayload()); err != nil {
+	if _, err := state.Unpack(rank.artifact.DecryptPayload()); err != nil {
 		state.Release()
 
 		return 0, errnie.Error(errnie.Err(
@@ -51,7 +51,7 @@ func (rank *Rank) Read(payload []byte) (int, error) {
 		state.Poke("output", "root")
 		state.Poke([]string{"value"}, "inputs")
 
-		return state.Read(payload)
+		return state.PackInto(payload)
 	}
 
 	sampleKey := datura.Peek[string](rank.artifact, "sampleKey")
@@ -208,7 +208,7 @@ func (rank *Rank) Read(payload []byte) (int, error) {
 	state.Poke("output", "root")
 	state.Poke([]string{"value"}, "inputs")
 
-	return state.Read(payload)
+	return state.PackInto(payload)
 }
 
 func (rank *Rank) Write(payload []byte) (int, error) {

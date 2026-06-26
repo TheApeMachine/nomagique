@@ -26,7 +26,7 @@ func NewEntropy(artifact *datura.Artifact) *Entropy {
 func (entropy *Entropy) Read(payload []byte) (int, error) {
 	state := datura.Acquire("entropy-state", datura.APPJSON)
 
-	if _, err := state.Write(entropy.artifact.DecryptPayload()); err != nil {
+	if _, err := state.Unpack(entropy.artifact.DecryptPayload()); err != nil {
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"entropy: state write failed",
@@ -164,7 +164,7 @@ func (entropy *Entropy) Read(payload []byte) (int, error) {
 	state.Poke("output", "root")
 	state.Poke([]string{outputKey}, "inputs")
 
-	return state.Read(payload)
+	return state.PackInto(payload)
 }
 
 func (entropy *Entropy) Write(payload []byte) (int, error) {

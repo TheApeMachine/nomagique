@@ -5,7 +5,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/transport"
+	"github.com/theapemachine/nomagique"
 )
 
 func fastSlowConfig() *datura.Artifact {
@@ -22,7 +22,7 @@ func TestFastSlowRead(t *testing.T) {
 		var got float64
 
 		for _, sample := range []float64{1, 1, 1, 10, 10, 10} {
-			err := transport.NewFlipFlop(ScalarWire(artifact, "sample", sample), ratio)
+			err := nomagique.RoundTripArtifact(ScalarWire(artifact, "sample", sample), ratio)
 
 			if err != nil {
 				continue
@@ -45,7 +45,7 @@ func TestFastSlowInvertedRead(t *testing.T) {
 		var got float64
 
 		for _, sample := range []float64{1, 1, 1, 10, 10, 10} {
-			err := transport.NewFlipFlop(ScalarWire(artifact, "sample", sample), ratio)
+			err := nomagique.RoundTripArtifact(ScalarWire(artifact, "sample", sample), ratio)
 
 			if err != nil {
 				continue
@@ -67,6 +67,6 @@ func BenchmarkFastSlowRead(testingTB *testing.B) {
 	testingTB.ReportAllocs()
 
 	for testingTB.Loop() {
-		_ = transport.NewFlipFlop(ScalarWire(artifact, "sample", 2.0), fastSlow)
+		_ = nomagique.RoundTripArtifact(ScalarWire(artifact, "sample", 2.0), fastSlow)
 	}
 }

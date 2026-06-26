@@ -28,7 +28,7 @@ func NewFastSlow(artifact *datura.Artifact) *FastSlow {
 func (fastSlow *FastSlow) Read(payload []byte) (int, error) {
 	state := datura.Acquire("fast-slow-state", datura.APPJSON)
 
-	if _, err := state.Write(fastSlow.artifact.DecryptPayload()); err != nil {
+	if _, err := state.Unpack(fastSlow.artifact.DecryptPayload()); err != nil {
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"fast-slow: state write failed",
@@ -180,7 +180,7 @@ func (fastSlow *FastSlow) Read(payload []byte) (int, error) {
 
 	windowsOut := datura.Acquire("fast-slow-windows-out", datura.APPJSON)
 
-	if _, err := windowsOut.Write(buffer[:readCount]); err != nil {
+	if _, err := windowsOut.Unpack(buffer[:readCount]); err != nil {
 		windowsOut.Release()
 
 		return 0, errnie.Error(errnie.Err(
@@ -241,7 +241,7 @@ func (fastSlow *FastSlow) Read(payload []byte) (int, error) {
 	state.Poke("output", "root")
 	state.Poke([]string{outputKey}, "inputs")
 
-	return state.Read(payload)
+	return state.PackInto(payload)
 }
 
 func (fastSlow *FastSlow) Write(payload []byte) (int, error) {

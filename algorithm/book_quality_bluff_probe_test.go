@@ -6,6 +6,7 @@ import (
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/transport"
+	"github.com/theapemachine/nomagique"
 	"github.com/theapemachine/nomagique/equation"
 	"github.com/theapemachine/nomagique/probability"
 )
@@ -40,7 +41,7 @@ func TestBookQualityBluffProbe(t *testing.T) {
 			WithScope("update").
 			WithPayload(frame)
 
-		err := transport.NewFlipFlop(state, pipeline)
+		err := nomagique.RoundTripArtifact(state, pipeline)
 
 		fmt.Printf(
 			"frame=%d err=%v near=%g bluffStr=%g churnGate=%g bluff=%g vacuum=%g support=%g category=%g confidence=%g\n",

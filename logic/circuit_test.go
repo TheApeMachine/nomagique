@@ -5,14 +5,14 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/transport"
+	"github.com/theapemachine/nomagique"
 	"github.com/theapemachine/nomagique/adaptive"
 	"github.com/theapemachine/nomagique/logic"
 )
 
 func flipFlopCircuit(circuit *logic.Circuit, sample float64) float64 {
 	artifact := scalarWire(datura.Acquire("test", datura.APPJSON), sample)
-	err := transport.NewFlipFlop(artifact, circuit)
+	err := nomagique.RoundTripArtifact(artifact, circuit)
 
 	So(err, ShouldBeNil)
 
@@ -52,7 +52,7 @@ func TestCircuitRead(testingTB *testing.T) {
 		above := flipFlopCircuit(circuit, 3)
 
 		resetArtifact := datura.Acquire("test", datura.APPJSON).Poke(1, "reset")
-		_ = transport.NewFlipFlop(resetArtifact, circuit)
+		_ = nomagique.RoundTripArtifact(resetArtifact, circuit)
 
 		below := flipFlopCircuit(circuit, 1)
 
@@ -131,6 +131,6 @@ func BenchmarkCircuitRead(benchmark *testing.B) {
 
 	for benchmark.Loop() {
 		artifact := scalarWire(datura.Acquire("test", datura.APPJSON), 3.0)
-		_ = transport.NewFlipFlop(artifact, circuit)
+		_ = nomagique.RoundTripArtifact(artifact, circuit)
 	}
 }

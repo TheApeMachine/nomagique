@@ -6,7 +6,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/transport"
+	"github.com/theapemachine/nomagique"
 )
 
 func TestLogReturnZScoreRead(t *testing.T) {
@@ -34,7 +34,7 @@ func TestLogReturnZScoreRead(t *testing.T) {
 			frame.SetTimestamp(timestamp)
 			timestamp += int64(time.Second)
 
-			err := transport.NewFlipFlop(frame, stage)
+			err := nomagique.RoundTripArtifact(frame, stage)
 
 			if err != nil {
 				frame.Release()
@@ -79,6 +79,6 @@ func BenchmarkLogReturnZScoreRead(b *testing.B) {
 	b.ReportAllocs()
 
 	for b.Loop() {
-		_ = transport.NewFlipFlop(artifact, stage)
+		_ = nomagique.RoundTripArtifact(artifact, stage)
 	}
 }

@@ -34,14 +34,13 @@ func NewGap(artifact *datura.Artifact) *Gap {
 func (gap *Gap) Read(p []byte) (int, error) {
 	state := datura.Acquire("gap-state", datura.APPJSON)
 
-	if _, err := state.Write(gap.artifact.DecryptPayload()); err != nil {
+	if _, err := state.Unpack(gap.artifact.DecryptPayload()); err != nil {
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"correlation-gap: state write failed",
 			err,
 		))
 	}
-
 
 	batch := gapBatch(state)
 
@@ -86,7 +85,7 @@ func (gap *Gap) Read(p []byte) (int, error) {
 	state.MergeOutput("gap", divergence)
 	state.Poke("output", "root")
 	state.Poke([]string{"value", "pearson", "hayashi", "gap"}, "inputs")
-	return state.Read(p)
+	return state.PackInto(p)
 }
 
 func (gap *Gap) Write(p []byte) (int, error) {

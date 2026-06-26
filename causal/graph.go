@@ -28,14 +28,13 @@ func NewGraph(artifact *datura.Artifact) *Graph {
 func (graphStage *Graph) Read(p []byte) (int, error) {
 	state := datura.Acquire("graph-state", datura.APPJSON)
 
-	if _, err := state.Write(graphStage.artifact.DecryptPayload()); err != nil {
+	if _, err := state.Unpack(graphStage.artifact.DecryptPayload()); err != nil {
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"causal: state write failed",
 			err,
 		))
 	}
-
 
 	dag, err := newDAGFromArtifact(graphStage.artifact)
 
@@ -70,7 +69,7 @@ func (graphStage *Graph) Read(p []byte) (int, error) {
 	state.MergeOutput("admissible", value)
 	state.Poke("output", "root")
 	state.Poke([]string{"value", "admissible"}, "inputs")
-	return state.Read(p)
+	return state.PackInto(p)
 }
 
 func (graphStage *Graph) Write(p []byte) (int, error) {

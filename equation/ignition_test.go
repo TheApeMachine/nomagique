@@ -7,7 +7,6 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/transport"
 	"github.com/theapemachine/nomagique"
 	"github.com/theapemachine/nomagique/probability"
 	"github.com/theapemachine/nomagique/vector"
@@ -118,7 +117,7 @@ func TestIgnitionFeatureExtractorPipeline(testingTB *testing.T) {
 			frame.SetTimestamp(timestamp)
 			timestamp += int64(time.Second)
 
-			_ = transport.NewFlipFlop(frame, pipeline)
+			_ = nomagique.RoundTripArtifact(frame, pipeline)
 
 			if lastFrame != nil {
 				lastFrame.Release()
@@ -136,7 +135,7 @@ func TestIgnitionFeatureExtractorPipeline(testingTB *testing.T) {
 		spikeFrame.WithPayload([]byte(spikePayload))
 		spikeFrame.SetTimestamp(timestamp)
 
-		err := transport.NewFlipFlop(spikeFrame, pipeline)
+		err := nomagique.RoundTripArtifact(spikeFrame, pipeline)
 
 		if lastFrame != nil {
 			lastFrame.Release()
@@ -167,7 +166,7 @@ func TestIgnitionSpreadAfterLogReturn(testingTB *testing.T) {
 			frame.SetTimestamp(timestamp)
 			timestamp += int64(time.Second)
 
-			_ = transport.NewFlipFlop(frame, stage)
+			_ = nomagique.RoundTripArtifact(frame, stage)
 			frame.Release()
 		}
 
@@ -177,7 +176,7 @@ func TestIgnitionSpreadAfterLogReturn(testingTB *testing.T) {
 		frame.Merge("features", []float64{120, 10050, 10050.0001, 10050.0002})
 		frame.SetTimestamp(timestamp)
 
-		err := transport.NewFlipFlop(frame, stage)
+		err := nomagique.RoundTripArtifact(frame, stage)
 
 		So(err, ShouldBeNil)
 		So(datura.Peek[float64](frame, "output", "spread"), ShouldBeGreaterThan, 0)
@@ -226,7 +225,7 @@ func TestIgnitionSpreadOutput(testingTB *testing.T) {
 			next.SetTimestamp(timestamp)
 			timestamp += int64(time.Second)
 
-			_ = transport.NewFlipFlop(next, stage)
+			_ = nomagique.RoundTripArtifact(next, stage)
 
 			if frame != nil {
 				frame.Release()
@@ -242,7 +241,7 @@ func TestIgnitionSpreadOutput(testingTB *testing.T) {
 		spikeFrame.Merge("features", []float64{spikeVolume, spikeLast, spikeLast - 1, spikeLast + 1})
 		spikeFrame.SetTimestamp(timestamp)
 
-		err := transport.NewFlipFlop(spikeFrame, stage)
+		err := nomagique.RoundTripArtifact(spikeFrame, stage)
 
 		if frame != nil {
 			frame.Release()
@@ -270,7 +269,7 @@ func TestIgnitionReplayTraversal(testingTB *testing.T) {
 			frame.SetTimestamp(timestamp)
 			timestamp += int64(time.Second)
 
-			_ = transport.NewFlipFlop(frame, stage)
+			_ = nomagique.RoundTripArtifact(frame, stage)
 
 			if artifact != nil {
 				artifact.Release()
@@ -286,7 +285,7 @@ func TestIgnitionReplayTraversal(testingTB *testing.T) {
 		spikeFrame.Merge("features", []float64{spikeVolume, spikeLast, spikeLast - 1, spikeLast + 1})
 		spikeFrame.SetTimestamp(timestamp)
 
-		err := transport.NewFlipFlop(spikeFrame, stage)
+		err := nomagique.RoundTripArtifact(spikeFrame, stage)
 
 		if artifact != nil {
 			artifact.Release()
@@ -314,7 +313,7 @@ func BenchmarkIgnitionReplayTraversal(b *testing.B) {
 		frame.Poke([]string{"volume", "last", "bid", "ask"}, "inputs")
 		frame.Merge("features", []float64{tick.volume, tick.last, tick.last - 1, tick.last + 1})
 
-		_ = transport.NewFlipFlop(frame, stage)
+		_ = nomagique.RoundTripArtifact(frame, stage)
 		frame.Release()
 	}
 
@@ -335,7 +334,7 @@ func BenchmarkIgnitionReplayTraversal(b *testing.B) {
 			baselineVolume, baselineLast, baselineLast - 1, baselineLast + 1,
 		})
 
-		_ = transport.NewFlipFlop(baselineFrame, stage)
+		_ = nomagique.RoundTripArtifact(baselineFrame, stage)
 		baselineFrame.Release()
 
 		spikeLastFrame := baselineLast * 2
@@ -349,7 +348,7 @@ func BenchmarkIgnitionReplayTraversal(b *testing.B) {
 			spikeVolumeFrame, spikeLastFrame, spikeLastFrame - 1, spikeLastFrame + 1,
 		})
 
-		if err := transport.NewFlipFlop(frame, stage); err != nil {
+		if err := nomagique.RoundTripArtifact(frame, stage); err != nil {
 			b.Fatal(err)
 		}
 

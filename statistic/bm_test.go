@@ -5,7 +5,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/transport"
+	"github.com/theapemachine/nomagique"
 )
 
 func bivariateMomentConfig(name string) *datura.Artifact {
@@ -26,7 +26,7 @@ func TestBivariateMomentRead(t *testing.T) {
 
 		for index := 0; index < len(xValues); index++ {
 			wired := PairWire(artifact, "sample", "paired", xValues[index], yValues[index])
-			err := transport.NewFlipFlop(wired, bivariateMoment)
+			err := nomagique.RoundTripArtifact(wired, bivariateMoment)
 
 			if index < 1 {
 				So(err, ShouldNotBeNil)
@@ -52,6 +52,6 @@ func BenchmarkBivariateMomentRead(testingTB *testing.B) {
 
 	for testingTB.Loop() {
 		wired := PairWire(artifact, "sample", "paired", 2.0, 5.0)
-		_ = transport.NewFlipFlop(wired, bivariateMoment)
+		_ = nomagique.RoundTripArtifact(wired, bivariateMoment)
 	}
 }

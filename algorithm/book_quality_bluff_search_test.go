@@ -6,6 +6,7 @@ import (
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/transport"
+	"github.com/theapemachine/nomagique"
 	"github.com/theapemachine/nomagique/equation"
 	"github.com/theapemachine/nomagique/probability"
 )
@@ -41,7 +42,7 @@ func replayBookQuality(
 			WithScope("update").
 			WithPayload(frame)
 
-		if transport.NewFlipFlop(state, pipeline) != nil {
+		if nomagique.RoundTripArtifact(state, pipeline) != nil {
 			state.Release()
 			continue
 		}

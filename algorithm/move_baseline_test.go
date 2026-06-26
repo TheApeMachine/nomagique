@@ -6,7 +6,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/transport"
+	"github.com/theapemachine/nomagique"
 )
 
 func TestMoveBaselineRead(testingTB *testing.T) {
@@ -23,7 +23,7 @@ func TestMoveBaselineRead(testingTB *testing.T) {
 
 		for index := range anchorMoveMinObs {
 			wire.Poke(0.0001+float64(index%2)*0.00005, "wire", "sample")
-			err := transport.NewFlipFlop(wire, baseline)
+			err := nomagique.RoundTripArtifact(wire, baseline)
 
 			So(err, ShouldBeNil)
 			So(datura.Peek[float64](wire, "output", "ready"), ShouldEqual, 0)
@@ -31,7 +31,7 @@ func TestMoveBaselineRead(testingTB *testing.T) {
 
 		Convey("It should classify a flat reading as stall with unit margin", func() {
 			wire.Poke(0.00001, "wire", "sample")
-			err := transport.NewFlipFlop(wire, baseline)
+			err := nomagique.RoundTripArtifact(wire, baseline)
 
 			So(err, ShouldBeNil)
 			So(datura.Peek[float64](wire, "output", "ready"), ShouldEqual, 1)

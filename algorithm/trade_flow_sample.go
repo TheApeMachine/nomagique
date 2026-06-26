@@ -53,7 +53,7 @@ func (tradeFlowSample *TradeFlowSample) Write(payload []byte) (int, error) {
 func (tradeFlowSample *TradeFlowSample) Read(payload []byte) (int, error) {
 	state := datura.Acquire("trade-flow-sample-state", datura.APPJSON)
 
-	if _, err := state.Write(tradeFlowSample.artifact.DecryptPayload()); err != nil {
+	if _, err := state.Unpack(tradeFlowSample.artifact.DecryptPayload()); err != nil {
 		state.Release()
 
 		return 0, errnie.Error(errnie.Err(
@@ -115,7 +115,7 @@ func (tradeFlowSample *TradeFlowSample) Read(payload []byte) (int, error) {
 	state.Poke("features", "root")
 	state.Poke(equation.FlowInputKeys, "inputs")
 
-	return state.Read(payload)
+	return state.PackInto(payload)
 }
 
 func (tradeFlowSample *TradeFlowSample) Close() error {

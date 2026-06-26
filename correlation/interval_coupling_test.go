@@ -5,7 +5,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/transport"
+	"github.com/theapemachine/nomagique"
 )
 
 func TestIntervalCouplingRead(testingTB *testing.T) {
@@ -15,25 +15,25 @@ func TestIntervalCouplingRead(testingTB *testing.T) {
 
 		artifact.Poke(0, "config", "side")
 		artifact = EpochLevelWire(artifact, float64(1_000), 100.0)
-		err := transport.NewFlipFlop(artifact, coupling)
+		err := nomagique.RoundTripArtifact(artifact, coupling)
 
 		So(err, ShouldNotBeNil)
 
 		artifact.Poke(0, "config", "side")
 		artifact = EpochLevelWire(artifact, float64(2_000), 110.0)
-		err = transport.NewFlipFlop(artifact, coupling)
+		err = nomagique.RoundTripArtifact(artifact, coupling)
 
 		So(err, ShouldNotBeNil)
 
 		artifact.Poke(1, "config", "side")
 		artifact = EpochLevelWire(artifact, float64(1_000), 50.0)
-		err = transport.NewFlipFlop(artifact, coupling)
+		err = nomagique.RoundTripArtifact(artifact, coupling)
 
 		So(err, ShouldNotBeNil)
 
 		artifact.Poke(1, "config", "side")
 		artifact = EpochLevelWire(artifact, float64(2_000), 55.0)
-		err = transport.NewFlipFlop(artifact, coupling)
+		err = nomagique.RoundTripArtifact(artifact, coupling)
 
 		So(err, ShouldBeNil)
 
@@ -53,15 +53,15 @@ func BenchmarkIntervalCouplingRead(testingTB *testing.B) {
 		epoch := float64((step + 1) * 1_000)
 		artifact.Poke(0, "config", "side")
 		artifact = EpochLevelWire(artifact, epoch, 100+float64(step)*0.1)
-		_ = transport.NewFlipFlop(artifact, coupling)
+		_ = nomagique.RoundTripArtifact(artifact, coupling)
 		artifact.Poke(1, "config", "side")
 		artifact = EpochLevelWire(artifact, epoch, 50+float64(step)*0.05)
-		_ = transport.NewFlipFlop(artifact, coupling)
+		_ = nomagique.RoundTripArtifact(artifact, coupling)
 	}
 
 	testingTB.ReportAllocs()
 
 	for testingTB.Loop() {
-		_ = transport.NewFlipFlop(artifact, coupling)
+		_ = nomagique.RoundTripArtifact(artifact, coupling)
 	}
 }

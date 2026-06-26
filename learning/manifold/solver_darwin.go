@@ -54,6 +54,12 @@ type BatchSolver struct {
 	outcomeSurprise    []float32
 }
 
+type LayerWire struct {
+	State      []float64
+	Prediction []float64
+	ErrorNorm  float64
+}
+
 /*
 NewBatchSolver builds a batched manifold for `batch` symbols over the given
 architecture and supervised target dimension (0 disables the task head). alpha is
@@ -498,6 +504,59 @@ func (s *BatchSolver) ReconstructionError(slot int) (float64, error) {
 			(*C.char)(unsafe.Pointer(&errBuf[0])), C.int(len(errBuf)))
 	})
 	return float64(out), err
+}
+
+func (s *BatchSolver) WireLayers(slot int) ([]LayerWire, error) {
+	if err := s.validateSlot(slot); err != nil {
+		return nil, err
+	}
+
+	zTotal := 0
+
+	for _, dimension := range s.arch {
+		zTotal += dimension
+	}
+
+	state := make([]float32, zTotal)
+	prediction := make([]float32, zTotal)
+	errorNorm := make([]float32, len(s.arch))
+	statePointer, stateLength := floatPtr(state)
+	predictionPointer, predictionLength := floatPtr(prediction)
+	errorPointer, errorLength := floatPtr(errorNorm)
+
+	err := s.call(func(errBuf []byte) C.int {
+		return C.batch_solver_read_wire_layers(
+			s.handle,
+			C.uint32_t(slot),
+			statePointer,
+			C.uint32_t(stateLength),
+			predictionPointer,
+			C.uint32_t(predictionLength),
+			errorPointer,
+			C.uint32_t(errorLength),
+			(*C.char)(unsafe.Pointer(&errBuf[0])),
+			C.int(len(errBuf)),
+		)
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	layers := make([]LayerWire, len(s.arch))
+	offset := 0
+
+	for layerIndex, dimension := range s.arch {
+		end := offset + dimension
+		layers[layerIndex] = LayerWire{
+			State:      toFloat64(state[offset:end]),
+			Prediction: toFloat64(prediction[offset:end]),
+			ErrorNorm:  float64(errorNorm[layerIndex]),
+		}
+		offset = end
+	}
+
+	return layers, nil
 }
 
 func (s *BatchSolver) Weights(slot int) (w, r, a, v []float32, err error) {

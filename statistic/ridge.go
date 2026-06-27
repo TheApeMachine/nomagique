@@ -108,6 +108,21 @@ func flattenRegularizedSquare(matrix [][]float64, lambda float64) []float64 {
 	return flat
 }
 
+/*
+ridgeLambda derives the regularization strength from the matrix's own
+conditioning, not a fixed constant. A well-conditioned system needs only a
+machine-epsilon nudge for numerical stability; a rank-deficient one (a constant
+or collinear predictor — e.g. a thin pair whose order flow never varies) needs
+real damping so the normal matrix becomes positive-definite and the solve returns
+a coefficient shrunk toward zero rather than failing. Zero shrinkage IS the
+correct structural answer for a predictor that carries no resolvable signal.
+
+lambda scales with the diagonal mean (so it is unit-consistent with the matrix)
+and with how far the estimated condition number exceeds the numerically safe
+limit: at or below the limit it is the epsilon floor; far beyond it (or infinite,
+the singular case) it rises to a fraction of the diagonal mean — enough to
+guarantee Cholesky succeeds on the regularized system.
+*/
 func (solver *RidgeSolver) ridgeLambda(normal [][]float64) float64 {
 	trace := 0.0
 	size := float64(len(normal))
@@ -121,16 +136,29 @@ func (solver *RidgeSolver) ridgeLambda(normal [][]float64) float64 {
 	}
 
 	base := trace / size
-	condition := solver.conditionEstimate(normal)
 	machineEpsilon := machineSqrtEpsilon()
-	conditionLimit := 1 / machineEpsilon
-	extra := 0.0
+	floor := base * machineEpsilon
 
-	if condition > conditionLimit || math.IsInf(condition, 0) {
-		extra = base * machineEpsilon
+	condition := solver.conditionEstimate(normal)
+	conditionLimit := 1 / machineEpsilon
+
+	// Well-conditioned: only the numerical floor.
+	if condition <= conditionLimit && !math.IsInf(condition, 0) {
+		return floor
 	}
 
-	return base*machineEpsilon + extra
+	// Rank-deficient or singular: damp by a fraction of the diagonal scale.
+	// The fraction grows with the excess condition number and saturates at the
+	// diagonal mean so a perfectly singular column (condition = +Inf) gets the
+	// full base damping that makes the system positive-definite.
+	if math.IsInf(condition, 0) {
+		return floor + base
+	}
+
+	excess := condition / conditionLimit
+	fraction := 1 - 1/excess
+
+	return floor + base*fraction
 }
 
 func machineSqrtEpsilon() float64 {

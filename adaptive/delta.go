@@ -153,7 +153,7 @@ func (delta *Delta) Read(payload []byte) (int, error) {
 }
 
 func (delta *Delta) Write(p []byte) (int, error) {
-	delta.artifact.WithPayload(p)
+	delta.artifact.WithPlaintextPayload(p)
 	return len(p), nil
 }
 

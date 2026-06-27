@@ -117,7 +117,7 @@ func (extent *Range) Read(payload []byte) (int, error) {
 }
 
 func (extent *Range) Write(p []byte) (int, error) {
-	extent.artifact.WithPayload(p)
+	extent.artifact.WithPlaintextPayload(p)
 	return len(p), nil
 }
 

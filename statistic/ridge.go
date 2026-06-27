@@ -36,16 +36,31 @@ func (solver *RidgeSolver) Solve(normal [][]float64, vector []float64) ([]float6
 		if len(normal[row]) != size {
 			return nil, fmt.Errorf("statistic: ridge normal matrix is not square")
 		}
+
+		if math.IsNaN(vector[row]) || math.IsInf(vector[row], 0) {
+			return nil, fmt.Errorf("statistic: ridge vector is non-finite")
+		}
+
+		for col := 0; col < size; col++ {
+			value := normal[row][col]
+			if math.IsNaN(value) || math.IsInf(value, 0) {
+				return nil, fmt.Errorf("statistic: ridge normal matrix is non-finite")
+			}
+		}
 	}
 
 	lambda := solver.ridgeLambda(normal)
+	if lambda <= 0 || math.IsNaN(lambda) || math.IsInf(lambda, 0) {
+		return nil, fmt.Errorf("statistic: ridge lambda is non-positive")
+	}
+
 	symmetric := mat.NewSymDense(size, nil)
 
 	for row := 0; row < size; row++ {
 		for col := row; col < size; col++ {
 			value := normal[row][col]
 
-			if row == col && row > 0 {
+			if row == col {
 				value += lambda
 			}
 
@@ -99,10 +114,7 @@ func flattenRegularizedSquare(matrix [][]float64, lambda float64) []float64 {
 
 	for row := 0; row < size; row++ {
 		copy(flat[row*size:(row+1)*size], matrix[row])
-
-		if row > 0 {
-			flat[row*size+row] += lambda
-		}
+		flat[row*size+row] += lambda
 	}
 
 	return flat

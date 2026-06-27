@@ -153,7 +153,7 @@ func (momentum *Momentum) Read(payload []byte) (int, error) {
 }
 
 func (momentum *Momentum) Write(p []byte) (int, error) {
-	momentum.artifact.WithPayload(p)
+	momentum.artifact.WithPlaintextPayload(p)
 	return len(p), nil
 }
 

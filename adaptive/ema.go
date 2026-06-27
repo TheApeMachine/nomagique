@@ -131,7 +131,7 @@ func (ema *EMA) Read(payload []byte) (int, error) {
 }
 
 func (ema *EMA) Write(payload []byte) (int, error) {
-	ema.artifact.WithPayload(payload)
+	ema.artifact.WithPlaintextPayload(payload)
 	return len(payload), nil
 }
 

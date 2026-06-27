@@ -144,7 +144,7 @@ func (fractional *FracDiff) Read(payload []byte) (int, error) {
 }
 
 func (fractional *FracDiff) Write(p []byte) (int, error) {
-	fractional.artifact.WithPayload(p)
+	fractional.artifact.WithPlaintextPayload(p)
 	return len(p), nil
 }
 

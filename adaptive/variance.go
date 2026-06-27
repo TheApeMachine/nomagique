@@ -139,7 +139,7 @@ func (variance *Variance) Read(payload []byte) (int, error) {
 }
 
 func (variance *Variance) Write(p []byte) (int, error) {
-	variance.artifact.WithPayload(p)
+	variance.artifact.WithPlaintextPayload(p)
 	return len(p), nil
 }
 

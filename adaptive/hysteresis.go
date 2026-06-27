@@ -160,7 +160,7 @@ func (hysteresis *Hysteresis) Read(payload []byte) (int, error) {
 }
 
 func (hysteresis *Hysteresis) Write(p []byte) (int, error) {
-	hysteresis.artifact.WithPayload(p)
+	hysteresis.artifact.WithPlaintextPayload(p)
 	return len(p), nil
 }
 

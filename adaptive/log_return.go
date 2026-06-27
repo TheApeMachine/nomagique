@@ -233,7 +233,7 @@ func (logReturn *LogReturn) Read(payload []byte) (int, error) {
 }
 
 func (logReturn *LogReturn) Write(p []byte) (int, error) {
-	logReturn.artifact.WithPayload(p)
+	logReturn.artifact.WithPlaintextPayload(p)
 	return len(p), nil
 }
 

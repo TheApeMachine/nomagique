@@ -52,4 +52,26 @@ func TestRidgeSolver_Solve(testingTB *testing.T) {
 			}
 		})
 	})
+
+	Convey("Given a rank-deficient system with no unregularized escape axis", testingTB, func() {
+		normal := [][]float64{
+			{4, 4, 0},
+			{4, 4, 0},
+			{0, 0, 0},
+		}
+		vector := []float64{2, 2, 0}
+		solver := NewRidgeSolver()
+
+		solution, err := solver.Solve(normal, vector)
+
+		Convey("It should regularize every diagonal and return finite coefficients", func() {
+			So(err, ShouldBeNil)
+			So(solution, ShouldHaveLength, 3)
+
+			for _, value := range solution {
+				So(math.IsNaN(value), ShouldBeFalse)
+				So(math.IsInf(value, 0), ShouldBeFalse)
+			}
+		})
+	})
 }

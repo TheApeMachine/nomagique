@@ -156,7 +156,7 @@ func appendInputs(inputs []string, key string) []string {
 }
 
 func (compression *Compression) Write(payload []byte) (int, error) {
-	compression.artifact.WithPayload(payload)
+	compression.artifact.WithPlaintextPayload(payload)
 	return len(payload), nil
 }
 

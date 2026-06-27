@@ -88,12 +88,13 @@ Algorithm:
  4. Phase[i] = atan2(v3[i], v2[i]). Combine across scales via weighted circular mean.
 */
 type EigenModeToroidal struct {
-	ctx       context.Context
-	cancel    context.CancelFunc
-	phase     [512]float64
-	frequency []float64
-	affinity  []uint64
-	err       error
+	ctx          context.Context
+	cancel       context.CancelFunc
+	phase        [512]float64
+	cooccurrence [512][512]float64
+	frequency    []float64
+	affinity     []uint64
+	err          error
 }
 
 type eigenOpts func(*EigenModeToroidal)
@@ -149,11 +150,11 @@ func (emt *EigenModeToroidal) BuildCooccurrenceFromWords(tags []uint64, windowSi
 		emt.frequency = make([]float64, 512)
 	}
 
-	var C [512][512]float64
+	C := &emt.cooccurrence
 
-	emt.buildCooccurrenceInto(&C, tags, windowSize)
+	emt.buildCooccurrenceInto(C, tags, windowSize)
 
-	_, v2, v3 := emt.top3Eigenvectors(&C)
+	_, v2, v3 := emt.top3Eigenvectors(C)
 
 	var v2sq, v3sq, mags [512]float64
 

@@ -204,7 +204,7 @@ func (surprise *ZScore) Read(payload []byte) (int, error) {
 }
 
 func (surprise *ZScore) Write(p []byte) (int, error) {
-	surprise.artifact.WithPayload(p)
+	surprise.artifact.WithPlaintextPayload(p)
 	return len(p), nil
 }
 

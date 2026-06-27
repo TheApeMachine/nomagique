@@ -190,7 +190,7 @@ func (timeElastic *TimeElastic) Read(payload []byte) (int, error) {
 }
 
 func (timeElastic *TimeElastic) Write(p []byte) (int, error) {
-	timeElastic.artifact.WithPayload(p)
+	timeElastic.artifact.WithPlaintextPayload(p)
 	return len(p), nil
 }
 

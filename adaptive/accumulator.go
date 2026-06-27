@@ -96,7 +96,7 @@ func (accumulator *Accumulator) Read(payload []byte) (int, error) {
 }
 
 func (accumulator *Accumulator) Write(p []byte) (int, error) {
-	accumulator.artifact.WithPayload(p)
+	accumulator.artifact.WithPlaintextPayload(p)
 	return len(p), nil
 }
 

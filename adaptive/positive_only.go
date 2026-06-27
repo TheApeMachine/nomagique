@@ -111,7 +111,7 @@ func (positiveOnly *PositiveOnly) Read(payload []byte) (int, error) {
 }
 
 func (positiveOnly *PositiveOnly) Write(p []byte) (int, error) {
-	positiveOnly.artifact.WithPayload(p)
+	positiveOnly.artifact.WithPlaintextPayload(p)
 	return len(p), nil
 }
 

@@ -77,17 +77,15 @@ func replayBookQuality(
 func bookQualityBluffReplayFrames() [][]byte {
 	frames := make([][]byte, 0, 32)
 
-	for range 12 {
-		frames = append(frames, bookFrameBytes(50, 80))
+	for range 5 {
+		frames = append(frames, bookFrameBytes(10, 10))
 	}
 
-	for range 8 {
-		frames = append(frames, bookFrameBytes(80, 80), bookFrameBytes(62, 80))
+	for range 3 {
+		frames = append(frames, bookFrameBytes(100, 10), bookFrameBytes(2, 10), bookFrameBytes(10, 10))
 	}
 
-	for range 4 {
-		frames = append(frames, bookFrameBytes(110, 80), bookFrameBytes(45, 80))
-	}
+	frames = append(frames, bookFrameBytes(120, 10), bookFrameBytes(1, 10))
 
 	return frames
 }

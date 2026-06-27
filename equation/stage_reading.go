@@ -8,7 +8,7 @@ import (
 StageReading exposes one output field from the carried artifact as a classifier score source.
 */
 type StageReading struct {
-	field string
+	field    string
 	artifact *datura.Artifact
 }
 
@@ -17,7 +17,7 @@ NewStageReading returns a score source for one output field on the carried artif
 */
 func NewStageReading(field string) *StageReading {
 	return &StageReading{
-		field: field,
+		field:    field,
 		artifact: datura.Acquire("equation-stage-reading", datura.APPJSON),
 	}
 }

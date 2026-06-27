@@ -85,7 +85,11 @@ func ToxicChurnEvidence(
 	distancePct float64,
 	proximityPct float64,
 ) (float64, error) {
-	if ratio <= churnGate || sizeThreshold <= 0 || addVol < sizeThreshold {
+	if ratio <= 0 || sizeThreshold <= 0 || addVol < sizeThreshold {
+		return 0, fmt.Errorf("algorithm: toxic churn ratio or size gate failed")
+	}
+
+	if churnGate > 0 && ratio <= churnGate {
 		return 0, fmt.Errorf("algorithm: toxic churn ratio or size gate failed")
 	}
 
@@ -93,7 +97,10 @@ func ToxicChurnEvidence(
 		return 0, fmt.Errorf("algorithm: toxic churn proximity gate failed")
 	}
 
-	ratioEvidence, err := probability.CompetitionMargin(ratio-churnGate, churnGate)
+	ratioEvidence, err := probability.MagnitudeMargin(ratio)
+	if churnGate > 0 {
+		ratioEvidence, err = probability.CompetitionMargin(ratio-churnGate, churnGate)
+	}
 
 	if err != nil {
 		return 0, err

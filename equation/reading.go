@@ -8,7 +8,7 @@ import (
 Reading exposes one upstream output field as a classifier score source.
 */
 type Reading struct {
-	field string
+	field    string
 	artifact *datura.Artifact
 }
 
@@ -17,7 +17,7 @@ NewReading returns a score source for one output field on the carried artifact.
 */
 func NewReading(field string) *Reading {
 	return &Reading{
-		field: field,
+		field:    field,
 		artifact: datura.Acquire("equation-reading", datura.APPJSON),
 	}
 }

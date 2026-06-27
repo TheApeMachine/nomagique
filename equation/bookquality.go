@@ -134,7 +134,7 @@ func classifyBookQuality(
 	toxicBluffStrength float64,
 	threshold, churnGate, supportGate, vacuumStrengthCap float64,
 ) (category int, strength, bluffScore, vacuumScore, supportScore float64, err error) {
-	if toxicNear && churnGate > 0 {
+	if toxicNear && toxicBluffStrength > 0 {
 		bluffScore, err = toxicBluffEvidence(toxicBluffStrength, churnGate)
 
 		if err != nil {

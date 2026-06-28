@@ -25,7 +25,21 @@ func TestExcitationMeasure(testingTB *testing.T) {
 		}
 
 		Convey("It should publish thermal scores", func() {
+			So(datura.Peek[bool](inbound, "output", "ready"), ShouldBeTrue)
 			So(datura.Peek[float64](inbound, "output", "strength"), ShouldBeGreaterThan, 0)
+		})
+	})
+
+	Convey("Given a scoped feature batch before fit history is ready", testingTB, func() {
+		excitation := NewExcitation(datura.Acquire("excitation-config", datura.APPJSON))
+		base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
+		inbound := daturaBurstArtifact("ALT/EUR", excitationBurstSamples(base, 2))
+
+		err := nomagique.RoundTripArtifact(inbound, excitation)
+
+		Convey("It should stage quietly as not ready", func() {
+			So(err, ShouldBeNil)
+			So(datura.Peek[bool](inbound, "output", "ready"), ShouldBeFalse)
 		})
 	})
 

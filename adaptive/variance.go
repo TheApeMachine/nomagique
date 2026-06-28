@@ -107,12 +107,8 @@ func (variance *Variance) Read(payload []byte) (int, error) {
 
 		if span == 0 {
 			variance.prev = sample
-
-			return 0, errnie.Error(errnie.Err(
-				errnie.Validation,
-				"variance: sample span is zero",
-				nil,
-			))
+			mergeStageOutput(state, 0, false)
+			continue
 		}
 
 		rate := math.Abs(sample-variance.prev) / span
@@ -122,18 +118,12 @@ func (variance *Variance) Read(payload []byte) (int, error) {
 		variance.prev = sample
 
 		if variance.variance <= 0 {
-			return 0, errnie.Error(errnie.Err(
-				errnie.Validation,
-				"variance: variance is not positive",
-				nil,
-			))
+			mergeStageOutput(state, 0, false)
+			continue
 		}
 
-		state.MergeOutput("value", variance.variance)
+		mergeStageOutput(state, variance.variance, true)
 	}
-
-	state.Poke("output", "root")
-	state.Poke([]string{"value"}, "inputs")
 
 	return state.PackInto(payload)
 }

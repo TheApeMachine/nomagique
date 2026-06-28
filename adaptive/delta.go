@@ -111,7 +111,7 @@ func (delta *Delta) Read(payload []byte) (int, error) {
 			delta.max = sample
 			delta.prev = sample
 			delta.artifact.Poke(1.0, "output", "count")
-			state.MergeOutput("value", 0)
+			mergeStageOutput(state, 0, false)
 
 			break
 		}
@@ -123,19 +123,15 @@ func (delta *Delta) Read(payload []byte) (int, error) {
 
 		if span == 0 {
 			delta.prev = sample
-
-			return 0, errnie.Error(errnie.Err(
-				errnie.Validation,
-				"delta: sample span is zero",
-				nil,
-			))
+			mergeStageOutput(state, 0, false)
+			continue
 		}
 
 		value := math.Abs(sample-delta.prev) / span
 		delta.prev = sample
 		delta.artifact.Poke(count+1, "output", "count")
 
-		state.MergeOutput("value", value)
+		mergeStageOutput(state, value, true)
 	}
 
 	if !found {
@@ -145,9 +141,6 @@ func (delta *Delta) Read(payload []byte) (int, error) {
 			nil,
 		))
 	}
-
-	state.Poke("output", "root")
-	state.Poke([]string{"value"}, "inputs")
 
 	return state.PackInto(payload)
 }

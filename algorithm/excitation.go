@@ -117,6 +117,7 @@ func (excitation *Excitation) Read(payload []byte) (int, error) {
 		state.MergeOutput("stationarityMargin", excitation.outcome.StationarityMargin)
 		state.MergeOutput("baselineMu", excitation.outcome.BaselineMu)
 		state.MergeOutput("intensityRatio", excitation.outcome.IntensityRatio)
+		state.MergeOutput("ready", true)
 
 		if excitation.outcome.Eligible {
 			state.Merge("excitation.eligible", 1.0)

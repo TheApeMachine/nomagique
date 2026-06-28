@@ -42,6 +42,21 @@ func TestTimeElasticRead(t *testing.T) {
 
 			So(rootKey, ShouldEqual, "output")
 			So(datura.Peek[float64](outbound, rootKey, "value"), ShouldEqual, 1)
+			So(datura.Peek[bool](outbound, rootKey, "ready"), ShouldBeFalse)
+		})
+
+		Convey("When a flat stream advances in time", func() {
+			_, _ = nomagique.WriteArtifact(timeElastic, timeElasticWire(10, time.Unix(0, 2)))
+
+			frame := make([]byte, 65536)
+			readCount, err := timeElastic.Read(frame)
+			So(err, ShouldEqual, io.EOF)
+
+			outbound := datura.Acquire("test-out", datura.APPJSON)
+			_, err = outbound.Unpack(frame[:readCount])
+			So(err, ShouldBeNil)
+			So(datura.Peek[float64](outbound, "output", "value"), ShouldEqual, 1)
+			So(datura.Peek[bool](outbound, "output", "ready"), ShouldBeFalse)
 		})
 
 		Convey("When a later timestamp regresses", func() {
@@ -106,11 +121,13 @@ func TestTimeElasticFlipFlop(t *testing.T) {
 
 		So(err, ShouldBeIn, nil, io.EOF)
 		So(datura.Peek[float64](artifact, "output", "value"), ShouldEqual, 1)
+		So(datura.Peek[bool](artifact, "output", "ready"), ShouldBeFalse)
 
 		second := timeElasticWire(14, time.Unix(0, int64(5*time.Hour)))
 		err = nomagique.RoundTripArtifact(second, timeElastic)
 
 		So(err, ShouldBeIn, nil, io.EOF)
 		So(datura.Peek[float64](second, "output", "value"), ShouldBeGreaterThan, 0)
+		So(datura.Peek[bool](second, "output", "ready"), ShouldBeTrue)
 	})
 }

@@ -135,6 +135,7 @@ func (timeElastic *TimeElastic) Read(payload []byte) (int, error) {
 
 	eventAt := time.Unix(0, int64(datura.Peek[float64](state, "at")))
 	value := 1.0
+	outputReady := false
 
 	if !timeElastic.ready {
 		timeElastic.baseline = sample
@@ -171,6 +172,7 @@ func (timeElastic *TimeElastic) Read(payload []byte) (int, error) {
 		}
 
 		value = sample / (timeElastic.baseline + epsilon)
+		outputReady = sample != timeElastic.baseline
 		timeElastic.baseline = (1.0-alpha)*timeElastic.baseline + alpha*sample
 	}
 
@@ -182,9 +184,7 @@ func (timeElastic *TimeElastic) Read(payload []byte) (int, error) {
 		))
 	}
 
-	state.Poke("output", "root")
-	state.Poke([]string{"value"}, "inputs")
-	state.MergeOutput("value", value)
+	mergeStageOutput(state, value, outputReady)
 
 	return state.PackInto(payload)
 }

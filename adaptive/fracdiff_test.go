@@ -25,7 +25,8 @@ func TestFracDiffRead(t *testing.T) {
 
 		outbound := datura.Acquire("fracdiff-outbound", datura.APPJSON)
 		_, _ = outbound.Unpack(frame[:readCount])
-		So(datura.Peek[float64](outbound, "output", "value"), ShouldEqual, 10)
+		So(datura.Peek[float64](outbound, "output", "value"), ShouldEqual, 0)
+		So(datura.Peek[bool](outbound, "output", "ready"), ShouldBeFalse)
 	})
 
 	Convey("Given a second FracDiff sample after bootstrap", t, func() {
@@ -45,6 +46,7 @@ func TestFracDiffRead(t *testing.T) {
 
 		So(err, ShouldBeNil)
 		So(datura.Peek[float64](artifact, "output", "value"), ShouldNotEqual, 0)
+		So(datura.Peek[bool](artifact, "output", "ready"), ShouldBeTrue)
 	})
 
 	Convey("Given a repeated span after bootstrap", t, func() {
@@ -53,9 +55,16 @@ func TestFracDiffRead(t *testing.T) {
 		_, _ = fractional.Read(make([]byte, 65536))
 		_, _ = nomagique.WriteArtifact(fractional, ScalarWire(datura.Acquire("test", datura.APPJSON), "sample", 10))
 
-		_, err := fractional.Read(make([]byte, 65536))
+		frame := make([]byte, 65536)
+		readCount, err := fractional.Read(frame)
 
-		So(err, ShouldNotBeNil)
+		So(err, ShouldEqual, io.EOF)
+		So(readCount, ShouldBeGreaterThan, 0)
+
+		outbound := datura.Acquire("fracdiff-outbound", datura.APPJSON)
+		_, _ = outbound.Unpack(frame[:readCount])
+		So(datura.Peek[float64](outbound, "output", "value"), ShouldEqual, 0)
+		So(datura.Peek[bool](outbound, "output", "ready"), ShouldBeFalse)
 	})
 
 	Convey("Given a non-finite sample", t, func() {

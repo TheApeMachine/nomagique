@@ -107,7 +107,7 @@ func (fractional *FracDiff) Read(payload []byte) (int, error) {
 			fractional.count = 1
 			fractional.weights = []float64{1}
 			fractional.ready = true
-			state.MergeOutput("value", sample)
+			mergeStageOutput(state, 0, false)
 
 			break
 		}
@@ -119,12 +119,8 @@ func (fractional *FracDiff) Read(payload []byte) (int, error) {
 
 		if span == 0 {
 			fractional.pushHistory(sample)
-
-			return 0, errnie.Error(errnie.Err(
-				errnie.Validation,
-				"fracdiff: sample span is zero",
-				nil,
-			))
+			mergeStageOutput(state, 0, false)
+			continue
 		}
 
 		rate := math.Abs(sample-fractional.prev) / span
@@ -134,11 +130,16 @@ func (fractional *FracDiff) Read(payload []byte) (int, error) {
 		fractional.prev = sample
 		value := fractional.outputSum()
 
-		state.MergeOutput("value", value)
-	}
+		if math.IsNaN(value) || math.IsInf(value, 0) {
+			return 0, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"fracdiff: output value is non-finite",
+				nil,
+			))
+		}
 
-	state.Poke("output", "root")
-	state.Poke([]string{"value"}, "inputs")
+		mergeStageOutput(state, value, true)
+	}
 
 	return state.PackInto(payload)
 }

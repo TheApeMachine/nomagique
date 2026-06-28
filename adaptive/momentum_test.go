@@ -26,6 +26,7 @@ func TestMomentumRead(t *testing.T) {
 		outbound := datura.Acquire("momentum-outbound", datura.APPJSON)
 		_, _ = outbound.Unpack(frame[:readCount])
 		So(datura.Peek[float64](outbound, "output", "value"), ShouldEqual, 0)
+		So(datura.Peek[bool](outbound, "output", "ready"), ShouldBeFalse)
 	})
 
 	Convey("Given a repeated span after bootstrap", t, func() {
@@ -34,9 +35,16 @@ func TestMomentumRead(t *testing.T) {
 		_, _ = momentum.Read(make([]byte, 65536))
 		_, _ = nomagique.WriteArtifact(momentum, ScalarWire(datura.Acquire("test", datura.APPJSON), "sample", 10))
 
-		_, err := momentum.Read(make([]byte, 65536))
+		frame := make([]byte, 65536)
+		readCount, err := momentum.Read(frame)
 
-		So(err, ShouldNotBeNil)
+		So(err, ShouldEqual, io.EOF)
+		So(readCount, ShouldBeGreaterThan, 0)
+
+		outbound := datura.Acquire("momentum-outbound", datura.APPJSON)
+		_, _ = outbound.Unpack(frame[:readCount])
+		So(datura.Peek[float64](outbound, "output", "value"), ShouldEqual, 0)
+		So(datura.Peek[bool](outbound, "output", "ready"), ShouldBeFalse)
 	})
 
 	Convey("Given warmed distinct samples", t, func() {
@@ -54,6 +62,7 @@ func TestMomentumRead(t *testing.T) {
 		outbound := datura.Acquire("momentum-outbound", datura.APPJSON)
 		_, _ = outbound.Unpack(frame[:readCount])
 		So(datura.Peek[float64](outbound, "output", "value"), ShouldEqual, 1)
+		So(datura.Peek[bool](outbound, "output", "ready"), ShouldBeTrue)
 	})
 
 	Convey("Given a non-finite sample", t, func() {

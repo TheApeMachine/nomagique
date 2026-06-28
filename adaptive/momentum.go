@@ -111,7 +111,7 @@ func (momentum *Momentum) Read(payload []byte) (int, error) {
 			momentum.max = sample
 			momentum.prev = sample
 			momentum.artifact.Poke(1.0, "output", "count")
-			state.MergeOutput("value", 0)
+			mergeStageOutput(state, 0, false)
 
 			break
 		}
@@ -123,19 +123,15 @@ func (momentum *Momentum) Read(payload []byte) (int, error) {
 
 		if span == 0 {
 			momentum.prev = sample
-
-			return 0, errnie.Error(errnie.Err(
-				errnie.Validation,
-				"momentum: sample span is zero",
-				nil,
-			))
+			mergeStageOutput(state, 0, false)
+			continue
 		}
 
 		value := (sample - momentum.prev) / span
 		momentum.prev = sample
 		momentum.artifact.Poke(count+1, "output", "count")
 
-		state.MergeOutput("value", value)
+		mergeStageOutput(state, value, true)
 	}
 
 	if !found {
@@ -145,9 +141,6 @@ func (momentum *Momentum) Read(payload []byte) (int, error) {
 			nil,
 		))
 	}
-
-	state.Poke("output", "root")
-	state.Poke([]string{"value"}, "inputs")
 
 	return state.PackInto(payload)
 }

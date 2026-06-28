@@ -56,10 +56,61 @@ func TestCohortSampleEmitsFeatureSchema(testingTB *testing.T) {
 
 		Convey("It should write cohort features onto the artifact", func() {
 			So(result, ShouldNotBeNil)
+			So(datura.Peek[bool](result, "output", "ready"), ShouldBeTrue)
 			So(datura.Peek[string](result, "root"), ShouldEqual, "features")
 			So(datura.Peek[[]string](result, "inputs"), ShouldResemble, equation.CohortInputKeys)
 			So(datura.Peek[float64](result, "features", 0), ShouldBeGreaterThanOrEqualTo, 2)
 			So(datura.Peek[float64](result, "features", 5), ShouldBeGreaterThan, 0)
+		})
+	})
+}
+
+func TestCohortSampleColdStartReturnsEOF(testingTB *testing.T) {
+	Convey("Given the first ticker price for a symbol", testingTB, func() {
+		sample := NewCohortSample(cohortSampleConfig())
+		frame := cohortSampleTicker(
+			"ALPHA/USD",
+			100,
+			time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC).UnixNano(),
+		)
+
+		err := runCohortSample(frame, sample)
+
+		Convey("It should stage the sample as not ready, not validation-failed", func() {
+			So(err, ShouldEqual, io.EOF)
+			So(datura.Peek[bool](frame, "output", "ready"), ShouldBeFalse)
+			So(len(datura.Peek[[]float64](frame, "features")), ShouldEqual, 0)
+		})
+	})
+}
+
+func TestCohortSampleHistoryIsBounded(testingTB *testing.T) {
+	Convey("Given a configured per-symbol history cap", testingTB, func() {
+		historyCap := 8
+		config := cohortSampleConfig().Poke(float64(historyCap), "historyCap")
+		sample := NewCohortSample(config)
+		base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
+		symbols := []string{"ALPHA/USD", "BETA/USD", "GAMMA/USD"}
+
+		for tick := range 32 {
+			for symbolIndex, symbol := range symbols {
+				frame := cohortSampleTicker(
+					symbol,
+					100+float64(tick)+float64(symbolIndex),
+					base.Add(time.Duration(tick)*time.Second).UnixNano(),
+				)
+				_ = runCohortSample(frame, sample)
+				frame.Release()
+			}
+		}
+
+		Convey("It should retain no more than the configured cap per symbol", func() {
+			for _, symbol := range symbols {
+				symbolState := sample.symbols[symbol]
+				So(symbolState, ShouldNotBeNil)
+				So(len(symbolState.returns), ShouldBeLessThanOrEqualTo, historyCap)
+				So(len(symbolState.times), ShouldBeLessThanOrEqualTo, historyCap)
+			}
 		})
 	})
 }

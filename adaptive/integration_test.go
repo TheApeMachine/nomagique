@@ -123,13 +123,14 @@ func TestIntegration(t *testing.T) {
 			)
 			err := nomagique.RoundTripArtifact(artifact, pipeline)
 
-			So(err, ShouldNotBeNil)
+			So(err, ShouldBeIn, nil, io.EOF)
+			So(datura.Peek[bool](artifact, "output", "ready"), ShouldBeFalse)
 
 			Convey("It should warm up then emit finite surprise scores", func() {
 				adaptive.ScalarWire(artifact, "sample", 22)
 				err := nomagique.RoundTripArtifact(artifact, pipeline)
 
-				So(err, ShouldNotBeNil)
+				So(err, ShouldBeIn, nil, io.EOF)
 
 				adaptive.ScalarWire(artifact, "sample", 30)
 				err = nomagique.RoundTripArtifact(artifact, pipeline)
@@ -158,7 +159,8 @@ func TestIntegration(t *testing.T) {
 				)
 				err := nomagique.RoundTripArtifact(varianceArtifact, variancePipeline)
 
-				So(err, ShouldNotBeNil)
+				So(err, ShouldBeIn, nil, io.EOF)
+				So(datura.Peek[bool](varianceArtifact, "output", "ready"), ShouldBeFalse)
 
 				adaptive.ScalarWire(varianceArtifact, "sample", 22)
 				err = nomagique.RoundTripArtifact(varianceArtifact, variancePipeline)
@@ -181,7 +183,8 @@ func TestIntegration(t *testing.T) {
 			artifact := adaptive.ScalarWire(datura.Acquire("test", datura.APPJSON), "sample", 1)
 			err := nomagique.RoundTripArtifact(artifact, pipeline)
 
-			So(err, ShouldNotBeNil)
+			So(err, ShouldBeIn, nil, io.EOF)
+			So(datura.Peek[bool](artifact, "output", "ready"), ShouldBeFalse)
 
 			Convey("It should bootstrap then emit signed unit-normalized momentum", func() {
 				artifact = adaptive.ScalarWire(datura.Acquire("test", datura.APPJSON), "sample", 3)
@@ -226,7 +229,8 @@ func TestIntegration(t *testing.T) {
 			)
 			err := nomagique.RoundTripArtifact(artifact, pipeline)
 
-			So(err, ShouldNotBeNil)
+			So(err, ShouldBeIn, nil, io.EOF)
+			So(datura.Peek[bool](artifact, "output", "ready"), ShouldBeFalse)
 
 			Convey("It should bootstrap at unity then stay finite and positive", func() {
 				second := adaptive.ScalarWire(datura.Acquire("test", datura.APPJSON), "sample", 14)

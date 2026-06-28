@@ -2,6 +2,7 @@ package algorithm
 
 import (
 	"fmt"
+	"io"
 	"math"
 	"sort"
 	"time"
@@ -16,6 +17,7 @@ import (
 const (
 	cohortMinimumWindow = 2
 	cohortMinimumPeers  = 2
+	cohortHistoryCap    = 128
 )
 
 /*
@@ -76,11 +78,7 @@ func (cohortSample *CohortSample) Read(payload []byte) (int, error) {
 	window := cohortSample.window(sample.name)
 
 	if window < cohortMinimumWindow {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"cohort-sample: window not calibrated",
-			nil,
-		))
+		return 0, io.EOF
 	}
 
 	symbolReturns := tailCohort(cohortSample.symbols[sample.name].returns, window)
@@ -89,11 +87,7 @@ func (cohortSample *CohortSample) Read(payload []byte) (int, error) {
 	if len(symbolReturns) < window ||
 		len(marketReturns) < window ||
 		len(peerCorrelations) < cohortMinimumPeers {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"cohort-sample: insufficient cohort history",
-			nil,
-		))
+		return 0, io.EOF
 	}
 
 	features := cohortFeatures(
@@ -106,6 +100,7 @@ func (cohortSample *CohortSample) Read(payload []byte) (int, error) {
 	)
 
 	state.Merge("features", features)
+	state.MergeOutput("ready", true)
 	state.Poke("features", "root")
 	state.Poke(equation.CohortInputKeys, "inputs")
 
@@ -177,9 +172,13 @@ func (cohortSample *CohortSample) observe(tick cohortTick) {
 	symbolState := cohortSample.symbol(tick.name)
 
 	if symbolState.lastPrice > 0 {
-		// ponytail: return history grows with runtime; use a time-bounded ring once retention policy exists.
-		symbolState.returns = append(symbolState.returns, math.Log(tick.price/symbolState.lastPrice))
-		symbolState.times = append(symbolState.times, tick.at)
+		historyCap := cohortSample.historyCap()
+		symbolState.returns = appendRingFloat(
+			symbolState.returns,
+			math.Log(tick.price/symbolState.lastPrice),
+			historyCap,
+		)
+		symbolState.times = appendRingInt64(symbolState.times, tick.at, historyCap)
 	}
 
 	symbolState.lastPrice = tick.price
@@ -196,6 +195,19 @@ func (cohortSample *CohortSample) symbol(name string) *cohortSymbol {
 	cohortSample.symbols[name] = symbolState
 
 	return symbolState
+}
+
+func (cohortSample *CohortSample) historyCap() int {
+	configured := datura.Peek[float64](cohortSample.artifact, "historyCap")
+	if configured <= 0 {
+		configured = datura.Peek[float64](cohortSample.artifact, "config", "historyCap")
+	}
+
+	if configured < cohortMinimumWindow {
+		return cohortHistoryCap
+	}
+
+	return int(configured)
 }
 
 func (cohortSample *CohortSample) window(symbol string) int {
@@ -366,6 +378,16 @@ func tailCohortInt(values []int64, count int) []int64 {
 	copy(out, values[len(values)-count:])
 
 	return out
+}
+
+func appendRingInt64(values []int64, value int64, capacity int) []int64 {
+	values = append(values, value)
+
+	if len(values) <= capacity {
+		return values
+	}
+
+	return values[len(values)-capacity:]
 }
 
 func medianAbsoluteCohort(values []float64) float64 {

@@ -17,9 +17,16 @@ func TestRangeRead(t *testing.T) {
 		extent := NewRange(datura.Acquire("range-config", datura.APPJSON).Poke("sample", "input"))
 		_, _ = nomagique.WriteArtifact(extent, rangeInput)
 
-		_, err := extent.Read(make([]byte, 65536))
+		frame := make([]byte, 65536)
+		readCount, err := extent.Read(frame)
 
-		So(err, ShouldNotBeNil)
+		So(err, ShouldEqual, io.EOF)
+		So(readCount, ShouldBeGreaterThan, 0)
+
+		outbound := datura.Acquire("range-outbound", datura.APPJSON)
+		_, _ = outbound.Unpack(frame[:readCount])
+		So(datura.Peek[float64](outbound, "output", "value"), ShouldEqual, 0)
+		So(datura.Peek[bool](outbound, "output", "ready"), ShouldBeFalse)
 	})
 
 	Convey("Given a repeated span after the first sample", t, func() {
@@ -28,9 +35,16 @@ func TestRangeRead(t *testing.T) {
 		_, _ = extent.Read(make([]byte, 65536))
 		_, _ = nomagique.WriteArtifact(extent, ScalarWire(datura.Acquire("test", datura.APPJSON), "sample", 10))
 
-		_, err := extent.Read(make([]byte, 65536))
+		frame := make([]byte, 65536)
+		readCount, err := extent.Read(frame)
 
-		So(err, ShouldNotBeNil)
+		So(err, ShouldEqual, io.EOF)
+		So(readCount, ShouldBeGreaterThan, 0)
+
+		outbound := datura.Acquire("range-outbound", datura.APPJSON)
+		_, _ = outbound.Unpack(frame[:readCount])
+		So(datura.Peek[float64](outbound, "output", "value"), ShouldEqual, 0)
+		So(datura.Peek[bool](outbound, "output", "ready"), ShouldBeFalse)
 	})
 
 	Convey("Given warmed distinct samples", t, func() {
@@ -48,6 +62,7 @@ func TestRangeRead(t *testing.T) {
 		outbound := datura.Acquire("range-outbound", datura.APPJSON)
 		_, _ = outbound.Unpack(frame[:readCount])
 		So(datura.Peek[float64](outbound, "output", "value"), ShouldEqual, 4)
+		So(datura.Peek[bool](outbound, "output", "ready"), ShouldBeTrue)
 	})
 
 	Convey("Given a non-finite sample", t, func() {

@@ -18,9 +18,33 @@ func TestVarianceRead(t *testing.T) {
 
 			So(err, ShouldBeIn, nil, io.EOF)
 
-			_, err = variance.Read(make([]byte, 65536))
+			frame := make([]byte, 65536)
+			readCount, err := variance.Read(frame)
 
-			So(err, ShouldNotBeNil)
+			So(err, ShouldEqual, io.EOF)
+			So(readCount, ShouldBeGreaterThan, 0)
+
+			outbound := datura.Acquire("variance-outbound", datura.APPJSON)
+			_, _ = outbound.Unpack(frame[:readCount])
+			So(datura.Peek[float64](outbound, "output", "value"), ShouldEqual, 0)
+			So(datura.Peek[bool](outbound, "output", "ready"), ShouldBeFalse)
+		})
+
+		Convey("When a flat stream repeats", func() {
+			_, _ = nomagique.WriteArtifact(variance, ScalarWire(datura.Acquire("test", datura.APPJSON), "sample", 10))
+			_, _ = variance.Read(make([]byte, 65536))
+			_, _ = nomagique.WriteArtifact(variance, ScalarWire(datura.Acquire("test", datura.APPJSON), "sample", 10))
+
+			frame := make([]byte, 65536)
+			readCount, err := variance.Read(frame)
+
+			So(err, ShouldEqual, io.EOF)
+			So(readCount, ShouldBeGreaterThan, 0)
+
+			outbound := datura.Acquire("variance-outbound", datura.APPJSON)
+			_, _ = outbound.Unpack(frame[:readCount])
+			So(datura.Peek[float64](outbound, "output", "value"), ShouldEqual, 0)
+			So(datura.Peek[bool](outbound, "output", "ready"), ShouldBeFalse)
 		})
 
 		Convey("When warmed up with distinct samples", func() {
@@ -43,6 +67,7 @@ func TestVarianceRead(t *testing.T) {
 
 			So(err, ShouldBeIn, nil, io.EOF)
 			So(datura.Peek[float64](artifact, "output", "value"), ShouldBeGreaterThan, 0)
+			So(datura.Peek[bool](artifact, "output", "ready"), ShouldBeTrue)
 		})
 	})
 }

@@ -55,10 +55,29 @@ func TestBookflowSample_Read(t *testing.T) {
 
 		Convey("It should emit calibrated depth-flow output", func() {
 			So(result, ShouldNotBeNil)
+			So(datura.Peek[bool](result, "output", "ready"), ShouldBeTrue)
 			So(datura.Peek[float64](result, "output", "value"), ShouldBeGreaterThan, 0)
 			So(datura.Peek[float64](result, "output", "confidence"), ShouldBeGreaterThan, 0.25)
 
 			result.Release()
+		})
+	})
+}
+
+func TestBookflowSample_ReadStagesColdStart(t *testing.T) {
+	Convey("Given a valid first book frame before feature history is ready", t, func() {
+		encoder := NewBookflowSample(datura.Acquire("bookflow-sample", datura.APPJSON))
+		frame := []byte(`{"channel":"book","type":"update","data":[{"symbol":"BTC/USD","bids":[{"price":100,"qty":20},{"price":99,"qty":18}],"asks":[{"price":101,"qty":8},{"price":102,"qty":6}]}]}`)
+		state := datura.Acquire("measurement", datura.APPJSON).WithPayload(frame)
+
+		err := nomagique.RoundTripArtifact(state, encoder)
+
+		Convey("It should be a nonfatal not-ready sample", func() {
+			So(err, ShouldBeNil)
+			So(datura.Peek[bool](state, "output", "ready"), ShouldBeFalse)
+			So(len(datura.Peek[[]float64](state, "features")), ShouldEqual, 0)
+
+			state.Release()
 		})
 	})
 }

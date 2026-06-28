@@ -152,12 +152,8 @@ func (surprise *ZScore) Read(payload []byte) (int, error) {
 
 		if span == 0 {
 			surprise.prev = sample
-
-			return 0, errnie.Error(errnie.Err(
-				errnie.Validation,
-				"zscore: sample span is zero",
-				nil,
-			))
+			mergeStageOutput(state, 0, false)
+			continue
 		}
 
 		rate := math.Abs(sample-surprise.prev) / span
@@ -177,11 +173,8 @@ func (surprise *ZScore) Read(payload []byte) (int, error) {
 		surprise.prev = sample
 
 		if surprise.variance <= 0 {
-			return 0, errnie.Error(errnie.Err(
-				errnie.Validation,
-				"zscore: variance is not positive",
-				nil,
-			))
+			mergeStageOutput(state, 0, false)
+			continue
 		}
 
 		value := deviation / math.Sqrt(surprise.variance)
@@ -194,11 +187,8 @@ func (surprise *ZScore) Read(payload []byte) (int, error) {
 			))
 		}
 
-		state.MergeOutput("value", value)
+		mergeStageOutput(state, value, true)
 	}
-
-	state.Poke("output", "root")
-	state.Poke([]string{"value"}, "inputs")
 
 	return state.PackInto(payload)
 }

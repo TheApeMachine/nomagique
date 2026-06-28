@@ -19,9 +19,33 @@ func TestZScoreRead(t *testing.T) {
 
 			So(err, ShouldBeIn, nil, io.EOF)
 
-			_, err = surprise.Read(make([]byte, 65536))
+			frame := make([]byte, 65536)
+			readCount, err := surprise.Read(frame)
 
-			So(err, ShouldNotBeNil)
+			So(err, ShouldEqual, io.EOF)
+			So(readCount, ShouldBeGreaterThan, 0)
+
+			outbound := datura.Acquire("zscore-outbound", datura.APPJSON)
+			_, _ = outbound.Unpack(frame[:readCount])
+			So(datura.Peek[float64](outbound, "output", "value"), ShouldEqual, 0)
+			So(datura.Peek[bool](outbound, "output", "ready"), ShouldBeFalse)
+		})
+
+		Convey("When a flat stream repeats", func() {
+			_, _ = nomagique.WriteArtifact(surprise, ScalarWire(datura.Acquire("test", datura.APPJSON), "sample", 10))
+			_, _ = surprise.Read(make([]byte, 65536))
+			_, _ = nomagique.WriteArtifact(surprise, ScalarWire(datura.Acquire("test", datura.APPJSON), "sample", 10))
+
+			frame := make([]byte, 65536)
+			readCount, err := surprise.Read(frame)
+
+			So(err, ShouldEqual, io.EOF)
+			So(readCount, ShouldBeGreaterThan, 0)
+
+			outbound := datura.Acquire("zscore-outbound", datura.APPJSON)
+			_, _ = outbound.Unpack(frame[:readCount])
+			So(datura.Peek[float64](outbound, "output", "value"), ShouldEqual, 0)
+			So(datura.Peek[bool](outbound, "output", "ready"), ShouldBeFalse)
 		})
 
 		Convey("When distinct samples arrive", func() {
@@ -44,6 +68,7 @@ func TestZScoreRead(t *testing.T) {
 
 			So(err, ShouldBeIn, nil, io.EOF)
 			So(datura.Peek[float64](artifact, "output", "value"), ShouldNotEqual, 0)
+			So(datura.Peek[bool](artifact, "output", "ready"), ShouldBeTrue)
 		})
 	})
 
@@ -85,6 +110,7 @@ func TestZScoreRead(t *testing.T) {
 
 			So(err, ShouldBeIn, nil, io.EOF)
 			So(datura.Peek[float64](artifact, "output", "value"), ShouldNotEqual, 0)
+			So(datura.Peek[bool](artifact, "output", "ready"), ShouldBeTrue)
 		})
 	})
 }

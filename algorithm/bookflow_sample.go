@@ -1,6 +1,7 @@
 package algorithm
 
 import (
+	"io"
 	"math"
 
 	"github.com/theapemachine/datura"
@@ -94,15 +95,12 @@ func (bookflowSample *BookflowSample) Read(payload []byte) (int, error) {
 	features := bookflowSample.features(window)
 
 	if len(features) == 0 {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"bookflow-sample: feature batch not ready",
-			nil,
-		))
+		return 0, io.EOF
 	}
 
 	state.WithScope(symbol)
 	state.Merge("features", features)
+	state.MergeOutput("ready", true)
 	state.Poke("features", "root")
 	state.Poke(equation.BookflowInputKeys, "inputs")
 

@@ -100,18 +100,12 @@ func (extent *Range) Read(payload []byte) (int, error) {
 		span := extent.max - extent.min
 
 		if span == 0 {
-			return 0, errnie.Error(errnie.Err(
-				errnie.Validation,
-				"range: sample span is zero",
-				nil,
-			))
+			mergeStageOutput(state, 0, false)
+			continue
 		}
 
-		state.MergeOutput("value", span)
+		mergeStageOutput(state, span, true)
 	}
-
-	state.Poke("output", "root")
-	state.Poke([]string{"value"}, "inputs")
 
 	return state.PackInto(payload)
 }

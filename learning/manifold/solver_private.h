@@ -62,6 +62,13 @@ typedef struct BatchDimsHost {
     float state_clip;
     float grad_clip;
     float early_stop_tol;
+
+    // Fused settle parameters
+    uint32_t max_inference_steps;
+    uint32_t min_inference_steps;
+    uint32_t line_search_halvings;
+    uint32_t monotone_state_steps;
+    float lr_state;
 } BatchDimsHost;
 
 /*
@@ -117,6 +124,7 @@ early-stop run per column so symbols converge independently.
 @property (nonatomic, strong) id<MTLComputePipelineState> pOuterFactor;
 @property (nonatomic, strong) id<MTLComputePipelineState> pOuterApply;
 @property (nonatomic, strong) id<MTLComputePipelineState> pMergeClamp;
+@property (nonatomic, strong) id<MTLComputePipelineState> pSettleFused;
 
 // Weights (per-symbol slot-major).
 @property (nonatomic, strong) id<MTLBuffer> bufW;   // [wTotal * N]
@@ -163,6 +171,8 @@ early-stop run per column so symbols converge independently.
 @property (nonatomic, strong) id<MTLBuffer> bufArchDim;    // [archLen]
 @property (nonatomic, strong) id<MTLBuffer> bufZOff;       // [archLen]
 @property (nonatomic, strong) id<MTLBuffer> bufPredOff;    // [numLinks]
+@property (nonatomic, strong) id<MTLBuffer> bufWOff;       // [numLinks]
+@property (nonatomic, strong) id<MTLBuffer> bufROff;       // [numLinks]
 @property (nonatomic, strong) id<MTLBuffer> bufLayerRow;   // [zTotal] layer per latent row
 @property (nonatomic, strong) id<MTLBuffer> bufHasPrev;    // [1]
 

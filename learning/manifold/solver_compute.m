@@ -264,100 +264,61 @@ static inline NSUInteger bo(uint32_t scalarOffset) { return (NSUInteger)scalarOf
 
 - (void)settleAdvanceTemporal:(BOOL)advanceTemporal {
     [self syncDims];
-    NSUInteger N = self.batch;
-    uint32_t topIndex = self.archLen - 1u;
-    uint32_t halvings = self.config.monotone_state_steps ? self.config.line_search_halvings : 0u;
-    uint32_t monotone = self.config.monotone_state_steps ? 1u : 0u;
 
-    uint32_t *active = (uint32_t *)self.bufActive.contents;
-    for (uint32_t s = 0u; s < N; ++s) active[s] = 1u;
-
-    float *stepBuf = (float *)self.bufStep.contents;
-    uint32_t *flags = (uint32_t *)self.bufFlags.contents;
-
-    // init: latents, predict, energyOld.
+    // 1. Initialize latent state bottom-up / top-down (once on host)
     {
         id<MTLCommandBuffer> cb = [self.queue commandBuffer];
         id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
         [self encInitLatents:enc];
-        [self encPredict:enc];
-        [self encEnergy:enc into:self.bufEnergyOld];
-        [enc endEncoding]; [cb commit]; [cb waitUntilCompleted];
+        [enc endEncoding];
+        [cb commit];
+        [cb waitUntilCompleted];
     }
 
-    for (uint32_t step = 0u; step < self.config.max_inference_steps; ++step) {
-        // Snapshot each column's start energy before any proposal mutates
-        // energyOld, then reset per-column line-search step sizes on the host.
-        memcpy(self.startSnapshot, self.bufEnergyOld.contents, N * sizeof(float));
-        for (uint32_t s = 0u; s < N; ++s) stepBuf[s] = self.config.lr_state;
+    // 2. Dispatch fused settle kernel (collapsing max_inference_steps loops into a single GPU commit)
+    {
+        id<MTLCommandBuffer> cb = [self.queue commandBuffer];
+        id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
 
-        for (uint32_t h = 0u; h <= halvings; ++h) {
-            uint32_t isLast = (h == halvings) ? 1u : 0u;
-            id<MTLCommandBuffer> cb = [self.queue commandBuffer];
-            id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
+        id<MTLBuffer> __unsafe_unretained bufs[] = {
+            self.bufZ,                // buffer(0)
+            self.bufErr,              // buffer(1)
+            self.bufPrecision,        // buffer(2)
+            self.bufW,                // buffer(3)
+            self.bufR,                // buffer(4)
+            self.bufA,                // buffer(5)
+            self.bufPrevTop,          // buffer(6)
+            self.bufTemporalPrec,     // buffer(7)
+            self.bufArchDim,          // buffer(8)
+            self.bufZOff,             // buffer(9)
+            self.bufPredOff,          // buffer(10)
+            self.bufWOff,             // buffer(11)
+            self.bufROff,             // buffer(12)
+            self.bufLayerRow,         // buffer(13)
+            self.bufHasPrev,          // buffer(14)
+            self.bufEnergyNew,        // buffer(15)
+            self.bufReconstruction,   // buffer(16)
+            self.bufDims              // buffer(17)
+        };
 
-            if (h == 0u) {
-                // First proposal of the inference step: refresh prediction errors,
-                // compute gradients, and save the starting z in the same command
-                // buffer as the first line-search attempt. This removes one
-                // command-buffer commit/wait from every inference step.
-                [self encPredict:enc];
-                for (uint32_t l = 1u; l <= topIndex; ++l) [self encGradLayer:enc layer:l];
-                [self encCopy:enc src:self.bufZ srcOff:0 dst:self.bufZSaved dstOff:0 count:self.zTotal * (uint32_t)N];
-            }
+        NSUInteger maxThreads = self.pSettleFused.maxTotalThreadsPerThreadgroup;
+        NSUInteger tcount = self.maxDim;
+        if (tcount > maxThreads) tcount = maxThreads;
+        if (tcount > 1024) tcount = 1024;
+        if (tcount == 0) tcount = 1;
 
-            // z = clamp(saved - step[s]*grad) for active columns, layers>=1.
-            id<MTLBuffer> __unsafe_unretained applyBufs[] = {
-                self.bufZ, self.bufZSaved, self.bufGradCache, self.bufLayerRow, self.bufStep, self.bufActive,
-            };
-            ResonanceConst applyConsts[] = { ResU(self.zTotal), ResU(self.batch), ResF(self.config.state_clip) };
-            [self encRaw:enc pipe:self.pApplyState buffers:applyBufs bufferCount:6 offsets:NULL
-                  consts:applyConsts constCount:3 threads:self.zTotal * N];
-
-            [self encPredict:enc];
-            [self encEnergy:enc into:self.bufEnergyNew];
-
-            // decide per column
-            id<MTLBuffer> __unsafe_unretained decideBufs[] = {
-                self.bufEnergyOld, self.bufEnergyNew, self.bufFlags, self.bufEnergyOld, self.bufStep, self.bufActive,
-            };
-            ResonanceConst decideConsts[] = { ResU(monotone), ResU(isLast), ResU(self.batch) };
-            [self encRaw:enc pipe:self.pDecide buffers:decideBufs bufferCount:6 offsets:NULL
-                  consts:decideConsts constCount:3 threads:N];
-
-            // revert columns whose flags==0
-            id<MTLBuffer> __unsafe_unretained revertBufs[] = { self.bufZ, self.bufZSaved, self.bufLayerRow, self.bufFlags };
-            ResonanceConst revertConsts[] = { ResU(self.zTotal), ResU(self.batch) };
-            [self encRaw:enc pipe:self.pRevert buffers:revertBufs bufferCount:4 offsets:NULL
-                  consts:revertConsts constCount:2 threads:self.zTotal * N];
-
-            [enc endEncoding]; [cb commit]; [cb waitUntilCompleted];
-
-            // host check: any column still wants another halving (flag==2)?
-            BOOL anyRetry = NO;
-            for (uint32_t s = 0u; s < N; ++s) {
-                if (active[s] && flags[s] == 2u) { anyRetry = YES; break; }
-            }
-            if (!anyRetry || isLast) break;
+        [enc setComputePipelineState:self.pSettleFused];
+        for (NSUInteger idx = 0; idx < 18; idx++) {
+            [enc setBuffer:bufs[idx] offset:0 atIndex:idx];
         }
 
-        // Early stop per column. After the halving loop, energyOld holds each
-        // column's carried (accepted/exhausted) end energy. Compare to the start
-        // snapshot; freeze columns whose relative change fell below tol once past
-        // the minimum step count. Mirrors the reference's per-settle early stop.
-        {
-            const float *eEnd = (const float *)self.bufEnergyOld.contents;
-            uint32_t pastMin = (step + 1u >= self.config.min_inference_steps) ? 1u : 0u;
-            uint32_t remaining = 0u;
-            for (uint32_t s = 0u; s < N; ++s) {
-                if (!active[s]) continue;
-                float start = self.startSnapshot[s];
-                float rel = fabsf(start - eEnd[s]) / (fabsf(start) + 1e-12f);
-                if (pastMin && rel < self.config.early_stop_tol) active[s] = 0u;
-                else remaining++;
-            }
-            if (remaining == 0u) break;
-        }
+        [enc dispatchThreadgroups:MTLSizeMake(self.batch, 1, 1)
+            threadsPerThreadgroup:MTLSizeMake(tcount, 1, 1)];
+
+        [enc memoryBarrierWithScope:MTLBarrierScopeBuffers];
+        [enc endEncoding];
+        [cb commit];
+        [cb waitUntilCompleted];
     }
 
     if (advanceTemporal) {

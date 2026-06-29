@@ -17,8 +17,10 @@ type stumpSplit struct {
 }
 
 type nonLinearModel struct {
-	intercept float64
-	stumps    []stumpSplit
+	intercept   float64
+	stumps      []stumpSplit
+	hasLinear   bool
+	linearModel linearModel
 }
 
 func fitNonLinearTable(nodeTable nodeTable, features []int) (nonLinearModel, bool) {
@@ -36,17 +38,44 @@ func fitNonLinearTable(nodeTable nodeTable, features []int) (nonLinearModel, boo
 		return nonLinearModel{}, false
 	}
 
-	residuals := append([]float64(nil), targets...)
+	// 1. Fit robust linear model using Ridge regression
+	linearModel, err := nodeTable.fitLinearModel(features...)
+
+	if err != nil {
+		return nonLinearModel{}, false
+	}
+
+	// 2. Compute residuals from the linear fit
+	residuals := make([]float64, len(nodeTable.rows))
+
+	for index, row := range nodeTable.rows {
+		pred, err := linearModel.predict(row, -1, 0)
+
+		if err != nil {
+			return nonLinearModel{}, false
+		}
+
+		residuals[index] = targets[index] - pred
+	}
+
+	// Compute standard deviation of residuals for regularization/anomaly thresholding
+	residualStd := stat.StdDev(residuals, nil)
+
 	thresholds := featureThresholds(nodeTable, features)
 	model := nonLinearModel{
-		intercept: stat.Mean(targets, nil),
-		stumps:    make([]stumpSplit, 0, nonLinearStumps),
+		intercept:   0.0, // Managed by linearModel
+		stumps:      make([]stumpSplit, 0, nonLinearStumps),
+		hasLinear:   true,
+		linearModel: linearModel,
 	}
 
 	for stumpIndex := 0; stumpIndex < nonLinearStumps; stumpIndex++ {
 		split, gain := bestStump(nodeTable, residuals, features, thresholds)
 
-		if gain <= 0 {
+		// Regularization: stumps only model large-magnitude secure residual anomalies
+		minGain := 0.01 * (residualStd * residualStd)
+
+		if gain <= minGain {
 			break
 		}
 
@@ -57,13 +86,24 @@ func fitNonLinearTable(nodeTable nodeTable, features []int) (nonLinearModel, boo
 		}
 	}
 
-	return model, len(model.stumps) > 0
+	return model, true
 }
 
 func (model nonLinearModel) predict(
 	row []float64, overrideNode int, overrideValue float64,
 ) (float64, error) {
-	prediction := model.intercept
+	var prediction float64
+	var err error
+
+	if model.hasLinear {
+		prediction, err = model.linearModel.predict(row, overrideNode, overrideValue)
+
+		if err != nil {
+			return 0, err
+		}
+	} else {
+		prediction = model.intercept
+	}
 
 	for _, split := range model.stumps {
 		if split.featureIndex < 0 || split.featureIndex >= len(row) {

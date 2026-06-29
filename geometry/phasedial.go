@@ -159,6 +159,20 @@ func (dial PhaseDial) Similarity(other PhaseDial) float64 {
 }
 
 /*
+SimilarityAdaptive computes the similarity metric, switching between standard rotational
+phase-matching and translational distance when herding is coherent (superfluid trend).
+*/
+func (dial PhaseDial) SimilarityAdaptive(
+	other PhaseDial, herdingCoherent bool, translationDistance float64,
+) float64 {
+	if herdingCoherent {
+		return 1.0 / (1.0 + translationDistance)
+	}
+
+	return dial.Similarity(other)
+}
+
+/*
 ComposeMidpoint returns Normalize(Normalize(a) + Normalize(b)).
 */
 func (dial PhaseDial) ComposeMidpoint(other PhaseDial) PhaseDial {
@@ -310,6 +324,20 @@ func (rotor PhaseRotor) Similarity(other PhaseRotor) float64 {
 	}
 
 	return dotSum / float64(len(rotor))
+}
+
+/*
+SimilarityAdaptive computes the similarity metric for PhaseRotor, switching between
+standard rotational phase-matching and translational distance when herding is coherent.
+*/
+func (rotor PhaseRotor) SimilarityAdaptive(
+	other PhaseRotor, herdingCoherent bool, translationDistance float64,
+) float64 {
+	if herdingCoherent {
+		return 1.0 / (1.0 + translationDistance)
+	}
+
+	return rotor.Similarity(other)
 }
 
 /*

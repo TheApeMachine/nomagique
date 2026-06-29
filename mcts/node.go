@@ -97,7 +97,7 @@ func (n *CausalMCTSNode) CounterfactualUpdate(
 		}
 
 		// Abduct, Act, and Predict alternative sibling rewards
-		_, counterfactualReward, _, err := table.AbductiveCounterfactual(
+		_, counterfactualReward, noise, err := table.AbductiveCounterfactual(
 			features,
 			linear,
 			actualRow,
@@ -107,9 +107,16 @@ func (n *CausalMCTSNode) CounterfactualUpdate(
 		)
 
 		if err == nil && !math.IsNaN(counterfactualReward) && !math.IsInf(counterfactualReward, 0) {
+			// Scale virtual reward by SCM reconstruction precision
+			precision := 1.0 / (1.0 + math.Abs(noise))
+
+			if precision > 1.0 {
+				precision = 1.0
+			}
+
 			// Update sibling with virtual experience (weighted fraction of the visit value)
 			sibling.Visits++
-			sibling.TotalReward += counterfactualReward
+			sibling.TotalReward += counterfactualReward * precision
 		}
 	}
 }

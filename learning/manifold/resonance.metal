@@ -45,6 +45,13 @@ struct BatchDims {
     float state_clip;
     float grad_clip;
     float early_stop_tol;
+
+    // Fused settle parameters
+    uint max_inference_steps;
+    uint min_inference_steps;
+    uint line_search_halvings;
+    uint monotone_state_steps;
+    float lr_state;
 };
 
 // ---- batched matrix-vector products (per symbol weights) ------------------
@@ -496,6 +503,408 @@ kernel void bmerge_clamp(
     float v = mix * td[gid] + (1.0f - mix) * bu[gid];
     out[gid] = clamp(v, -clip, clip);
 }
+
+// ---- fused GPU-side settle loop -------------------------------------------
+kernel void bsettle_fused(
+    device float* z                     [[buffer(0)]],
+    device float* err                   [[buffer(1)]],
+    device const float* precision       [[buffer(2)]],
+    device const float* W               [[buffer(3)]],
+    device const float* R               [[buffer(4)]],
+    device const float* A               [[buffer(5)]],
+    device const float* prevTop         [[buffer(6)]],
+    device const float* temporalPrec    [[buffer(7)]],
+    device const uint* arch_dim         [[buffer(8)]],
+    device const uint* z_off            [[buffer(9)]],
+    device const uint* pred_off         [[buffer(10)]],
+    device const uint* w_off            [[buffer(11)]],
+    device const uint* r_off            [[buffer(12)]],
+    device const uint* layer_row        [[buffer(13)]],
+    device const uint* has_prev         [[buffer(14)]],
+    device float* energy_out            [[buffer(15)]],
+    device float* reconstruction_out    [[buffer(16)]],
+    constant BatchDims& d               [[buffer(17)]],
+    uint s                              [[threadgroup_position_in_grid]],
+    uint tid                            [[thread_position_in_threadgroup]],
+    uint tcount                         [[threads_per_threadgroup]]
+) {
+    threadgroup float sh_z[1024];
+    threadgroup float sh_saved[1024];
+    threadgroup float sh_grad[1024];
+    threadgroup float sh_pred[1024];
+    threadgroup float sh_err[1024];
+    threadgroup float sh_precision[1024];
+    threadgroup float sh_tmp_a[1024];
+    threadgroup float sh_tmp_b[1024];
+    
+    threadgroup float sh_temporal_err[1024];
+    threadgroup float sh_temporal_prec[1024];
+    threadgroup float sh_prev_top[1024];
+
+    threadgroup float sh_energy_old;
+    threadgroup float sh_energy_new;
+    threadgroup float sh_energy_start;
+    threadgroup float sh_step;
+    threadgroup uint sh_active;
+    threadgroup uint sh_flag;
+
+    uint n = d.n;
+
+    // Load Z state
+    for (uint i = tid; i < d.z_total; i += tcount) {
+        sh_z[i] = z[i * n + s];
+    }
+
+    // Load precision
+    for (uint i = tid; i < d.pred_total; i += tcount) {
+        sh_precision[i] = precision[i * n + s];
+    }
+
+    // Load temporal states
+    uint top_dim = d.top_dim;
+    if (has_prev[0] != 0u) {
+        for (uint i = tid; i < top_dim; i += tcount) {
+            sh_prev_top[i] = prevTop[i * n + s];
+            sh_temporal_prec[i] = temporalPrec[i * n + s];
+        }
+    }
+
+    if (tid == 0u) {
+        sh_active = 1u;
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    // Helpers
+    auto run_gemv_W = [&](uint l) {
+        uint rows = arch_dim[l];
+        uint cols = arch_dim[l + 1];
+        uint mbase = d.w_total * s + w_off[l];
+        uint x_layer_off = z_off[l + 1];
+        uint out_layer_off = pred_off[l];
+
+        for (uint r = tid; r < rows; r += tcount) {
+            float acc = 0.0f;
+            for (uint c = 0u; c < cols; ++c) {
+                acc += W[mbase + r * cols + c] * sh_z[x_layer_off + c];
+            }
+            sh_pred[out_layer_off + r] = tanh(acc);
+        }
+    };
+
+    auto run_gemv_T_W = [&](uint l, threadgroup const float* x, threadgroup float* out) {
+        uint rows = arch_dim[l];
+        uint cols = arch_dim[l + 1];
+        uint mbase = d.w_total * s + w_off[l];
+
+        for (uint c = tid; c < cols; c += tcount) {
+            float acc = 0.0f;
+            for (uint r = 0u; r < rows; ++r) {
+                acc += W[mbase + r * cols + c] * x[r];
+            }
+            out[c] = acc;
+        }
+    };
+
+    auto run_gemv_A = [&](threadgroup float* out) {
+        uint rows = top_dim;
+        uint cols = top_dim;
+        uint mbase = top_dim * top_dim * s;
+        for (uint r = tid; r < rows; r += tcount) {
+            float acc = 0.0f;
+            for (uint c = 0u; c < cols; ++c) {
+                acc += A[mbase + r * cols + c] * sh_prev_top[c];
+            }
+            out[r] = tanh(acc);
+        }
+    };
+
+    auto run_predict = [&]() {
+        for (uint l = 0u; l < d.num_links; ++l) {
+            run_gemv_W(l);
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+
+        for (uint l = 0u; l < d.num_links; ++l) {
+            uint rows = arch_dim[l];
+            uint z_base = z_off[l];
+            uint pred_base = pred_off[l];
+            for (uint r = tid; r < rows; r += tcount) {
+                sh_err[pred_base + r] = sh_z[z_base + r] - sh_pred[pred_base + r];
+            }
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    };
+
+    auto run_temporal_err = [&]() {
+        if (has_prev[0] != 0u) {
+            run_gemv_A(sh_tmp_b);
+            threadgroup_barrier(mem_flags::mem_threadgroup);
+            uint top_base = z_off[d.arch_len - 1u];
+            for (uint r = tid; r < top_dim; r += tcount) {
+                sh_temporal_err[r] = sh_z[top_base + r] - sh_tmp_b[r];
+            }
+            threadgroup_barrier(mem_flags::mem_threadgroup);
+        }
+    };
+
+    auto run_energy = [&]() {
+        float local = 0.0f;
+        for (uint l = 0u; l < d.num_links; ++l) {
+            uint rows = arch_dim[l];
+            uint base = pred_off[l];
+            for (uint r = tid; r < rows; r += tcount) {
+                float e = sh_err[base + r];
+                float w = (d.use_precision != 0u) ? sh_precision[base + r] * e : e;
+                local += 0.5f * w * e;
+            }
+        }
+
+        if (has_prev[0] != 0u) {
+            for (uint r = tid; r < top_dim; r += tcount) {
+                float e = sh_temporal_err[r];
+                float w = (d.use_precision != 0u) ? sh_temporal_prec[r] * e : e;
+                local += 0.5f * d.temporal_weight * w * e;
+            }
+        }
+
+        if (d.latent_decay > 0.0f || d.sparsity > 0.0f) {
+            for (uint l = 1u; l < d.arch_len; ++l) {
+                uint dim = arch_dim[l];
+                uint base = z_off[l];
+                for (uint r = tid; r < dim; r += tcount) {
+                    float v = sh_z[base + r];
+                    if (d.latent_decay > 0.0f) local += 0.5f * d.latent_decay * v * v;
+                    if (d.sparsity > 0.0f) local += d.sparsity * fabs(v);
+                }
+            }
+        }
+
+        sh_tmp_a[tid] = local;
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+        for (uint stride = tcount / 2u; stride > 0u; stride >>= 1u) {
+            if (tid < stride) sh_tmp_a[tid] += sh_tmp_a[tid + stride];
+            threadgroup_barrier(mem_flags::mem_threadgroup);
+        }
+        return sh_tmp_a[0];
+    };
+
+    auto run_grad_layer = [&](uint layer) {
+        uint dim = arch_dim[layer];
+        uint gOff = z_off[layer];
+
+        for (uint r = tid; r < dim; r += tcount) {
+            sh_grad[gOff + r] = 0.0f;
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+
+        uint topIndex = d.arch_len - 1u;
+        if (layer < topIndex) {
+            uint predOff = pred_off[layer];
+            for (uint r = tid; r < dim; r += tcount) {
+                float e = sh_err[predOff + r];
+                float w = (d.use_precision != 0u) ? sh_precision[predOff + r] * e : e;
+                sh_grad[gOff + r] += w;
+            }
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+
+        uint belowRows = arch_dim[layer - 1u];
+        uint belowPredOff = pred_off[layer - 1u];
+        for (uint r = tid; r < belowRows; r += tcount) {
+            float p = sh_pred[belowPredOff + r];
+            float deriv = 1.0f - p * p;
+            float val = deriv * sh_err[belowPredOff + r];
+            if (d.use_precision != 0u) {
+                val *= sh_precision[belowPredOff + r];
+            }
+            sh_tmp_a[r] = val;
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+
+        run_gemv_T_W(layer - 1u, sh_tmp_a, sh_tmp_b);
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+
+        for (uint r = tid; r < dim; r += tcount) {
+            sh_grad[gOff + r] -= sh_tmp_b[r];
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+
+        if (layer == topIndex && has_prev[0] != 0u) {
+            for (uint r = tid; r < dim; r += tcount) {
+                float e = sh_z[gOff + r] - sh_tmp_b[r];
+                if (d.use_precision != 0u) {
+                    e *= sh_temporal_prec[r];
+                }
+                sh_grad[gOff + r] += d.temporal_weight * e;
+            }
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+
+        if (d.latent_decay > 0.0f) {
+            for (uint r = tid; r < dim; r += tcount) {
+                sh_grad[gOff + r] += d.latent_decay * sh_z[gOff + r];
+            }
+        }
+        if (d.sparsity > 0.0f) {
+            for (uint r = tid; r < dim; r += tcount) {
+                float v = sh_z[gOff + r];
+                if (v > 0.0f) sh_grad[gOff + r] += d.sparsity;
+                else if (v < 0.0f) sh_grad[gOff + r] -= d.sparsity;
+            }
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+
+        float sumSq = 0.0f;
+        for (uint r = tid; r < dim; r += tcount) {
+            float g = sh_grad[gOff + r];
+            sumSq += g * g;
+        }
+        sh_tmp_a[tid] = sumSq;
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+        for (uint stride = tcount / 2u; stride > 0u; stride >>= 1u) {
+            if (tid < stride) sh_tmp_a[tid] += sh_tmp_a[tid + stride];
+            threadgroup_barrier(mem_flags::mem_threadgroup);
+        }
+
+        float norm = sqrt(sh_tmp_a[0]);
+        if (norm > d.grad_clip) {
+            float scale = d.grad_clip / (norm + 1e-12f);
+            for (uint r = tid; r < dim; r += tcount) {
+                sh_grad[gOff + r] *= scale;
+            }
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    };
+
+    auto run_all_grads = [&]() {
+        uint topIndex = d.arch_len - 1u;
+        for (uint l = 1u; l <= topIndex; ++l) {
+            run_grad_layer(l);
+        }
+    };
+
+    // First predict and energy
+    run_temporal_err();
+    run_predict();
+    float initial_energy = run_energy();
+    if (tid == 0u) {
+        sh_energy_old = initial_energy;
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    // Iterative settle loop
+    for (uint step = 0u; step < d.max_inference_steps; ++step) {
+        if (sh_active == 0u) break;
+
+        if (tid == 0u) {
+            sh_energy_start = sh_energy_old;
+            sh_step = d.lr_state;
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+
+        run_temporal_err();
+        run_predict();
+        run_all_grads();
+
+        // Save starting z
+        for (uint i = tid; i < d.z_total; i += tcount) {
+            sh_saved[i] = sh_z[i];
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+
+        uint halvings = d.line_search_halvings;
+        for (uint h = 0u; h <= halvings; ++h) {
+            // Apply state update
+            for (uint i = tid; i < d.z_total; i += tcount) {
+                if (layer_row[i] > 0u) {
+                    float v = sh_saved[i] - sh_step * sh_grad[i];
+                    sh_z[i] = clamp(v, -d.state_clip, d.state_clip);
+                }
+            }
+            threadgroup_barrier(mem_flags::mem_threadgroup);
+
+            run_temporal_err();
+            run_predict();
+            float new_energy = run_energy();
+
+            if (tid == 0u) {
+                sh_energy_new = new_energy;
+
+                if (d.monotone_state_steps == 0u || sh_energy_new <= sh_energy_old + 1e-12f) {
+                    sh_flag = 1u; // accept
+                } else if (h == halvings) {
+                    sh_flag = 0u; // revert
+                } else {
+                    sh_flag = 2u; // halve step
+                }
+            }
+            threadgroup_barrier(mem_flags::mem_threadgroup);
+
+            if (sh_flag == 1u) {
+                if (tid == 0u) {
+                    sh_energy_old = sh_energy_new;
+                }
+                threadgroup_barrier(mem_flags::mem_threadgroup);
+                break;
+            } else if (sh_flag == 0u) {
+                for (uint i = tid; i < d.z_total; i += tcount) {
+                    if (layer_row[i] > 0u) {
+                        sh_z[i] = sh_saved[i];
+                    }
+                }
+                threadgroup_barrier(mem_flags::mem_threadgroup);
+                break;
+            } else {
+                if (tid == 0u) {
+                    sh_step *= 0.5f;
+                }
+                threadgroup_barrier(mem_flags::mem_threadgroup);
+            }
+        }
+
+        // Early stop check
+        if (tid == 0u) {
+            uint pastMin = (step + 1u >= d.min_inference_steps) ? 1u : 0u;
+            float rel = fabs(sh_energy_start - sh_energy_old) / (fabs(sh_energy_start) + 1e-12f);
+            if (pastMin && rel < d.early_stop_tol) {
+                sh_active = 0u;
+            }
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+
+    // Write back states and errors
+    for (uint i = tid; i < d.z_total; i += tcount) {
+        z[i * n + s] = sh_z[i];
+    }
+    for (uint i = tid; i < d.pred_total; i += tcount) {
+        err[i * n + s] = sh_err[i];
+    }
+
+    if (tid == 0u) {
+        energy_out[s] = sh_energy_old;
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    // Compute reconstruction error
+    float reconSumSq = 0.0f;
+    uint r0_rows = arch_dim[0];
+    uint r0_base = pred_off[0];
+    for (uint r = tid; r < r0_rows; r += tcount) {
+        float val = sh_err[r0_base + r];
+        reconSumSq += val * val;
+    }
+    sh_tmp_a[tid] = reconSumSq;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    for (uint stride = tcount / 2u; stride > 0u; stride >>= 1u) {
+        if (tid < stride) sh_tmp_a[tid] += sh_tmp_a[tid + stride];
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+    if (tid == 0u) {
+        reconstruction_out[s] = sqrt(sh_tmp_a[0]);
+    }
+}
+
 
 
 

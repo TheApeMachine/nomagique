@@ -156,7 +156,7 @@ func (nodeRing *NodeRing) copyStreamsTo(state *datura.Artifact) {
 func (nodeRing *NodeRing) loadStream(nodeIndex int, capacity int) *structure.ListRing[float64] {
 	key := strconv.Itoa(nodeIndex)
 	values := datura.Peek[[]float64](nodeRing.artifact, "streams", key)
-	stream := structure.NewListRing[float64](capacity, nil)
+	stream := structure.NewListRing[float64](capacity)
 
 	for _, value := range values {
 		stream.Push(value)

@@ -36,6 +36,7 @@
     self.pOuterFactor = [self pipe:@"bouter_factor" error:&e];
     self.pOuterApply = [self pipe:@"bouter_apply" error:&e];
     self.pMergeClamp = [self pipe:@"bmerge_clamp" error:&e];
+    self.pSettleFused = [self pipe:@"bsettle_fused" error:&e];
 
     if (e != nil) { if (error) *error = e.localizedDescription ?: @"pipeline build failed"; return NO; }
     return YES;
@@ -227,6 +228,13 @@ static const NSUInteger kReduceOccupancyFloor = 256u;
     d->state_clip = self.config.state_clip;
     d->grad_clip = self.config.grad_clip;
     d->early_stop_tol = self.config.early_stop_tol;
+
+    // Fused settle parameters
+    d->max_inference_steps = self.config.max_inference_steps;
+    d->min_inference_steps = self.config.min_inference_steps;
+    d->line_search_halvings = self.config.monotone_state_steps ? self.config.line_search_halvings : 0u;
+    d->monotone_state_steps = self.config.monotone_state_steps ? 1u : 0u;
+    d->lr_state = self.config.lr_state;
 
     uint32_t *hp = (uint32_t *)self.bufHasPrev.contents;
     hp[0] = self.hasPrevTop ? 1u : 0u;

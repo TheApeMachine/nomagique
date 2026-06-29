@@ -13,7 +13,7 @@ type State interface {
 // This interface allows us to pass wrapped versions of your private package methods.
 type CausalEngine interface {
 	DoExpectation(rows [][]float64, target, minRows, treatment int, level float64, controls []int) (float64, error)
-	AbductiveCounterfactual(rows [][]float64, target, minRows int, features []int, linear bool, row []float64, treatment int, intervention float64) (float64, error)
+	AbductiveCounterfactual(rows [][]float64, target, minRows int, features []int, linear bool, row []float64, treatment int, intervention float64) (float64, float64, error)
 }
 
 // Node represents a state-action configuration in the MCTS tree.

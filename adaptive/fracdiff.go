@@ -125,7 +125,19 @@ func (fractional *FracDiff) Read(payload []byte) (int, error) {
 
 		rate := math.Abs(sample-fractional.prev) / span
 		order := fracDiffOrder(rate, span)
-		fractional.rebuildWeights(order, span)
+
+		// Smooth the calculated d to maintain weight-vector stability
+		alpha := 0.05
+		smoothedOrder := order
+		if fractional.count > 1 {
+			smoothedOrder = (1-alpha)*fractional.order + alpha*order
+		}
+
+		// Hysteresis gate to avoid rebuilding weights for micro-fluctuations
+		if fractional.count == 1 || math.Abs(smoothedOrder-fractional.order) > 0.01 {
+			fractional.rebuildWeights(smoothedOrder, span)
+		}
+
 		fractional.pushHistory(sample)
 		fractional.prev = sample
 		value := fractional.outputSum()

@@ -28,14 +28,14 @@ func (a *MCTSAdapter) AbductiveCounterfactual(
 	row []float64,
 	treatment int,
 	intervention float64,
-) (float64, error) {
+) (float64, float64, error) {
 	table, err := newNodeTable(rows, target, minRows)
 	if err != nil {
-		return 0, err
+		return 0, 0, err
 	}
 
 	// Returns uplift, counterfactual, noise, err
-	_, counterfactual, _, err := abductiveCounterfactual(
+	_, counterfactual, noise, err := abductiveCounterfactual(
 		table,
 		features,
 		linear,
@@ -44,5 +44,5 @@ func (a *MCTSAdapter) AbductiveCounterfactual(
 		treatment,
 		intervention,
 	)
-	return counterfactual, err
+	return counterfactual, noise, err
 }

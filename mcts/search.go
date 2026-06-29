@@ -204,7 +204,7 @@ func (mcts *CausalMCTS) causalBackpropagate(leaf *Node, reward float64, trajecto
 				}
 
 				// Infer what reward would have occurred if sibling's action was taken
-				virtualReward, err := mcts.CausalEngine.AbductiveCounterfactual(
+				virtualReward, noise, err := mcts.CausalEngine.AbductiveCounterfactual(
 					history,
 					mcts.TargetCol,
 					mcts.MinRows,
@@ -216,8 +216,15 @@ func (mcts *CausalMCTS) causalBackpropagate(leaf *Node, reward float64, trajecto
 				)
 
 				if err == nil && !math.IsNaN(virtualReward) && !math.IsInf(virtualReward, 0) {
+					// Scale virtual reward by SCM reconstruction precision
+					precision := 1.0 / (1.0 + math.Abs(noise))
+
+					if precision > 1.0 {
+						precision = 1.0
+					}
+
 					sibling.Visits++
-					sibling.TotalReward += virtualReward
+					sibling.TotalReward += virtualReward * precision
 				}
 			}
 		}

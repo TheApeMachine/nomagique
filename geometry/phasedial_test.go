@@ -88,6 +88,16 @@ func TestPhaseDialSimilarity(t *testing.T) {
 		sim := encodedA.Similarity(encodedB)
 		So(sim, ShouldBeBetweenOrEqual, -1, 1)
 		So(sim, ShouldNotAlmostEqual, 1.0, 0.01)
+
+		Convey("When herding is coherent", func() {
+			simAdaptive := encodedA.SimilarityAdaptive(encodedB, true, 0.25)
+			So(simAdaptive, ShouldAlmostEqual, 1.0/(1.0+0.25), 0.001)
+		})
+
+		Convey("When herding is not coherent", func() {
+			simAdaptive := encodedA.SimilarityAdaptive(encodedB, false, 0.25)
+			So(simAdaptive, ShouldEqual, sim)
+		})
 	})
 }
 
@@ -123,6 +133,16 @@ func TestNewPhaseRotor(t *testing.T) {
 		}
 
 		So(math.Sqrt(mag), ShouldAlmostEqual, 1.0, 0.0001)
+
+		Convey("When herding is coherent on PhaseRotor", func() {
+			simAdaptive := encoded.SimilarityAdaptive(encoded, true, 0.25)
+			So(simAdaptive, ShouldAlmostEqual, 1.0/(1.0+0.25), 0.001)
+		})
+
+		Convey("When herding is not coherent on PhaseRotor", func() {
+			simAdaptive := encoded.SimilarityAdaptive(encoded, false, 0.25)
+			So(simAdaptive, ShouldEqual, selfSim)
+		})
 	})
 }
 

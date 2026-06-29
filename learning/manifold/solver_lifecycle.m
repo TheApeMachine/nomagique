@@ -165,6 +165,8 @@ void resonance_write_error(char *err_out, int err_cap, NSString *message) {
     self.bufArchDim = [self.device newBufferWithBytes:self.arch length:archLen * sizeof(uint32_t) options:MTLResourceStorageModeShared];
     self.bufZOff = [self.device newBufferWithBytes:self.zOffset length:archLen * sizeof(uint32_t) options:MTLResourceStorageModeShared];
     self.bufPredOff = [self.device newBufferWithBytes:self.predOffset length:(numLinks ? numLinks : 1u) * sizeof(uint32_t) options:MTLResourceStorageModeShared];
+    self.bufWOff = [self.device newBufferWithBytes:self.wOffset length:(numLinks ? numLinks : 1u) * sizeof(uint32_t) options:MTLResourceStorageModeShared];
+    self.bufROff = [self.device newBufferWithBytes:self.rOffset length:(numLinks ? numLinks : 1u) * sizeof(uint32_t) options:MTLResourceStorageModeShared];
 
     self.bufLayerRow = [self.device newBufferWithLength:self.zTotal * sizeof(uint32_t) options:MTLResourceStorageModeShared];
     uint32_t *lr = (uint32_t *)self.bufLayerRow.contents;

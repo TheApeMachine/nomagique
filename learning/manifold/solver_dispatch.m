@@ -5,6 +5,14 @@
 
 @implementation BatchResonanceSolver (Pipelines)
 
+static const uint32_t ResonanceFusedScalarCapacity = 512u;
+
+static NSUInteger resonance_fused_scratch_bytes(uint32_t capacity) {
+    return (NSUInteger)capacity * 11u * sizeof(float) +
+        4u * sizeof(float) +
+        2u * sizeof(uint32_t);
+}
+
 - (id<MTLComputePipelineState>)pipe:(NSString *)name error:(NSError **)error {
     id<MTLFunction> fn = [self.library newFunctionWithName:name];
     if (fn == nil) {
@@ -13,6 +21,52 @@
         return nil;
     }
     return [self.device newComputePipelineStateWithFunction:fn error:error];
+}
+
+- (uint32_t)settleFusedCapacity {
+    uint32_t capacity = self.zTotal;
+    if (self.predTotal > capacity) capacity = self.predTotal;
+    if (self.maxDim > capacity) capacity = self.maxDim;
+
+    uint32_t top = self.arch[self.archLen - 1u];
+    if (top > capacity) capacity = top;
+    if (capacity == 0u) capacity = 1u;
+
+    return capacity;
+}
+
+- (BOOL)validateSettleFusedCapacity:(uint32_t)capacity error:(NSError **)error {
+    if (capacity > ResonanceFusedScalarCapacity) {
+        if (error) {
+            NSString *message = [NSString stringWithFormat:
+                @"fused settle capacity %u exceeds compiled capacity %u",
+                capacity,
+                ResonanceFusedScalarCapacity];
+            *error = [NSError errorWithDomain:@"resonance" code:1
+                userInfo:@{NSLocalizedDescriptionKey: message}];
+        }
+
+        return NO;
+    }
+
+    NSUInteger required = resonance_fused_scratch_bytes(ResonanceFusedScalarCapacity);
+    NSUInteger limit = self.device.maxThreadgroupMemoryLength;
+
+    if (required <= limit) {
+        return YES;
+    }
+
+    if (error) {
+        NSString *message = [NSString stringWithFormat:
+            @"fused settle scratch %lu bytes for capacity %u exceeds Metal threadgroup limit %lu",
+            (unsigned long)required,
+            capacity,
+            (unsigned long)limit];
+        *error = [NSError errorWithDomain:@"resonance" code:1
+            userInfo:@{NSLocalizedDescriptionKey: message}];
+    }
+
+    return NO;
 }
 
 - (BOOL)buildPipelines:(NSString **)error {
@@ -36,7 +90,9 @@
     self.pOuterFactor = [self pipe:@"bouter_factor" error:&e];
     self.pOuterApply = [self pipe:@"bouter_apply" error:&e];
     self.pMergeClamp = [self pipe:@"bmerge_clamp" error:&e];
-    self.pSettleFused = [self pipe:@"bsettle_fused" error:&e];
+    if (e == nil && [self validateSettleFusedCapacity:[self settleFusedCapacity] error:&e]) {
+        self.pSettleFused = [self pipe:@"bsettle_fused" error:&e];
+    }
 
     if (e != nil) { if (error) *error = e.localizedDescription ?: @"pipeline build failed"; return NO; }
     return YES;
@@ -241,6 +297,3 @@ static const NSUInteger kReduceOccupancyFloor = 256u;
 }
 
 @end
-
-
-

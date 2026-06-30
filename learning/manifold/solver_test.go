@@ -212,3 +212,35 @@ func TestBatchSolver_ReadOutcomesParity(t *testing.T) {
 		})
 	})
 }
+
+func BenchmarkBatchSolver_Settle(testingTB *testing.B) {
+	arch := []int{4, 8, 4}
+	alpha := 0.05
+	batchSize := 32
+
+	solver, err := NewBatchSolver(arch, 0, batchSize, alpha)
+	if err != nil {
+		testingTB.Fatal(err)
+	}
+	defer solver.Close()
+
+	inputs := make([][]float64, batchSize)
+	for slot := range batchSize {
+		inputs[slot] = slotInput(slot, arch[0])
+	}
+
+	testingTB.ReportAllocs()
+	testingTB.ResetTimer()
+
+	for testingTB.Loop() {
+		for slot := range batchSize {
+			if err := solver.SetInput(slot, inputs[slot], nil); err != nil {
+				testingTB.Fatal(err)
+			}
+		}
+
+		if err := solver.Settle(false); err != nil {
+			testingTB.Fatal(err)
+		}
+	}
+}

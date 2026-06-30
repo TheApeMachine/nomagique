@@ -54,6 +54,8 @@ struct BatchDims {
     float lr_state;
 };
 
+#define BSETTLE_CAPACITY 512u
+
 // ---- batched matrix-vector products (per symbol weights) ------------------
 // For link l: out[(row r, slot s)] = act( sum_c W_s[l][r,c] * x[(c,s)] ).
 // Thread grid = rows * N ; gid -> (r, s).
@@ -528,18 +530,18 @@ kernel void bsettle_fused(
     uint tid                            [[thread_position_in_threadgroup]],
     uint tcount                         [[threads_per_threadgroup]]
 ) {
-    threadgroup float sh_z[1024];
-    threadgroup float sh_saved[1024];
-    threadgroup float sh_grad[1024];
-    threadgroup float sh_pred[1024];
-    threadgroup float sh_err[1024];
-    threadgroup float sh_precision[1024];
-    threadgroup float sh_tmp_a[1024];
-    threadgroup float sh_tmp_b[1024];
-    
-    threadgroup float sh_temporal_err[1024];
-    threadgroup float sh_temporal_prec[1024];
-    threadgroup float sh_prev_top[1024];
+    threadgroup float sh_z[BSETTLE_CAPACITY];
+    threadgroup float sh_saved[BSETTLE_CAPACITY];
+    threadgroup float sh_grad[BSETTLE_CAPACITY];
+    threadgroup float sh_pred[BSETTLE_CAPACITY];
+    threadgroup float sh_err[BSETTLE_CAPACITY];
+    threadgroup float sh_precision[BSETTLE_CAPACITY];
+    threadgroup float sh_tmp_a[BSETTLE_CAPACITY];
+    threadgroup float sh_tmp_b[BSETTLE_CAPACITY];
+
+    threadgroup float sh_temporal_err[BSETTLE_CAPACITY];
+    threadgroup float sh_temporal_prec[BSETTLE_CAPACITY];
+    threadgroup float sh_prev_top[BSETTLE_CAPACITY];
 
     threadgroup float sh_energy_old;
     threadgroup float sh_energy_new;
@@ -731,7 +733,7 @@ kernel void bsettle_fused(
 
         if (layer == topIndex && has_prev[0] != 0u) {
             for (uint r = tid; r < dim; r += tcount) {
-                float e = sh_z[gOff + r] - sh_tmp_b[r];
+                float e = sh_temporal_err[r];
                 if (d.use_precision != 0u) {
                     e *= sh_temporal_prec[r];
                 }
@@ -904,7 +906,3 @@ kernel void bsettle_fused(
         reconstruction_out[s] = sqrt(sh_tmp_a[0]);
     }
 }
-
-
-
-

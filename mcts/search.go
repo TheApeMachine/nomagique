@@ -54,7 +54,7 @@ func (mcts *CausalMCTS) Search(rootState State, iterations int, historicalData [
 		localHistory[i] = append([]float64(nil), row...)
 	}
 
-	for i := 0; i < iterations; i++ {
+	for range iterations {
 		// 1. Selection: Traverses tree using UCT + Causal Intervention Bias
 		selected := mcts.selectNode(root, localHistory)
 

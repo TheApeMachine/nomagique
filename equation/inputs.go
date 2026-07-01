@@ -97,11 +97,11 @@ var DecayInputKeys = []string{
 
 var CohortInputKeys = []string{
 	"window",
-	"symbolReturnCount",
-	"marketReturnCount",
+	"pairCorrelationCount",
 	"peerCorrelationCount",
 	"peerEnergyCount",
 	"barSpacingSeconds",
+	"energy",
 }
 
 var LagInputKeys = []string{

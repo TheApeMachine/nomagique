@@ -4,14 +4,13 @@ import (
 	"io"
 	"math"
 	"sort"
-	"time"
 
 	"github.com/theapemachine/datura"
 	"gonum.org/v1/gonum/stat"
 )
 
 /*
-Cohort classifies how one symbol's returns align with the peer median.
+Cohort classifies one symbol's pairwise return correlation against peer correlations and energy.
 The constructor artifact holds schema inputs; Write buffers inbound wire on its payload.
 */
 type Cohort struct {
@@ -113,8 +112,9 @@ func evaluateCohort(state *datura.Artifact, inputKeys []string) cohortOutcome {
 	}
 
 	window := int(fields[0])
-	barSpacingSeconds := fields[5]
-	counts := fields[1:5]
+	barSpacingSeconds := fields[4]
+	energy := fields[5]
+	counts := fields[1:4]
 	offset := len(inputKeys)
 	features := Features(state)
 	series := make([][]float64, len(counts))
@@ -130,27 +130,23 @@ func evaluateCohort(state *datura.Artifact, inputKeys []string) cohortOutcome {
 		offset += segmentCount
 	}
 
-	symbolReturns := series[0]
-	marketReturns := series[1]
-	peerCorrelations := series[2]
-	peerEnergies := series[3]
-
-	if window <= 0 || len(symbolReturns) < window || len(marketReturns) < window {
+	if offset != len(features) {
 		return cohortOutcome{}
 	}
 
-	if len(peerCorrelations) < 2 || len(peerEnergies) < 2 {
+	pairCorrelations := series[0]
+	peerCorrelations := series[1]
+	peerEnergies := series[2]
+
+	if window <= 0 || barSpacingSeconds <= 0 || len(pairCorrelations) == 0 {
 		return cohortOutcome{}
 	}
 
-	correlation := stat.Correlation(symbolReturns, marketReturns, nil)
-
-	if hyCorrelation, hyOK := cohortHayashiCorrelation(symbolReturns, marketReturns, barSpacingSeconds); hyOK {
-		if math.Abs(correlation) < math.Abs(hyCorrelation) || math.IsNaN(correlation) {
-			correlation = hyCorrelation
-		}
+	if len(peerCorrelations) == 0 || len(peerEnergies) == 0 {
+		return cohortOutcome{}
 	}
-	energy := cohortMedianAbsoluteValues(symbolReturns)
+
+	correlation := cohortQuantileSorted(cohortCopySorted(pairCorrelations), 0.5)
 	upperEnergy := cohortQuantileSorted(cohortCopySorted(peerEnergies), 0.75)
 
 	category := classifyCohort(
@@ -165,21 +161,17 @@ func evaluateCohort(state *datura.Artifact, inputKeys []string) cohortOutcome {
 		return cohortOutcome{}
 	}
 
-	strength := math.Abs(correlation)
-
-	if category == 2 {
-		strength = energy * (1 - math.Abs(correlation))
-	}
+	scores := cohortClassifierScores(category, correlation, energy, upperEnergy)
+	strength := cohortMaxScore(scores)
 
 	if strength <= 0 {
 		return cohortOutcome{}
 	}
 
-	scores := cohortClassifierScores(category, correlation, energy, upperEnergy)
 	peakScore := 0.0
 
 	if cohortPeakGate(correlation, peerCorrelations) {
-		peakScore = math.Abs(correlation) * energy
+		peakScore = math.Abs(correlation) * cohortEnergyShare(energy, upperEnergy)
 	}
 
 	return cohortOutcome{
@@ -215,34 +207,49 @@ func cohortClassifierScores(
 	correlation, energy, upperEnergy float64,
 ) [4]float64 {
 	scores := [4]float64{}
+	energyShare := cohortEnergyShare(energy, upperEnergy)
 
 	if category == 1 {
-		scores[0] = correlation * energy
+		scores[0] = math.Max(0, correlation) * energyShare
 	}
 
 	if category == 2 {
-		scores[1] = energy * (1 - math.Abs(correlation))
+		scores[1] = math.Max(0, 1-math.Abs(correlation)) * energyShare
 	}
 
 	if category == 3 {
-		normalizedEnergy := energy
-
-		if upperEnergy > 0 {
-			normalizedEnergy = energy / upperEnergy
-		}
-
-		if normalizedEnergy > 1 {
-			normalizedEnergy = 1
-		}
-
-		scores[2] = 1 - normalizedEnergy
+		scores[2] = 1 - energyShare
 	}
 
 	if category == 4 {
-		scores[3] = math.Abs(correlation) * energy
+		scores[3] = math.Abs(correlation) * energyShare
 	}
 
 	return scores
+}
+
+func cohortEnergyShare(energy, upperEnergy float64) float64 {
+	if energy <= 0 || math.IsNaN(energy) || math.IsInf(energy, 0) {
+		return 0
+	}
+
+	if upperEnergy <= 0 || math.IsNaN(upperEnergy) || math.IsInf(upperEnergy, 0) {
+		return 1
+	}
+
+	return math.Min(energy/upperEnergy, 1)
+}
+
+func cohortMaxScore(scores [4]float64) float64 {
+	best := 0.0
+
+	for _, score := range scores {
+		if score > best && !math.IsNaN(score) && !math.IsInf(score, 0) {
+			best = score
+		}
+	}
+
+	return best
 }
 
 func classifyCohort(
@@ -255,11 +262,7 @@ func classifyCohort(
 	medianEnergy := cohortQuantileSorted(cohortCopySorted(peerEnergies), 0.5)
 
 	energySpread := upperEnergy - lowerEnergy
-	lowEnergy := energySpread > 0 && energy <= lowerEnergy
-
-	if lowEnergy {
-		return 3
-	}
+	lowEnergy := energy <= lowerEnergy
 
 	upperCorrelation := cohortQuantileSorted(cohortCopySorted(peerCorrelations), 0.75)
 	correlationSpread := upperCorrelation - lowerCorrelation
@@ -275,17 +278,27 @@ func classifyCohort(
 		peerCorrelations,
 	)
 
-	highEnergy := energy >= upperEnergy
+	highEnergy := energy >= medianEnergy && energy > 0
 
 	if energySpread <= 0 {
-		highEnergy = energy >= medianEnergy
+		lowEnergy = energy <= medianEnergy
 	}
 
-	if correlation < 0 && highEnergy && math.Abs(correlation) >= math.Abs(lowerCorrelation) {
-		return 4
+	if correlation < 0 && highEnergy {
+		magnitudes := make([]float64, len(peerCorrelations))
+
+		for index, value := range peerCorrelations {
+			magnitudes[index] = math.Abs(value)
+		}
+
+		sort.Float64s(magnitudes)
+
+		if math.Abs(correlation) >= cohortQuantileSorted(magnitudes, 0.75) {
+			return 4
+		}
 	}
 
-	if highPositiveCorrelation && highEnergy && cohortPeakGate(correlation, peerCorrelations) {
+	if highPositiveCorrelation && highEnergy {
 		return 1
 	}
 
@@ -293,7 +306,11 @@ func classifyCohort(
 		return 2
 	}
 
-	return 3
+	if lowEnergy || lowMagnitudeCorrelation {
+		return 3
+	}
+
+	return 0
 }
 
 func peerLowMagnitudeCorrelation(
@@ -341,157 +358,4 @@ func cohortQuantileSorted(sorted []float64, percentile float64) float64 {
 	}
 
 	return stat.Quantile(percentile, stat.LinInterp, sorted, nil)
-}
-
-func cohortMedianAbsoluteValues(values []float64) float64 {
-	if len(values) == 0 {
-		return 0
-	}
-
-	absValues := make([]float64, len(values))
-
-	for index, value := range values {
-		absValues[index] = math.Abs(value)
-	}
-
-	sort.Float64s(absValues)
-
-	return stat.Quantile(0.5, stat.LinInterp, absValues, nil)
-}
-
-func cohortHayashiCorrelation(left, right []float64, barSpacingSeconds float64) (float64, bool) {
-	if barSpacingSeconds <= 0 || math.IsNaN(barSpacingSeconds) || math.IsInf(barSpacingSeconds, 0) {
-		return 0, false
-	}
-
-	if len(left) < 2 || len(left) != len(right) {
-		return 0, false
-	}
-
-	barSpacing := time.Duration(barSpacingSeconds * float64(time.Second))
-	leftSamples := make([]cohortHayashiSample, len(left))
-	rightSamples := make([]cohortHayashiSample, len(right))
-	start := time.Unix(0, 0)
-
-	for index := range left {
-		at := start.Add(time.Duration(index) * barSpacing)
-		leftSamples[index] = cohortHayashiSample{At: at, Value: left[index]}
-		rightSamples[index] = cohortHayashiSample{At: at, Value: right[index]}
-	}
-
-	return cohortHayashiYoshida(leftSamples, rightSamples, barSpacing*2)
-}
-
-type cohortHayashiSample struct {
-	At    time.Time
-	Value float64
-}
-
-func cohortHayashiYoshida(
-	left, right []cohortHayashiSample,
-	maxInterval time.Duration,
-) (float64, bool) {
-	if len(left) < 2 || len(right) < 2 {
-		return 0, false
-	}
-
-	leftVariance := cohortHayashiVariance(left, maxInterval)
-	rightVariance := cohortHayashiVariance(right, maxInterval)
-
-	if leftVariance <= 0 || rightVariance <= 0 {
-		return 0, false
-	}
-
-	covariance := 0.0
-	rightStart := 0
-
-	for leftIndex := 0; leftIndex < len(left)-1; leftIndex++ {
-		leftStart := left[leftIndex].At
-		leftEnd := left[leftIndex+1].At
-
-		if !cohortHayashiInterval(left[leftIndex], left[leftIndex+1], maxInterval) {
-			continue
-		}
-
-		leftReturn := math.Log(left[leftIndex+1].Value / left[leftIndex].Value)
-
-		for rightStart < len(right)-1 {
-			if !cohortHayashiInterval(right[rightStart], right[rightStart+1], maxInterval) ||
-				!leftStart.Before(right[rightStart+1].At) {
-				rightStart++
-
-				continue
-			}
-
-			break
-		}
-
-		for rightIndex := rightStart; rightIndex < len(right)-1; rightIndex++ {
-			rightIntervalStart := right[rightIndex].At
-
-			if !rightIntervalStart.Before(leftEnd) {
-				break
-			}
-
-			if !cohortHayashiInterval(right[rightIndex], right[rightIndex+1], maxInterval) {
-				continue
-			}
-
-			covariance += leftReturn * math.Log(
-				right[rightIndex+1].Value/right[rightIndex].Value,
-			)
-		}
-	}
-
-	denominator := math.Sqrt(leftVariance * rightVariance)
-
-	if denominator <= 0 {
-		return 0, false
-	}
-
-	correlationValue := covariance / denominator
-
-	if correlationValue > 1 {
-		return 1, true
-	}
-
-	if correlationValue < -1 {
-		return -1, true
-	}
-
-	return correlationValue, true
-}
-
-func cohortHayashiVariance(samples []cohortHayashiSample, maxInterval time.Duration) float64 {
-	if len(samples) < 2 {
-		return 0
-	}
-
-	sum := 0.0
-
-	for index := 1; index < len(samples); index++ {
-		if !cohortHayashiInterval(samples[index-1], samples[index], maxInterval) {
-			continue
-		}
-
-		ret := math.Log(samples[index].Value / samples[index-1].Value)
-		sum += ret * ret
-	}
-
-	return sum
-}
-
-func cohortHayashiInterval(
-	previous, current cohortHayashiSample,
-	maxInterval time.Duration,
-) bool {
-	if previous.Value <= 0 || current.Value <= 0 || !previous.At.Before(current.At) {
-		return false
-	}
-
-	if maxInterval <= 0 {
-		return true
-	}
-
-	return current.At.Sub(previous.At) <= maxInterval
 }

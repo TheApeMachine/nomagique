@@ -14,23 +14,23 @@ const cohortPayloadHeader = 6
 func cohortBatch(
 	window int,
 	barSpacingSeconds float64,
-	symbolReturns, marketReturns, peerCorrelations, peerEnergies []float64,
+	energy float64,
+	pairCorrelations, peerCorrelations, peerEnergies []float64,
 ) []float64 {
 	batch := make(
 		[]float64,
 		0,
-		cohortPayloadHeader+len(symbolReturns)+len(marketReturns)+len(peerCorrelations)+len(peerEnergies),
+		cohortPayloadHeader+len(pairCorrelations)+len(peerCorrelations)+len(peerEnergies),
 	)
 	batch = append(batch, float64(window))
 	batch = append(batch,
-		float64(len(symbolReturns)),
-		float64(len(marketReturns)),
+		float64(len(pairCorrelations)),
 		float64(len(peerCorrelations)),
 		float64(len(peerEnergies)),
 	)
 	batch = append(batch, barSpacingSeconds)
-	batch = append(batch, symbolReturns...)
-	batch = append(batch, marketReturns...)
+	batch = append(batch, energy)
+	batch = append(batch, pairCorrelations...)
 	batch = append(batch, peerCorrelations...)
 	batch = append(batch, peerEnergies...)
 
@@ -54,8 +54,8 @@ func TestCohort_evaluate(testingTB *testing.T) {
 			batch: cohortBatch(
 				3,
 				60,
-				[]float64{0.01, 0.02, 0.01},
-				[]float64{0.01, 0.02, 0.01},
+				0.1,
+				[]float64{0.05, 0.04},
 				[]float64{0.5, 0.6, 0.7, 0.8},
 				[]float64{0.5, 0.6, 0.7, 0.8},
 			),
@@ -67,8 +67,8 @@ func TestCohort_evaluate(testingTB *testing.T) {
 			batch: cohortBatch(
 				4,
 				60,
-				[]float64{0.5, 0.6, 0.7, 0.8},
-				[]float64{0.4, 0.5, 0.6, 0.7},
+				0.5,
+				[]float64{0.8, 0.9},
 				[]float64{0.1, 0.2, 0.3, 0.4},
 				[]float64{0.1, 0.2, 0.3, 0.4},
 			),
@@ -80,8 +80,8 @@ func TestCohort_evaluate(testingTB *testing.T) {
 			batch: cohortBatch(
 				4,
 				60,
-				[]float64{-0.8, -0.7, -0.9, -0.85},
-				[]float64{0.8, 0.7, 0.9, 0.85},
+				0.6,
+				[]float64{-0.8, -0.7},
 				[]float64{0.1, 0.2, -0.1, 0.05},
 				[]float64{0.2, 0.3, 0.4, 0.5},
 			),
@@ -91,7 +91,7 @@ func TestCohort_evaluate(testingTB *testing.T) {
 		{
 			name: "mismatched segment length",
 			batch: append(
-				cohortBatch(3, 60, []float64{1, 2}, []float64{1, 2}, []float64{0.1, 0.2}, []float64{0.1, 0.2}),
+				cohortBatch(3, 60, 0.2, []float64{1, 2}, []float64{0.1, 0.2}, []float64{0.1, 0.2}),
 				99,
 			),
 			eligible: false,

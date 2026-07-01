@@ -16,7 +16,7 @@ import (
 
 const (
 	cohortMinimumWindow = 2
-	cohortMinimumPeers  = 2
+	cohortMinimumPeers  = 1
 	cohortHistoryCap    = 128
 )
 
@@ -31,6 +31,7 @@ type CohortSample struct {
 
 type cohortSymbol struct {
 	lastPrice float64
+	prices    []float64
 	returns   []float64
 	times     []int64
 }
@@ -81,20 +82,22 @@ func (cohortSample *CohortSample) Read(payload []byte) (int, error) {
 		return 0, io.EOF
 	}
 
-	symbolReturns := tailCohort(cohortSample.symbols[sample.name].returns, window)
-	marketReturns, peerCorrelations, peerEnergies := cohortSample.peers(window)
+	pairCorrelations, peerCorrelations, peerEnergies, energy, barSpacingSeconds :=
+		cohortSample.peers(sample.name, window)
 
-	if len(symbolReturns) < window ||
-		len(marketReturns) < window ||
-		len(peerCorrelations) < cohortMinimumPeers {
+	if len(pairCorrelations) == 0 ||
+		len(peerCorrelations) < cohortMinimumPeers ||
+		len(peerEnergies) < cohortMinimumPeers ||
+		energy <= 0 ||
+		barSpacingSeconds <= 0 {
 		return 0, io.EOF
 	}
 
 	features := cohortFeatures(
 		window,
-		cohortSample.barSpacing(sample.name, window),
-		symbolReturns,
-		marketReturns,
+		barSpacingSeconds,
+		energy,
+		pairCorrelations,
 		peerCorrelations,
 		peerEnergies,
 	)
@@ -171,14 +174,24 @@ func (cohortSample *CohortSample) sample(state *datura.Artifact) (cohortTick, er
 func (cohortSample *CohortSample) observe(tick cohortTick) {
 	symbolState := cohortSample.symbol(tick.name)
 
+	historyCap := cohortSample.historyCap()
+
+	if len(symbolState.times) > 0 && symbolState.times[len(symbolState.times)-1] == tick.at {
+		symbolState.prices[len(symbolState.prices)-1] = tick.price
+		symbolState.lastPrice = tick.price
+
+		return
+	}
+
+	symbolState.prices = appendRingFloat(symbolState.prices, tick.price, historyCap)
+	symbolState.times = appendRingInt64(symbolState.times, tick.at, historyCap)
+
 	if symbolState.lastPrice > 0 {
-		historyCap := cohortSample.historyCap()
 		symbolState.returns = appendRingFloat(
 			symbolState.returns,
 			math.Log(tick.price/symbolState.lastPrice),
 			historyCap,
 		)
-		symbolState.times = appendRingInt64(symbolState.times, tick.at, historyCap)
 	}
 
 	symbolState.lastPrice = tick.price
@@ -217,6 +230,10 @@ func (cohortSample *CohortSample) window(symbol string) int {
 		return 0
 	}
 
+	if len(symbolState.returns) < cohortMinimumWindow {
+		return 0
+	}
+
 	shortWindow, _, err := statistic.ResolveWindows(symbolState.returns, 0, 0)
 
 	if err != nil {
@@ -227,6 +244,10 @@ func (cohortSample *CohortSample) window(symbol string) int {
 
 	if commonDepth <= 0 {
 		return 0
+	}
+
+	if shortWindow < cohortMinimumWindow {
+		shortWindow = cohortMinimumWindow
 	}
 
 	if shortWindow > commonDepth {
@@ -252,132 +273,243 @@ func (cohortSample *CohortSample) commonDepth() int {
 	return commonDepth
 }
 
-func (cohortSample *CohortSample) peers(window int) ([]float64, []float64, []float64) {
-	series := make([][]float64, 0, len(cohortSample.symbols))
+func (cohortSample *CohortSample) peers(
+	target string,
+	window int,
+) ([]float64, []float64, []float64, float64, float64) {
+	gridInterval := cohortSample.gridInterval()
 
-	for _, symbolState := range cohortSample.symbols {
-		returns := tailCohort(symbolState.returns, window)
+	if gridInterval <= 0 {
+		return nil, nil, nil, 0, 0
+	}
 
-		if len(returns) < window {
+	currentTime := cohortSample.currentTime()
+	windowStart := currentTime - int64(window)*gridInterval
+	targetState := cohortSample.symbols[target]
+
+	if targetState == nil {
+		return nil, nil, nil, 0, 0
+	}
+
+	targetIntervals := returnIntervalsCohort(targetState, windowStart, currentTime)
+	energy := medianAbsoluteIntervalsCohort(targetIntervals)
+
+	if energy <= 0 {
+		return nil, nil, nil, 0, 0
+	}
+
+	pairCorrelations := make([]float64, 0, len(cohortSample.symbols)-1)
+	peerCorrelations := make([]float64, 0, len(cohortSample.symbols))
+	peerEnergies := make([]float64, 0, len(cohortSample.symbols))
+	symbols := cohortSample.sortedSymbols()
+
+	for _, symbol := range symbols {
+		symbolState := cohortSample.symbols[symbol]
+		intervals := returnIntervalsCohort(symbolState, windowStart, currentTime)
+		symbolEnergy := medianAbsoluteIntervalsCohort(intervals)
+
+		if symbolEnergy > 0 {
+			peerEnergies = append(peerEnergies, symbolEnergy)
+		}
+
+		if symbol == target {
 			continue
 		}
 
-		series = append(series, returns)
-	}
-
-	if len(series) < cohortMinimumPeers {
-		return nil, nil, nil
-	}
-
-	marketReturns := make([]float64, window)
-
-	for index := range window {
-		column := make([]float64, len(series))
-
-		for seriesIndex, returns := range series {
-			column[seriesIndex] = returns[index]
+		if correlation, ok := pairCorrelationCohort(targetState, symbolState, gridInterval, windowStart, currentTime, window); ok {
+			pairCorrelations = append(pairCorrelations, correlation)
 		}
-
-		sort.Float64s(column)
-		marketReturns[index] = stat.Quantile(0.5, stat.LinInterp, column, nil)
 	}
 
-	peerCorrelations := make([]float64, len(series))
-	peerEnergies := make([]float64, len(series))
+	for leftIndex := 0; leftIndex < len(symbols); leftIndex++ {
+		left := cohortSample.symbols[symbols[leftIndex]]
 
-	for index, returns := range series {
-		peerCorrelations[index] = stat.Correlation(returns, marketReturns, nil)
-		peerEnergies[index] = medianAbsoluteCohort(returns)
+		for rightIndex := leftIndex + 1; rightIndex < len(symbols); rightIndex++ {
+			right := cohortSample.symbols[symbols[rightIndex]]
+			correlation, ok := pairCorrelationCohort(left, right, gridInterval, windowStart, currentTime, window)
+
+			if ok {
+				peerCorrelations = append(peerCorrelations, correlation)
+			}
+		}
 	}
 
-	return marketReturns, peerCorrelations, peerEnergies
+	return pairCorrelations,
+		peerCorrelations,
+		peerEnergies,
+		energy,
+		float64(gridInterval) / float64(time.Second)
 }
 
-func (cohortSample *CohortSample) barSpacing(symbol string, window int) float64 {
-	symbolState := cohortSample.symbols[symbol]
+func (cohortSample *CohortSample) gridInterval() int64 {
+	deltas := make([]float64, 0, len(cohortSample.symbols))
 
-	if symbolState == nil || len(symbolState.times) < cohortMinimumWindow {
-		return 0
-	}
+	for _, symbolState := range cohortSample.symbols {
+		for index := 1; index < len(symbolState.times); index++ {
+			delta := symbolState.times[index] - symbolState.times[index-1]
 
-	times := tailCohortInt(symbolState.times, window)
-	deltas := make([]float64, 0, len(times))
-
-	for index := 1; index < len(times); index++ {
-		delta := times[index] - times[index-1]
-
-		if delta <= 0 {
-			continue
+			if delta > 0 {
+				deltas = append(deltas, float64(delta))
+			}
 		}
-
-		deltas = append(deltas, float64(delta)/float64(time.Second))
 	}
 
 	median, ok := statistic.MedianOf(deltas)
 
-	if !ok {
+	if !ok || median <= 0 || math.IsNaN(median) || math.IsInf(median, 0) {
 		return 0
 	}
 
-	return median
+	return int64(median)
+}
+
+func (cohortSample *CohortSample) sortedSymbols() []string {
+	symbols := make([]string, 0, len(cohortSample.symbols))
+
+	for symbol := range cohortSample.symbols {
+		symbols = append(symbols, symbol)
+	}
+
+	sort.Strings(symbols)
+
+	return symbols
+}
+
+func (cohortSample *CohortSample) currentTime() int64 {
+	current := int64(0)
+
+	for _, symbolState := range cohortSample.symbols {
+		if len(symbolState.times) == 0 {
+			continue
+		}
+
+		last := symbolState.times[len(symbolState.times)-1]
+
+		if last > current {
+			current = last
+		}
+	}
+
+	return current
+}
+
+func pairCorrelationCohort(
+	left *cohortSymbol,
+	right *cohortSymbol,
+	gridInterval int64,
+	windowStart int64,
+	currentTime int64,
+	window int,
+) (float64, bool) {
+	leftGrid := gridReturnsCohort(left, gridInterval, windowStart, window)
+	rightGrid := gridReturnsCohort(right, gridInterval, windowStart, window)
+
+	if len(leftGrid) == window && len(rightGrid) == window {
+		if correlation, ok := pearsonCohort(leftGrid, rightGrid); ok {
+			return correlation, true
+		}
+	}
+
+	return hayashiYoshidaCohort(
+		returnIntervalsCohort(left, windowStart, currentTime),
+		returnIntervalsCohort(right, windowStart, currentTime),
+	)
+}
+
+func gridReturnsCohort(
+	symbolState *cohortSymbol,
+	gridInterval int64,
+	windowStart int64,
+	window int,
+) []float64 {
+	if symbolState == nil ||
+		len(symbolState.prices) == 0 ||
+		gridInterval <= 0 ||
+		window < cohortMinimumWindow {
+		return nil
+	}
+
+	prices := make([]float64, 0, window+1)
+
+	for index := 0; index <= window; index++ {
+		cutoff := windowStart + int64(index)*gridInterval
+		price, ok := priceAtCohort(symbolState, cutoff)
+
+		if !ok {
+			return nil
+		}
+
+		prices = append(prices, price)
+	}
+
+	return logReturnsCohort(prices)
+}
+
+func pearsonCohort(left, right []float64) (float64, bool) {
+	if len(left) != len(right) || len(left) < cohortMinimumWindow {
+		return 0, false
+	}
+
+	meanLeft := stat.Mean(left, nil)
+	meanRight := stat.Mean(right, nil)
+	var leftVariance float64
+	var rightVariance float64
+	var covariance float64
+
+	for index := range left {
+		leftDelta := left[index] - meanLeft
+		rightDelta := right[index] - meanRight
+
+		leftVariance += leftDelta * leftDelta
+		rightVariance += rightDelta * rightDelta
+		covariance += leftDelta * rightDelta
+	}
+
+	if leftVariance <= 0 || rightVariance <= 0 {
+		return 0, false
+	}
+
+	correlation := covariance / math.Sqrt(leftVariance*rightVariance)
+
+	if math.IsNaN(correlation) || math.IsInf(correlation, 0) {
+		return 0, false
+	}
+
+	return math.Max(-1, math.Min(1, correlation)), true
+}
+
+func priceAtCohort(symbolState *cohortSymbol, timestamp int64) (float64, bool) {
+	for index, observed := range symbolState.times {
+		if observed == timestamp && index < len(symbolState.prices) {
+			price := symbolState.prices[index]
+
+			return price, price > 0
+		}
+	}
+
+	return 0, false
 }
 
 func cohortFeatures(
 	window int,
 	barSpacingSeconds float64,
-	symbolReturns, marketReturns, peerCorrelations, peerEnergies []float64,
+	energy float64,
+	pairCorrelations, peerCorrelations, peerEnergies []float64,
 ) []float64 {
 	features := []float64{
 		float64(window),
-		float64(len(symbolReturns)),
-		float64(len(marketReturns)),
+		float64(len(pairCorrelations)),
 		float64(len(peerCorrelations)),
 		float64(len(peerEnergies)),
 		barSpacingSeconds,
+		energy,
 	}
 
-	features = append(features, symbolReturns...)
-	features = append(features, marketReturns...)
+	features = append(features, pairCorrelations...)
 	features = append(features, peerCorrelations...)
 	features = append(features, peerEnergies...)
 
 	return features
-}
-
-func tailCohort(values []float64, count int) []float64 {
-	if len(values) == 0 || count <= 0 {
-		return nil
-	}
-
-	if len(values) <= count {
-		out := make([]float64, len(values))
-		copy(out, values)
-
-		return out
-	}
-
-	out := make([]float64, count)
-	copy(out, values[len(values)-count:])
-
-	return out
-}
-
-func tailCohortInt(values []int64, count int) []int64 {
-	if len(values) == 0 || count <= 0 {
-		return nil
-	}
-
-	if len(values) <= count {
-		out := make([]int64, len(values))
-		copy(out, values)
-
-		return out
-	}
-
-	out := make([]int64, count)
-	copy(out, values[len(values)-count:])
-
-	return out
 }
 
 func appendRingInt64(values []int64, value int64, capacity int) []int64 {
@@ -390,15 +522,113 @@ func appendRingInt64(values []int64, value int64, capacity int) []int64 {
 	return values[len(values)-capacity:]
 }
 
-func medianAbsoluteCohort(values []float64) float64 {
-	absValues := make([]float64, 0, len(values))
+func logReturnsCohort(prices []float64) []float64 {
+	if len(prices) < 2 {
+		return nil
+	}
 
-	for _, value := range values {
-		if math.IsNaN(value) || math.IsInf(value, 0) {
+	returns := make([]float64, 0, len(prices)-1)
+
+	for index := 1; index < len(prices); index++ {
+		if prices[index-1] <= 0 || prices[index] <= 0 {
 			continue
 		}
 
-		absValues = append(absValues, math.Abs(value))
+		returns = append(returns, math.Log(prices[index]/prices[index-1]))
+	}
+
+	return returns
+}
+
+type cohortReturnInterval struct {
+	start int64
+	end   int64
+	value float64
+}
+
+func returnIntervalsCohort(
+	symbolState *cohortSymbol,
+	windowStart int64,
+	currentTime int64,
+) []cohortReturnInterval {
+	if symbolState == nil || len(symbolState.times) < 2 {
+		return nil
+	}
+
+	intervals := make([]cohortReturnInterval, 0, len(symbolState.times)-1)
+
+	for index := 1; index < len(symbolState.times); index++ {
+		start := symbolState.times[index-1]
+		end := symbolState.times[index]
+
+		if end <= windowStart || start >= currentTime || end <= start {
+			continue
+		}
+
+		previous := symbolState.prices[index-1]
+		current := symbolState.prices[index]
+
+		if previous <= 0 || current <= 0 {
+			continue
+		}
+
+		intervals = append(intervals, cohortReturnInterval{
+			start: start,
+			end:   end,
+			value: math.Log(current / previous),
+		})
+	}
+
+	return intervals
+}
+
+func hayashiYoshidaCohort(
+	left []cohortReturnInterval,
+	right []cohortReturnInterval,
+) (float64, bool) {
+	if len(left) == 0 || len(right) == 0 {
+		return 0, false
+	}
+
+	covariance := 0.0
+	leftVariance := 0.0
+	rightVariance := 0.0
+
+	for _, interval := range left {
+		leftVariance += interval.value * interval.value
+	}
+
+	for _, interval := range right {
+		rightVariance += interval.value * interval.value
+	}
+
+	if leftVariance <= 0 || rightVariance <= 0 {
+		return 0, false
+	}
+
+	for _, leftInterval := range left {
+		for _, rightInterval := range right {
+			if leftInterval.start < rightInterval.end &&
+				rightInterval.start < leftInterval.end {
+				covariance += leftInterval.value * rightInterval.value
+			}
+		}
+	}
+
+	correlation := covariance / math.Sqrt(leftVariance*rightVariance)
+
+	if math.IsNaN(correlation) || math.IsInf(correlation, 0) {
+		return 0, false
+	}
+
+	return math.Max(-1, math.Min(1, correlation)), true
+}
+
+func medianAbsoluteIntervalsCohort(intervals []cohortReturnInterval) float64 {
+	absValues := make([]float64, 0, len(intervals))
+
+	for _, interval := range intervals {
+		absValues = append(absValues, math.Abs(interval.value))
 	}
 
 	median, ok := statistic.MedianOf(absValues)

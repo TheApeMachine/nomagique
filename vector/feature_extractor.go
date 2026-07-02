@@ -19,6 +19,7 @@ from Write to Read. Read unpacks the frame, extracts features, and emits output.
 type FeatureExtractor struct {
 	artifact   *datura.Artifact
 	transforms map[string]func(*datura.Artifact) io.ReadWriteCloser
+	writes     []byte
 }
 
 /*
@@ -46,18 +47,27 @@ func (extractor *FeatureExtractor) Read(payload []byte) (int, error) {
 		))
 	}
 
+	extractor.writes = nil
+
 	role := datura.Peek[string](state, "channel")
 
-	if role == "" {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"feature-extractor: channel required",
-			nil,
-		))
-	}
+	rootKey := datura.Peek[string](extractor.artifact, "root")
+	inputs := datura.Peek[[]string](extractor.artifact, "inputs")
+	elementIndex := int(datura.Peek[float64](extractor.artifact, "elementIndex"))
 
-	rootKey := datura.Peek[string](extractor.artifact, role, "root")
-	inputs := datura.Peek[[]string](extractor.artifact, role, "inputs")
+	if role != "" {
+		if scopedRoot := datura.Peek[string](extractor.artifact, role, "root"); scopedRoot != "" {
+			rootKey = scopedRoot
+		}
+
+		if scopedInputs := datura.Peek[[]string](extractor.artifact, role, "inputs"); len(scopedInputs) > 0 {
+			inputs = scopedInputs
+		}
+
+		if scopedIndex := int(datura.Peek[float64](extractor.artifact, role, "elementIndex")); scopedIndex != 0 {
+			elementIndex = scopedIndex
+		}
+	}
 
 	if rootKey == "" {
 		return 0, errnie.Error(errnie.Err(
@@ -78,8 +88,11 @@ func (extractor *FeatureExtractor) Read(payload []byte) (int, error) {
 	features := make([]float64, len(inputs))
 
 	for index, input := range inputs {
-		elementIndex := int(datura.Peek[float64](extractor.artifact, role, "elementIndex"))
 		sample := datura.Peek[float64](state, rootKey, elementIndex, input)
+
+		if rootKey == "." {
+			sample = datura.Peek[float64](state, input)
+		}
 
 		if math.IsNaN(sample) || math.IsInf(sample, 0) {
 			return 0, errnie.Error(errnie.Err(
@@ -89,7 +102,13 @@ func (extractor *FeatureExtractor) Read(payload []byte) (int, error) {
 			))
 		}
 
-		transform := datura.Peek[string](extractor.artifact, role, "transforms", input)
+		transform := datura.Peek[string](extractor.artifact, "transforms", input)
+
+		if role != "" {
+			if scopedTransform := datura.Peek[string](extractor.artifact, role, "transforms", input); scopedTransform != "" {
+				transform = scopedTransform
+			}
+		}
 
 		if transform == "" {
 			features[index] = sample
@@ -184,10 +203,29 @@ func (extractor *FeatureExtractor) Read(payload []byte) (int, error) {
 }
 
 func (extractor *FeatureExtractor) Write(p []byte) (int, error) {
-	extractor.artifact.WithPayload(p)
+	extractor.writes = append(extractor.writes, p...)
+	extractor.artifact.WithPayload(extractor.writes)
+
 	return len(p), nil
 }
 
-func (extractor *FeatureExtractor) Close() error {
+func (extractor *FeatureExtractor) Flush() error {
+	if len(extractor.writes) == 0 {
+		return nil
+	}
+
+	probe := datura.Acquire("feature-extractor-flush", datura.APPJSON)
+	defer probe.Release()
+
+	if _, err := probe.Unpack(extractor.writes); err != nil {
+		return err
+	}
+
+	extractor.writes = nil
+
 	return nil
+}
+
+func (extractor *FeatureExtractor) Close() error {
+	return extractor.Flush()
 }

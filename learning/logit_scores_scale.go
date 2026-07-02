@@ -81,6 +81,10 @@ func (logitScores *LogitScores) resolveFeatureScale(
 	scale := math.Max(derived, math.Abs(feature))
 
 	if scale <= 0 || math.IsNaN(scale) || math.IsInf(scale, 0) {
+		if feature == 0 {
+			return 0, nil
+		}
+
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
 			fmt.Sprintf("logit-scores: scale for %q could not be derived", stageKey),

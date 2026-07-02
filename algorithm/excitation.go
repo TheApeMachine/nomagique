@@ -124,7 +124,7 @@ func (excitation *Excitation) Read(payload []byte) (int, error) {
 		}
 
 		state.Poke("output", "root")
-		state.Poke([]string{"frenzy", "saturation", "organic", "exhaustion"}, "inputs")
+		state.Poke([]string{"frenzy", "saturation", "organic", "exhaustion", "strength"}, "inputs")
 
 		packed, packErr := state.Message().MarshalPacked()
 		state.Release()

@@ -184,15 +184,15 @@ func (rollingZScore *RollingZScore) Read(payload []byte) (int, error) {
 
 	rollingZScore.samples[seriesKey] = history
 
-	if len(prior) == 0 {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"rolling-zscore: prior sample required",
-			nil,
-		))
-	}
-
 	var score float64
+
+	if len(prior) == 0 {
+		state.MergeOutput(outputKey, score)
+		state.Poke("output", "root")
+		state.Poke([]string{outputKey}, "inputs")
+
+		return state.PackInto(payload)
+	}
 
 	meanSample := stat.Mean(prior, nil)
 	stdSample := stat.StdDev(prior, nil)

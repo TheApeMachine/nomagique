@@ -205,16 +205,11 @@ func (logReturn *LogReturn) Read(payload []byte) (int, error) {
 	logReturn.samples[seriesKey] = history
 
 	anchorIndex := len(history) - returnLag - 1
+	anchorSample := sample
 
-	if anchorIndex < 0 {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"log-return: insufficient history for returnLag",
-			nil,
-		))
+	if anchorIndex >= 0 {
+		anchorSample = history[anchorIndex].value
 	}
-
-	anchorSample := history[anchorIndex].value
 
 	if anchorSample <= 0 || math.IsNaN(anchorSample) || math.IsInf(anchorSample, 0) {
 		return 0, errnie.Error(errnie.Err(

@@ -127,6 +127,50 @@ func TestFeatureExtractor_Read(t *testing.T) {
 		})
 	})
 
+	Convey("Given a feature extractor with a row-level payload", t, func() {
+		extractor := NewFeatureExtractor(
+			datura.Acquire("feature-extractor-row-test", datura.APPJSON).
+				WithAttributes(datura.Map[any]{
+					"root":   ".",
+					"inputs": []string{"bid", "ask", "last"},
+				}),
+		)
+
+		Convey("When the payload has no channel or root object", func() {
+			inbound := datura.Acquire("test", datura.APPJSON).
+				WithPayload([]byte(`{"symbol":"BTC/USD","bid":100.9,"ask":101.1,"last":101}`))
+			_, err := nomagique.WriteArtifact(extractor, inbound)
+			So(err, ShouldBeNil)
+
+			wire := make([]byte, 65536)
+			n, err := extractor.Read(wire)
+			So(err, ShouldEqual, io.EOF)
+
+			buffer := bytes.NewBuffer(wire[:n])
+
+			Convey("Then features should be read directly from the top level", func() {
+				decoded := datura.Acquire("feature-extractor-row", datura.APPJSON)
+				_, err = decoded.Unpack(buffer.Bytes())
+				So(err, ShouldBeNil)
+
+				So(datura.Peek[string](decoded, "root"), ShouldEqual, "features")
+				So(datura.Peek[string](decoded, "sourceRoot"), ShouldEqual, ".")
+				So(
+					datura.Peek[[]string](decoded, "inputs"),
+					ShouldResemble,
+					[]string{"bid", "ask", "last"},
+				)
+				So(
+					datura.Peek[[]float64](decoded, "features"),
+					ShouldResemble,
+					[]float64{100.9, 101.1, 101},
+				)
+
+				decoded.Release()
+			})
+		})
+	})
+
 	Convey("Given a non-finite sample field", t, func() {
 		extractor := NewFeatureExtractor(
 			datura.Acquire("feature-extractor-test", datura.APPJSON).

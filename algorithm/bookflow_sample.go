@@ -74,6 +74,24 @@ func (bookflowSample *BookflowSample) Read(payload []byte) (int, error) {
 
 	channel := datura.Peek[string](state, "channel")
 	symbol := datura.Peek[string](state, "data", 0, "symbol")
+	row := false
+
+	if symbol == "" {
+		symbol = datura.Peek[string](state, "symbol")
+		row = symbol != ""
+	}
+
+	if channel == "" && row {
+		if datura.Peek[float64](state, "bids", 0, "price") > 0 ||
+			datura.Peek[float64](state, "asks", 0, "price") > 0 {
+			channel = "book"
+		}
+
+		if datura.Peek[float64](state, "price") > 0 &&
+			datura.Peek[float64](state, "qty") > 0 {
+			channel = "trade"
+		}
+	}
 
 	if symbol == "" {
 		return 0, errnie.Error(errnie.Err(
@@ -87,9 +105,9 @@ func (bookflowSample *BookflowSample) Read(payload []byte) (int, error) {
 
 	switch channel {
 	case "book":
-		bookflowSample.ingestBook(state, window)
+		bookflowSample.ingestBook(state, window, row)
 	case "trade":
-		bookflowSample.ingestTrade(state, window)
+		bookflowSample.ingestTrade(state, window, row)
 	}
 
 	features := bookflowSample.features(window)
@@ -128,14 +146,18 @@ func (bookflowSample *BookflowSample) window(symbol string) *bookflowWindow {
 	return window
 }
 
-func (bookflowSample *BookflowSample) ingestBook(state *datura.Artifact, window *bookflowWindow) {
+func (bookflowSample *BookflowSample) ingestBook(
+	state *datura.Artifact,
+	window *bookflowWindow,
+	row bool,
+) {
 	window.touchCancelBid = 0
 	window.touchCancelAsk = 0
 	window.frameAddBid = 0
 	window.frameAddAsk = 0
 
-	bookflowSample.applyLevels(state, "bids", window.bids, window, SideBid)
-	bookflowSample.applyLevels(state, "asks", window.asks, window, SideAsk)
+	bookflowSample.applyLevels(state, "bids", window.bids, window, SideBid, row)
+	bookflowSample.applyLevels(state, "asks", window.asks, window, SideAsk, row)
 
 	mid := bookflowMidPrice(window.bids, window.asks)
 	spread := bookflowSpread(window.bids, window.asks)
@@ -177,10 +199,20 @@ func (bookflowSample *BookflowSample) ingestBook(state *datura.Artifact, window 
 	window.flatHist = appendRingFloat(window.flatHist, flat, bookflowSampleHistoryCap)
 }
 
-func (bookflowSample *BookflowSample) ingestTrade(state *datura.Artifact, window *bookflowWindow) {
+func (bookflowSample *BookflowSample) ingestTrade(
+	state *datura.Artifact,
+	window *bookflowWindow,
+	row bool,
+) {
 	price := datura.Peek[float64](state, "data", 0, "price")
 	quantity := datura.Peek[float64](state, "data", 0, "qty")
 	side := datura.Peek[string](state, "data", 0, "side")
+
+	if row {
+		price = datura.Peek[float64](state, "price")
+		quantity = datura.Peek[float64](state, "qty")
+		side = datura.Peek[string](state, "side")
+	}
 
 	if price <= 0 || quantity <= 0 {
 		return
@@ -209,10 +241,16 @@ func (bookflowSample *BookflowSample) applyLevels(
 	book map[float64]float64,
 	window *bookflowWindow,
 	side byte,
+	row bool,
 ) {
 	for index := 0; ; index++ {
 		price := datura.Peek[float64](state, "data", 0, sideKey, index, "price")
 		quantity := datura.Peek[float64](state, "data", 0, sideKey, index, "qty")
+
+		if row {
+			price = datura.Peek[float64](state, sideKey, index, "price")
+			quantity = datura.Peek[float64](state, sideKey, index, "qty")
+		}
 
 		if price <= 0 {
 			break

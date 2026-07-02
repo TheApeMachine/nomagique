@@ -8,6 +8,7 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/nomagique"
+	"github.com/theapemachine/nomagique/probability"
 )
 
 func TestTradeExcitationSampleRead(testingTB *testing.T) {
@@ -61,6 +62,44 @@ func TestTradeExcitationSampleRead(testingTB *testing.T) {
 		})
 	})
 
+	Convey("Given row-level trade artifacts", testingTB, func() {
+		sample := NewTradeExcitationSample(datura.Acquire("trade-excitation-config", datura.APPJSON))
+		base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
+
+		var last *datura.Artifact
+		var lastErr error
+
+		for index := range 64 {
+			side := "buy"
+
+			if index%2 == 0 {
+				side = "sell"
+			}
+
+			frame := datura.Acquire("trade-excitation-row", datura.APPJSON).
+				WithRole("measurement").
+				WithScope("ALT/EUR").
+				WithPayload(datura.Map[any]{
+					"symbol":    "ALT/EUR",
+					"side":      side,
+					"price":     1.0,
+					"qty":       1.0,
+					"timestamp": base.Add(time.Duration(index) * 100 * time.Millisecond).Format(time.RFC3339Nano),
+				}.Marshal())
+			frame.SetTimestamp(base.Add(time.Duration(index) * 100 * time.Millisecond).UnixNano())
+
+			lastErr = nomagique.RoundTripArtifact(frame, sample)
+			last = frame
+		}
+
+		Convey("It should publish the same excitation feature batch shape", func() {
+			So(lastErr, ShouldBeNil)
+			features := datura.Peek[[]float64](last, "features")
+			So(len(features), ShouldBeGreaterThan, 8)
+			So(features[0], ShouldAlmostEqual, float64(base.Add(63*100*time.Millisecond).UnixNano())/float64(time.Second), 0.001)
+		})
+	})
+
 	Convey("Given a warmed excitation pipeline", testingTB, func() {
 		excitation := NewExcitation(datura.Acquire("excitation-config", datura.APPJSON))
 		pipeline := nomagique.Number(
@@ -98,6 +137,50 @@ func TestTradeExcitationSampleRead(testingTB *testing.T) {
 
 		Convey("It should publish excitation thermal scores", func() {
 			So(datura.Peek[float64](last, "output", "strength"), ShouldBeGreaterThan, 0)
+		})
+	})
+
+	Convey("Given warmed excitation output classified in place", testingTB, func() {
+		pipeline := nomagique.Number(
+			NewTradeExcitationSample(datura.Acquire("trade-excitation-config", datura.APPJSON)),
+			NewExcitation(datura.Acquire("excitation-config", datura.APPJSON)),
+		)
+		classifier := probability.NewClassifier(datura.Acquire(
+			"excitation-classifier-config", datura.APPJSON,
+		).WithAttributes(datura.Map[any]{
+			"inputs": []string{
+				"frenzy",
+				"saturation",
+				"organic",
+				"exhaustion",
+			},
+		}))
+		base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
+		var last *datura.Artifact
+
+		for index := range 128 {
+			side := "buy"
+
+			if index%2 == 0 {
+				side = "sell"
+			}
+
+			frame := tradeFrame(
+				"ALT/EUR",
+				side,
+				1,
+				1,
+				base.Add(time.Duration(index)*100*time.Millisecond).UnixNano(),
+			)
+
+			_ = nomagique.RoundTripArtifact(frame, pipeline)
+			last = frame
+		}
+
+		Convey("It should classify from excitation scores", func() {
+			So(classifier.Apply(last), ShouldBeNil)
+			So(datura.Peek[float64](last, "output", "category"), ShouldBeGreaterThan, 0)
+			So(datura.Peek[float64](last, "output", "confidence"), ShouldBeGreaterThan, 0)
 		})
 	})
 

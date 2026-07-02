@@ -45,7 +45,8 @@ func TestLogReturnRead(t *testing.T) {
 			err := nomagique.RoundTripArtifact(artifact, stage)
 
 			if index == 0 {
-				So(err, ShouldNotBeNil)
+				So(err, ShouldBeNil)
+				So(datura.Peek[float64](artifact, "output", "precursor"), ShouldEqual, 0)
 
 				artifact.Release()
 
@@ -92,7 +93,8 @@ func TestLogReturnReadLongReplayDoesNotGrowTraversal(t *testing.T) {
 			err := nomagique.RoundTripArtifact(artifact, stage)
 
 			if index == 0 {
-				So(err, ShouldNotBeNil)
+				So(err, ShouldBeNil)
+				So(datura.Peek[float64](artifact, "output", "precursor"), ShouldEqual, 0)
 
 				artifact.Release()
 

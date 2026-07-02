@@ -82,9 +82,18 @@ func (tradeExcitationSample *TradeExcitationSample) Read(payload []byte) (int, e
 	defer state.Release()
 
 	channel := datura.Peek[string](state, "channel")
+	row := false
 
 	if channel == "book" {
 		return 0, io.EOF
+	}
+
+	if channel == "" &&
+		datura.Peek[string](state, "symbol") != "" &&
+		(datura.Peek[string](state, "side") == "buy" ||
+			datura.Peek[string](state, "side") == "sell") {
+		channel = "trade"
+		row = true
 	}
 
 	if channel != "trade" {
@@ -97,6 +106,11 @@ func (tradeExcitationSample *TradeExcitationSample) Read(payload []byte) (int, e
 
 	symbol := datura.Peek[string](state, "data", 0, "symbol")
 	side := datura.Peek[string](state, "data", 0, "side")
+
+	if row {
+		symbol = datura.Peek[string](state, "symbol")
+		side = datura.Peek[string](state, "side")
+	}
 
 	if symbol == "" || (side != "buy" && side != "sell") {
 		return 0, errnie.Error(errnie.Err(
@@ -163,11 +177,26 @@ func (tradeExcitationSample *TradeExcitationSample) window(symbol string) *trade
 func (tradeExcitationSample *TradeExcitationSample) arrivalSecond(state *datura.Artifact) float64 {
 	timestamp := state.Timestamp()
 
-	if timestamp <= 0 {
-		return 0
+	if timestamp > 0 {
+		return float64(timestamp) / float64(time.Second)
 	}
 
-	return float64(timestamp) / float64(time.Second)
+	for _, timestamp := range []string{
+		datura.Peek[string](state, "timestamp"),
+		datura.Peek[string](state, "data", 0, "timestamp"),
+	} {
+		if timestamp == "" {
+			continue
+		}
+
+		observed, err := time.Parse(time.RFC3339Nano, timestamp)
+
+		if err == nil {
+			return float64(observed.UnixNano()) / float64(time.Second)
+		}
+	}
+
+	return 0
 }
 
 func (tradeExcitationSample *TradeExcitationSample) trimWindow(window *tradeExcitationWindow) {

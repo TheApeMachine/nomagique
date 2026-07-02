@@ -2,6 +2,7 @@ package algorithm
 
 import (
 	"fmt"
+	"io"
 	"math"
 
 	"github.com/theapemachine/datura"
@@ -66,6 +67,15 @@ func (tradeFlowSample *TradeFlowSample) Read(payload []byte) (int, error) {
 	defer state.Release()
 
 	channel := datura.Peek[string](state, "channel")
+	row := false
+
+	if channel == "" &&
+		datura.Peek[string](state, "symbol") != "" &&
+		datura.Peek[float64](state, "price") > 0 &&
+		datura.Peek[float64](state, "qty") > 0 {
+		channel = "trade"
+		row = true
+	}
 
 	if channel != "trade" {
 		return 0, errnie.Error(errnie.Err(
@@ -79,6 +89,13 @@ func (tradeFlowSample *TradeFlowSample) Read(payload []byte) (int, error) {
 	price := datura.Peek[float64](state, "data", 0, "price")
 	quantity := datura.Peek[float64](state, "data", 0, "qty")
 	side := datura.Peek[string](state, "data", 0, "side")
+
+	if row {
+		symbol = datura.Peek[string](state, "symbol")
+		price = datura.Peek[float64](state, "price")
+		quantity = datura.Peek[float64](state, "qty")
+		side = datura.Peek[string](state, "side")
+	}
 
 	if symbol == "" || price <= 0 || quantity <= 0 {
 		return 0, errnie.Error(errnie.Err(
@@ -103,11 +120,7 @@ func (tradeFlowSample *TradeFlowSample) Read(payload []byte) (int, error) {
 	features := tradeFlowSample.features(window)
 
 	if len(features) == 0 {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"trade-flow-sample: feature batch not ready",
-			nil,
-		))
+		return 0, io.EOF
 	}
 
 	state.WithScope(symbol)

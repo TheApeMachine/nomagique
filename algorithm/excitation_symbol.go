@@ -54,7 +54,9 @@ type fitEventKey struct {
 func newExcitationSymbol() *excitationSymbol {
 	return &excitationSymbol{
 		minFitEvents: bivariateParamCount * 2,
-		rawBase:      adaptive.NewEMA(datura.Acquire("excitation-ema", datura.APPJSON)),
+		rawBase: adaptive.NewEMA(
+			datura.Acquire("excitation-ema", datura.APPJSON).Poke("sample", "input"),
+		),
 	}
 }
 
@@ -252,7 +254,9 @@ func (symbol *excitationSymbol) measureFit(fit hawkes.BivariateFit) (excitationR
 
 func (symbol *excitationSymbol) rawBaseStep(sample float64) float64 {
 	inbound := datura.Acquire("excitation-ema-in", datura.APPJSON)
-	inbound.WithPayload(datura.Map[any]{"sample": sample}.Marshal())
+	inbound.Poke("wire", "root")
+	inbound.Poke([]string{"sample"}, "inputs")
+	inbound.Merge("wire", map[string]any{"sample": sample})
 	frame := inbound.Pack()
 
 	if len(frame) == 0 {

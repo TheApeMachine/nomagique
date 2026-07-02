@@ -40,17 +40,17 @@ func TestRollingZScoreRead(t *testing.T) {
 
 			err := nomagique.RoundTripArtifact(artifact, stage)
 
-			if index == 0 {
-				So(err, ShouldNotBeNil)
+			So(err, ShouldBeNil)
+
+			prior := samples[:index]
+
+			if len(prior) == 0 {
+				So(datura.Peek[float64](artifact, "output", "value"), ShouldAlmostEqual, 0, 1e-9)
 
 				artifact.Release()
 
 				continue
 			}
-
-			So(err, ShouldBeNil)
-
-			prior := samples[:index]
 
 			if len(prior) == 1 {
 				continue
@@ -103,19 +103,11 @@ func TestRollingZScoreRead(t *testing.T) {
 		var lastArtifact *datura.Artifact
 		timestamp := time.Unix(0, 1).UnixNano()
 
-		for index := range 6 {
+		for range 6 {
 			artifact := rollingZScoreFrame(0.0, timestamp)
 			timestamp += int64(time.Second)
 
 			err := nomagique.RoundTripArtifact(artifact, stage)
-
-			if index == 0 {
-				So(err, ShouldNotBeNil)
-
-				artifact.Release()
-
-				continue
-			}
 
 			So(err, ShouldBeNil)
 			So(datura.Peek[float64](artifact, "output", "value"), ShouldAlmostEqual, 0, 1e-9)

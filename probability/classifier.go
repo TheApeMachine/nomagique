@@ -1,6 +1,7 @@
 package probability
 
 import (
+	"fmt"
 	"io"
 	"math"
 
@@ -39,10 +40,38 @@ func (classifier *Classifier) Read(payload []byte) (int, error) {
 
 	defer state.Release()
 
+	if err := classifier.Apply(state); err != nil {
+		return 0, err
+	}
+
+	return state.PackInto(payload)
+}
+
+/*
+Apply classifies scores already present on state and writes the classifier
+outputs back onto the same artifact.
+*/
+func (classifier *Classifier) Apply(state *datura.Artifact) error {
+	if classifier == nil || classifier.artifact == nil {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"classifier: config required",
+			nil,
+		))
+	}
+
+	if state == nil {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"classifier: state required",
+			nil,
+		))
+	}
+
 	rootKey := datura.Peek[string](state, "root")
 
 	if rootKey == "" {
-		return 0, errnie.Error(errnie.Err(
+		return errnie.Error(errnie.Err(
 			errnie.Validation,
 			"classifier: root required",
 			nil,
@@ -52,7 +81,7 @@ func (classifier *Classifier) Read(payload []byte) (int, error) {
 	inputs := datura.Peek[[]string](state, "inputs")
 
 	if len(inputs) == 0 {
-		return 0, errnie.Error(errnie.Err(
+		return errnie.Error(errnie.Err(
 			errnie.Validation,
 			"classifier: inputs required",
 			nil,
@@ -62,9 +91,19 @@ func (classifier *Classifier) Read(payload []byte) (int, error) {
 	categories := datura.Peek[[]string](classifier.artifact, "inputs")
 
 	if len(categories) == 0 {
-		return 0, errnie.Error(errnie.Err(
+		return errnie.Error(errnie.Err(
 			errnie.Validation,
 			"classifier: inputs required",
+			nil,
+		))
+	}
+
+	categoryIndexes := datura.Peek[[]float64](classifier.artifact, "categoryIndexes")
+
+	if len(categoryIndexes) > 0 && len(categoryIndexes) != len(categories) {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"classifier: categoryIndexes length must match inputs",
 			nil,
 		))
 	}
@@ -73,7 +112,7 @@ func (classifier *Classifier) Read(payload []byte) (int, error) {
 
 	for index, category := range categories {
 		if category == "" {
-			return 0, errnie.Error(errnie.Err(
+			return errnie.Error(errnie.Err(
 				errnie.Validation,
 				"classifier: empty input key",
 				nil,
@@ -92,7 +131,7 @@ func (classifier *Classifier) Read(payload []byte) (int, error) {
 				features := datura.Peek[[]float64](state, rootKey)
 
 				if wireIndex >= len(features) {
-					return 0, errnie.Error(errnie.Err(
+					return errnie.Error(errnie.Err(
 						errnie.Validation,
 						"classifier: feature index out of range",
 						nil,
@@ -110,7 +149,7 @@ func (classifier *Classifier) Read(payload []byte) (int, error) {
 		}
 
 		if !scoreFound {
-			return 0, errnie.Error(errnie.Err(
+			return errnie.Error(errnie.Err(
 				errnie.Validation,
 				"classifier: input not in inputs",
 				nil,
@@ -118,7 +157,7 @@ func (classifier *Classifier) Read(payload []byte) (int, error) {
 		}
 
 		if math.IsNaN(score) || math.IsInf(score, 0) {
-			return 0, errnie.Error(errnie.Err(
+			return errnie.Error(errnie.Err(
 				errnie.Validation,
 				"classifier: score is non-finite",
 				nil,
@@ -141,19 +180,24 @@ func (classifier *Classifier) Read(payload []byte) (int, error) {
 	probabilities, err := SoftmaxScoresNormalized(scores)
 
 	if err != nil {
-		return 0, errnie.Error(errnie.Err(
+		return errnie.Error(errnie.Err(
 			errnie.Validation,
 			"classifier: unable to compute softmax probabilities",
 			err,
 		))
 	}
 
-	categoryIndex := ArgmaxIndex(probabilities) + 1
+	winnerIndex := ArgmaxIndex(probabilities)
+	categoryIndex := float64(winnerIndex + 1)
 
-	confidence, err := CategoryShareConfidence(scores, categoryIndex)
+	if len(categoryIndexes) > 0 {
+		categoryIndex = categoryIndexes[winnerIndex]
+	}
+
+	confidence, err := CategoryShareConfidence(scores, winnerIndex+1)
 
 	if err != nil {
-		return 0, errnie.Error(errnie.Err(
+		return errnie.Error(errnie.Err(
 			errnie.Validation,
 			"classifier: unable to compute category confidence",
 			err,
@@ -172,7 +216,7 @@ func (classifier *Classifier) Read(payload []byte) (int, error) {
 			features := datura.Peek[[]float64](state, rootKey)
 
 			if wireIndex >= len(features) {
-				return 0, errnie.Error(errnie.Err(
+				return errnie.Error(errnie.Err(
 					errnie.Validation,
 					"classifier: strength feature index out of range",
 					nil,
@@ -190,7 +234,7 @@ func (classifier *Classifier) Read(payload []byte) (int, error) {
 	}
 
 	if !strengthFound {
-		return 0, errnie.Error(errnie.Err(
+		return errnie.Error(errnie.Err(
 			errnie.Validation,
 			"classifier: strength not in inputs",
 			nil,
@@ -199,7 +243,7 @@ func (classifier *Classifier) Read(payload []byte) (int, error) {
 
 	if strength <= 0 || math.IsNaN(strength) || math.IsInf(strength, 0) {
 		if !allZeroEvidence {
-			return 0, errnie.Error(errnie.Err(
+			return errnie.Error(errnie.Err(
 				errnie.Validation,
 				"classifier: strength must be positive and finite",
 				nil,
@@ -207,19 +251,44 @@ func (classifier *Classifier) Read(payload []byte) (int, error) {
 		}
 	}
 
-	state.MergeOutput("probabilities", probabilities)
-	state.MergeOutput("category", categoryIndex)
-	state.MergeOutput("confidence", confidence)
-	state.MergeOutput("strength", strength)
-	state.MergeOutput("value", categoryIndex)
+	outputs := map[string]any{
+		"probabilities": probabilities,
+		"category":      categoryIndex,
+		"confidence":    confidence,
+		"strength":      strength,
+		"value":         categoryIndex,
+	}
+
+	for index, probability := range probabilities {
+		wireCategoryIndex := float64(index + 1)
+
+		if len(categoryIndexes) > 0 {
+			wireCategoryIndex = categoryIndexes[index]
+		}
+
+		outputs[fmt.Sprintf("category.%d", int(wireCategoryIndex))] = probability
+	}
+
+	state.MergeOutputs(outputs)
 	state.Poke("output", "root")
 
-	outputInputs := make([]string, 0, len(categories)+5)
+	outputInputs := make([]string, 0, len(categories)+len(probabilities)+5)
 	outputInputs = append(outputInputs, categories...)
 	outputInputs = append(outputInputs, "probabilities", "category", "confidence", "strength", "value")
+
+	for index := range probabilities {
+		wireCategoryIndex := float64(index + 1)
+
+		if len(categoryIndexes) > 0 {
+			wireCategoryIndex = categoryIndexes[index]
+		}
+
+		outputInputs = append(outputInputs, fmt.Sprintf("category.%d", int(wireCategoryIndex)))
+	}
+
 	state.Poke(outputInputs, "inputs")
 
-	return state.PackInto(payload)
+	return nil
 }
 
 func (classifier *Classifier) Write(p []byte) (int, error) {

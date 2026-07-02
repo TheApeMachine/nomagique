@@ -92,6 +92,14 @@ func pearlTrade(index int) *datura.Artifact {
 		WithPayload(payload)
 }
 
+func pearlRow(symbol string, row datura.Map[any]) *datura.Artifact {
+	row["symbol"] = symbol
+
+	return datura.Acquire("pearl-row", datura.APPJSON).
+		WithScope(symbol).
+		WithPayload(row.Marshal())
+}
+
 func TestPearl_Read(testingTB *testing.T) {
 	Convey("Given aligned node streams with causal structure", testingTB, func() {
 		pearl := algorithm.NewPearl(pearlConfig())
@@ -141,6 +149,82 @@ func TestPearl_ReadsRawTickerFrames(testingTB *testing.T) {
 			So(datura.Peek[float64](artifact, "output", "confidence"), ShouldBeGreaterThan, 0)
 		})
 	})
+}
+
+func TestPearlSample_ReadsRowArtifacts(testingTB *testing.T) {
+	Convey("Given row artifacts for multiple symbols", testingTB, func() {
+		sample := algorithm.NewPearlSample(pearlConfig())
+		var btc *datura.Artifact
+
+		for index := range 6 {
+			btc = pearlRow("BTC/USD", datura.Map[any]{
+				"bid":        49990.0 + float64(index),
+				"bid_qty":    20.0 + float64(index),
+				"ask":        50010.0 + float64(index),
+				"ask_qty":    18.0 + float64(index),
+				"last":       50000.0 + float64(index),
+				"change_pct": 0.01 * float64(index),
+			})
+			_ = nomagique.RoundTripArtifact(btc, sample)
+		}
+
+		eth := pearlRow("ETH/USD", datura.Map[any]{
+			"bid":        2990.0,
+			"bid_qty":    9.0,
+			"ask":        3010.0,
+			"ask_qty":    8.0,
+			"last":       3000.0,
+			"change_pct": 0.02,
+		})
+		_ = nomagique.RoundTripArtifact(eth, sample)
+
+		Convey("It should retain separate node streams per symbol", func() {
+			So(hasSample(datura.Peek[[]float64](btc, "streams", "0"), 0.0005), ShouldBeTrue)
+			So(hasSample(datura.Peek[[]float64](eth, "streams", "0"), 0.0002), ShouldBeTrue)
+			So(hasSample(datura.Peek[[]float64](eth, "streams", "0"), 0.0005), ShouldBeFalse)
+		})
+	})
+
+	Convey("Given a book row artifact", testingTB, func() {
+		sample := algorithm.NewPearlSample(pearlConfig())
+		book := pearlRow("BTC/USD", datura.Map[any]{
+			"bids": []datura.Map[any]{
+				{"price": 100.0, "qty": 4.0},
+				{"price": 99.0, "qty": 10.0},
+			},
+			"asks": []datura.Map[any]{
+				{"price": 101.0, "qty": 3.0},
+				{"price": 102.0, "qty": 10.0},
+			},
+		})
+		err := nomagique.RoundTripArtifact(book, sample)
+
+		Convey("It should encode book liquidity stress into Pearl node streams", func() {
+			So(err, ShouldBeNil)
+			So(datura.Peek[float64](book, "streams", "nodeCount"), ShouldEqual, 4)
+			So(hasPositive(datura.Peek[[]float64](book, "streams", "1")), ShouldBeTrue)
+		})
+	})
+}
+
+func hasSample(values []float64, expected float64) bool {
+	for _, value := range values {
+		if value == expected {
+			return true
+		}
+	}
+
+	return false
+}
+
+func hasPositive(values []float64) bool {
+	for _, value := range values {
+		if value > 0 {
+			return true
+		}
+	}
+
+	return false
 }
 
 func BenchmarkPearl_Read(testingTB *testing.B) {

@@ -55,6 +55,54 @@ func TestBookflow_Read(testingTB *testing.T) {
 			So(int(datura.Peek[float64](outbound, "output", "category")), ShouldEqual, 2)
 		})
 	})
+
+	Convey("Given weighted depth that collapses away from flat depth", testingTB, func() {
+		stage := equation.NewBookflow(bookflowConfig())
+		err := writeFeatureStage(stage, equation.BookflowInputKeys,
+			0.8, 0.7, 0.1, 1,
+			100, 2, 12,
+			0.2,
+			4, 4, 4,
+			0.60, 0.62, 0.61, 0.63,
+			0.60, 0.62, 0.61, 0.63,
+			0.50, 0.48, 0.52, 0.50,
+		)
+
+		So(err, ShouldBeNil)
+
+		outbound, err := readStageOutput(stage)
+
+		So(err, ShouldBeNil)
+
+		Convey("It should classify book thinning", func() {
+			So(int(datura.Peek[float64](outbound, "output", "category")), ShouldEqual, 3)
+			So(datura.Peek[float64](outbound, "output", "thinScore"), ShouldBeGreaterThan, 0)
+		})
+	})
+
+	Convey("Given balanced depth below the loaded threshold", testingTB, func() {
+		stage := equation.NewBookflow(bookflowConfig())
+		err := writeFeatureStage(stage, equation.BookflowInputKeys,
+			0.1, 0.05, 0.12, 1,
+			100, 2, 12,
+			0.0,
+			4, 4, 4,
+			0.50, 0.52, 0.51, 0.53,
+			0.45, 0.46, 0.44, 0.47,
+			0.50, 0.51, 0.49, 0.52,
+		)
+
+		So(err, ShouldBeNil)
+
+		outbound, err := readStageOutput(stage)
+
+		So(err, ShouldBeNil)
+
+		Convey("It should classify dense neutrality", func() {
+			So(int(datura.Peek[float64](outbound, "output", "category")), ShouldEqual, 4)
+			So(datura.Peek[float64](outbound, "output", "neutralScore"), ShouldBeGreaterThan, 0)
+		})
+	})
 }
 
 func BenchmarkBookflowRead(b *testing.B) {

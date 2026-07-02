@@ -2,6 +2,7 @@ package causal
 
 import (
 	"math"
+	"sort"
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
@@ -67,8 +68,17 @@ func (regime *Regime) Read(p []byte) (int, error) {
 	}
 
 	contagion := datura.Peek[float64](state, "paired")
-	contagionBreak := datura.Peek[float64](regime.artifact, "contagionBreak") > 0 &&
-		contagion >= datura.Peek[float64](regime.artifact, "contagionBreak")
+	contagionBreakPoint := datura.Peek[float64](regime.artifact, "contagionBreak")
+
+	if contagionBreakPoint <= 0 {
+		contagionBreakPoint = dynamicContagionBreak(
+			rows,
+			target,
+			intSlice(datura.Peek[[]float64](regime.artifact, "contagionSkip")),
+		)
+	}
+
+	contagionBreak := contagionBreakPoint > 0 && contagion > contagionBreakPoint
 
 	condition := 0.0
 	conditionBreak := false
@@ -113,4 +123,47 @@ func (regime *Regime) Write(p []byte) (int, error) {
 
 func (regime *Regime) Close() error {
 	return nil
+}
+
+func dynamicContagionBreak(rows [][]float64, target int, skip []int) float64 {
+	samples := make([]float64, 0, len(rows))
+
+	for _, row := range rows {
+		for nodeIndex, sample := range row {
+			if nodeIndex == target || containsIndex(skip, nodeIndex) {
+				continue
+			}
+
+			samples = append(samples, math.Abs(sample))
+		}
+	}
+
+	if len(samples) == 0 {
+		return 0
+	}
+
+	center := median(samples)
+	deviations := make([]float64, 0, len(samples))
+
+	for _, sample := range samples {
+		deviations = append(deviations, math.Abs(sample-center))
+	}
+
+	return center + median(deviations)
+}
+
+func median(values []float64) float64 {
+	if len(values) == 0 {
+		return 0
+	}
+
+	sorted := append([]float64(nil), values...)
+	sort.Float64s(sorted)
+	middle := len(sorted) / 2
+
+	if len(sorted)%2 == 0 {
+		return (sorted[middle-1] + sorted[middle]) / 2
+	}
+
+	return sorted[middle]
 }

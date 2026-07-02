@@ -15,11 +15,17 @@ import (
 NewPearl returns the Judea Pearl ladder-of-causation pipeline.
 */
 func NewPearl(config *datura.Artifact) io.ReadWriteCloser {
+	classifierConfig := datura.Map[any]{
+		"inputs":    []string{"alphaScore", "betaScore", "shockScore", "noiseScore"},
+		"scoreRoot": "output",
+	}
+
+	if categoryIndexes := datura.Peek[[]float64](config, "categoryIndexes"); len(categoryIndexes) > 0 {
+		classifierConfig["categoryIndexes"] = categoryIndexes
+	}
+
 	classifier := probability.NewClassifier(
-		datura.Acquire("causal-classifier", datura.APPJSON).WithAttributes(datura.Map[any]{
-			"inputs":    []string{"alphaScore", "betaScore", "shockScore", "noiseScore"},
-			"scoreRoot": "output",
-		}),
+		datura.Acquire("causal-classifier", datura.APPJSON).WithAttributes(classifierConfig),
 	)
 
 	return nomagique.Number(

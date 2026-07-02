@@ -90,6 +90,53 @@ func TestDecaySample_Read(t *testing.T) {
 			So(lastErr, ShouldBeNil)
 		})
 	})
+
+	Convey("Given deteriorating row-level book artifacts", t, func() {
+		encoder := NewDecaySample(datura.Acquire("decay-sample", datura.APPJSON))
+		decay := equation.NewDecay(equation.DecayConfig())
+		classifier := probability.NewClassifier(
+			datura.Acquire("exhaust-classifier", datura.APPJSON).WithAttributes(datura.Map[any]{
+				"inputs": []string{"mechanical", "fragile", "thermal", "reversal"},
+			}),
+		)
+		pipeline := transport.NewPipeline(encoder, decay, classifier)
+		quantities := []float64{20, 18, 16, 14, 12, 10, 8, 6, 4}
+
+		var result *datura.Artifact
+
+		for index, bidQty := range quantities {
+			frame := []byte(fmt.Sprintf(
+				`{"symbol":"BTC/USD","bids":[{"price":100,"qty":%g}],"asks":[{"price":101,"qty":10}]}`,
+				bidQty,
+			))
+			state := datura.Acquire("measurement", datura.APPJSON).
+				WithRole("measurement").
+				WithScope("BTC/USD").
+				WithPayload(frame)
+
+			err := nomagique.RoundTripArtifact(state, pipeline)
+
+			if index == len(quantities)-1 {
+				So(err, ShouldBeNil)
+			}
+
+			if result != nil {
+				result.Release()
+			}
+
+			result = state
+		}
+
+		Convey("It should emit classified decay output without a Kraken envelope", func() {
+			So(result, ShouldNotBeNil)
+			So(datura.Peek[string](result, "symbol"), ShouldEqual, "BTC/USD")
+			So(datura.Peek[string](result, "root"), ShouldEqual, "output")
+			So(datura.Peek[float64](result, "output", "category"), ShouldBeGreaterThan, 0)
+			So(datura.Peek[float64](result, "output", "confidence"), ShouldBeGreaterThan, 0)
+
+			result.Release()
+		})
+	})
 }
 
 func TestDecaySample_ReadStagesColdStart(t *testing.T) {

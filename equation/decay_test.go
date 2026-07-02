@@ -86,6 +86,56 @@ func TestDecay_Read(testingTB *testing.T) {
 		})
 	})
 
+	Convey("Given widening spread without depth collapse", testingTB, func() {
+		stage := equation.NewDecay(equation.DecayConfig())
+		bidDepths := []float64{10, 10, 10, 10, 10, 10, 10, 10}
+		askDepths := []float64{10, 10, 10, 10, 10, 10, 10, 10}
+		densities := []float64{20, 20, 20, 20, 20, 20, 20, 20}
+		spreads := []float64{1, 1, 1, 1, 1, 1, 1, 3}
+		pressures := []float64{0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2}
+		imbalances := []float64{0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1}
+
+		err := writeFeatureStage(stage, equation.DecayInputKeys, decayPayload(
+			100, bidDepths, askDepths, densities, spreads, pressures, imbalances,
+		)...)
+
+		So(err, ShouldBeNil)
+
+		outbound, err := readStageOutput(stage)
+
+		So(err, ShouldBeNil)
+
+		Convey("It should classify fragile expansion", func() {
+			So(int(datura.Peek[float64](outbound, "output", "category")), ShouldEqual, 2)
+			So(datura.Peek[float64](outbound, "output", "fragile"), ShouldBeGreaterThan, 0)
+		})
+	})
+
+	Convey("Given support-side imbalance flipping against the position", testingTB, func() {
+		stage := equation.NewDecay(equation.DecayConfig())
+		bidDepths := []float64{10, 10, 10, 10, 10, 10, 10, 10}
+		askDepths := []float64{10, 10, 10, 10, 10, 10, 10, 10}
+		densities := []float64{20, 20, 20, 20, 20, 20, 20, 20}
+		spreads := []float64{1, 1, 1, 1, 1, 1, 1, 1}
+		pressures := []float64{0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2}
+		imbalances := []float64{0.4, 0.35, 0.3, 0.32, 0.28, 0.3, 0.25, -0.5}
+
+		err := writeFeatureStage(stage, equation.DecayInputKeys, decayPayload(
+			100, bidDepths, askDepths, densities, spreads, pressures, imbalances,
+		)...)
+
+		So(err, ShouldBeNil)
+
+		outbound, err := readStageOutput(stage)
+
+		So(err, ShouldBeNil)
+
+		Convey("It should classify active reversal", func() {
+			So(int(datura.Peek[float64](outbound, "output", "category")), ShouldEqual, 4)
+			So(datura.Peek[float64](outbound, "output", "reversal"), ShouldBeGreaterThan, 0)
+		})
+	})
+
 	Convey("Given stable book history without decay signals", testingTB, func() {
 		stage := equation.NewDecay(equation.DecayConfig())
 		bidDepths := []float64{10, 10, 10, 10, 10, 10, 10, 10}

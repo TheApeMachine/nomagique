@@ -38,13 +38,23 @@ func (causalStory *CausalStory) Read(payload []byte) (int, error) {
 	}
 
 	association := datura.Peek[float64](state, "output", "association")
-	intervention := datura.Peek[float64](state, "output", "intervention")
-	uplift := datura.Peek[float64](state, "output", "uplift")
+	rawIntervention := datura.Peek[float64](state, "output", "intervention")
+	rawUplift := datura.Peek[float64](state, "output", "uplift")
+	intervention := datura.Peek[float64](state, "output", "interventionScore")
+	uplift := datura.Peek[float64](state, "output", "upliftScore")
 	contagion := datura.Peek[float64](state, "output", "contagion")
 	condition := datura.Peek[float64](state, "output", "condition")
 	inverted := datura.Peek[float64](state, "output", "inverted") > 0
 
-	for _, value := range []float64{association, intervention, uplift, contagion, condition} {
+	if intervention == 0 {
+		intervention = rawIntervention
+	}
+
+	if uplift == 0 {
+		uplift = rawUplift
+	}
+
+	for _, value := range []float64{association, intervention, uplift, rawIntervention, rawUplift, contagion, condition} {
 		if math.IsNaN(value) || math.IsInf(value, 0) {
 			return rejectStage(state, "causalstory: ladder output is non-finite")
 		}
@@ -77,15 +87,17 @@ func (causalStory *CausalStory) Read(payload []byte) (int, error) {
 		alphaScore = margin * uplift
 	}
 
-	if !inverted && association > intervention {
-		margin := association - intervention
+	betaIntervention := math.Abs(rawIntervention)
+
+	if !inverted && association > betaIntervention {
+		margin := association - betaIntervention
 		score, err := probability.CompetitionMargin(margin, association)
 
 		if err != nil {
 			return rejectStage(state, fmt.Sprintf("causalstory: beta margin failed: %v", err))
 		}
 
-		betaScore = score
+		betaScore = score * association
 	}
 
 	if inverted {
@@ -137,18 +149,20 @@ func (causalStory *CausalStory) Read(payload []byte) (int, error) {
 	}
 
 	return emitOutput(state, payload, datura.Map[float64]{
-		"value":        best,
-		"alphaScore":   alphaScore,
-		"betaScore":    betaScore,
-		"shockScore":   shockScore,
-		"noiseScore":   noiseScore,
-		"strength":     best,
-		"category":     float64(category),
-		"association":  association,
-		"intervention": intervention,
-		"uplift":       uplift,
-		"contagion":    contagion,
-		"condition":    condition,
+		"value":             best,
+		"alphaScore":        alphaScore,
+		"betaScore":         betaScore,
+		"shockScore":        shockScore,
+		"noiseScore":        noiseScore,
+		"strength":          best,
+		"category":          float64(category),
+		"association":       association,
+		"intervention":      rawIntervention,
+		"interventionScore": intervention,
+		"uplift":            rawUplift,
+		"upliftScore":       uplift,
+		"contagion":         contagion,
+		"condition":         condition,
 	})
 }
 

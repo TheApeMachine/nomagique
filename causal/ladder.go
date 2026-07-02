@@ -1,6 +1,8 @@
 package causal
 
 import (
+	"math"
+
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 )
@@ -196,16 +198,28 @@ func (ladder *Ladder) Read(p []byte) (int, error) {
 		invertedValue = 1
 	}
 
+	interventionScore := intervention
+	upliftScore := uplift
+
+	if targetValues, targetErr := table.column(target); targetErr == nil {
+		if scale := robustScale(targetValues); scale > 0 {
+			interventionScore = intervention / scale
+			upliftScore = uplift / scale
+		}
+	}
+
 	state.MergeOutput("value", raw)
 	state.MergeOutput("association", association)
 	state.MergeOutput("intervention", intervention)
+	state.MergeOutput("interventionScore", interventionScore)
 	state.MergeOutput("uplift", uplift)
+	state.MergeOutput("upliftScore", upliftScore)
 	state.MergeOutput("contagion", contagion)
 	state.MergeOutput("condition", condition)
 	state.MergeOutput("inverted", invertedValue)
 	state.Poke("output", "root")
 	state.Poke([]string{
-		"value", "association", "intervention", "uplift", "contagion", "condition", "inverted",
+		"value", "association", "intervention", "interventionScore", "uplift", "upliftScore", "contagion", "condition", "inverted",
 	}, "inputs")
 	return state.PackInto(p)
 }
@@ -217,4 +231,44 @@ func (ladder *Ladder) Write(p []byte) (int, error) {
 
 func (ladder *Ladder) Close() error {
 	return nil
+}
+
+func robustScale(values []float64) float64 {
+	if len(values) == 0 {
+		return 0
+	}
+
+	center := median(values)
+	deviations := make([]float64, 0, len(values))
+
+	for _, value := range values {
+		deviations = append(deviations, math.Abs(value-center))
+	}
+
+	scale := median(deviations)
+
+	if scale > 0 && !math.IsNaN(scale) && !math.IsInf(scale, 0) {
+		return scale
+	}
+
+	minValue := values[0]
+	maxValue := values[0]
+
+	for _, value := range values[1:] {
+		if value < minValue {
+			minValue = value
+		}
+
+		if value > maxValue {
+			maxValue = value
+		}
+	}
+
+	scale = maxValue - minValue
+
+	if scale <= 0 || math.IsNaN(scale) || math.IsInf(scale, 0) {
+		return 0
+	}
+
+	return scale
 }

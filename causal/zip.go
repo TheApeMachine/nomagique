@@ -37,7 +37,13 @@ func (zipStage *Zip) Read(p []byte) (int, error) {
 		))
 	}
 
-	if rows, tableErr := tableRows(state); tableErr == nil {
+	if datura.Peek[float64](state, "table", "rowCount") > 0 {
+		rows, tableErr := tableRows(state)
+
+		if tableErr != nil {
+			return 0, tableErr
+		}
+
 		state.MergeOutput("value", float64(len(rows)))
 		state.Poke("output", "root")
 		state.Poke([]string{"value"}, "inputs")

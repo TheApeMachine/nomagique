@@ -70,6 +70,24 @@ func (decaySample *DecaySample) Read(payload []byte) (int, error) {
 
 	channel := datura.Peek[string](state, "channel")
 	symbol := datura.Peek[string](state, "data", 0, "symbol")
+	row := false
+
+	if symbol == "" {
+		symbol = datura.Peek[string](state, "symbol")
+		row = symbol != ""
+	}
+
+	if channel == "" && row {
+		if datura.Peek[float64](state, "bids", 0, "price") > 0 ||
+			datura.Peek[float64](state, "asks", 0, "price") > 0 {
+			channel = "book"
+		}
+
+		if datura.Peek[float64](state, "price") > 0 &&
+			datura.Peek[float64](state, "qty") > 0 {
+			channel = "trade"
+		}
+	}
 
 	if symbol == "" {
 		return 0, errnie.Error(errnie.Err(
@@ -83,9 +101,9 @@ func (decaySample *DecaySample) Read(payload []byte) (int, error) {
 
 	switch channel {
 	case "book":
-		decaySample.ingestBook(state, window)
+		decaySample.ingestBook(state, window, row)
 	case "trade":
-		decaySample.ingestTrade(state, window)
+		decaySample.ingestTrade(state, window, row)
 	}
 
 	features := decaySample.features(window)
@@ -124,9 +142,13 @@ func (decaySample *DecaySample) window(symbol string) *decayWindow {
 	return window
 }
 
-func (decaySample *DecaySample) ingestBook(state *datura.Artifact, window *decayWindow) {
-	decaySample.applyLevels(state, "bids", window.bids)
-	decaySample.applyLevels(state, "asks", window.asks)
+func (decaySample *DecaySample) ingestBook(
+	state *datura.Artifact,
+	window *decayWindow,
+	row bool,
+) {
+	decaySample.applyLevels(state, "bids", window.bids, row)
+	decaySample.applyLevels(state, "asks", window.asks, row)
 
 	mid := bookflowMidPrice(window.bids, window.asks)
 	spread := bookflowSpread(window.bids, window.asks)
@@ -150,10 +172,20 @@ func (decaySample *DecaySample) ingestBook(state *datura.Artifact, window *decay
 	window.imbalanceHist = appendRingFloat(window.imbalanceHist, imbalance, decaySampleHistoryCap)
 }
 
-func (decaySample *DecaySample) ingestTrade(state *datura.Artifact, window *decayWindow) {
+func (decaySample *DecaySample) ingestTrade(
+	state *datura.Artifact,
+	window *decayWindow,
+	row bool,
+) {
 	price := datura.Peek[float64](state, "data", 0, "price")
 	quantity := datura.Peek[float64](state, "data", 0, "qty")
 	side := datura.Peek[string](state, "data", 0, "side")
+
+	if row {
+		price = datura.Peek[float64](state, "price")
+		quantity = datura.Peek[float64](state, "qty")
+		side = datura.Peek[string](state, "side")
+	}
 
 	if price <= 0 || quantity <= 0 {
 		return
@@ -184,10 +216,16 @@ func (decaySample *DecaySample) applyLevels(
 	state *datura.Artifact,
 	sideKey string,
 	book map[float64]float64,
+	row bool,
 ) {
 	for index := 0; ; index++ {
 		price := datura.Peek[float64](state, "data", 0, sideKey, index, "price")
 		quantity := datura.Peek[float64](state, "data", 0, sideKey, index, "qty")
+
+		if row {
+			price = datura.Peek[float64](state, sideKey, index, "price")
+			quantity = datura.Peek[float64](state, sideKey, index, "qty")
+		}
 
 		if price <= 0 {
 			break

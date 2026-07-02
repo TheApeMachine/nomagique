@@ -1,10 +1,10 @@
 package equation
 
 import (
+	"io"
 	"math"
 
 	"github.com/theapemachine/datura"
-	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/statistic"
 )
 
@@ -40,11 +40,7 @@ func (bookflow *Bookflow) Read(p []byte) (int, error) {
 	if !outcome.eligible || outcome.strength <= 0 {
 		state.Release()
 
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"bookflow: insufficient signal eligibility",
-			nil,
-		))
+		return 0, io.EOF
 	}
 
 	return emitOutput(state, p, datura.Map[float64]{

@@ -1,6 +1,7 @@
 package learning
 
 import (
+	"io"
 	"math"
 
 	"github.com/theapemachine/datura"
@@ -12,7 +13,9 @@ LogitScores maps configured feature outputs to classifier logits on the artifact
 Runtime scale and threshold history live on the config artifact output keys.
 */
 type LogitScores struct {
-	config *datura.Artifact
+	config       *datura.Artifact
+	pendingFrame bool
+	output       []byte
 }
 
 /*
@@ -25,10 +28,27 @@ func NewLogitScores(config *datura.Artifact) *LogitScores {
 }
 
 func (logitScores *LogitScores) Read(payload []byte) (int, error) {
-	state := datura.Acquire("logit-scores-state", datura.APPJSON)
+	if len(logitScores.output) > 0 {
+		return logitScores.readOutput(payload)
+	}
 
-	if _, err := state.Unpack(logitScores.config.DecryptPayload()); err != nil {
+	if !logitScores.pendingFrame {
+		return 0, io.EOF
+	}
+
+	state := datura.Acquire("logit-scores-state", datura.APPJSON)
+	frame := logitScores.config.DecryptPayload()
+
+	if len(frame) == 0 {
 		state.Release()
+		logitScores.pendingFrame = false
+
+		return 0, io.EOF
+	}
+
+	if _, err := state.Unpack(frame); err != nil {
+		state.Release()
+		logitScores.pendingFrame = false
 
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
@@ -43,6 +63,8 @@ func (logitScores *LogitScores) Read(payload []byte) (int, error) {
 	outputs := datura.Peek[[]string](logitScores.config, "outputs")
 
 	if len(order) == 0 {
+		logitScores.pendingFrame = false
+
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"logit-scores: config order required",
@@ -51,6 +73,8 @@ func (logitScores *LogitScores) Read(payload []byte) (int, error) {
 	}
 
 	if len(outputs) == 0 {
+		logitScores.pendingFrame = false
+
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"logit-scores: config outputs required",
@@ -61,30 +85,40 @@ func (logitScores *LogitScores) Read(payload []byte) (int, error) {
 	features, err := logitScores.featureValues(state, order)
 
 	if err != nil {
+		logitScores.pendingFrame = false
+
 		return 0, err
 	}
 
 	threshold, err := logitScores.resolveThreshold(features, state)
 
 	if err != nil {
+		logitScores.pendingFrame = false
+
 		return 0, err
 	}
 
 	scales, err := logitScores.featureScales(order, features, state)
 
 	if err != nil {
+		logitScores.pendingFrame = false
+
 		return 0, err
 	}
 
 	weightScales, suppressedScales, err := logitWeightScales(scales, features)
 
 	if err != nil {
+		logitScores.pendingFrame = false
+
 		return 0, err
 	}
 
 	weights, err := NewClassifierWeights(logitScores.config, threshold, weightScales)
 
 	if err != nil {
+		logitScores.pendingFrame = false
+
 		return 0, err
 	}
 
@@ -96,6 +130,8 @@ func (logitScores *LogitScores) Read(payload []byte) (int, error) {
 	if err := logitScores.applyDecline(
 		state, logitScores.config, weights, centeredFeatures, scores,
 	); err != nil {
+		logitScores.pendingFrame = false
+
 		return 0, err
 	}
 
@@ -105,6 +141,8 @@ func (logitScores *LogitScores) Read(payload []byte) (int, error) {
 		)
 
 		if err != nil {
+			logitScores.pendingFrame = false
+
 			return 0, err
 		}
 
@@ -129,12 +167,37 @@ func (logitScores *LogitScores) Read(payload []byte) (int, error) {
 	outputInputs = append(outputInputs, "strength")
 	state.Poke(outputInputs, "inputs")
 
-	return state.PackInto(payload)
+	logitScores.output = state.Pack()
+
+	return logitScores.readOutput(payload)
 }
 
 func (logitScores *LogitScores) Write(payload []byte) (int, error) {
+	if len(payload) == 0 {
+		logitScores.pendingFrame = false
+		logitScores.output = nil
+
+		return 0, nil
+	}
+
 	logitScores.config.WithPayload(payload)
+	logitScores.pendingFrame = true
+	logitScores.output = nil
+
 	return len(payload), nil
+}
+
+func (logitScores *LogitScores) readOutput(payload []byte) (int, error) {
+	n := copy(payload, logitScores.output)
+
+	if n < len(logitScores.output) {
+		return n, io.ErrShortBuffer
+	}
+
+	logitScores.output = nil
+	logitScores.pendingFrame = false
+
+	return n, io.EOF
 }
 
 func (logitScores *LogitScores) Close() error {

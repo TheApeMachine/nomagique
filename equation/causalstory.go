@@ -69,7 +69,9 @@ func (causalStory *CausalStory) Read(payload []byte) (int, error) {
 	rungTotal := association + intervention + uplift
 
 	if rungTotal <= 0 && !inverted {
-		return rejectStage(state, "causalstory: ladder rungs are zero")
+		state.Release()
+
+		return 0, io.EOF
 	}
 
 	alphaScore := 0.0
@@ -119,19 +121,24 @@ func (causalStory *CausalStory) Read(payload []byte) (int, error) {
 	if rungTotal > 0 {
 		dominant := math.Max(association, math.Max(intervention, uplift))
 		residual := rungTotal - dominant
-		score, err := probability.CompetitionMargin(residual, rungTotal)
 
-		if err != nil {
-			return rejectStage(state, fmt.Sprintf("causalstory: noise margin failed: %v", err))
+		if residual > 0 {
+			score, err := probability.CompetitionMargin(residual, rungTotal)
+
+			if err != nil {
+				return rejectStage(state, fmt.Sprintf("causalstory: noise margin failed: %v", err))
+			}
+
+			noiseScore = score
 		}
-
-		noiseScore = score
 	}
 
 	best := math.Max(alphaScore, math.Max(betaScore, math.Max(shockScore, noiseScore)))
 
 	if best <= 0 {
-		return rejectStage(state, "causalstory: no positive category evidence")
+		state.Release()
+
+		return 0, io.EOF
 	}
 
 	category := 1

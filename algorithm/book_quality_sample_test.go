@@ -1,6 +1,7 @@
 package algorithm
 
 import (
+	"io"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
@@ -27,10 +28,6 @@ func bookQualitySampleConfig() *datura.Artifact {
 		},
 		"levelSizeGate": datura.Map[any]{
 			"percentile": 0.75,
-			"minSamples": 3.0,
-		},
-		"fillMatchGate": datura.Map[any]{
-			"percentile": 0.5,
 			"minSamples": 3.0,
 		},
 		"vacuumLowPercentile": 0.25,
@@ -120,6 +117,77 @@ func TestBookQualitySample_Read(t *testing.T) {
 			So(bestEvidence, ShouldBeGreaterThan, 0)
 
 			result.Release()
+		})
+	})
+}
+
+func readBookQualitySample(
+	encoder *BookQualitySample,
+	payload string,
+) (*datura.Artifact, error) {
+	state := datura.Acquire("measurement", datura.APPJSON).
+		WithRole("measurement").
+		WithScope("update").
+		WithPayload([]byte(payload))
+	packed := state.Pack()
+	state.Release()
+
+	if _, err := encoder.Write(packed); err != nil {
+		return nil, err
+	}
+
+	buffer := make([]byte, 65536)
+	n, err := encoder.Read(buffer)
+
+	if err != nil && err != io.EOF {
+		return nil, err
+	}
+
+	if n == 0 {
+		return nil, err
+	}
+
+	outbound := datura.Acquire("book-quality-read", datura.APPJSON)
+	_, unpackErr := outbound.Unpack(buffer[:n])
+
+	if unpackErr != nil {
+		outbound.Release()
+
+		return nil, unpackErr
+	}
+
+	return outbound, err
+}
+
+func TestBookQualitySample_ReadsLevel3RowArtifacts(t *testing.T) {
+	Convey("Given level3 row artifacts for multiple symbols", t, func() {
+		encoder := NewBookQualitySample(bookQualitySampleConfig())
+
+		btc, btcErr := readBookQualitySample(
+			encoder,
+			`{"symbol":"BTC/USD","bids":[{"order_id":"B1","limit_price":100,"order_qty":20}],"asks":[{"order_id":"A1","limit_price":101,"order_qty":20}]}`,
+		)
+
+		Convey("It should emit L3 features for the first symbol", func() {
+			So(btcErr, ShouldEqual, io.EOF)
+			So(btc, ShouldNotBeNil)
+			So(datura.Peek[float64](btc, "output", "l3"), ShouldEqual, 1)
+			So(datura.Peek[[]float64](btc, "features")[12], ShouldEqual, 100.5)
+
+			btc.Release()
+		})
+
+		eth, ethErr := readBookQualitySample(
+			encoder,
+			`{"symbol":"ETH/USD","bids":[{"order_id":"B1","limit_price":200,"order_qty":20}],"asks":[{"order_id":"A1","limit_price":201,"order_qty":20}]}`,
+		)
+
+		Convey("It should keep per-symbol books isolated", func() {
+			So(ethErr, ShouldEqual, io.EOF)
+			So(eth, ShouldNotBeNil)
+			So(datura.Peek[[]float64](eth, "features")[12], ShouldEqual, 200.5)
+
+			eth.Release()
 		})
 	})
 }

@@ -114,6 +114,36 @@ func TestBookQuality_Read(testingTB *testing.T) {
 			So(datura.Peek[float64](outbound, "output", "strength"), ShouldEqual, 0)
 		})
 	})
+
+	Convey("Given cancels without fills on one side", testingTB, func() {
+		stage := transport.NewPipeline(
+			equation.NewBookQuality(equation.BookQualityConfig()),
+			probability.NewClassifier(
+				datura.Acquire("toxicity-classifier", datura.APPJSON).WithAttributes(datura.Map[any]{
+					"inputs":    []string{"bluffScore", "vacuumScore", "supportScore"},
+					"scoreRoot": "output",
+				}),
+			),
+		)
+		err := writeFeatureStage(stage, equation.BookQualityInputKeys,
+			0, 0, 4, 0,
+			80, 80,
+			0, 0,
+			0.15, 0, 0, 1,
+			100,
+		)
+
+		So(err, ShouldBeNil)
+
+		outbound, err := readStageOutput(stage)
+
+		So(err, ShouldBeNil)
+
+		Convey("It should remain neutral instead of inventing a ratio", func() {
+			So(datura.Peek[float64](outbound, "output", "confidence"), ShouldAlmostEqual, 1.0/3.0)
+			So(datura.Peek[float64](outbound, "output", "strength"), ShouldEqual, 0)
+		})
+	})
 }
 
 func BenchmarkBookQualityRead(b *testing.B) {

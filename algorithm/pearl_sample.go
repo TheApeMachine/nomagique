@@ -16,8 +16,10 @@ PearlSample turns Kraken trade and ticker frames into aligned node streams for P
 Macro, liquidity, flow, and target nodes are derived from observed market fields.
 */
 type PearlSample struct {
-	artifact *datura.Artifact
-	windows  map[string]*pearlWindow
+	artifact     *datura.Artifact
+	pendingFrame bool
+	output       []byte
+	windows      map[string]*pearlWindow
 }
 
 type pearlWindow struct {
@@ -39,15 +41,42 @@ func NewPearlSample(config *datura.Artifact) *PearlSample {
 }
 
 func (pearlSample *PearlSample) Write(payload []byte) (int, error) {
+	if len(payload) == 0 {
+		pearlSample.pendingFrame = false
+		pearlSample.output = nil
+
+		return 0, nil
+	}
+
 	pearlSample.artifact.WithPayload(payload)
+	pearlSample.pendingFrame = true
+	pearlSample.output = nil
+
 	return len(payload), nil
 }
 
 func (pearlSample *PearlSample) Read(payload []byte) (int, error) {
-	state := datura.Acquire("pearl-sample-state", datura.APPJSON)
+	if len(pearlSample.output) > 0 {
+		return pearlSample.readOutput(payload)
+	}
 
-	if _, err := state.Unpack(pearlSample.artifact.DecryptPayload()); err != nil {
+	if !pearlSample.pendingFrame {
+		return 0, io.EOF
+	}
+
+	state := datura.Acquire("pearl-sample-state", datura.APPJSON)
+	inbound := pearlSample.artifact.DecryptPayload()
+
+	if len(inbound) == 0 {
 		state.Release()
+		pearlSample.pendingFrame = false
+
+		return 0, io.EOF
+	}
+
+	if _, err := state.Unpack(inbound); err != nil {
+		state.Release()
+		pearlSample.pendingFrame = false
 
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
@@ -59,12 +88,16 @@ func (pearlSample *PearlSample) Read(payload []byte) (int, error) {
 	defer state.Release()
 
 	if datura.Peek[float64](state, "table", "rowCount") > 0 {
-		return state.PackInto(payload)
+		pearlSample.output = state.Pack()
+
+		return pearlSample.readOutput(payload)
 	}
 
 	row, window := pearlSample.ingestRow(state)
 
 	if len(row) != pearlSampleNodeCount || window == nil {
+		pearlSample.pendingFrame = false
+
 		return 0, io.EOF
 	}
 
@@ -82,7 +115,22 @@ func (pearlSample *PearlSample) Read(payload []byte) (int, error) {
 
 	window.nodeRing.CopyStreamsTo(state)
 
-	return state.PackInto(payload)
+	pearlSample.output = state.Pack()
+
+	return pearlSample.readOutput(payload)
+}
+
+func (pearlSample *PearlSample) readOutput(payload []byte) (int, error) {
+	n := copy(payload, pearlSample.output)
+
+	if n < len(pearlSample.output) {
+		return n, io.ErrShortBuffer
+	}
+
+	pearlSample.output = nil
+	pearlSample.pendingFrame = false
+
+	return n, io.EOF
 }
 
 func (pearlSample *PearlSample) Close() error {

@@ -1,6 +1,7 @@
 package causal
 
 import (
+	"io"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
@@ -10,6 +11,33 @@ import (
 )
 
 func TestLadder_Read(testingTB *testing.T) {
+	Convey("Given no inbound frame", testingTB, func() {
+		ladder := NewLadder(causalPipelineConfig(0.8))
+		buffer := make([]byte, 4096)
+
+		n, err := ladder.Read(buffer)
+
+		Convey("It should report no frame without trying to unpack stale payload", func() {
+			So(n, ShouldEqual, 0)
+			So(err, ShouldEqual, io.EOF)
+		})
+	})
+
+	Convey("Given an empty inbound frame", testingTB, func() {
+		ladder := NewLadder(causalPipelineConfig(0.8))
+		buffer := make([]byte, 4096)
+
+		n, writeErr := ladder.Write(nil)
+		readN, readErr := ladder.Read(buffer)
+
+		Convey("It should drain cleanly without validation noise", func() {
+			So(n, ShouldEqual, 0)
+			So(writeErr, ShouldBeNil)
+			So(readN, ShouldEqual, 0)
+			So(readErr, ShouldEqual, io.EOF)
+		})
+	})
+
 	Convey("Given aligned node rows with causal structure", testingTB, func() {
 		config := causalPipelineConfig(0.8)
 		config.Poke(0.35, "kernelBandwidth")

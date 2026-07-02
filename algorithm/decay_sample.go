@@ -20,8 +20,10 @@ DecaySample accumulates book and trade frames into the feature batch Decay expec
 Series lengths are derived from observed update cadence, not fixed constants.
 */
 type DecaySample struct {
-	artifact *datura.Artifact
-	windows  map[string]*decayWindow
+	artifact     *datura.Artifact
+	pendingFrame bool
+	output       []byte
+	windows      map[string]*decayWindow
 }
 
 type decayWindow struct {
@@ -49,15 +51,42 @@ func NewDecaySample(artifact *datura.Artifact) *DecaySample {
 }
 
 func (decaySample *DecaySample) Write(payload []byte) (int, error) {
+	if len(payload) == 0 {
+		decaySample.pendingFrame = false
+		decaySample.output = nil
+
+		return 0, nil
+	}
+
 	decaySample.artifact.WithPayload(payload)
+	decaySample.pendingFrame = true
+	decaySample.output = nil
+
 	return len(payload), nil
 }
 
 func (decaySample *DecaySample) Read(payload []byte) (int, error) {
-	state := datura.Acquire("decay-sample-state", datura.APPJSON)
+	if len(decaySample.output) > 0 {
+		return decaySample.readOutput(payload)
+	}
 
-	if _, err := state.Unpack(decaySample.artifact.DecryptPayload()); err != nil {
+	if !decaySample.pendingFrame {
+		return 0, io.EOF
+	}
+
+	state := datura.Acquire("decay-sample-state", datura.APPJSON)
+	frame := decaySample.artifact.DecryptPayload()
+
+	if len(frame) == 0 {
 		state.Release()
+		decaySample.pendingFrame = false
+
+		return 0, io.EOF
+	}
+
+	if _, err := state.Unpack(frame); err != nil {
+		state.Release()
+		decaySample.pendingFrame = false
 
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
@@ -90,6 +119,8 @@ func (decaySample *DecaySample) Read(payload []byte) (int, error) {
 	}
 
 	if symbol == "" {
+		decaySample.pendingFrame = false
+
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"decay-sample: symbol required",
@@ -109,6 +140,8 @@ func (decaySample *DecaySample) Read(payload []byte) (int, error) {
 	features := decaySample.features(window)
 
 	if len(features) == 0 {
+		decaySample.pendingFrame = false
+
 		return 0, io.EOF
 	}
 
@@ -118,7 +151,22 @@ func (decaySample *DecaySample) Read(payload []byte) (int, error) {
 	state.Poke("features", "root")
 	state.Poke(equation.DecayInputKeys, "inputs")
 
-	return state.PackInto(payload)
+	decaySample.output = state.Pack()
+
+	return decaySample.readOutput(payload)
+}
+
+func (decaySample *DecaySample) readOutput(payload []byte) (int, error) {
+	n := copy(payload, decaySample.output)
+
+	if n < len(decaySample.output) {
+		return n, io.ErrShortBuffer
+	}
+
+	decaySample.output = nil
+	decaySample.pendingFrame = false
+
+	return n, io.EOF
 }
 
 func (decaySample *DecaySample) Close() error {

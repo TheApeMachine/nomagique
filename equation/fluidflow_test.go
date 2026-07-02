@@ -73,6 +73,46 @@ func TestFluidflow_Read(testingTB *testing.T) {
 			So(datura.Peek[float64](outbound, "output", "turbulentScore"), ShouldEqual, 6.4)
 		})
 	})
+
+	Convey("Given a valid flat price-change field", testingTB, func() {
+		stage := equation.NewFluidflow(equation.FluidflowConfig())
+		err := writeFeatureStage(stage, equation.FluidflowInputKeys,
+			0.5, 0.01, 0.8, 1, 1,
+			2, 4, 0, 0.05, 0, 0, 0, 0,
+			100, 2, 0, 1000,
+		)
+
+		So(err, ShouldBeNil)
+
+		outbound, err := readStageOutput(stage)
+
+		So(err, ShouldBeNil)
+
+		Convey("It should not reject zero changePct", func() {
+			So(int(datura.Peek[float64](outbound, "output", "category")), ShouldEqual, 1)
+			So(datura.Peek[float64](outbound, "output", "changePct"), ShouldEqual, 0)
+		})
+	})
+
+	Convey("Given zero field motion with positive viscosity", testingTB, func() {
+		stage := equation.NewFluidflow(equation.FluidflowConfig())
+		err := writeFeatureStage(stage, equation.FluidflowInputKeys,
+			0, 0, 1000, 0, 0,
+			0, 0, 0, 0, 0, 0, 0, 0,
+			100, 2, 0, 1000,
+		)
+
+		So(err, ShouldBeNil)
+
+		outbound, err := readStageOutput(stage)
+
+		So(err, ShouldBeNil)
+
+		Convey("It should classify laminar stability", func() {
+			So(int(datura.Peek[float64](outbound, "output", "category")), ShouldEqual, 1)
+			So(datura.Peek[float64](outbound, "output", "laminarScore"), ShouldEqual, 1000)
+		})
+	})
 }
 
 func BenchmarkFluidflowRead(b *testing.B) {

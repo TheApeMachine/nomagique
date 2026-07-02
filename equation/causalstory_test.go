@@ -1,6 +1,7 @@
 package equation_test
 
 import (
+	"io"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
@@ -87,6 +88,28 @@ func TestCausalStory_Read(testingTB *testing.T) {
 			})
 		})
 	}
+}
+
+func TestCausalStory_ReadNoCategoryEvidence(testingTB *testing.T) {
+	Convey("Given Pearl ladder output with no positive category evidence", testingTB, func() {
+		stage := equation.NewCausalStory(equation.CausalStoryConfig())
+		inbound := datura.Acquire("causal-story-in", datura.APPJSON)
+		inbound.MergeOutput("association", 0.0)
+		inbound.MergeOutput("intervention", 1.0)
+		inbound.MergeOutput("uplift", 0.0)
+		inbound.MergeOutput("contagion", 0.0)
+		inbound.MergeOutput("condition", 0.0)
+		inbound.MergeOutput("inverted", 0.0)
+		_, writeErr := nomagique.WriteArtifact(stage, inbound)
+		buffer := make([]byte, 262144)
+		read, readErr := stage.Read(buffer)
+
+		Convey("It should stop without converting no evidence into validation failure", func() {
+			So(writeErr, ShouldBeNil)
+			So(read, ShouldEqual, 0)
+			So(readErr, ShouldEqual, io.EOF)
+		})
+	})
 }
 
 func BenchmarkCausalStoryRead(b *testing.B) {

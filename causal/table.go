@@ -2,6 +2,7 @@ package causal
 
 import (
 	"fmt"
+	"io"
 	"math"
 	"sort"
 
@@ -253,14 +254,34 @@ func (nodeTable nodeTable) association(treatment int) (float64, error) {
 		return 0, err
 	}
 
+	for _, value := range treatmentValues {
+		if math.IsNaN(value) || math.IsInf(value, 0) {
+			return 0, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"causal: treatment sample is non-finite",
+				nil,
+			))
+		}
+	}
+
+	for _, value := range targetValues {
+		if math.IsNaN(value) || math.IsInf(value, 0) {
+			return 0, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"causal: target sample is non-finite",
+				nil,
+			))
+		}
+	}
+
+	if stat.Variance(treatmentValues, nil) <= 0 || stat.Variance(targetValues, nil) <= 0 {
+		return 0, io.EOF
+	}
+
 	association := stat.Correlation(treatmentValues, targetValues, nil)
 
 	if math.IsNaN(association) || math.IsInf(association, 0) {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"causal: association is non-finite",
-			nil,
-		))
+		return 0, io.EOF
 	}
 
 	return association, nil
@@ -484,17 +505,25 @@ func (nodeTable nodeTable) kernelBackdoorEffect(
 		distance := math.Sqrt(distanceSum)
 		weight := math.Exp(-distance * distance / (2 * bandwidth * bandwidth))
 
-		if weight <= 0 || math.IsNaN(weight) || math.IsInf(weight, 0) {
+		if math.IsNaN(weight) || math.IsInf(weight, 0) {
 			return 0, errnie.Error(errnie.Err(
 				errnie.Validation,
-				"causal: kernel weight is non-positive or non-finite",
+				"causal: kernel weight is non-finite",
 				nil,
 			))
+		}
+
+		if weight <= 0 {
+			continue
 		}
 
 		treatmentValue := residualTreatment[rowIndex]
 		numerator += weight * residualTarget[rowIndex] * treatmentValue
 		weightSum += weight * treatmentValue * treatmentValue
+	}
+
+	if weightSum <= 0 {
+		return 0, io.EOF
 	}
 
 	denominator, err := backdoorDenominator(weightSum)
@@ -671,52 +700,48 @@ func deriveBandwidth(rows [][]float64, treatmentNode int) (float64, error) {
 	minSamples := max(2, int(math.Ceil(math.Sqrt(float64(len(rows))))))
 
 	if len(rows) < minSamples {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"causal: insufficient rows for bandwidth derivation",
-			nil,
-		))
+		return 0, io.EOF
 	}
 
 	values := make([]float64, len(rows))
 
 	for index := range rows {
 		values[index] = rows[index][treatmentNode]
-	}
 
-	mean := stat.Mean(values, nil)
-
-	if mean <= 0 || math.IsNaN(mean) || math.IsInf(mean, 0) {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"causal: treatment mean is non-positive or non-finite",
-			nil,
-		))
+		if math.IsNaN(values[index]) || math.IsInf(values[index], 0) {
+			return 0, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"causal: treatment value is non-finite",
+				nil,
+			))
+		}
 	}
 
 	variance := stat.Variance(values, nil)
 
 	if variance <= 0 || math.IsNaN(variance) || math.IsInf(variance, 0) {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"causal: treatment variance is non-positive or non-finite",
-			nil,
-		))
+		return 0, io.EOF
 	}
 
 	sampleCount := float64(len(values))
 	covariateDimension := float64(len(rows[0]) - 1)
+	spread := math.Sqrt(variance)
+	scale := robustScale(values)
 
 	if covariateDimension < 1 {
 		covariateDimension = 1
 	}
 
-	relativeSpread := math.Sqrt(variance) / math.Abs(mean)
+	if scale <= 0 {
+		scale = spread
+	}
+
+	relativeSpread := spread / scale
 	smoothnessPenalty := math.Log(math.E + relativeSpread*relativeSpread*sampleCount)
 	denominator := covariateDimension + smoothnessPenalty
 	exponent := -1.0 / denominator
 
-	return math.Sqrt(variance) * math.Pow(sampleCount, exponent), nil
+	return spread * math.Pow(sampleCount, exponent), nil
 }
 
 func intSlice(values []float64) []int {

@@ -1,6 +1,8 @@
 package equation
 
 import (
+	"io"
+
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 )
@@ -14,6 +16,12 @@ func Features(artifact *datura.Artifact) []float64 {
 
 func stageState(bytes []byte) (*datura.Artifact, error) {
 	state := datura.Acquire("equation-state", datura.APPJSON)
+
+	if len(bytes) == 0 {
+		state.Release()
+
+		return nil, io.EOF
+	}
 
 	if _, err := state.Unpack(bytes); err != nil {
 		state.Release()

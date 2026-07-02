@@ -1,6 +1,8 @@
 package causal
 
 import (
+	"errors"
+	"io"
 	"math"
 
 	"github.com/theapemachine/datura"
@@ -12,7 +14,9 @@ Ladder evaluates Judea Pearl's ladder of causation over tabular rows on the arti
 The constructor artifact holds config; Write buffers inbound table wire on its payload.
 */
 type Ladder struct {
-	artifact *datura.Artifact
+	artifact     *datura.Artifact
+	pendingFrame bool
+	output       []byte
 }
 
 /*
@@ -25,9 +29,28 @@ func NewLadder(artifact *datura.Artifact) *Ladder {
 }
 
 func (ladder *Ladder) Read(p []byte) (int, error) {
-	state := datura.Acquire("ladder-state", datura.APPJSON)
+	if len(ladder.output) > 0 {
+		return ladder.readOutput(p)
+	}
 
-	if _, err := state.Unpack(ladder.artifact.DecryptPayload()); err != nil {
+	if !ladder.pendingFrame {
+		return 0, io.EOF
+	}
+
+	state := datura.Acquire("ladder-state", datura.APPJSON)
+	frame := ladder.artifact.DecryptPayload()
+
+	if len(frame) == 0 {
+		state.Release()
+		ladder.pendingFrame = false
+
+		return 0, io.EOF
+	}
+
+	if _, err := state.Unpack(frame); err != nil {
+		state.Release()
+		ladder.pendingFrame = false
+
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"causal: state write failed",
@@ -35,43 +58,51 @@ func (ladder *Ladder) Read(p []byte) (int, error) {
 		))
 	}
 
+	defer state.Release()
+
+	fail := func(err error) (int, error) {
+		ladder.pendingFrame = false
+
+		return 0, err
+	}
+
 	rows, err := tableRows(state)
 
 	if err != nil {
-		return 0, errnie.Error(errnie.Err(
+		return fail(errnie.Error(errnie.Err(
 			errnie.Validation,
 			"causal ladder: missing table rows",
 			err,
-		))
+		)))
 	}
 
 	target := int(datura.Peek[float64](ladder.artifact, "target"))
 	minHistory := int(datura.Peek[float64](ladder.artifact, "minHistory"))
 
 	if minHistory <= 0 {
-		return 0, errnie.Error(errnie.Err(
+		return fail(errnie.Error(errnie.Err(
 			errnie.Validation,
 			"causal ladder: minHistory required",
 			nil,
-		))
+		)))
 	}
 
 	if len(rows) < minHistory {
-		return 0, errnie.Error(errnie.Err(
+		return fail(errnie.Error(errnie.Err(
 			errnie.Validation,
 			"causal ladder: insufficient table rows",
 			nil,
-		))
+		)))
 	}
 
 	table, err := newNodeTable(rows, target, minHistory)
 
 	if err != nil {
-		return 0, errnie.Error(errnie.Err(
+		return fail(errnie.Error(errnie.Err(
 			errnie.Validation,
 			"causal ladder: table construction failed",
 			err,
-		))
+		)))
 	}
 
 	inverted := datura.Peek[float64](state, "output", "value") != 0
@@ -91,40 +122,52 @@ func (ladder *Ladder) Read(p []byte) (int, error) {
 		bandwidth, err = deriveBandwidth(rows, int(datura.Peek[float64](ladder.artifact, "treatmentNormal")))
 
 		if err != nil {
-			return 0, errnie.Error(errnie.Err(
+			if errors.Is(err, io.EOF) {
+				return fail(io.EOF)
+			}
+
+			return fail(errnie.Error(errnie.Err(
 				errnie.Validation,
 				"causal ladder: kernel bandwidth derivation failed",
 				err,
-			))
+			)))
 		}
 	}
 
 	if bandwidth <= 0 {
-		return 0, errnie.Error(errnie.Err(
+		return fail(errnie.Error(errnie.Err(
 			errnie.Validation,
 			"causal ladder: kernel bandwidth required",
 			nil,
-		))
+		)))
 	}
 
 	association, err := table.association(treatment)
 
 	if err != nil {
-		return 0, errnie.Error(errnie.Err(
+		if errors.Is(err, io.EOF) {
+			return fail(io.EOF)
+		}
+
+		return fail(errnie.Error(errnie.Err(
 			errnie.Validation,
 			"causal ladder: association failed",
 			err,
-		))
+		)))
 	}
 
 	intervention, err := table.kernelBackdoorEffect(treatment, bandwidth, controls...)
 
 	if err != nil {
-		return 0, errnie.Error(errnie.Err(
+		if errors.Is(err, io.EOF) {
+			return fail(io.EOF)
+		}
+
+		return fail(errnie.Error(errnie.Err(
 			errnie.Validation,
 			"causal ladder: kernel backdoor failed",
 			err,
-		))
+		)))
 	}
 
 	raw := intervention
@@ -145,11 +188,11 @@ func (ladder *Ladder) Read(p []byte) (int, error) {
 			level, err := table.percentile(treatment, percentile)
 
 			if err != nil {
-				return 0, errnie.Error(errnie.Err(
+				return fail(errnie.Error(errnie.Err(
 					errnie.Validation,
 					"causal ladder: intervention level failed",
 					err,
-				))
+				)))
 			}
 
 			interventionLevel = level
@@ -161,11 +204,11 @@ func (ladder *Ladder) Read(p []byte) (int, error) {
 			uplift, err = nonLinear.counterfactualUplift(currentRow, treatment, interventionLevel)
 
 			if err != nil {
-				return 0, errnie.Error(errnie.Err(
+				return fail(errnie.Error(errnie.Err(
 					errnie.Validation,
 					"causal ladder: nonlinear uplift failed",
 					err,
-				))
+				)))
 			}
 		}
 
@@ -173,21 +216,21 @@ func (ladder *Ladder) Read(p []byte) (int, error) {
 			linear, err := table.fitLinearModel(predictors...)
 
 			if err != nil {
-				return 0, errnie.Error(errnie.Err(
+				return fail(errnie.Error(errnie.Err(
 					errnie.Validation,
 					"causal ladder: linear uplift fit failed",
 					err,
-				))
+				)))
 			}
 
 			uplift, err = linear.counterfactualUplift(currentRow, treatment, interventionLevel)
 
 			if err != nil {
-				return 0, errnie.Error(errnie.Err(
+				return fail(errnie.Error(errnie.Err(
 					errnie.Validation,
 					"causal ladder: linear uplift failed",
 					err,
-				))
+				)))
 			}
 		}
 	}
@@ -221,12 +264,37 @@ func (ladder *Ladder) Read(p []byte) (int, error) {
 	state.Poke([]string{
 		"value", "association", "intervention", "interventionScore", "uplift", "upliftScore", "contagion", "condition", "inverted",
 	}, "inputs")
-	return state.PackInto(p)
+	ladder.output = state.Pack()
+
+	return ladder.readOutput(p)
 }
 
 func (ladder *Ladder) Write(p []byte) (int, error) {
+	if len(p) == 0 {
+		ladder.pendingFrame = false
+		ladder.output = nil
+
+		return 0, nil
+	}
+
 	ladder.artifact.WithPayload(p)
+	ladder.pendingFrame = true
+	ladder.output = nil
+
 	return len(p), nil
+}
+
+func (ladder *Ladder) readOutput(p []byte) (int, error) {
+	n := copy(p, ladder.output)
+
+	if n < len(ladder.output) {
+		return n, io.ErrShortBuffer
+	}
+
+	ladder.output = nil
+	ladder.pendingFrame = false
+
+	return n, io.EOF
 }
 
 func (ladder *Ladder) Close() error {

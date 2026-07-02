@@ -24,15 +24,25 @@ type Ignition struct {
 NewIgnition composes ignition stages from one shared config artifact.
 */
 func NewIgnition(artifact *datura.Artifact) *Ignition {
+	configs := make([]*datura.Artifact, 6)
+
+	for index := range configs {
+		configs[index] = artifact
+
+		if cloned, err := artifact.Clone(); err == nil {
+			configs[index] = cloned
+		}
+	}
+
 	return &Ignition{
 		artifact: artifact,
 		pipeline: transport.NewPipeline(
-			statistic.NewMeanMedianRatio(artifact),
-			NewLogReturnZScore(artifact),
-			vector.NewSpreadSample(artifact),
-			adaptive.NewCompression(artifact),
-			geometry.NewGeometricMean(artifact),
-			learning.NewLogitScores(artifact),
+			statistic.NewMeanMedianRatio(configs[0]),
+			NewLogReturnZScore(configs[1]),
+			vector.NewSpreadSample(configs[2]),
+			adaptive.NewCompression(configs[3]),
+			geometry.NewGeometricMean(configs[4]),
+			learning.NewLogitScores(configs[5]),
 		),
 	}
 }

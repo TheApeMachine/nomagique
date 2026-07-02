@@ -76,11 +76,25 @@ func (logitScores *LogitScores) resolveOutputScore(
 	combine := datura.Peek[string](logitScores.config, outputKey, "combine")
 
 	if combine == "ratio" {
-		if logitScores.hasCenteredOperand(outputKey) {
-			return logitScores.centeredCompositeScore(outputKey, features, scales)
+		leftKey, rightKey := logitScores.compositeOperandKeys(outputKey)
+
+		if leftKey == "" || rightKey == "" {
+			if overrideValue == 0 {
+				return 0, nil
+			}
+
+			return 0, errnie.Error(errnie.Err(
+				errnie.Validation,
+				fmt.Sprintf("logit-scores: output %q requires leftKey and rightKey", outputKey),
+				nil,
+			))
 		}
 
-		scale, err := logitScores.resolveCompositeScale(outputKey)
+		if logitScores.hasCenteredOperandKeys(leftKey, rightKey) {
+			return logitScores.centeredCompositeScore(outputKey, leftKey, rightKey, features, scales)
+		}
+
+		scale, err := logitScores.resolveCompositeScaleWithKeys(outputKey, leftKey, rightKey)
 
 		if err != nil {
 			if overrideValue == 0 {

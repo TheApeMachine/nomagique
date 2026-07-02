@@ -2,6 +2,7 @@ package algorithm
 
 import (
 	"fmt"
+	"io"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
@@ -13,6 +14,33 @@ import (
 )
 
 func TestDecaySample_Read(t *testing.T) {
+	Convey("Given no inbound frame", t, func() {
+		encoder := NewDecaySample(datura.Acquire("decay-sample", datura.APPJSON))
+		buffer := make([]byte, 4096)
+
+		n, err := encoder.Read(buffer)
+
+		Convey("It should report no frame without trying to unpack stale payload", func() {
+			So(n, ShouldEqual, 0)
+			So(err, ShouldEqual, io.EOF)
+		})
+	})
+
+	Convey("Given an empty inbound frame", t, func() {
+		encoder := NewDecaySample(datura.Acquire("decay-sample", datura.APPJSON))
+		buffer := make([]byte, 4096)
+
+		n, writeErr := encoder.Write(nil)
+		readN, readErr := encoder.Read(buffer)
+
+		Convey("It should drain cleanly without validation noise", func() {
+			So(n, ShouldEqual, 0)
+			So(writeErr, ShouldBeNil)
+			So(readN, ShouldEqual, 0)
+			So(readErr, ShouldEqual, io.EOF)
+		})
+	})
+
 	Convey("Given deteriorating bid depth on repeated book frames", t, func() {
 		encoder := NewDecaySample(datura.Acquire("decay-sample", datura.APPJSON))
 		decay := equation.NewDecay(equation.DecayConfig())

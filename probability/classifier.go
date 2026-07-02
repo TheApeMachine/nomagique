@@ -16,7 +16,9 @@ The config artifact carries input score keys in attributes; its payload buses
 inbound wire from Write to Read. Read classifies from reconstituted output scores.
 */
 type Classifier struct {
-	artifact *datura.Artifact
+	artifact     *datura.Artifact
+	pendingFrame bool
+	output       []byte
 }
 
 /*
@@ -27,24 +29,77 @@ func NewClassifier(artifact *datura.Artifact) *Classifier {
 }
 
 func (classifier *Classifier) Read(payload []byte) (int, error) {
-	state := datura.Acquire("classifier-state", datura.APPJSON)
+	if len(classifier.output) > 0 {
+		return classifier.readOutput(payload)
+	}
 
-	if _, err := state.Unpack(classifier.artifact.DecryptPayload()); err != nil {
+	if !classifier.pendingFrame {
+		return 0, io.EOF
+	}
+
+	state := datura.Acquire("classifier-state", datura.APPJSON)
+	frame := classifier.artifact.DecryptPayload()
+
+	if len(frame) == 0 {
 		state.Release()
+		classifier.pendingFrame = false
+
+		return 0, io.EOF
+	}
+
+	if _, err := state.Unpack(frame); err != nil {
+		state.Release()
+		classifier.pendingFrame = false
+
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"classifier: state write failed",
 			err,
+		).With(
+			append(
+				classifier.artifact.Log(),
+				"payload_bytes", len(frame),
+				"payload_kind", classifier.payloadKind(frame),
+			)...,
 		))
 	}
 
 	defer state.Release()
 
 	if err := classifier.Apply(state); err != nil {
+		classifier.pendingFrame = false
 		return 0, err
 	}
 
-	return state.PackInto(payload)
+	classifier.output = state.Pack()
+
+	return classifier.readOutput(payload)
+}
+
+func (classifier *Classifier) readOutput(payload []byte) (int, error) {
+	n := copy(payload, classifier.output)
+
+	if n < len(classifier.output) {
+		return n, io.ErrShortBuffer
+	}
+
+	classifier.output = nil
+	classifier.pendingFrame = false
+
+	return n, io.EOF
+}
+
+func (classifier *Classifier) payloadKind(frame []byte) string {
+	if len(frame) == 0 {
+		return "empty"
+	}
+
+	switch frame[0] {
+	case '{', '[':
+		return "json"
+	default:
+		return "packed"
+	}
 }
 
 /*
@@ -292,7 +347,17 @@ func (classifier *Classifier) Apply(state *datura.Artifact) error {
 }
 
 func (classifier *Classifier) Write(p []byte) (int, error) {
+	if len(p) == 0 {
+		classifier.pendingFrame = false
+		classifier.output = nil
+
+		return 0, nil
+	}
+
 	classifier.artifact.WithPayload(p)
+	classifier.pendingFrame = true
+	classifier.output = nil
+
 	return len(p), nil
 }
 

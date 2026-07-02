@@ -2,6 +2,8 @@ package algorithm_test
 
 import (
 	"fmt"
+	"io"
+	"strings"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
@@ -108,6 +110,69 @@ func TestPearl_Read(testingTB *testing.T) {
 
 		So(err, ShouldBeNil)
 		So(datura.Peek[float64](artifact, "output", "intervention"), ShouldBeGreaterThan, 0)
+	})
+}
+
+func TestPearl_ReadPipelineColdStart(testingTB *testing.T) {
+	Convey("Given the full Pearl pipeline before causal history is ready", testingTB, func() {
+		pearl := algorithm.NewPearl(pearlConfig())
+		artifact := pearlTicker(0)
+
+		err := nomagique.RoundTripArtifact(artifact, pearl)
+		payload := strings.TrimSpace(string(artifact.DecryptPayload()))
+
+		Convey("It should stop cleanly before classification", func() {
+			So(err, ShouldBeNil)
+			So(payload, ShouldNotEqual, "")
+			So(payload[:1], ShouldEqual, "{")
+			So(datura.Peek[string](artifact, "channel"), ShouldEqual, "ticker")
+			So(datura.Peek[string](artifact, "root"), ShouldEqual, "")
+		})
+	})
+}
+
+func TestPearlSample_ReadFrameContract(testingTB *testing.T) {
+	Convey("Given the Pearl sample stage without an inbound frame", testingTB, func() {
+		sample := algorithm.NewPearlSample(pearlConfig())
+		buffer := make([]byte, 1024)
+
+		read, err := sample.Read(buffer)
+
+		Convey("It should stop without attempting to unpack stale state", func() {
+			So(read, ShouldEqual, 0)
+			So(err, ShouldEqual, io.EOF)
+		})
+	})
+
+	Convey("Given the Pearl sample stage after an emitted frame is drained", testingTB, func() {
+		sample := algorithm.NewPearlSample(pearlConfig())
+		artifact := pearlTicker(0)
+		_, writeErr := nomagique.WriteArtifact(sample, artifact)
+		buffer := make([]byte, 262144)
+		read, readErr := sample.Read(buffer)
+		nextRead, nextErr := sample.Read(buffer)
+
+		Convey("It should expose exactly one frame for that write", func() {
+			So(writeErr, ShouldBeNil)
+			So(read, ShouldBeGreaterThan, 0)
+			So(readErr, ShouldEqual, io.EOF)
+			So(nextRead, ShouldEqual, 0)
+			So(nextErr, ShouldEqual, io.EOF)
+		})
+	})
+
+	Convey("Given an empty Pearl sample write", testingTB, func() {
+		sample := algorithm.NewPearlSample(pearlConfig())
+		written, writeErr := sample.Write(nil)
+		buffer := make([]byte, 1024)
+		read, readErr := sample.Read(buffer)
+
+		Convey("It should stop instead of reporting a validation error", func() {
+			So(written, ShouldEqual, 0)
+			So(writeErr, ShouldBeNil)
+			So(read, ShouldEqual, 0)
+			So(readErr, ShouldEqual, io.EOF)
+		})
 	})
 }
 

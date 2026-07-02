@@ -20,8 +20,10 @@ BookflowSample accumulates book and trade frames into the feature batch Bookflow
 Decay rate and history windows are derived from observed spread and imbalance history.
 */
 type BookflowSample struct {
-	artifact *datura.Artifact
-	windows  map[string]*bookflowWindow
+	artifact     *datura.Artifact
+	pendingFrame bool
+	output       []byte
+	windows      map[string]*bookflowWindow
 }
 
 type bookflowWindow struct {
@@ -53,15 +55,42 @@ func NewBookflowSample(artifact *datura.Artifact) *BookflowSample {
 }
 
 func (bookflowSample *BookflowSample) Write(payload []byte) (int, error) {
+	if len(payload) == 0 {
+		bookflowSample.pendingFrame = false
+		bookflowSample.output = nil
+
+		return 0, nil
+	}
+
 	bookflowSample.artifact.WithPayload(payload)
+	bookflowSample.pendingFrame = true
+	bookflowSample.output = nil
+
 	return len(payload), nil
 }
 
 func (bookflowSample *BookflowSample) Read(payload []byte) (int, error) {
-	state := datura.Acquire("bookflow-sample-state", datura.APPJSON)
+	if len(bookflowSample.output) > 0 {
+		return bookflowSample.readOutput(payload)
+	}
 
-	if _, err := state.Unpack(bookflowSample.artifact.DecryptPayload()); err != nil {
+	if !bookflowSample.pendingFrame {
+		return 0, io.EOF
+	}
+
+	state := datura.Acquire("bookflow-sample-state", datura.APPJSON)
+	frame := bookflowSample.artifact.DecryptPayload()
+
+	if len(frame) == 0 {
 		state.Release()
+		bookflowSample.pendingFrame = false
+
+		return 0, io.EOF
+	}
+
+	if _, err := state.Unpack(frame); err != nil {
+		state.Release()
+		bookflowSample.pendingFrame = false
 
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
@@ -94,6 +123,8 @@ func (bookflowSample *BookflowSample) Read(payload []byte) (int, error) {
 	}
 
 	if symbol == "" {
+		bookflowSample.pendingFrame = false
+
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"bookflow-sample: symbol required",
@@ -113,6 +144,8 @@ func (bookflowSample *BookflowSample) Read(payload []byte) (int, error) {
 	features := bookflowSample.features(window)
 
 	if len(features) == 0 {
+		bookflowSample.pendingFrame = false
+
 		return 0, io.EOF
 	}
 
@@ -122,7 +155,22 @@ func (bookflowSample *BookflowSample) Read(payload []byte) (int, error) {
 	state.Poke("features", "root")
 	state.Poke(equation.BookflowInputKeys, "inputs")
 
-	return state.PackInto(payload)
+	bookflowSample.output = state.Pack()
+
+	return bookflowSample.readOutput(payload)
+}
+
+func (bookflowSample *BookflowSample) readOutput(payload []byte) (int, error) {
+	n := copy(payload, bookflowSample.output)
+
+	if n < len(bookflowSample.output) {
+		return n, io.ErrShortBuffer
+	}
+
+	bookflowSample.output = nil
+	bookflowSample.pendingFrame = false
+
+	return n, io.EOF
 }
 
 func (bookflowSample *BookflowSample) Close() error {

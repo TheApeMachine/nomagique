@@ -155,7 +155,7 @@ func classifyBookQuality(
 	}
 
 	if cancelBid > 0 && fillBid <= 0 {
-		return 0, 0, 0, 0, 0, fmt.Errorf("bookquality: cancelBid requires positive fillBid")
+		return 0, 0, 0, 0, 0, errNoBookQualityCategory
 	}
 
 	askRatio := 0.0
@@ -169,7 +169,7 @@ func classifyBookQuality(
 	}
 
 	if cancelAsk > 0 && fillAsk <= 0 {
-		return 0, 0, 0, 0, 0, fmt.Errorf("bookquality: cancelAsk requires positive fillAsk")
+		return 0, 0, 0, 0, 0, errNoBookQualityCategory
 	}
 
 	maxRatio := math.Max(bidRatio, askRatio)

@@ -1,6 +1,7 @@
 package causal
 
 import (
+	"io"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
@@ -43,11 +44,63 @@ func TestDeriveBandwidth(testingTB *testing.T) {
 		})
 	})
 
+	Convey("Given signed treatment spread centered near zero", testingTB, func() {
+		rows := [][]float64{
+			{-4, 0, -8},
+			{-3, 1, -6},
+			{-2, 2, -4},
+			{-1, 3, -2},
+			{0, 4, 0},
+			{1, 5, 2},
+			{2, 6, 4},
+			{3, 7, 6},
+			{4, 8, 8},
+		}
+		bandwidth, err := deriveBandwidth(rows, 0)
+
+		Convey("It should derive bandwidth from dispersion, not mean sign", func() {
+			So(err, ShouldBeNil)
+			So(bandwidth, ShouldBeGreaterThan, 0)
+		})
+	})
+
 	Convey("Given insufficient rows", testingTB, func() {
 		_, err := deriveBandwidth([][]float64{{1, 2}}, 0)
 
 		Convey("It should reject bandwidth derivation", func() {
 			So(err, ShouldNotBeNil)
+		})
+	})
+
+	Convey("Given constant treatment values", testingTB, func() {
+		_, err := deriveBandwidth([][]float64{
+			{1, 0},
+			{1, 1},
+			{1, 2},
+			{1, 3},
+		}, 0)
+
+		Convey("It should report no identifiable bandwidth yet", func() {
+			So(err, ShouldEqual, io.EOF)
+		})
+	})
+}
+
+func TestNodeTable_association(testingTB *testing.T) {
+	Convey("Given constant treatment values", testingTB, func() {
+		table, tableErr := newNodeTable([][]float64{
+			{0, 1},
+			{0, 2},
+			{0, 3},
+			{0, 4},
+		}, 1, 4)
+
+		So(tableErr, ShouldBeNil)
+
+		_, err := table.association(0)
+
+		Convey("It should report no identifiable association yet", func() {
+			So(err, ShouldEqual, io.EOF)
 		})
 	})
 }
@@ -103,6 +156,26 @@ func TestNodeTable_kernelBackdoorEffect(testingTB *testing.T) {
 
 		Convey("It should align the kernel path with residualized backdoor adjustment", func() {
 			So(kernelEffect, ShouldAlmostEqual, linearEffect, 1e-6)
+		})
+	})
+
+	Convey("Given control rows outside the kernel support", testingTB, func() {
+		rows := [][]float64{
+			{0, 1, 3},
+			{1e9, 2, 4},
+			{2e9, 10, 20},
+			{3e9, 4, 8},
+			{4e9, 9, 17},
+		}
+		table, tableErr := newNodeTable(rows, 2, 5)
+
+		So(tableErr, ShouldBeNil)
+
+		effect, err := table.kernelBackdoorEffect(1, 0.5, 0)
+
+		Convey("It should skip exact-zero weights without rejecting the table", func() {
+			So(err, ShouldBeNil)
+			So(effect, ShouldNotEqual, 0)
 		})
 	})
 }

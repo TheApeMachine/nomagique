@@ -1,6 +1,7 @@
 package probability_test
 
 import (
+	"io"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
@@ -26,6 +27,34 @@ func TestNewClassifier(testingTB *testing.T) {
 }
 
 func TestClassifier_Read(testingTB *testing.T) {
+	Convey("Given no inbound frame", testingTB, func() {
+		classifier := probability.NewClassifier(classifierSchema("s0", "s1"))
+
+		Convey("It should report EOF without manufacturing state", func() {
+			buffer := make([]byte, 1024)
+			n, err := classifier.Read(buffer)
+
+			So(n, ShouldEqual, 0)
+			So(err, ShouldEqual, io.EOF)
+		})
+	})
+
+	Convey("Given an empty inbound write", testingTB, func() {
+		classifier := probability.NewClassifier(classifierSchema("s0", "s1"))
+		written, err := classifier.Write(nil)
+
+		So(written, ShouldEqual, 0)
+		So(err, ShouldBeNil)
+
+		Convey("It should still report EOF on read", func() {
+			buffer := make([]byte, 1024)
+			n, err := classifier.Read(buffer)
+
+			So(n, ShouldEqual, 0)
+			So(err, ShouldEqual, io.EOF)
+		})
+	})
+
 	Convey("Given four output scores on the artifact", testingTB, func() {
 		classifier := probability.NewClassifier(classifierSchema("s0", "s1", "s2", "s3"))
 
@@ -101,6 +130,39 @@ func TestClassifier_Read(testingTB *testing.T) {
 			So(datura.Peek[float64](artifact, "output", "confidence"), ShouldAlmostEqual, 0.25, 1e-9)
 			So(datura.Peek[float64](artifact, "output", "strength"), ShouldEqual, 0)
 		})
+	})
+
+	Convey("Given a short output buffer", testingTB, func() {
+		classifier := probability.NewClassifier(classifierSchema("s0", "s1", "s2"))
+		artifact := artifactWithScores(map[string]float64{
+			"s0":       0.1,
+			"s1":       0.8,
+			"s2":       0.2,
+			"strength": 0.8,
+		})
+
+		written, err := classifier.Write(artifact.Pack())
+
+		So(written, ShouldBeGreaterThan, 0)
+		So(err, ShouldBeNil)
+
+		small := make([]byte, 1)
+		n, err := classifier.Read(small)
+
+		So(n, ShouldEqual, 1)
+		So(err, ShouldEqual, io.ErrShortBuffer)
+
+		large := make([]byte, 64*1024)
+		n, err = classifier.Read(large)
+
+		So(n, ShouldBeGreaterThan, 1)
+		So(err, ShouldEqual, io.EOF)
+
+		output := datura.Acquire("classifier-short-buffer-output", datura.APPJSON)
+		_, err = output.Unpack(large[:n])
+
+		So(err, ShouldBeNil)
+		So(datura.Peek[float64](output, "output", "value"), ShouldEqual, 2)
 	})
 }
 

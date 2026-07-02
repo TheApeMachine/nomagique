@@ -1,6 +1,7 @@
 package statistic
 
 import (
+	"io"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
@@ -201,6 +202,52 @@ func TestMeanMedianRatioRead(testingTB *testing.T) {
 		Convey("It should derive the long median from positive deltas only", func() {
 			So(datura.Peek[float64](lastFrame, "output", "lift"), ShouldBeGreaterThan, 1)
 		})
+	})
+
+	Convey("Given nested block configuration from attributes", testingTB, func() {
+		config := datura.Acquire("mean-median-ratio-attribute-config", datura.APPJSON).
+			WithAttributes(datura.Map[any]{
+				"order": []string{"rvol"},
+				"rvol": datura.Map[any]{
+					"input":       "volume",
+					"shortWindow": 0.0,
+					"longWindow":  0.0,
+					"outputKey":   "rvol",
+				},
+			})
+
+		stage := NewMeanMedianRatio(config)
+		frame := datura.Acquire("mean-median-ratio-attribute-frame", datura.APPJSON)
+		frame.Poke("features", "root")
+		frame.Poke([]string{"volume"}, "inputs")
+		frame.Merge("features", []float64{10})
+		frame.SetTimestamp(1)
+
+		err := nomagique.RoundTripArtifact(frame, stage)
+
+		So(err, ShouldBeNil)
+		So(datura.Peek[float64](frame, "output", "rvol"), ShouldEqual, 1)
+	})
+
+	Convey("Given the ratio stage without an inbound frame", testingTB, func() {
+		stage := NewMeanMedianRatio(datura.Acquire("mean-median-ratio-no-frame", datura.APPJSON))
+		buffer := make([]byte, 1024)
+		read, err := stage.Read(buffer)
+
+		So(read, ShouldEqual, 0)
+		So(err, ShouldEqual, io.EOF)
+	})
+
+	Convey("Given an empty ratio stage write", testingTB, func() {
+		stage := NewMeanMedianRatio(datura.Acquire("mean-median-ratio-empty-write", datura.APPJSON))
+		written, writeErr := stage.Write(nil)
+		buffer := make([]byte, 1024)
+		read, readErr := stage.Read(buffer)
+
+		So(written, ShouldEqual, 0)
+		So(writeErr, ShouldBeNil)
+		So(read, ShouldEqual, 0)
+		So(readErr, ShouldEqual, io.EOF)
 	})
 }
 

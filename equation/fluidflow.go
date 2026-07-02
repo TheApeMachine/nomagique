@@ -62,7 +62,7 @@ func (fluidflow *Fluidflow) Read(p []byte) (int, error) {
 	changePct := fields[15]
 	volume := fields[16]
 
-	if price <= 0 || spreadBPS <= 0 || changePct <= 0 || volume <= 0 {
+	if price <= 0 || spreadBPS <= 0 || volume <= 0 || math.IsNaN(changePct) || math.IsInf(changePct, 0) {
 		return rejectStage(state, "equation: invalid stage input")
 	}
 
@@ -75,9 +75,15 @@ func (fluidflow *Fluidflow) Read(p []byte) (int, error) {
 	}
 
 	laminarScore := 0.0
+	lowReynolds := reynolds <= 0 || (laminarCeiling > 0 && reynolds <= laminarCeiling)
+	lowDivergence := divergence <= 0 || (divergenceEdge > 0 && divergence <= divergenceEdge)
 
-	if reynolds <= laminarCeiling && laminarCeiling > 0 && divergenceEdge > 0 && divergence <= divergenceEdge {
-		laminarScore = viscosity * (1 - divergence/divergenceEdge)
+	if lowReynolds && lowDivergence {
+		laminarScore = viscosity
+
+		if divergenceEdge > 0 && divergence > 0 {
+			laminarScore = viscosity * (1 - divergence/divergenceEdge)
+		}
 	}
 
 	turbulentScore := 0.0

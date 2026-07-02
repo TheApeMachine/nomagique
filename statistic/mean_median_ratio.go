@@ -1,6 +1,7 @@
 package statistic
 
 import (
+	"io"
 	"math"
 	"time"
 
@@ -13,8 +14,10 @@ import (
 MeanMedianRatio compares a short-window mean to a long-window median on streamed samples.
 */
 type MeanMedianRatio struct {
-	artifact  *datura.Artifact
-	histories map[string][]struct {
+	artifact     *datura.Artifact
+	pendingFrame bool
+	output       []byte
+	histories    map[string][]struct {
 		value float64
 		at    time.Time
 	}
@@ -42,9 +45,28 @@ func NewMeanMedianRatio(artifact *datura.Artifact) *MeanMedianRatio {
 }
 
 func (meanMedianRatio *MeanMedianRatio) Read(payload []byte) (int, error) {
-	state := datura.Acquire("mean-median-ratio-state", datura.APPJSON)
+	if len(meanMedianRatio.output) > 0 {
+		return meanMedianRatio.readOutput(payload)
+	}
 
-	if _, err := state.Unpack(meanMedianRatio.artifact.DecryptPayload()); err != nil {
+	if !meanMedianRatio.pendingFrame {
+		return 0, io.EOF
+	}
+
+	state := datura.Acquire("mean-median-ratio-state", datura.APPJSON)
+	frame := meanMedianRatio.artifact.DecryptPayload()
+
+	if len(frame) == 0 {
+		state.Release()
+		meanMedianRatio.pendingFrame = false
+
+		return 0, io.EOF
+	}
+
+	if _, err := state.Unpack(frame); err != nil {
+		state.Release()
+		meanMedianRatio.pendingFrame = false
+
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"mean-median-ratio: state write failed",
@@ -60,6 +82,9 @@ func (meanMedianRatio *MeanMedianRatio) Read(payload []byte) (int, error) {
 	sourceKey := configString(meanMedianRatio.artifact, stageKey, "input")
 
 	if sourceKey == "" {
+		state.Release()
+		meanMedianRatio.pendingFrame = false
+
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"mean-median-ratio: input key required",
@@ -80,6 +105,9 @@ func (meanMedianRatio *MeanMedianRatio) Read(payload []byte) (int, error) {
 	}
 
 	if !sampleFound {
+		state.Release()
+		meanMedianRatio.pendingFrame = false
+
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"mean-median-ratio: source key not found in inputs",
@@ -88,6 +116,9 @@ func (meanMedianRatio *MeanMedianRatio) Read(payload []byte) (int, error) {
 	}
 
 	if math.IsNaN(sample) || math.IsInf(sample, 0) {
+		state.Release()
+		meanMedianRatio.pendingFrame = false
+
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"mean-median-ratio: sample is non-finite",
@@ -110,6 +141,9 @@ func (meanMedianRatio *MeanMedianRatio) Read(payload []byte) (int, error) {
 	timestamp := state.Timestamp()
 
 	if timestamp <= 0 {
+		state.Release()
+		meanMedianRatio.pendingFrame = false
+
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"mean-median-ratio: event timestamp required",
@@ -169,6 +203,9 @@ func (meanMedianRatio *MeanMedianRatio) Read(payload []byte) (int, error) {
 	outputKey := configString(meanMedianRatio.artifact, stageKey, "outputKey")
 
 	if outputKey == "" {
+		state.Release()
+		meanMedianRatio.pendingFrame = false
+
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"mean-median-ratio: outputKey required",
@@ -179,6 +216,9 @@ func (meanMedianRatio *MeanMedianRatio) Read(payload []byte) (int, error) {
 	history := meanMedianRatio.histories[seriesKey]
 
 	if len(history) > 0 && observed.Before(history[len(history)-1].at) {
+		state.Release()
+		meanMedianRatio.pendingFrame = false
+
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"mean-median-ratio: event timestamp must not regress",
@@ -242,6 +282,9 @@ func (meanMedianRatio *MeanMedianRatio) Read(payload []byte) (int, error) {
 	}
 
 	if !ok || longMedian <= 0 {
+		state.Release()
+		meanMedianRatio.pendingFrame = false
+
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"mean-median-ratio: long median is invalid",
@@ -285,12 +328,38 @@ func (meanMedianRatio *MeanMedianRatio) Read(payload []byte) (int, error) {
 	state.Poke("output", "root")
 	state.Poke(outputInputs, "inputs")
 
-	return state.PackInto(payload)
+	meanMedianRatio.output = state.Pack()
+	state.Release()
+
+	return meanMedianRatio.readOutput(payload)
 }
 
 func (meanMedianRatio *MeanMedianRatio) Write(payload []byte) (int, error) {
+	if len(payload) == 0 {
+		meanMedianRatio.pendingFrame = false
+		meanMedianRatio.output = nil
+
+		return 0, nil
+	}
+
 	meanMedianRatio.artifact.WithPayload(payload)
+	meanMedianRatio.pendingFrame = true
+	meanMedianRatio.output = nil
+
 	return len(payload), nil
+}
+
+func (meanMedianRatio *MeanMedianRatio) readOutput(payload []byte) (int, error) {
+	n := copy(payload, meanMedianRatio.output)
+
+	if n < len(meanMedianRatio.output) {
+		return n, io.ErrShortBuffer
+	}
+
+	meanMedianRatio.output = nil
+	meanMedianRatio.pendingFrame = false
+
+	return n, io.EOF
 }
 
 func (meanMedianRatio *MeanMedianRatio) Close() error {

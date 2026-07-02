@@ -1,6 +1,7 @@
 package learning
 
 import (
+	"io"
 	"math"
 	"testing"
 
@@ -66,6 +67,49 @@ func logitScoresConfig() *datura.Artifact {
 }
 
 func TestLogitScoresRead(testingTB *testing.T) {
+	Convey("Given nested output config from WithAttributes", testingTB, func() {
+		config := datura.Acquire("logit-scores-nested-config", datura.APPJSON).WithAttributes(datura.Map[any]{
+			"ignition": datura.Map[any]{
+				"leftKey":  "rvol",
+				"rightKey": "precursor",
+			},
+		})
+
+		config.Poke([]float64{1}, "output", "scaleSamples", "rvol")
+
+		Convey("It should keep nested operand keys readable after runtime config state writes", func() {
+			So(datura.Peek[string](config, "ignition", "leftKey"), ShouldEqual, "rvol")
+			So(datura.Peek[string](config, "ignition", "rightKey"), ShouldEqual, "precursor")
+		})
+	})
+
+	Convey("Given no inbound frame", testingTB, func() {
+		stage := NewLogitScores(logitScoresConfig())
+		buffer := make([]byte, 4096)
+
+		n, err := stage.Read(buffer)
+
+		Convey("It should report no frame without trying to unpack stale payload", func() {
+			So(n, ShouldEqual, 0)
+			So(err, ShouldEqual, io.EOF)
+		})
+	})
+
+	Convey("Given an empty inbound frame", testingTB, func() {
+		stage := NewLogitScores(logitScoresConfig())
+		buffer := make([]byte, 4096)
+
+		n, writeErr := stage.Write(nil)
+		readN, readErr := stage.Read(buffer)
+
+		Convey("It should drain cleanly without validation noise", func() {
+			So(n, ShouldEqual, 0)
+			So(writeErr, ShouldBeNil)
+			So(readN, ShouldEqual, 0)
+			So(readErr, ShouldEqual, io.EOF)
+		})
+	})
+
 	Convey("Given order, inputs, and outputs on the config artifact", testingTB, func() {
 		config := logitScoresConfig()
 		stage := NewLogitScores(config)

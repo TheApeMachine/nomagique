@@ -1,6 +1,7 @@
 package equation_test
 
 import (
+	"io"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
@@ -101,6 +102,29 @@ func TestBookflow_Read(testingTB *testing.T) {
 		Convey("It should classify dense neutrality", func() {
 			So(int(datura.Peek[float64](outbound, "output", "category")), ShouldEqual, 4)
 			So(datura.Peek[float64](outbound, "output", "neutralScore"), ShouldBeGreaterThan, 0)
+		})
+	})
+
+	Convey("Given valid features with no eligible bookflow evidence", testingTB, func() {
+		stage := equation.NewBookflow(bookflowConfig())
+		err := writeFeatureStage(stage, equation.BookflowInputKeys,
+			0, 0, 0, 0,
+			100, 2, 12,
+			0,
+			4, 4, 4,
+			0, 0, 0, 0,
+			0, 0, 0, 0,
+			0, 0, 0, 0,
+		)
+
+		So(err, ShouldBeNil)
+
+		frame := make([]byte, 4096)
+		readCount, readErr := stage.Read(frame)
+
+		Convey("It should be a nonfatal no-output state", func() {
+			So(readCount, ShouldEqual, 0)
+			So(readErr, ShouldEqual, io.EOF)
 		})
 	})
 }

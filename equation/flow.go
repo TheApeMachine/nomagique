@@ -58,12 +58,26 @@ func (flow *Flow) Read(p []byte) (int, error) {
 
 	gross := buyNotional + sellNotional
 
-	if gross <= 0 || tradeCount < 2 || len(prices) < 2 {
+	if gross <= 0 || tradeCount <= 0 || len(prices) == 0 {
 		return rejectStage(state, "equation: invalid stage input")
 	}
 
 	net := buyNotional - sellNotional
 	netFraction := math.Abs(net) / gross
+
+	if len(prices) < 2 {
+		return emitOutput(state, p, datura.Map[float64]{
+			"value":       0,
+			"absorption":  0,
+			"drive":       0,
+			"balance":     0,
+			"starvation":  0,
+			"net":         net,
+			"netFraction": netFraction,
+			"category":    0,
+		})
+	}
+
 	firstPrice := prices[0]
 	lastPrice := prices[len(prices)-1]
 

@@ -13,7 +13,6 @@ import (
 
 const (
 	flowSampleHeader     = 5
-	flowSampleMinTrades  = 2
 	flowSampleHistoryCap = 128
 )
 
@@ -151,7 +150,7 @@ func (tradeFlowSample *TradeFlowSample) window(symbol string) *tradeFlowWindow {
 func (tradeFlowSample *TradeFlowSample) features(window *tradeFlowWindow) []float64 {
 	tradeCount := len(window.ticks)
 
-	if tradeCount < flowSampleMinTrades {
+	if tradeCount == 0 {
 		return nil
 	}
 

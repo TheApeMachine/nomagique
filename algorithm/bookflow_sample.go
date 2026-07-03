@@ -12,7 +12,6 @@ import (
 
 const (
 	bookflowSampleHistoryCap = 64
-	bookflowSampleMinHistory = 4
 )
 
 /*
@@ -376,7 +375,7 @@ func bookflowToxicPenalty(touchCancel, frameAdd, touchDepth float64) float64 {
 func (bookflowSample *BookflowSample) features(window *bookflowWindow) []float64 {
 	historyCount := len(window.weightedHist)
 
-	if historyCount < bookflowSampleMinHistory {
+	if historyCount == 0 {
 		return nil
 	}
 

@@ -1,6 +1,7 @@
 package statistic
 
 import (
+	"io"
 	"math"
 
 	"github.com/theapemachine/datura"
@@ -11,7 +12,9 @@ import (
 PriceRing publishes the configured input sample on the outbound wire.
 */
 type PriceRing struct {
-	artifact *datura.Artifact
+	artifact     *datura.Artifact
+	pendingFrame bool
+	output       []byte
 }
 
 /*
@@ -24,9 +27,28 @@ func NewPriceRing(artifact *datura.Artifact) *PriceRing {
 }
 
 func (priceRing *PriceRing) Read(payload []byte) (int, error) {
-	state := datura.Acquire("price-ring-state", datura.APPJSON)
+	if len(priceRing.output) > 0 {
+		return priceRing.readOutput(payload)
+	}
 
-	if _, err := state.Unpack(priceRing.artifact.DecryptPayload()); err != nil {
+	if !priceRing.pendingFrame {
+		return 0, io.EOF
+	}
+
+	state := datura.Acquire("price-ring-state", datura.APPJSON)
+	frame := priceRing.artifact.DecryptPayload()
+
+	if len(frame) == 0 {
+		state.Release()
+		priceRing.pendingFrame = false
+
+		return 0, io.EOF
+	}
+
+	if _, err := state.Unpack(frame); err != nil {
+		state.Release()
+		priceRing.pendingFrame = false
+
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"price-ring: state write failed",
@@ -34,9 +56,13 @@ func (priceRing *PriceRing) Read(payload []byte) (int, error) {
 		))
 	}
 
+	defer state.Release()
+
 	rootKey := datura.Peek[string](state, "root")
 
 	if rootKey == "" {
+		priceRing.pendingFrame = false
+
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"price-ring: root required",
@@ -47,6 +73,8 @@ func (priceRing *PriceRing) Read(payload []byte) (int, error) {
 	inputs := datura.Peek[[]string](state, "inputs")
 
 	if len(inputs) == 0 {
+		priceRing.pendingFrame = false
+
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"price-ring: inputs required",
@@ -64,6 +92,8 @@ func (priceRing *PriceRing) Read(payload []byte) (int, error) {
 	configInput := configString(priceRing.artifact, stageKey, "input")
 
 	if configInput == "" {
+		priceRing.pendingFrame = false
+
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"price-ring: input required",
@@ -103,6 +133,8 @@ func (priceRing *PriceRing) Read(payload []byte) (int, error) {
 			featureSlice := datura.Peek[[]float64](state, rootKey)
 
 			if index >= len(featureSlice) {
+				priceRing.pendingFrame = false
+
 				return 0, errnie.Error(errnie.Err(
 					errnie.Validation,
 					"price-ring: feature index out of range",
@@ -121,6 +153,8 @@ func (priceRing *PriceRing) Read(payload []byte) (int, error) {
 	}
 
 	if !sampleFound {
+		priceRing.pendingFrame = false
+
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"price-ring: input not in inputs",
@@ -129,6 +163,8 @@ func (priceRing *PriceRing) Read(payload []byte) (int, error) {
 	}
 
 	if sample <= 0 || math.IsNaN(sample) || math.IsInf(sample, 0) {
+		priceRing.pendingFrame = false
+
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"price-ring: sample is non-positive or non-finite",
@@ -140,12 +176,37 @@ func (priceRing *PriceRing) Read(payload []byte) (int, error) {
 	state.Poke("output", "root")
 	state.Poke([]string{configInput}, "inputs")
 
-	return state.PackInto(payload)
+	priceRing.output = state.Pack()
+
+	return priceRing.readOutput(payload)
 }
 
 func (priceRing *PriceRing) Write(payload []byte) (int, error) {
+	if len(payload) == 0 {
+		priceRing.pendingFrame = false
+		priceRing.output = nil
+
+		return 0, nil
+	}
+
 	priceRing.artifact.WithPayload(payload)
+	priceRing.pendingFrame = true
+	priceRing.output = nil
+
 	return len(payload), nil
+}
+
+func (priceRing *PriceRing) readOutput(payload []byte) (int, error) {
+	n := copy(payload, priceRing.output)
+
+	if n < len(priceRing.output) {
+		return n, io.ErrShortBuffer
+	}
+
+	priceRing.output = nil
+	priceRing.pendingFrame = false
+
+	return n, io.EOF
 }
 
 func (priceRing *PriceRing) Close() error {

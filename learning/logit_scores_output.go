@@ -94,14 +94,20 @@ func (logitScores *LogitScores) resolveOutputScore(
 			return logitScores.centeredCompositeScore(outputKey, leftKey, rightKey, features, scales)
 		}
 
-		scale, err := logitScores.resolveCompositeScaleWithKeys(outputKey, leftKey, rightKey)
+		scale := compositeScaleFromFrame(scales, leftKey, rightKey)
 
-		if err != nil {
-			if overrideValue == 0 {
-				return 0, nil
+		if scale <= 0 || math.IsNaN(scale) || math.IsInf(scale, 0) {
+			var err error
+
+			scale, err = logitScores.resolveCompositeScaleWithKeys(outputKey, leftKey, rightKey)
+
+			if err != nil {
+				if overrideValue == 0 {
+					return 0, nil
+				}
+
+				return 0, err
 			}
-
-			return 0, err
 		}
 
 		if scale <= 0 || math.IsNaN(scale) || math.IsInf(scale, 0) {
@@ -140,6 +146,23 @@ func (logitScores *LogitScores) resolveOutputScore(
 	}
 
 	return normalizeFeature(overrideValue, scale), nil
+}
+
+func compositeScaleFromFrame(
+	scales map[string]float64,
+	leftKey string,
+	rightKey string,
+) float64 {
+	leftScale := scales[leftKey]
+	rightScale := scales[rightKey]
+
+	if leftScale <= 0 || rightScale <= 0 ||
+		math.IsNaN(leftScale) || math.IsNaN(rightScale) ||
+		math.IsInf(leftScale, 0) || math.IsInf(rightScale, 0) {
+		return 0
+	}
+
+	return math.Sqrt(leftScale * rightScale)
 }
 
 func (logitScores *LogitScores) applyDecline(

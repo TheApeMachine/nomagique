@@ -1,6 +1,7 @@
 package statistic
 
 import (
+	"io"
 	"testing"
 	"time"
 
@@ -31,6 +32,26 @@ func TestPriceRingRead(t *testing.T) {
 		config := precursorConfig()
 		stage := NewPriceRing(config)
 		var lastArtifact *datura.Artifact
+
+		Convey("It should return EOF before a frame is written", func() {
+			payload := make([]byte, 1024)
+			read, err := stage.Read(payload)
+
+			So(read, ShouldEqual, 0)
+			So(err, ShouldEqual, io.EOF)
+		})
+
+		Convey("It should clear an empty write without parsing stale state", func() {
+			written, err := stage.Write(nil)
+			So(written, ShouldEqual, 0)
+			So(err, ShouldBeNil)
+
+			payload := make([]byte, 1024)
+			read, err := stage.Read(payload)
+
+			So(read, ShouldEqual, 0)
+			So(err, ShouldEqual, io.EOF)
+		})
 
 		for _, last := range []float64{100, 101, 102} {
 			artifact := precursorState(last)

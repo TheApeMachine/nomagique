@@ -95,6 +95,26 @@ func TestClassifier_Read(testingTB *testing.T) {
 		})
 	})
 
+	Convey("Given schema attributes are mutated after construction", testingTB, func() {
+		schema := classifierSchema("s0", "s1", "s2")
+		classifier := probability.NewClassifier(schema)
+		schema.Poke([]string{}, "inputs")
+
+		artifact := artifactWithScores(map[string]float64{
+			"s0":       0.1,
+			"s1":       0.8,
+			"s2":       0.2,
+			"strength": 0.8,
+		})
+
+		err := nomagique.RoundTripArtifact(artifact, classifier)
+
+		Convey("It should classify using the construction-time category schema", func() {
+			So(err, ShouldBeNil)
+			So(datura.Peek[float64](artifact, "output", "value"), ShouldEqual, 2)
+		})
+	})
+
 	Convey("Given an empty score key in schema inputs", testingTB, func() {
 		classifier := probability.NewClassifier(classifierSchema("s0", ""))
 

@@ -16,16 +16,22 @@ The config artifact carries input score keys in attributes; its payload buses
 inbound wire from Write to Read. Read classifies from reconstituted output scores.
 */
 type Classifier struct {
-	artifact     *datura.Artifact
-	pendingFrame bool
-	output       []byte
+	artifact        *datura.Artifact
+	categories      []string
+	categoryIndexes []float64
+	pendingFrame    bool
+	output          []byte
 }
 
 /*
 NewClassifier returns a classifier wired from schema.inputs score keys.
 */
 func NewClassifier(artifact *datura.Artifact) *Classifier {
-	return &Classifier{artifact: artifact}
+	return &Classifier{
+		artifact:        artifact,
+		categories:      append([]string(nil), datura.Peek[[]string](artifact, "inputs")...),
+		categoryIndexes: append([]float64(nil), datura.Peek[[]float64](artifact, "categoryIndexes")...),
+	}
 }
 
 func (classifier *Classifier) Read(payload []byte) (int, error) {
@@ -143,7 +149,7 @@ func (classifier *Classifier) Apply(state *datura.Artifact) error {
 		))
 	}
 
-	categories := datura.Peek[[]string](classifier.artifact, "inputs")
+	categories := classifier.categories
 
 	if len(categories) == 0 {
 		return errnie.Error(errnie.Err(
@@ -153,7 +159,7 @@ func (classifier *Classifier) Apply(state *datura.Artifact) error {
 		))
 	}
 
-	categoryIndexes := datura.Peek[[]float64](classifier.artifact, "categoryIndexes")
+	categoryIndexes := classifier.categoryIndexes
 
 	if len(categoryIndexes) > 0 && len(categoryIndexes) != len(categories) {
 		return errnie.Error(errnie.Err(

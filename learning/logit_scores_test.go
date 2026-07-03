@@ -232,6 +232,36 @@ func TestLogitScoresRead(testingTB *testing.T) {
 		artifact.Release()
 	})
 
+	Convey("Given first-frame median-scaled ratio output", testingTB, func() {
+		config := logitScoresConfig()
+		config.Poke(0.0, "rvol", "scale")
+		config.Poke(0.0, "precursor", "scale")
+		config.Poke("median", "rvol", "scaleMode")
+		config.Poke("median", "precursor", "scaleMode")
+
+		stage := NewLogitScores(config)
+		artifact := datura.Acquire("logit-scores-first-ratio-test", datura.APPJSON)
+		artifact.Poke("output", "root")
+		artifact.Poke([]string{"rvol", "precursor", "compression", "ignition", "value", "rvolDecline"}, "inputs")
+		artifact.MergeOutput("rvol", 1.0)
+		artifact.MergeOutput("precursor", 1.2)
+		artifact.MergeOutput("compression", 0.2)
+		artifact.MergeOutput("value", 0.2)
+		artifact.MergeOutput("ignition", math.Sqrt(1.0*1.2))
+		artifact.MergeOutput("rvolDecline", 0.0)
+
+		err := nomagique.RoundTripArtifact(artifact, stage)
+
+		So(err, ShouldBeNil)
+
+		Convey("It should use the current observation as the initial scale sample", func() {
+			So(datura.Peek[float64](artifact, "output", "ignition"), ShouldBeGreaterThan, 0)
+			So(math.IsNaN(datura.Peek[float64](artifact, "output", "ignition")), ShouldBeFalse)
+		})
+
+		artifact.Release()
+	})
+
 	Convey("Given fading volume lift with flat precursor", testingTB, func() {
 		config := logitScoresConfig()
 

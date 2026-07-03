@@ -37,7 +37,7 @@ func (bookflow *Bookflow) Read(p []byte) (int, error) {
 	inputKeys := EnsureFeatureSchema(state, bookflow.artifact, BookflowInputKeys)
 	outcome := evaluateBookflow(state, inputKeys)
 
-	if !outcome.eligible || outcome.strength <= 0 {
+	if !outcome.eligible {
 		state.Release()
 
 		return 0, io.EOF
@@ -179,8 +179,8 @@ func evaluateBookflow(state *datura.Artifact, inputKeys []string) bookflowOutcom
 		strength = math.Abs(thinScore)
 	}
 
-	if category == 0 || strength <= 0 {
-		return bookflowOutcome{}
+	if category == 4 {
+		strength = neutralScore
 	}
 
 	quoteVol := mid * touchDepth

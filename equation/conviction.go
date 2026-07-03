@@ -81,10 +81,6 @@ func (conviction *Conviction) Read(p []byte) (int, error) {
 		divergentScore = math.Abs(change)
 	case 3:
 		slumpScore = math.Max(math.Max(0, surgeThreshold-breadth), math.Abs(change))
-
-		if slumpScore == 0 {
-			slumpScore = 1.0
-		}
 	}
 
 	strength := breadth
@@ -97,7 +93,7 @@ func (conviction *Conviction) Read(p []byte) (int, error) {
 		strength = slumpScore
 	}
 
-	if strength <= 0 {
+	if strength < 0 {
 		return rejectStage(state, "equation: invalid stage input")
 	}
 

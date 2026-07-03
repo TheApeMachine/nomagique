@@ -72,8 +72,10 @@ func fitNonLinearTable(nodeTable nodeTable, features []int) (nonLinearModel, boo
 	for stumpIndex := 0; stumpIndex < nonLinearStumps; stumpIndex++ {
 		split, gain := bestStump(nodeTable, residuals, features, thresholds)
 
-		// Regularization: stumps only model large-magnitude secure residual anomalies
-		minGain := 0.01 * (residualStd * residualStd)
+		// Regularization: splitGain is a total SSE reduction, so compare it to
+		// the current residual variance on the same total-sample scale.
+		residualStd = stat.StdDev(residuals, nil)
+		minGain := 0.01 * (residualStd * residualStd) * float64(len(residuals))
 
 		if gain <= minGain {
 			break

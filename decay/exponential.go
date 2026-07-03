@@ -40,6 +40,28 @@ func KernelSupport(events timeline.Timeline, horizon time.Time, beta float64) fl
 }
 
 /*
+KernelIntegralSupport sums 1 - exp(-beta * remaining) over events before horizon.
+It is the support term for ∫ exp(-beta(t-ti)) dt from each event time to horizon.
+*/
+func KernelIntegralSupport(events timeline.Timeline, horizon time.Time, beta float64) float64 {
+	sum := 0.0
+
+	for _, eventTime := range events.Times() {
+		if eventTime.After(horizon) {
+			continue
+		}
+
+		remaining := horizon.Sub(eventTime).Seconds()
+
+		if remaining > 0 {
+			sum += 1 - ExpNeg(beta, remaining)
+		}
+	}
+
+	return sum
+}
+
+/*
 IntensityAt evaluates mu plus alphaOnBuy * sum(buy impulses) plus alphaOnSell * sum(sell impulses).
 */
 func IntensityAt(

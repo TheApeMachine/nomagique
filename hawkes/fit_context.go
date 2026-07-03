@@ -214,6 +214,23 @@ func (context FitContext) MuYStart() float64 {
 }
 
 /*
+PoissonFit returns the no-excitation bivariate baseline for this stream.
+*/
+func (context FitContext) PoissonFit() BivariateFit {
+	fit := BivariateFit{
+		MuX:            context.MuXStart(),
+		MuY:            context.MuYStart(),
+		Beta:           1 / context.MedianGapSec,
+		SpectralRadius: 0,
+	}
+
+	fit.IntensityX = fit.MuX
+	fit.IntensityY = fit.MuY
+
+	return fit
+}
+
+/*
 CrossBranchCap returns the cross-excitation ceiling given a diagonal branch.
 */
 func (context FitContext) CrossBranchCap(diagonalBranch float64) float64 {

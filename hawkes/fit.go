@@ -129,7 +129,7 @@ func (fit BivariateFit) Valid() bool {
 		fit.AlphaXY >= 0 &&
 		fit.AlphaYX >= 0 &&
 		fit.AlphaYY >= 0 &&
-		fit.SpectralRadius > 0 &&
+		fit.SpectralRadius >= 0 &&
 		fit.SpectralRadius < criticalBranch
 }
 
@@ -333,7 +333,7 @@ func (fit BivariateFit) compensator(
 	span float64,
 ) float64 {
 	beta := fit.Beta
-	buySupport, sellSupport := stream.kernelSupport(horizon, beta)
+	buySupport, sellSupport := stream.kernelIntegralSupport(horizon, beta)
 
 	buyIntegral := fit.MuX*span +
 		(fit.AlphaXX/beta)*buySupport +

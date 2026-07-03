@@ -54,8 +54,12 @@ func FitGatesFromHistory(spectralRadii, asymmetries []float64) (FitGates, bool) 
 		return FitGates{}, false
 	}
 
-	if saturationRadius <= 0 || frenzyAsymmetry <= 0 {
-		return FitGates{}, false
+	if saturationRadius <= 0 {
+		saturationRadius = criticalBranch
+	}
+
+	if frenzyAsymmetry <= 0 {
+		frenzyAsymmetry = 1
 	}
 
 	return FitGates{

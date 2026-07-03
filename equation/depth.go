@@ -105,10 +105,6 @@ func (depth *Depth) Read(p []byte) (int, error) {
 
 	scarcityScore := scarcityRaw
 
-	if peakScarcity {
-		scarcityScore = math.Max(scarcityScore, 1)
-	}
-
 	medianScore := medianDepthEvidence(scaledQuoteVol, lower, upper)
 	strength := scarcityRaw
 

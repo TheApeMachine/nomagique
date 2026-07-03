@@ -205,13 +205,11 @@ func classifyBookQuality(
 			return 0, 0, 0, 0, 0, err
 		}
 
-		strengthCap := vacuumStrengthCap
+		strength = vacuumScore
 
-		if strengthCap <= 0 {
-			strengthCap = maxRatio / threshold
+		if vacuumStrengthCap > 0 {
+			strength = math.Min(strength, vacuumStrengthCap)
 		}
-
-		strength = math.Min(maxRatio/threshold, strengthCap)
 
 		return 2, strength, 0, vacuumScore, 0, nil
 	}

@@ -115,6 +115,29 @@ func TestBookQuality_Read(testingTB *testing.T) {
 		})
 	})
 
+	Convey("Given liquidity vacuum evidence without a configured strength cap", testingTB, func() {
+		stage := equation.NewBookQuality(equation.BookQualityConfig())
+		err := writeFeatureStage(stage, equation.BookQualityInputKeys,
+			0.3, 0.1, 0, 0,
+			80, 80,
+			0, 0,
+			0.15, 0, 0, 0,
+			100,
+		)
+
+		So(err, ShouldBeNil)
+
+		outbound, err := readStageOutput(stage)
+
+		So(err, ShouldBeNil)
+
+		Convey("It should use bounded vacuum evidence as strength", func() {
+			So(int(datura.Peek[float64](outbound, "output", "category")), ShouldEqual, 2)
+			So(datura.Peek[float64](outbound, "output", "value"), ShouldAlmostEqual, datura.Peek[float64](outbound, "output", "vacuumScore"))
+			So(datura.Peek[float64](outbound, "output", "value"), ShouldBeLessThan, 1)
+		})
+	})
+
 	Convey("Given cancels without fills on one side", testingTB, func() {
 		stage := transport.NewPipeline(
 			equation.NewBookQuality(equation.BookQualityConfig()),

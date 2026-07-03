@@ -112,6 +112,28 @@ func TestCausalStory_ReadNoCategoryEvidence(testingTB *testing.T) {
 	})
 }
 
+func TestCausalStory_ReadTiedCategoryEvidence(testingTB *testing.T) {
+	Convey("Given Pearl ladder output with tied category evidence", testingTB, func() {
+		stage := equation.NewCausalStory(equation.CausalStoryConfig())
+		inbound := datura.Acquire("causal-story-in", datura.APPJSON)
+		inbound.MergeOutput("association", 1.0)
+		inbound.MergeOutput("intervention", 1.0)
+		inbound.MergeOutput("uplift", 1.0)
+		inbound.MergeOutput("contagion", 0.4)
+		inbound.MergeOutput("condition", 0.1)
+		inbound.MergeOutput("inverted", 1.0)
+		_, writeErr := nomagique.WriteArtifact(stage, inbound)
+		buffer := make([]byte, 262144)
+		read, readErr := stage.Read(buffer)
+
+		Convey("It should stop instead of resolving the tie by category order", func() {
+			So(writeErr, ShouldBeNil)
+			So(read, ShouldEqual, 0)
+			So(readErr, ShouldEqual, io.EOF)
+		})
+	})
+}
+
 func BenchmarkCausalStoryRead(b *testing.B) {
 	stage := equation.NewCausalStory(equation.CausalStoryConfig())
 	inbound := datura.Acquire("causal-story-bench", datura.APPJSON)

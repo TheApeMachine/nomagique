@@ -1,7 +1,7 @@
 package equation_test
 
 import (
-	"fmt"
+	"strconv"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
@@ -33,6 +33,55 @@ func TestBookflow_Read(testingTB *testing.T) {
 		Convey("It should classify loaded imbalance", func() {
 			So(int(datura.Peek[float64](outbound, "output", "category")), ShouldEqual, 1)
 			So(datura.Peek[float64](outbound, "output", "value"), ShouldBeGreaterThan, 0)
+		})
+	})
+
+	Convey("Given ask-heavy loaded depth confirmed by sell pressure", testingTB, func() {
+		stage := equation.NewBookflow(bookflowConfig())
+		err := writeFeatureStage(stage, equation.BookflowInputKeys,
+			-0.85, -0.80, -0.86, 1,
+			100, 2, 12,
+			-5.0,
+			4, 4, 4,
+			-0.80, -0.82, -0.84, -0.86,
+			-0.78, -0.79, -0.80, -0.81,
+			-0.80, -0.82, -0.83, -0.84,
+		)
+
+		So(err, ShouldBeNil)
+
+		outbound, err := readStageOutput(stage)
+
+		So(err, ShouldBeNil)
+
+		Convey("It should boost loaded score in the same direction", func() {
+			So(int(datura.Peek[float64](outbound, "output", "category")), ShouldEqual, 1)
+			So(datura.Peek[float64](outbound, "output", "loadedScore"), ShouldBeGreaterThan, 0.85)
+		})
+	})
+
+	Convey("Given loaded depth opposed by trade pressure", testingTB, func() {
+		stage := equation.NewBookflow(bookflowConfig())
+		err := writeFeatureStage(stage, equation.BookflowInputKeys,
+			0.85, 0.80, 0.86, 1,
+			100, 2, 12,
+			-5.0,
+			4, 4, 4,
+			0.80, 0.82, 0.84, 0.86,
+			0.78, 0.79, 0.80, 0.81,
+			0.80, 0.82, 0.83, 0.84,
+		)
+
+		So(err, ShouldBeNil)
+
+		outbound, err := readStageOutput(stage)
+
+		So(err, ShouldBeNil)
+
+		Convey("It should damp loaded score without erasing the category evidence", func() {
+			So(int(datura.Peek[float64](outbound, "output", "category")), ShouldEqual, 1)
+			So(datura.Peek[float64](outbound, "output", "loadedScore"), ShouldBeGreaterThan, 0)
+			So(datura.Peek[float64](outbound, "output", "loadedScore"), ShouldBeLessThan, 0.85)
 		})
 	})
 
@@ -144,15 +193,24 @@ func TestBookflow_ReadClassifiedCategories(testingTB *testing.T) {
 
 		assertHighestProbability := func(outbound *datura.Artifact, category int) {
 			probabilities := datura.Peek[[]float64](outbound, "output", "probabilities")
+			distribution := datura.Peek[map[string]any](outbound, "output", "distribution")
 			So(len(probabilities), ShouldEqual, 4)
+			So(len(distribution), ShouldEqual, 4)
 
 			selected := probabilities[category-1]
+			total := 0.0
+
 			for index, probability := range probabilities {
-				So(datura.Peek[float64](outbound, "output", "category."+fmt.Sprint(index+1)), ShouldAlmostEqual, probability, 1e-12)
+				total += probability
+				mass, ok := distribution[strconv.Itoa(index+1)].(float64)
+				So(ok, ShouldBeTrue)
+				So(mass, ShouldAlmostEqual, probability, 1e-12)
 				if index != category-1 {
 					So(selected, ShouldBeGreaterThan, probability)
 				}
 			}
+
+			So(total, ShouldAlmostEqual, 1.0, 1e-12)
 		}
 
 		cases := []bookflowCase{

@@ -41,6 +41,24 @@ func TestConviction_Read(testingTB *testing.T) {
 		})
 	})
 
+	Convey("Given broad positive breadth without leadership or change", testingTB, func() {
+		stage := equation.NewConviction(equation.ConvictionConfig())
+		err := writeFeatureStage(stage, equation.ConvictionInputKeys, 1.0, 0, 0.5, 0)
+
+		So(err, ShouldBeNil)
+
+		outbound, err := readStageOutput(stage)
+
+		So(err, ShouldBeNil)
+
+		Convey("It should emit zero evidence instead of maximum slump strength", func() {
+			So(int(datura.Peek[float64](outbound, "output", "category")), ShouldEqual, 3)
+			So(datura.Peek[float64](outbound, "output", "slumpScore"), ShouldEqual, 0)
+			So(datura.Peek[float64](outbound, "output", "value"), ShouldEqual, 0)
+			So(datura.Peek[float64](outbound, "output", "strength"), ShouldEqual, 0)
+		})
+	})
+
 	Convey("Given a local leader in a weak market", testingTB, func() {
 		stage := equation.NewConviction(equation.ConvictionConfig())
 		err := writeFeatureStage(stage, equation.ConvictionInputKeys, 0.33, 4.0, 0.5, 1, 4.0)

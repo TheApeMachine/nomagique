@@ -32,6 +32,33 @@ func TestTransitionMatrixSurprise(testingTB *testing.T) {
 	})
 }
 
+func TestKLDivergence(testingTB *testing.T) {
+	Convey("Given two finite probability distributions", testingTB, func() {
+		got, err := klDivergence(
+			[]float64{0.5, 0.5},
+			[]float64{0.25, 0.75},
+		)
+
+		expected := 0.5*math.Log(0.5/0.25) + 0.5*math.Log(0.5/0.75)
+
+		Convey("It should compute the KL divergence directly", func() {
+			So(err, ShouldBeNil)
+			So(got, ShouldAlmostEqual, expected)
+		})
+	})
+
+	Convey("Given mismatched probability distributions", testingTB, func() {
+		_, err := klDivergence(
+			[]float64{0.5, 0.5},
+			[]float64{1.0},
+		)
+
+		Convey("It should reject the inputs", func() {
+			So(err, ShouldNotBeNil)
+		})
+	})
+}
+
 func TestTransitionMatrixPadObserved(testingTB *testing.T) {
 	Convey("Given a four-class distribution", testingTB, func() {
 		matrix := NewTransitionMatrix(5, 0.1)

@@ -20,4 +20,17 @@ func TestFitGatesFromHistory(testingTB *testing.T) {
 			So(gates.SaturationRadius, ShouldBeGreaterThan, gates.FrenzyAsymmetry)
 		})
 	})
+
+	Convey("Given enough no-excitation history", testingTB, func() {
+		spectralRadii := make([]float64, 14)
+		asymmetries := make([]float64, 14)
+
+		gates, gatesReady := FitGatesFromHistory(spectralRadii, asymmetries)
+
+		Convey("It should use physical bounds as gates", func() {
+			So(gatesReady, ShouldBeTrue)
+			So(gates.SaturationRadius, ShouldEqual, criticalBranch)
+			So(gates.FrenzyAsymmetry, ShouldEqual, 1)
+		})
+	})
 }

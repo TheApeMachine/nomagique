@@ -1,9 +1,9 @@
 package learning
 
 import (
-	"fmt"
 	"io"
 	"math"
+	"strconv"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
@@ -392,15 +392,24 @@ func TestLogitScoresReadClassifiedCategories(testingTB *testing.T) {
 
 		assertHighestProbability := func(outbound *datura.Artifact, category int) {
 			probabilities := datura.Peek[[]float64](outbound, "output", "probabilities")
+			distribution := datura.Peek[map[string]any](outbound, "output", "distribution")
 			So(len(probabilities), ShouldEqual, 4)
+			So(len(distribution), ShouldEqual, 4)
 
 			selected := probabilities[category-1]
+			total := 0.0
+
 			for index, probability := range probabilities {
-				So(datura.Peek[float64](outbound, "output", "category."+fmt.Sprint(index+1)), ShouldAlmostEqual, probability, 1e-12)
+				total += probability
+				mass, ok := distribution[strconv.Itoa(index+1)].(float64)
+				So(ok, ShouldBeTrue)
+				So(mass, ShouldAlmostEqual, probability, 1e-12)
 				if index != category-1 {
 					So(selected, ShouldBeGreaterThan, probability)
 				}
 			}
+
+			So(total, ShouldAlmostEqual, 1.0, 1e-12)
 		}
 
 		cases := []logitCase{

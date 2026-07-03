@@ -45,7 +45,8 @@ func TestDepth_Read(testingTB *testing.T) {
 
 		Convey("It should classify extreme scarcity", func() {
 			So(int(datura.Peek[float64](outbound, "output", "category")), ShouldEqual, 1)
-			So(datura.Peek[float64](outbound, "output", "scarcityScore"), ShouldEqual, 1)
+			So(datura.Peek[float64](outbound, "output", "scarcityScore"), ShouldBeGreaterThan, 0)
+			So(datura.Peek[float64](outbound, "output", "scarcityScore"), ShouldBeLessThan, 1)
 		})
 	})
 

@@ -45,9 +45,47 @@ func TestRankRead(testingTB *testing.T) {
 
 		got := datura.Peek[float64](artifact, "output", "value")
 
-		Convey("It should return a probability in the unit interval", func() {
-			So(got, ShouldBeGreaterThan, 0)
-			So(got, ShouldBeLessThan, 1)
+		Convey("It should return the empirical probability at or below the sample", func() {
+			So(got, ShouldEqual, 0.5)
+		})
+	})
+
+	Convey("Given sub-unit empirical rank history", testingTB, func() {
+		empirical := NewRank(rankConfig("rank-config"))
+		artifact := datura.Acquire("test", datura.APPJSON)
+
+		for _, sample := range []float64{0.1, 0.2, 0.15} {
+			scalarWire(artifact, "sample", sample)
+			err := nomagique.RoundTripArtifact(artifact, empirical)
+
+			So(err, ShouldBeNil)
+		}
+
+		value := datura.Peek[float64](artifact, "output", "value")
+		count := datura.Peek[float64](empirical.artifact, "output", "count")
+		history := datura.Peek[[]float64](empirical.artifact, "history")
+
+		Convey("It should retain observations by count instead of value span", func() {
+			So(value, ShouldAlmostEqual, 2.0/3.0)
+			So(count, ShouldEqual, 3)
+			So(len(history), ShouldEqual, 3)
+		})
+	})
+
+	Convey("Given equal consecutive scalar samples", testingTB, func() {
+		empirical := NewRank(rankConfig("rank-config"))
+		artifact := datura.Acquire("test", datura.APPJSON)
+
+		for _, sample := range []float64{10, 10} {
+			scalarWire(artifact, "sample", sample)
+			err := nomagique.RoundTripArtifact(artifact, empirical)
+
+			So(err, ShouldBeNil)
+		}
+
+		Convey("It should still advance the observation count", func() {
+			So(datura.Peek[float64](empirical.artifact, "output", "count"), ShouldEqual, 2)
+			So(datura.Peek[float64](artifact, "output", "value"), ShouldEqual, 1)
 		})
 	})
 

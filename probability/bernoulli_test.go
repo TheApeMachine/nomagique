@@ -87,6 +87,44 @@ func TestBernoulliRead(testingTB *testing.T) {
 		})
 	})
 
+	Convey("Given repeated equal outcomes", testingTB, func() {
+		posterior := NewBernoulli(bernoulliConfig("bernoulli-config"))
+		artifact := datura.Acquire("test", datura.APPJSON)
+
+		for _, sample := range []float64{1, 1} {
+			scalarWire(artifact, "sample", sample)
+			err := nomagique.RoundTripArtifact(artifact, posterior)
+
+			So(err, ShouldBeNil)
+		}
+
+		Convey("It should update the Beta posterior once per observation", func() {
+			So(datura.Peek[float64](posterior.artifact, "output", "alpha"), ShouldEqual, 3)
+			So(datura.Peek[float64](posterior.artifact, "output", "beta"), ShouldEqual, 1)
+			So(datura.Peek[float64](posterior.artifact, "output", "count"), ShouldEqual, 2)
+			So(datura.Peek[float64](artifact, "output", "value"), ShouldEqual, 0.75)
+		})
+	})
+
+	Convey("Given repeated equal prediction errors", testingTB, func() {
+		posterior := NewBernoulli(bernoulliPairConfig("bernoulli-config"))
+		artifact := datura.Acquire("test", datura.APPJSON)
+
+		for range 2 {
+			pairWire(artifact, "sample", "paired", 10, 10)
+			err := nomagique.RoundTripArtifact(artifact, posterior)
+
+			So(err, ShouldBeNil)
+		}
+
+		Convey("It should update paired observations without span errors", func() {
+			So(datura.Peek[float64](posterior.artifact, "output", "alpha"), ShouldEqual, 3)
+			So(datura.Peek[float64](posterior.artifact, "output", "beta"), ShouldEqual, 1)
+			So(datura.Peek[float64](posterior.artifact, "output", "count"), ShouldEqual, 2)
+			So(datura.Peek[float64](artifact, "output", "value"), ShouldEqual, 0.75)
+		})
+	})
+
 	Convey("Given an invalid outcome", testingTB, func() {
 		posterior := NewBernoulli(bernoulliConfig("bernoulli-config"))
 		artifact := scalarWire(datura.Acquire("test", datura.APPJSON), "sample", 2)

@@ -146,8 +146,13 @@ func MethodOfMoments(
 		params.AlphaYX = covariance * beta / (2 * meanX)
 	}
 
-	params.MuX = meanX * (1 - params.AlphaXX/beta)
-	params.MuY = meanY * (1 - params.AlphaYY/beta)
+	branchXX := params.AlphaXX / beta
+	branchXY := params.AlphaXY / beta
+	branchYX := params.AlphaYX / beta
+	branchYY := params.AlphaYY / beta
+
+	params.MuX = meanX - branchXX*meanX - branchXY*meanY
+	params.MuY = meanY - branchYX*meanX - branchYY*meanY
 
 	if params.MuX <= 0 || params.MuY <= 0 || !params.Stable() {
 		return BivariateParams{}, false

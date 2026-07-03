@@ -45,16 +45,16 @@ func TestBivariateFit_LogLikelihoodGradient(testingTB *testing.T) {
 	})
 }
 
-func TestKernelSupportBetaDerivative(testingTB *testing.T) {
+func TestKernelIntegralSupportBetaDerivative(testingTB *testing.T) {
 	Convey("Given one buy event before horizon", testingTB, func() {
 		start := time.Unix(0, 0)
 		stream := NewArrivalStream([]time.Time{start}, nil)
 		horizon := start.Add(2 * time.Second)
 
-		derivative := kernelSupportBetaDerivative(stream.buy, horizon, 1)
+		derivative := kernelIntegralSupportBetaDerivative(stream.buy, horizon, 1)
 
-		Convey("It should be positive", func() {
-			So(derivative, ShouldBeGreaterThan, 0)
+		Convey("It should match d/dbeta of one minus exponential survival", func() {
+			So(derivative, ShouldAlmostEqual, 2*math.Exp(-2), 1e-12)
 		})
 	})
 }

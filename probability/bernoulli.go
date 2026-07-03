@@ -132,9 +132,14 @@ func (bernoulli *Bernoulli) Read(payload []byte) (int, error) {
 	prev := datura.Peek[float64](bernoulli.artifact, "output", "prev")
 	minimum := datura.Peek[float64](bernoulli.artifact, "output", "min")
 	maximum := datura.Peek[float64](bernoulli.artifact, "output", "max")
-	rate := datura.Peek[float64](bernoulli.artifact, "output", "rate")
+	rate := 1.0
 	count := int(datura.Peek[float64](bernoulli.artifact, "output", "count"))
 	pairedKey := datura.Peek[string](bernoulli.artifact, "pairedKey")
+
+	if alpha+betaParam == 0 {
+		alpha = 1
+		betaParam = 1
+	}
 
 	if pairedKey != "" {
 		var paired float64
@@ -193,42 +198,18 @@ func (bernoulli *Bernoulli) Read(payload []byte) (int, error) {
 		tracking := actual - predicted
 
 		if count == 0 {
-			alpha = 1 + success
-			betaParam = 1 + (1 - success)
 			prev = predicted
 			minimum = tracking
 			maximum = tracking
-			count = 1
-		}
-
-		if count > 1 {
+		} else {
 			minimum = math.Min(minimum, tracking)
 			maximum = math.Max(maximum, tracking)
-			count++
 		}
 
-		if count == 1 && tracking != minimum {
-			minimum = math.Min(minimum, tracking)
-			maximum = math.Max(maximum, tracking)
-			count = 2
-		}
-
-		span := maximum - minimum
-
-		if count > 1 {
-			if span == 0 {
-				return 0, errnie.Error(errnie.Err(
-					errnie.Validation,
-					"bernoulli: sample span is zero",
-					nil,
-				))
-			}
-
-			rate = math.Abs(tracking) / span
-			prev = predicted
-			alpha += rate * success
-			betaParam += rate * (1 - success)
-		}
+		prev = predicted
+		count++
+		alpha += success
+		betaParam += 1 - success
 	}
 
 	if pairedKey == "" {
@@ -251,43 +232,18 @@ func (bernoulli *Bernoulli) Read(payload []byte) (int, error) {
 		}
 
 		if count == 0 {
-			alpha = 1 + outcome
-			betaParam = 1 + (1 - outcome)
 			prev = outcome
 			minimum = outcome
 			maximum = outcome
-			count = 1
-		}
-
-		if count > 1 {
+		} else {
 			minimum = math.Min(minimum, outcome)
 			maximum = math.Max(maximum, outcome)
-			count++
 		}
 
-		if count == 1 && outcome != minimum {
-			minimum = math.Min(minimum, outcome)
-			maximum = math.Max(maximum, outcome)
-			count = 2
-		}
-
-		span := maximum - minimum
-
-		if count > 1 {
-			if span == 0 {
-				return 0, errnie.Error(errnie.Err(
-					errnie.Validation,
-					"bernoulli: sample span is zero",
-					nil,
-				))
-			}
-
-			movement := outcome - prev
-			rate = math.Abs(movement) / span
-			prev = outcome
-			alpha += rate * outcome
-			betaParam += rate * (1 - outcome)
-		}
+		prev = outcome
+		count++
+		alpha += outcome
+		betaParam += 1 - outcome
 	}
 
 	if alpha+betaParam == 0 {

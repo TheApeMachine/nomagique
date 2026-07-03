@@ -146,7 +146,7 @@ func evaluateBookflow(state *datura.Artifact, inputKeys []string) bookflowOutcom
 	if loaded {
 		loadedScore = math.Abs(weighted)
 
-		pressureScale := bookflowLoadedPressureScale(tradePressure, weightedThreshold)
+		pressureScale := bookflowLoadedPressureScale(weighted, tradePressure, weightedThreshold)
 
 		if pressureScale > 0 {
 			loadedScore *= pressureScale
@@ -263,20 +263,21 @@ func bookflowThinningGate(weightedHistory, flatHistory []float64) float64 {
 	return flatMedian / weightedMedian
 }
 
-func bookflowLoadedPressureScale(tradePressure, weightedThreshold float64) float64 {
+func bookflowLoadedPressureScale(weighted, tradePressure, weightedThreshold float64) float64 {
 	if weightedThreshold <= 0 {
 		return 1
 	}
 
 	confirmWeight := math.Abs(tradePressure) / (math.Abs(tradePressure) + weightedThreshold)
-
-	scale := 1 + confirmWeight*tradePressure
-
-	if scale < 0 {
-		return 0
+	if weighted*tradePressure > 0 {
+		return 1 + confirmWeight
 	}
 
-	return scale
+	if weighted*tradePressure < 0 {
+		return 1 - confirmWeight
+	}
+
+	return 1
 }
 
 func bookflowIsSpoofSkew(

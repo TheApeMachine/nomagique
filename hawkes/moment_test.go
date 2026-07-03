@@ -1,10 +1,12 @@
 package hawkes
 
 import (
+	"math"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/nomagique/equation"
+	"gonum.org/v1/gonum/stat"
 )
 
 func TestBivariateParams_MeanIntensity(testingTB *testing.T) {
@@ -38,6 +40,31 @@ func TestMethodOfMoments(testingTB *testing.T) {
 			So(params.Stable(), ShouldBeTrue)
 			So(params.MuX, ShouldBeGreaterThan, 0)
 			So(params.MuY, ShouldBeGreaterThan, 0)
+		})
+	})
+}
+
+func TestMethodOfMomentsStationarySeedIncludesCrossExcitation(testingTB *testing.T) {
+	Convey("Given correlated x and y count streams", testingTB, func() {
+		x := []float64{1.0, 1.2, 0.9, 1.1, 1.0, 1.15}
+		y := []float64{0.8, 1.1, 0.9, 1.2, 1.0, 1.05}
+		beta := 10.0
+		params, ok := MethodOfMoments(x, y, nil, beta)
+
+		Convey("It should solve mu from the full bivariate branching matrix", func() {
+			So(ok, ShouldBeTrue)
+
+			meanX := stat.Mean(x, nil)
+			meanY := stat.Mean(y, nil)
+			branchXX := params.AlphaXX / beta
+			branchXY := params.AlphaXY / beta
+			branchYX := params.AlphaYX / beta
+			branchYY := params.AlphaYY / beta
+
+			So(params.MuX, ShouldAlmostEqual, meanX-branchXX*meanX-branchXY*meanY, 1e-12)
+			So(params.MuY, ShouldAlmostEqual, meanY-branchYX*meanX-branchYY*meanY, 1e-12)
+			So(math.Abs(branchXY*meanY), ShouldBeGreaterThan, 0)
+			So(math.Abs(branchYX*meanX), ShouldBeGreaterThan, 0)
 		})
 	})
 }

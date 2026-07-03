@@ -219,50 +219,7 @@ func (softmax *Softmax) raw(scores []float64) ([]float64, error) {
 }
 
 func (softmax *Softmax) normalized(scores []float64) ([]float64, error) {
-	if len(scores) == 1 {
-		return softmax.uniform(len(scores)), nil
-	}
-
-	mean := 0.0
-
-	for _, score := range scores {
-		mean += score
-	}
-
-	mean /= float64(len(scores))
-
-	variance := 0.0
-
-	for _, score := range scores {
-		deviation := score - mean
-		variance += deviation * deviation
-	}
-
-	variance /= float64(len(scores) - 1)
-	stddev := math.Sqrt(variance)
-
-	if stddev <= 0 {
-		return softmax.uniform(len(scores)), nil
-	}
-
-	standardized := make([]float64, len(scores))
-
-	for index, score := range scores {
-		standardized[index] = (score - mean) / stddev
-	}
-
-	return softmax.raw(standardized)
-}
-
-func (softmax *Softmax) uniform(count int) []float64 {
-	probabilities := make([]float64, count)
-	share := 1.0 / float64(count)
-
-	for index := range probabilities {
-		probabilities[index] = share
-	}
-
-	return probabilities
+	return SoftmaxScoresNormalized(scores)
 }
 
 var _ io.ReadWriteCloser = (*Softmax)(nil)

@@ -8,7 +8,7 @@ import (
 )
 
 /*
-Rank tracks P(history <= current sample) over a span-derived window.
+Rank tracks P(history <= current sample) over retained observations.
 The constructor artifact holds config; Write buffers inbound wire on its payload.
 */
 type Rank struct {
@@ -132,70 +132,27 @@ func (rank *Rank) Read(payload []byte) (int, error) {
 	history := datura.Peek[[]float64](rank.artifact, "history")
 	minimum := datura.Peek[float64](rank.artifact, "output", "min")
 	maximum := datura.Peek[float64](rank.artifact, "output", "max")
-	head := int(datura.Peek[float64](rank.artifact, "output", "head"))
-	count := int(datura.Peek[float64](rank.artifact, "output", "count"))
-	value := 1.0
-	extendHistory := count > 1
 
-	if count == 0 {
+	if len(history) == 0 {
 		minimum = sample
 		maximum = sample
-		history = make([]float64, 1)
-		history[0] = sample
-		head = 0
-		count = 1
-		value = 1
-	}
-
-	if count == 1 && sample != minimum {
-		extendHistory = true
-	}
-
-	if count > 1 {
+	} else {
 		minimum = math.Min(minimum, sample)
 		maximum = math.Max(maximum, sample)
 	}
 
-	if count == 1 && sample != minimum {
-		minimum = math.Min(minimum, sample)
-		maximum = math.Max(maximum, sample)
+	history = append(history, sample)
+	count := len(history)
+	head := count - 1
+	atOrBelow := 0
+
+	for _, observed := range history {
+		if observed <= sample {
+			atOrBelow++
+		}
 	}
 
-	if extendHistory {
-		span := maximum - minimum
-		capacity := max(1, int(span)+1)
-
-		if len(history) < capacity {
-			next := make([]float64, capacity)
-
-			for index := 0; index < count; index++ {
-				source := (head - index + len(history)) % len(history)
-				next[index] = history[source]
-			}
-
-			head = count - 1
-			history = next
-		}
-
-		head = (head + 1) % len(history)
-		history[head] = sample
-
-		if count < len(history) {
-			count++
-		}
-
-		atOrBelow := 0
-
-		for index := 0; index < count; index++ {
-			historyIndex := (head - index + len(history)) % len(history)
-
-			if history[historyIndex] <= sample {
-				atOrBelow++
-			}
-		}
-
-		value = float64(atOrBelow) / float64(count)
-	}
+	value := float64(atOrBelow) / float64(count)
 
 	rank.artifact.Poke(history, "history")
 	rank.artifact.Poke(sample, "output", "prev")

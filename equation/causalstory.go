@@ -141,18 +141,22 @@ func (causalStory *CausalStory) Read(payload []byte) (int, error) {
 		return 0, io.EOF
 	}
 
-	category := 1
+	category := 0
+	winners := 0
 
-	if betaScore >= best {
-		category = 2
+	for index, score := range []float64{alphaScore, betaScore, shockScore, noiseScore} {
+		if score != best {
+			continue
+		}
+
+		winners++
+		category = index + 1
 	}
 
-	if shockScore >= best {
-		category = 3
-	}
+	if winners != 1 {
+		state.Release()
 
-	if noiseScore >= best {
-		category = 4
+		return 0, io.EOF
 	}
 
 	return emitOutput(state, payload, datura.Map[float64]{

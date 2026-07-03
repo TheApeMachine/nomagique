@@ -49,9 +49,9 @@ func (fit BivariateFit) LogLikelihoodGradient(
 		return math.Inf(-1), gradient, false
 	}
 
-	buySupport, sellSupport := stream.kernelSupport(horizon, fit.Beta)
-	buySupportBeta := kernelSupportBetaDerivative(stream.buy, horizon, fit.Beta)
-	sellSupportBeta := kernelSupportBetaDerivative(stream.sell, horizon, fit.Beta)
+	buySupport, sellSupport := stream.kernelIntegralSupport(horizon, fit.Beta)
+	buySupportBeta := kernelIntegralSupportBetaDerivative(stream.buy, horizon, fit.Beta)
+	sellSupportBeta := kernelIntegralSupportBetaDerivative(stream.sell, horizon, fit.Beta)
 	beta := fit.Beta
 
 	compensator := fit.MuX*span +
@@ -165,7 +165,7 @@ func (fit BivariateFit) eventLogLikelihoodGradient(
 	return result
 }
 
-func kernelSupportBetaDerivative(
+func kernelIntegralSupportBetaDerivative(
 	events timeline.Timeline,
 	horizon time.Time,
 	beta float64,

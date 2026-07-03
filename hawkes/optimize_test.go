@@ -71,6 +71,30 @@ func TestFitFromLogParams(testingTB *testing.T) {
 	})
 }
 
+func TestFitContext_PoissonFit(testingTB *testing.T) {
+	Convey("Given fit context with side counts and span", testingTB, func() {
+		context := FitContext{
+			SpanSec:      10,
+			MedianGapSec: 0.5,
+			EventsX:      7,
+			EventsY:      3,
+		}
+
+		fit := context.PoissonFit()
+
+		Convey("It should derive a valid no-excitation baseline", func() {
+			So(fit.Valid(), ShouldBeTrue)
+			So(fit.MuX, ShouldAlmostEqual, 0.7, 1e-12)
+			So(fit.MuY, ShouldAlmostEqual, 0.3, 1e-12)
+			So(fit.AlphaXX, ShouldEqual, 0)
+			So(fit.AlphaXY, ShouldEqual, 0)
+			So(fit.AlphaYX, ShouldEqual, 0)
+			So(fit.AlphaYY, ShouldEqual, 0)
+			So(fit.SpectralRadius, ShouldEqual, 0)
+		})
+	})
+}
+
 func TestLogParamsFromFit(testingTB *testing.T) {
 	Convey("Given a fitted model", testingTB, func() {
 		fit := BivariateFit{

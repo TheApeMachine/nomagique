@@ -65,7 +65,7 @@ func (matrix *TransitionMatrix) Surprise(observed []float64) (float64, error) {
 		expected[index] = count / rowSum
 	}
 
-	return klDivergence(observed, expected, 0, 0)
+	return klDivergence(observed, expected)
 }
 
 /*
@@ -135,47 +135,8 @@ func (matrix *TransitionMatrix) Reset() {
 	matrix.lastCategory = 0
 }
 
-func klDivergence(
-	observed, expected []float64, expectedSum, floor float64,
-) (float64, error) {
-	for _, value := range observed {
-		if math.IsNaN(value) || math.IsInf(value, 0) {
-			return 0, errnie.Error(errnie.Err(
-				errnie.Validation,
-				"unable to compute KL divergence",
-				KLError(KLErrorNonFiniteObserved),
-			))
-		}
-	}
-
-	for _, value := range expected {
-		if math.IsNaN(value) || math.IsInf(value, 0) {
-			return 0, errnie.Error(errnie.Err(
-				errnie.Validation,
-				"unable to compute KL divergence",
-				KLError(KLErrorNonFiniteExpected),
-			))
-		}
-	}
-
-	if expectedSum <= 0 || math.IsNaN(expectedSum) || math.IsInf(expectedSum, 0) {
-		for index := range expected {
-			expectedSum += expected[index]
-		}
-	}
-
-	width := max(len(observed), len(expected))
-	probabilityFloor := klProbabilityFloor(observed, expected, width, floor)
-
-	if probabilityFloor <= 0 {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"unable to compute KL divergence",
-			KLError(KLErrorNonFiniteExpected),
-		))
-	}
-
-	if expectedSum <= 0 {
+func klDivergence(observed, expected []float64) (float64, error) {
+	if len(observed) == 0 || len(observed) != len(expected) {
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"unable to compute KL divergence",
@@ -185,16 +146,16 @@ func klDivergence(
 
 	observedSum := 0.0
 
-	for index := range observed {
-		observedSum += observed[index]
-	}
+	for _, value := range observed {
+		if value < 0 || math.IsNaN(value) || math.IsInf(value, 0) {
+			return 0, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"unable to compute KL divergence",
+				KLError(KLErrorNonFiniteObserved),
+			))
+		}
 
-	if math.IsNaN(observedSum) || math.IsInf(observedSum, 0) {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"unable to compute KL divergence",
-			KLError(KLErrorNonFiniteObservedSum),
-		))
+		observedSum += value
 	}
 
 	if observedSum <= 0 {
@@ -205,56 +166,34 @@ func klDivergence(
 		))
 	}
 
-	observedProbabilities := make([]float64, width)
-	expectedProbabilities := make([]float64, width)
+	expectedSum := 0.0
 
-	for index := range width {
-		observedProbability := probabilityFloor
-
-		if index < len(observed) {
-			observedProbability = observed[index] / observedSum
+	for _, value := range expected {
+		if value < 0 || math.IsNaN(value) || math.IsInf(value, 0) {
+			return 0, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"unable to compute KL divergence",
+				KLError(KLErrorNonFiniteExpected),
+			))
 		}
 
-		if observedProbability < probabilityFloor {
-			observedProbability = probabilityFloor
-		}
-
-		observedProbabilities[index] = observedProbability
-
-		expectedMass := probabilityFloor
-
-		if index < len(expected) {
-			expectedMass = expected[index]
-		}
-
-		expectedProbability := expectedMass / expectedSum
-
-		if expectedProbability < probabilityFloor {
-			expectedProbability = probabilityFloor
-		}
-
-		expectedProbabilities[index] = expectedProbability
+		expectedSum += value
 	}
 
-	observedTotal := 0.0
-	expectedTotal := 0.0
-
-	for index := range width {
-		observedTotal += observedProbabilities[index]
-		expectedTotal += expectedProbabilities[index]
-	}
-
-	if observedTotal <= 0 || expectedTotal <= 0 {
+	if expectedSum <= 0 {
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"unable to compute KL divergence",
-			KLError(KLErrorNonFiniteResult),
+			KLError(KLErrorNonFiniteExpected),
 		))
 	}
 
-	for index := range width {
-		observedProbabilities[index] /= observedTotal
-		expectedProbabilities[index] /= expectedTotal
+	observedProbabilities := make([]float64, len(observed))
+	expectedProbabilities := make([]float64, len(expected))
+
+	for index := range observed {
+		observedProbabilities[index] = observed[index] / observedSum
+		expectedProbabilities[index] = expected[index] / expectedSum
 	}
 
 	divergence := stat.KullbackLeibler(observedProbabilities, expectedProbabilities)
@@ -268,34 +207,6 @@ func klDivergence(
 	}
 
 	return divergence, nil
-}
-
-func klProbabilityFloor(
-	observed, expected []float64, width int, floor float64,
-) float64 {
-	if floor > 0 {
-		return floor
-	}
-
-	observedSum := 0.0
-
-	for index := range observed {
-		observedSum += observed[index]
-	}
-
-	expectedSum := 0.0
-
-	for index := range expected {
-		expectedSum += expected[index]
-	}
-
-	scale := math.Max(observedSum, expectedSum) / float64(width)
-
-	if scale <= 0 || math.IsNaN(scale) || math.IsInf(scale, 0) {
-		return 0
-	}
-
-	return math.Nextafter(0, scale)
 }
 
 type KLErrorType string

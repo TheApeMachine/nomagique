@@ -24,7 +24,7 @@ func TestIntensityAtAccumulatesDecayedImpulses(testingTB *testing.T) {
 	})
 }
 
-func TestKernelSupportIncreasesWithHorizon(testingTB *testing.T) {
+func TestKernelSupport(testingTB *testing.T) {
 	Convey("Given one event and two horizons", testingTB, func() {
 		start := time.Unix(0, 0)
 		events := timeline.New([]time.Time{start})
@@ -33,6 +33,21 @@ func TestKernelSupportIncreasesWithHorizon(testingTB *testing.T) {
 
 		Convey("It should weight past events less as the horizon moves farther away", func() {
 			So(long, ShouldBeLessThan, short)
+		})
+	})
+}
+
+func TestKernelIntegralSupport(testingTB *testing.T) {
+	Convey("Given one event and two horizons", testingTB, func() {
+		start := time.Unix(0, 0)
+		events := timeline.New([]time.Time{start})
+		short := KernelIntegralSupport(events, start.Add(time.Second), 1)
+		long := KernelIntegralSupport(events, start.Add(3*time.Second), 1)
+
+		Convey("It should integrate more kernel mass as horizon expands", func() {
+			So(short, ShouldAlmostEqual, 1-math.Exp(-1), 1e-12)
+			So(long, ShouldAlmostEqual, 1-math.Exp(-3), 1e-12)
+			So(long, ShouldBeGreaterThan, short)
 		})
 	})
 }

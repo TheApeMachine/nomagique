@@ -89,11 +89,11 @@ func (zipStage *Zip) Read(p []byte) (int, error) {
 }
 
 func (zipStage *Zip) Write(p []byte) (int, error) {
-	preserved := zipStage.preserveStreams()
+	preserved := preserveStreams(zipStage.artifact)
 	zipStage.artifact.WithPayload(p)
 
 	if datura.Peek[float64](zipStage.artifact, "streams", "nodeCount") <= 0 {
-		zipStage.restoreStreams(preserved)
+		restoreStreams(zipStage.artifact, preserved)
 	}
 
 	return len(p), nil
@@ -101,39 +101,6 @@ func (zipStage *Zip) Write(p []byte) (int, error) {
 
 func (zipStage *Zip) Close() error {
 	return nil
-}
-
-type preservedStreams struct {
-	nodeCount float64
-	streams   map[string][]float64
-}
-
-func (zipStage *Zip) preserveStreams() preservedStreams {
-	nodeCount := datura.Peek[float64](zipStage.artifact, "streams", "nodeCount")
-	streamCount := int(nodeCount)
-	preserved := preservedStreams{
-		nodeCount: nodeCount,
-		streams:   make(map[string][]float64, streamCount),
-	}
-
-	for nodeIndex := range streamCount {
-		key := strconv.Itoa(nodeIndex)
-		preserved.streams[key] = datura.Peek[[]float64](zipStage.artifact, "streams", key)
-	}
-
-	return preserved
-}
-
-func (zipStage *Zip) restoreStreams(preserved preservedStreams) {
-	if preserved.nodeCount <= 0 && len(preserved.streams) == 0 {
-		return
-	}
-
-	zipStage.artifact.Poke(preserved.nodeCount, "streams", "nodeCount")
-
-	for key, stream := range preserved.streams {
-		zipStage.artifact.Poke(stream, "streams", key)
-	}
 }
 
 func (zipStage *Zip) streamsFromPayload(state *datura.Artifact) ([][]float64, bool) {

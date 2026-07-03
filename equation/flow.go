@@ -5,6 +5,7 @@ import (
 	"math"
 
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/nomagique/statistic"
 )
 
 /*
@@ -178,38 +179,12 @@ func medianAbsoluteMove(prices []float64) float64 {
 		absoluteMoves[index] = math.Abs(move)
 	}
 
-	return medianOf(absoluteMoves)
-}
-
-func medianOf(values []float64) float64 {
-	if len(values) == 0 {
+	median, ok := statistic.MedianOf(absoluteMoves)
+	if !ok {
 		return 0
 	}
 
-	sorted := append([]float64(nil), values...)
-	sortFloat64s(sorted)
-
-	mid := len(sorted) / 2
-
-	if len(sorted)%2 == 1 {
-		return sorted[mid]
-	}
-
-	return (sorted[mid-1] + sorted[mid]) / 2
-}
-
-func sortFloat64s(values []float64) {
-	for left := 1; left < len(values); left++ {
-		pivot := values[left]
-		right := left - 1
-
-		for right >= 0 && values[right] > pivot {
-			values[right+1] = values[right]
-			right--
-		}
-
-		values[right+1] = pivot
-	}
+	return median
 }
 
 func priceMoves(prices []float64) []float64 {

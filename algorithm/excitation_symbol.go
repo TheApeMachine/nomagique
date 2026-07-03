@@ -286,7 +286,7 @@ func (symbol *excitationSymbol) rawBaseStep(sample float64) float64 {
 }
 
 func (symbol *excitationSymbol) recordFitGates(spectralRadius, asymmetry float64) {
-	if spectralRadius <= 0 {
+	if spectralRadius < 0 || math.IsNaN(spectralRadius) || math.IsInf(spectralRadius, 0) {
 		return
 	}
 

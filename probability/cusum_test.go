@@ -29,15 +29,36 @@ func TestCUSUMRead(testingTB *testing.T) {
 		})
 	})
 
-	Convey("Given a first sample with zero span", testingTB, func() {
+	Convey("Given a first sample", testingTB, func() {
 		changeSum := NewCUSUM(cusumConfig("cusum-config"))
 		artifact := datura.Acquire("test", datura.APPJSON)
 
 		scalarWire(artifact, "sample", 10)
 		err := nomagique.RoundTripArtifact(artifact, changeSum)
 
-		Convey("It should return a span error", func() {
-			So(err, ShouldNotBeNil)
+		Convey("It should emit zero change evidence", func() {
+			So(err, ShouldBeNil)
+			So(datura.Peek[float64](artifact, "output", "value"), ShouldEqual, 0)
+			So(datura.Peek[float64](changeSum.artifact, "output", "count"), ShouldEqual, 1)
+		})
+	})
+
+	Convey("Given repeated equal samples", testingTB, func() {
+		changeSum := NewCUSUM(cusumConfig("cusum-config"))
+		artifact := datura.Acquire("test", datura.APPJSON)
+
+		for _, sample := range []float64{10, 10} {
+			scalarWire(artifact, "sample", sample)
+			err := nomagique.RoundTripArtifact(artifact, changeSum)
+
+			So(err, ShouldBeNil)
+		}
+
+		Convey("It should advance count without manufacturing change evidence", func() {
+			So(datura.Peek[float64](changeSum.artifact, "output", "count"), ShouldEqual, 2)
+			So(datura.Peek[float64](changeSum.artifact, "output", "positive"), ShouldEqual, 0)
+			So(datura.Peek[float64](changeSum.artifact, "output", "negative"), ShouldEqual, 0)
+			So(datura.Peek[float64](artifact, "output", "value"), ShouldEqual, 0)
 		})
 	})
 
@@ -89,6 +110,8 @@ func TestCUSUMRead(testingTB *testing.T) {
 
 		Convey("It should match a single combined scalar", func() {
 			So(withWork, ShouldEqual, direct)
+			So(datura.Peek[float64](artifact, "output", "value"), ShouldBeGreaterThan, 0)
+			So(datura.Peek[float64](changeSum.artifact, "output", "negative"), ShouldBeGreaterThan, 0)
 		})
 	})
 

@@ -111,6 +111,32 @@ func TestDecay_Read(testingTB *testing.T) {
 		})
 	})
 
+	Convey("Given stronger mechanical decay with moderate spread widening", testingTB, func() {
+		stage := equation.NewDecay(equation.DecayConfig())
+		bidDepths := []float64{10, 10, 10, 10, 0, 0, 0, 0}
+		askDepths := []float64{10, 10, 10, 10, 10, 10, 10, 10}
+		densities := []float64{20, 20, 20, 20, 20, 20, 20, 20}
+		spreads := []float64{10, 10, 10, 10, 10, 10, 10, 16}
+		pressures := []float64{0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2}
+		imbalances := []float64{0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1}
+
+		err := writeFeatureStage(stage, equation.DecayInputKeys, decayPayload(
+			100, bidDepths, askDepths, densities, spreads, pressures, imbalances,
+		)...)
+
+		So(err, ShouldBeNil)
+
+		outbound, err := readStageOutput(stage)
+
+		So(err, ShouldBeNil)
+
+		Convey("It should compare category scores on the same scale", func() {
+			So(int(datura.Peek[float64](outbound, "output", "category")), ShouldEqual, 1)
+			So(datura.Peek[float64](outbound, "output", "mechanical"), ShouldBeGreaterThan,
+				datura.Peek[float64](outbound, "output", "fragile"))
+		})
+	})
+
 	Convey("Given support-side imbalance flipping against the position", testingTB, func() {
 		stage := equation.NewDecay(equation.DecayConfig())
 		bidDepths := []float64{10, 10, 10, 10, 10, 10, 10, 10}

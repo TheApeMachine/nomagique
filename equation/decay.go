@@ -153,15 +153,80 @@ func (decay *Decay) exitSide(series [][]float64, side int) (decaySideOutcome, er
 
 	widen := spreadWiden(spreads)
 	collapse := depthTrend(densities)
-	collapseMargin := componentMargin(collapse)
-	mechanicalScore := math.Max(componentMargin(thinning), collapseMargin)
+	thinningScore := 0.0
+	collapseScore := 0.0
+	fragileScore := 0.0
+	thermalScore := 0.0
+	reversalScore := 0.0
+	var err error
+
+	if thinning > 0 {
+		thinningScore, err = probability.MagnitudeMargin(thinning)
+
+		if err != nil {
+			return decaySideOutcome{}, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"equation decay: thinning margin failed",
+				err,
+			))
+		}
+	}
+
+	if collapse > 0 {
+		collapseScore, err = probability.MagnitudeMargin(collapse)
+
+		if err != nil {
+			return decaySideOutcome{}, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"equation decay: collapse margin failed",
+				err,
+			))
+		}
+	}
+
+	if widen > 0 {
+		fragileScore, err = probability.MagnitudeMargin(widen)
+
+		if err != nil {
+			return decaySideOutcome{}, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"equation decay: spread margin failed",
+				err,
+			))
+		}
+	}
+
+	if fade > 0 {
+		thermalScore, err = probability.MagnitudeMargin(fade)
+
+		if err != nil {
+			return decaySideOutcome{}, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"equation decay: pressure margin failed",
+				err,
+			))
+		}
+	}
+
+	if flip > 0 {
+		reversalScore, err = probability.MagnitudeMargin(flip)
+
+		if err != nil {
+			return decaySideOutcome{}, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"equation decay: imbalance margin failed",
+				err,
+			))
+		}
+	}
+
+	mechanicalScore := math.Max(thinningScore, collapseScore)
 
 	margins := []float64{
 		mechanicalScore,
-		componentMargin(widen),
-		componentMargin(fade),
-		componentMargin(flip),
-		collapseMargin,
+		fragileScore,
+		thermalScore,
+		reversalScore,
 	}
 
 	fusionWeights, err := probability.SoftmaxScoresNormalized(margins)
@@ -180,7 +245,7 @@ func (decay *Decay) exitSide(series [][]float64, side int) (decaySideOutcome, er
 		urgency += weight * margins[index]
 	}
 
-	category := classifyDecay(mechanicalScore, widen, fade, flip)
+	category := classifyDecay(mechanicalScore, fragileScore, thermalScore, reversalScore)
 
 	return decaySideOutcome{
 		mechanical: margins[0],
@@ -281,14 +346,6 @@ func imbalanceFlip(imbalances []float64, side int) float64 {
 	}
 
 	return 0
-}
-
-func componentMargin(value float64) float64 {
-	if value <= 0 {
-		return 0
-	}
-
-	return value / (1 + value)
 }
 
 func classifyDecay(thinning, widen, fade, flip float64) int {

@@ -85,6 +85,20 @@ func TestClassifyFit(testingTB *testing.T) {
 			wantConfGt: 0,
 		},
 		{
+			name: "organic no excitation",
+			fit: BivariateFit{
+				MuX:            1,
+				MuY:            1,
+				IntensityX:     1,
+				IntensityY:     1,
+				SpectralRadius: 0,
+			},
+			asymmetry:  0,
+			gates:      FitGates{SaturationRadius: criticalBranch, FrenzyAsymmetry: 1},
+			wantCat:    FitCategoryOrganic,
+			wantConfGt: 0,
+		},
+		{
 			name: "exhaustion on Y when preferY",
 			fit: BivariateFit{
 				MuX:            2,

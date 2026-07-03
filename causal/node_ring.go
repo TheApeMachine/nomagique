@@ -90,9 +90,9 @@ func (nodeRing *NodeRing) Read(p []byte) (int, error) {
 }
 
 func (nodeRing *NodeRing) Write(p []byte) (int, error) {
-	preserved := nodeRing.preserveStreams()
+	preserved := preserveStreams(nodeRing.artifact)
 	nodeRing.artifact.WithPayload(p)
-	nodeRing.restoreStreams(preserved)
+	restoreStreams(nodeRing.artifact, preserved)
 	return len(p), nil
 }
 
@@ -193,37 +193,4 @@ func (nodeRing *NodeRing) capacityFromArtifact() int {
 	}
 
 	return capacity
-}
-
-type nodeRingStreams struct {
-	nodeCount float64
-	streams   map[string][]float64
-}
-
-func (nodeRing *NodeRing) preserveStreams() nodeRingStreams {
-	nodeCount := datura.Peek[float64](nodeRing.artifact, "streams", "nodeCount")
-	streamCount := int(nodeCount)
-	preserved := nodeRingStreams{
-		nodeCount: nodeCount,
-		streams:   make(map[string][]float64, streamCount),
-	}
-
-	for nodeIndex := range streamCount {
-		key := strconv.Itoa(nodeIndex)
-		preserved.streams[key] = datura.Peek[[]float64](nodeRing.artifact, "streams", key)
-	}
-
-	return preserved
-}
-
-func (nodeRing *NodeRing) restoreStreams(preserved nodeRingStreams) {
-	if preserved.nodeCount <= 0 && len(preserved.streams) == 0 {
-		return
-	}
-
-	nodeRing.artifact.Poke(preserved.nodeCount, "streams", "nodeCount")
-
-	for key, stream := range preserved.streams {
-		nodeRing.artifact.Poke(stream, "streams", key)
-	}
 }

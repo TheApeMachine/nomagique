@@ -1,6 +1,7 @@
 package hawkes
 
 import (
+	"math"
 	"testing"
 	"time"
 
@@ -32,6 +33,14 @@ func TestBivariateFit_Valid(testingTB *testing.T) {
 			So(fit.Valid(), ShouldBeFalse)
 		})
 	})
+
+	Convey("Given a no-excitation Poisson fit", testingTB, func() {
+		fit := BivariateFit{MuX: 1, MuY: 1, Beta: 1, SpectralRadius: 0}
+
+		Convey("It should accept zero spectral radius", func() {
+			So(fit.Valid(), ShouldBeTrue)
+		})
+	})
 }
 
 func TestBivariateEstimator_Fit(testingTB *testing.T) {
@@ -58,6 +67,28 @@ func TestBivariateEstimator_Fit(testingTB *testing.T) {
 			if fit.MuX > 0 {
 				So(fit.Valid(), ShouldBeTrue)
 			}
+		})
+	})
+}
+
+func TestBivariateFit_LogLikelihood(testingTB *testing.T) {
+	Convey("Given one buy event and one-sided self excitation", testingTB, func() {
+		start := time.Unix(0, 0)
+		stream := NewArrivalStream([]time.Time{start}, nil)
+		horizon := start.Add(2 * time.Second)
+		fit := BivariateFit{
+			MuX:     1,
+			MuY:     1,
+			AlphaXX: 1,
+			Beta:    1,
+		}
+
+		likelihood := fit.LogLikelihood(stream, horizon)
+
+		Convey("It should subtract the integrated kernel mass over the horizon", func() {
+			expected := -4 - (1 - math.Exp(-2))
+
+			So(likelihood, ShouldAlmostEqual, expected, 1e-12)
 		})
 	})
 }

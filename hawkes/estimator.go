@@ -34,6 +34,12 @@ func (estimator *BivariateEstimator) Fit(
 
 	best := BivariateFit{}
 	bestLL := math.Inf(-1)
+	poisson := context.PoissonFit().WithIntensitiesAt(stream, horizon)
+
+	if poisson.Valid() {
+		best = poisson
+		bestLL = poisson.LogLikelihood(stream, horizon)
+	}
 
 	for _, seed := range estimator.multiStartSeeds(context) {
 		candidate := estimator.maximizeLikelihood(stream, horizon, context, seed)

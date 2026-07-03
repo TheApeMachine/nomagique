@@ -69,6 +69,28 @@ func TestFitFromLogParams(testingTB *testing.T) {
 			So(fit.SpectralRadius, ShouldBeLessThan, criticalBranch)
 		})
 	})
+
+	Convey("Given weak excitation below the branch floor", testingTB, func() {
+		context := FitContext{
+			BranchFloor:   0.1,
+			BranchCeiling: 0.9,
+		}
+		fit := fitFromLogParams([bivariateParamCount]float64{
+			math.Log(1),
+			math.Log(1),
+			math.Log(1),
+			math.Log(0.01),
+			math.Log(0.0),
+			math.Log(0.0),
+			math.Log(0.01),
+		}, context)
+
+		Convey("It should keep the valid subcritical fit instead of forcing excitation above the floor", func() {
+			So(fit.MuX, ShouldBeGreaterThan, 0)
+			So(fit.SpectralRadius, ShouldBeGreaterThan, 0)
+			So(fit.SpectralRadius, ShouldBeLessThan, context.BranchFloor)
+		})
+	})
 }
 
 func TestFitContext_PoissonFit(testingTB *testing.T) {

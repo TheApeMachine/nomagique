@@ -10,12 +10,10 @@ import (
 ExcitationState tracks running Hawkes excitation sums while walking marked events.
 */
 type ExcitationState struct {
-	buyToBuy   float64
-	sellToBuy  float64
-	buyToSell  float64
-	sellToSell float64
-	lastTime   time.Time
-	haveLast   bool
+	buySupport  float64
+	sellSupport float64
+	lastTime    time.Time
+	haveLast    bool
 }
 
 /*
@@ -27,10 +25,8 @@ func (state *ExcitationState) DecayTo(eventTime time.Time, beta float64) {
 	}
 
 	decayFactor := decay.ExpNeg(beta, eventTime.Sub(state.lastTime).Seconds())
-	state.buyToBuy *= decayFactor
-	state.sellToBuy *= decayFactor
-	state.buyToSell *= decayFactor
-	state.sellToSell *= decayFactor
+	state.buySupport *= decayFactor
+	state.sellSupport *= decayFactor
 	state.lastTime = eventTime
 }
 
@@ -62,7 +58,7 @@ func (state *ExcitationState) LogLikelihoodSum(
 		for _, event := range marked[index:end] {
 			switch event.Side {
 			case sideBuy:
-				lambda := muBuy + alphaBB*state.buyToBuy + alphaBS*state.sellToBuy
+				lambda := muBuy + alphaBB*state.buySupport + alphaBS*state.sellSupport
 
 				if lambda <= 0 {
 					return 0, false
@@ -70,7 +66,7 @@ func (state *ExcitationState) LogLikelihoodSum(
 
 				logSum += decay.LogPositive(lambda)
 			case sideSell:
-				lambda := muSell + alphaSB*state.buyToSell + alphaSS*state.sellToSell
+				lambda := muSell + alphaSB*state.buySupport + alphaSS*state.sellSupport
 
 				if lambda <= 0 {
 					return 0, false
@@ -83,11 +79,9 @@ func (state *ExcitationState) LogLikelihoodSum(
 		for _, event := range marked[index:end] {
 			switch event.Side {
 			case sideBuy:
-				state.buyToBuy += 1
-				state.buyToSell += 1
+				state.buySupport += 1
 			case sideSell:
-				state.sellToBuy += 1
-				state.sellToSell += 1
+				state.sellSupport += 1
 			}
 		}
 

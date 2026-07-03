@@ -148,11 +148,11 @@ func TestBernoulliReset(testingTB *testing.T) {
 		resetArtifact := datura.Acquire("test", datura.APPJSON).Poke(1, "reset")
 		err = nomagique.RoundTripArtifact(resetArtifact, posterior)
 
-		So(err, ShouldNotBeNil)
+		So(err, ShouldBeNil)
 
 		Convey("It should clear derived state", func() {
-			So(datura.Peek[float64](posterior.artifact, "output", "count"), ShouldEqual, 0)
-			So(datura.Peek[float64](posterior.artifact, "output", "value"), ShouldEqual, 0)
+			So(datura.Peek[float64](resetArtifact, "output", "count"), ShouldEqual, 0)
+			So(datura.Peek[float64](resetArtifact, "output", "value"), ShouldEqual, 0)
 		})
 	})
 }

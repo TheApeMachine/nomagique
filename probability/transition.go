@@ -139,8 +139,8 @@ func klDivergence(observed, expected []float64) (float64, error) {
 	if len(observed) == 0 || len(observed) != len(expected) {
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
-			"unable to compute KL divergence",
-			KLError(KLErrorNonFiniteExpected),
+			"kl divergence: distributions must be non-empty with equal length",
+			nil,
 		))
 	}
 
@@ -150,8 +150,8 @@ func klDivergence(observed, expected []float64) (float64, error) {
 		if value < 0 || math.IsNaN(value) || math.IsInf(value, 0) {
 			return 0, errnie.Error(errnie.Err(
 				errnie.Validation,
-				"unable to compute KL divergence",
-				KLError(KLErrorNonFiniteObserved),
+				"kl divergence: observed sample must be finite and non-negative",
+				nil,
 			))
 		}
 
@@ -161,8 +161,8 @@ func klDivergence(observed, expected []float64) (float64, error) {
 	if observedSum <= 0 {
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
-			"unable to compute KL divergence",
-			KLError(KLErrorNonFiniteObservedSum),
+			"kl divergence: observed sum must be positive",
+			nil,
 		))
 	}
 
@@ -172,8 +172,8 @@ func klDivergence(observed, expected []float64) (float64, error) {
 		if value < 0 || math.IsNaN(value) || math.IsInf(value, 0) {
 			return 0, errnie.Error(errnie.Err(
 				errnie.Validation,
-				"unable to compute KL divergence",
-				KLError(KLErrorNonFiniteExpected),
+				"kl divergence: expected sample must be finite and non-negative",
+				nil,
 			))
 		}
 
@@ -183,8 +183,8 @@ func klDivergence(observed, expected []float64) (float64, error) {
 	if expectedSum <= 0 {
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
-			"unable to compute KL divergence",
-			KLError(KLErrorNonFiniteExpected),
+			"kl divergence: expected sum must be positive",
+			nil,
 		))
 	}
 
@@ -201,25 +201,10 @@ func klDivergence(observed, expected []float64) (float64, error) {
 	if math.IsNaN(divergence) || math.IsInf(divergence, 0) {
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
-			"unable to compute KL divergence",
-			KLError(KLErrorNonFiniteResult),
+			"kl divergence: result must be finite",
+			nil,
 		))
 	}
 
 	return divergence, nil
-}
-
-type KLErrorType string
-
-const (
-	KLErrorNonFiniteObserved    KLErrorType = "observed sample is non-finite"
-	KLErrorNonFiniteExpected    KLErrorType = "expected sample is non-finite"
-	KLErrorNonFiniteObservedSum KLErrorType = "observed sum is non-finite"
-	KLErrorNonFiniteResult      KLErrorType = "kl divergence is non-finite"
-)
-
-type KLError string
-
-func (klError KLError) Error() string {
-	return string(klError)
 }

@@ -81,14 +81,10 @@ func (fit BivariateFit) eventLogLikelihoodGradient(
 	beta float64,
 ) likelihoodGradient {
 	result := likelihoodGradient{valid: true}
-	buyToBuy := 0.0
-	sellToBuy := 0.0
-	buyToSell := 0.0
-	sellToSell := 0.0
-	dBuyToBuy := 0.0
-	dSellToBuy := 0.0
-	dBuyToSell := 0.0
-	dSellToSell := 0.0
+	buySupport := 0.0
+	sellSupport := 0.0
+	dBuySupport := 0.0
+	dSellSupport := 0.0
 	lastTime := marked[0].At
 	haveLast := true
 
@@ -98,14 +94,10 @@ func (fit BivariateFit) eventLogLikelihoodGradient(
 		if haveLast && eventTime.After(lastTime) {
 			decayFactor := decay.ExpNeg(beta, eventTime.Sub(lastTime).Seconds())
 			age := eventTime.Sub(lastTime).Seconds()
-			dBuyToBuy = (dBuyToBuy - buyToBuy*age) * decayFactor
-			dSellToBuy = (dSellToBuy - sellToBuy*age) * decayFactor
-			dBuyToSell = (dBuyToSell - buyToSell*age) * decayFactor
-			dSellToSell = (dSellToSell - sellToSell*age) * decayFactor
-			buyToBuy *= decayFactor
-			sellToBuy *= decayFactor
-			buyToSell *= decayFactor
-			sellToSell *= decayFactor
+			dBuySupport = (dBuySupport - buySupport*age) * decayFactor
+			dSellSupport = (dSellSupport - sellSupport*age) * decayFactor
+			buySupport *= decayFactor
+			sellSupport *= decayFactor
 			lastTime = eventTime
 		}
 
@@ -118,32 +110,32 @@ func (fit BivariateFit) eventLogLikelihoodGradient(
 		for _, event := range marked[index:end] {
 			switch event.Side {
 			case sideBuy:
-				lambda := fit.MuX + fit.AlphaXX*buyToBuy + fit.AlphaXY*sellToBuy
+				lambda := fit.MuX + fit.AlphaXX*buySupport + fit.AlphaXY*sellSupport
 
 				if lambda <= 0 {
 					return likelihoodGradient{}
 				}
 
 				inverse := 1 / lambda
-				lambdaBeta := fit.AlphaXX*dBuyToBuy + fit.AlphaXY*dSellToBuy
+				lambdaBeta := fit.AlphaXX*dBuySupport + fit.AlphaXY*dSellSupport
 				result.logSum += math.Log(lambda)
 				result.muX += inverse
-				result.alphaXX += inverse * buyToBuy
-				result.alphaXY += inverse * sellToBuy
+				result.alphaXX += inverse * buySupport
+				result.alphaXY += inverse * sellSupport
 				result.beta += inverse * lambdaBeta
 			case sideSell:
-				lambda := fit.MuY + fit.AlphaYX*buyToSell + fit.AlphaYY*sellToSell
+				lambda := fit.MuY + fit.AlphaYX*buySupport + fit.AlphaYY*sellSupport
 
 				if lambda <= 0 {
 					return likelihoodGradient{}
 				}
 
 				inverse := 1 / lambda
-				lambdaBeta := fit.AlphaYX*dBuyToSell + fit.AlphaYY*dSellToSell
+				lambdaBeta := fit.AlphaYX*dBuySupport + fit.AlphaYY*dSellSupport
 				result.logSum += math.Log(lambda)
 				result.muY += inverse
-				result.alphaYX += inverse * buyToSell
-				result.alphaYY += inverse * sellToSell
+				result.alphaYX += inverse * buySupport
+				result.alphaYY += inverse * sellSupport
 				result.beta += inverse * lambdaBeta
 			}
 		}
@@ -151,11 +143,9 @@ func (fit BivariateFit) eventLogLikelihoodGradient(
 		for _, event := range marked[index:end] {
 			switch event.Side {
 			case sideBuy:
-				buyToBuy += 1
-				buyToSell += 1
+				buySupport += 1
 			case sideSell:
-				sellToBuy += 1
-				sellToSell += 1
+				sellSupport += 1
 			}
 		}
 

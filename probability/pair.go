@@ -1,13 +1,13 @@
 package probability
 
 import (
-	"errors"
+	"github.com/theapemachine/nomagique/core"
 )
 
 var (
-	ErrEmptyInputs    = errors.New("probability: empty inputs")
-	ErrZeroPredicted  = errors.New("probability: zero predicted value")
-	ErrInvalidOutcome = errors.New("probability: invalid Bernoulli outcome")
+	ErrEmptyInputs    = core.ErrEmptyInputs
+	ErrZeroPredicted  = core.ErrZeroPredicted
+	ErrInvalidOutcome = core.ErrInvalidOutcome
 )
 
 func parsePredictedActual(

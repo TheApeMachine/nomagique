@@ -11,12 +11,10 @@ import (
 func TestExcitationState_DecayTo(testingTB *testing.T) {
 	Convey("Given excitation accumulated at an earlier time", testingTB, func() {
 		state := ExcitationState{
-			buyToBuy:   2,
-			sellToBuy:  1,
-			buyToSell:  3,
-			sellToSell: 4,
-			lastTime:   time.Unix(0, 0),
-			haveLast:   true,
+			buySupport:  2,
+			sellSupport: 4,
+			lastTime:    time.Unix(0, 0),
+			haveLast:    true,
 		}
 		later := state.lastTime.Add(time.Second)
 
@@ -24,8 +22,8 @@ func TestExcitationState_DecayTo(testingTB *testing.T) {
 
 		Convey("It should scale all branches by exp(-beta * age)", func() {
 			scale := decay.ExpNeg(1, 1)
-			So(state.buyToBuy, ShouldAlmostEqual, 2*scale, 1e-12)
-			So(state.sellToSell, ShouldAlmostEqual, 4*scale, 1e-12)
+			So(state.buySupport, ShouldAlmostEqual, 2*scale, 1e-12)
+			So(state.sellSupport, ShouldAlmostEqual, 4*scale, 1e-12)
 		})
 	})
 }
@@ -46,6 +44,27 @@ func TestExcitationState_LogLikelihoodSum(testingTB *testing.T) {
 		Convey("It should accumulate log intensity at mu", func() {
 			So(ok, ShouldBeTrue)
 			So(logSum, ShouldEqual, 0)
+		})
+	})
+
+	Convey("Given a buy event followed by a sell event", testingTB, func() {
+		start := time.Unix(0, 0)
+		state := ExcitationState{}
+		marked := []MarkedEvent{
+			{At: start, Side: sideBuy},
+			{At: start.Add(time.Second), Side: sideSell},
+		}
+
+		logSum, ok := state.LogLikelihoodSum(
+			marked,
+			1, 1,
+			0.5, 0.25, 0.75, 0.125,
+			1,
+		)
+
+		Convey("It should use buy support for the sell-side cross excitation", func() {
+			So(ok, ShouldBeTrue)
+			So(logSum, ShouldAlmostEqual, decay.LogPositive(1+0.75*decay.ExpNeg(1, 1)), 1e-12)
 		})
 	})
 }

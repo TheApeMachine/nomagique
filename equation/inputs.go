@@ -119,20 +119,13 @@ var LagInputKeys = []string{
 }
 
 /*
-featureField reads one named scalar from a features/root payload.
-*/
-func featureField(state *datura.Artifact, key string) (float64, error) {
-	return statistic.FeatureColumn(state, key)
-}
-
-/*
 FeatureFields reads named scalars in order; missing keys return validation errors.
 */
 func FeatureFields(state *datura.Artifact, keys []string) ([]float64, error) {
 	values := make([]float64, len(keys))
 
 	for index, key := range keys {
-		value, err := featureField(state, key)
+		value, err := statistic.FeatureColumn(state, key)
 
 		if err != nil {
 			return nil, err

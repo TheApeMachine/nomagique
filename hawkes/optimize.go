@@ -191,7 +191,7 @@ func fitFromLogParams(
 	}
 	fit.SpectralRadius = fit.computeSpectralRadius()
 
-	if fit.SpectralRadius <= context.BranchFloor || fit.SpectralRadius >= criticalBranch {
+	if fit.SpectralRadius < 0 || fit.SpectralRadius >= criticalBranch {
 		return BivariateFit{}
 	}
 

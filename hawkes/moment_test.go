@@ -1,10 +1,12 @@
 package hawkes
 
 import (
+	"io"
 	"math"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/datura"
 	"github.com/theapemachine/nomagique/equation"
 	"gonum.org/v1/gonum/stat"
 )
@@ -69,6 +71,40 @@ func TestMethodOfMomentsStationarySeedIncludesCrossExcitation(testingTB *testing
 	})
 }
 
+func TestMomentReadOutputsBranchingEstimate(testingTB *testing.T) {
+	Convey("Given a moment stage with aligned samples", testingTB, func() {
+		moment := NewMoment(momentConfigArtifact(
+			BivariateParams{MuX: 1, MuY: 1, AlphaXX: 0.1, Beta: 1},
+			2,
+			0,
+		))
+		wire := datura.Acquire("hawkes-moment-test-in", datura.APPJSON).
+			WithPayload(equation.MarshalFeaturesPayload(EncodeMomentBatch(
+				[]float64{2, 4, 6, 8},
+				[]float64{1, 2, 3, 4},
+			))).Pack()
+		response := make([]byte, 4096)
+
+		_, err := moment.Write(wire)
+		So(err, ShouldBeNil)
+
+		readCount, err := moment.Read(response)
+		So(err == nil || err == io.EOF, ShouldBeTrue)
+		So(readCount, ShouldBeGreaterThan, 0)
+
+		outbound := datura.Acquire("hawkes-moment-test-out", datura.APPJSON)
+		_, err = outbound.Unpack(response[:readCount])
+		So(err, ShouldBeNil)
+
+		Convey("It should name the diagnostic as an estimate", func() {
+			So(datura.Peek[float64](outbound, "output", "value"), ShouldBeGreaterThan, 0)
+			So(datura.Peek[float64](outbound, "output", "estimate"), ShouldBeGreaterThan, 0)
+			So(datura.Peek[[]string](outbound, "inputs"), ShouldResemble,
+				[]string{"value", "empirical", "estimate", "confidence"})
+		})
+	})
+}
+
 func BenchmarkMethodOfMoments(testingTB *testing.B) {
 	x := []float64{2, 4, 6, 8, 10, 12}
 	y := []float64{1, 2, 3, 4, 5, 6}
@@ -84,7 +120,10 @@ func BenchmarkMomentRead(testingTB *testing.B) {
 		1,
 		1,
 	))
-	wire := equation.MarshalFeaturesPayload(EncodeMomentBatch([]float64{2, 4, 6, 8}, []float64{1, 2, 3, 4}))
+	wire := datura.Acquire("hawkes-moment-benchmark-in", datura.APPJSON).
+		WithPayload(equation.MarshalFeaturesPayload(
+			EncodeMomentBatch([]float64{2, 4, 6, 8}, []float64{1, 2, 3, 4}),
+		)).Pack()
 	response := make([]byte, 4096)
 
 	testingTB.ReportAllocs()

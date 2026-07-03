@@ -51,35 +51,33 @@ func (moment *Moment) Read(p []byte) (int, error) {
 	}
 
 	params := bivariateParamsFromArtifact(moment.artifact)
-
-	if datura.Peek[float64](moment.artifact, "config", "momentR") == 0 ||
-		datura.Peek[float64](moment.artifact, "config", "momentS") == 0 {
-		state.Release()
-
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"hawkes-moment: config momentR and momentS required",
-			nil,
-		))
-	}
-
 	momentR := datura.Peek[float64](moment.artifact, "config", "momentR")
 	momentS := datura.Peek[float64](moment.artifact, "config", "momentS")
 
-	empirical := stat.BivariateMoment(momentR, momentS, xValues, yValues, weights)
-	theoretical, theoreticalOK := TheoreticalCentralMoment(params, momentR, momentS)
-
-	if !theoreticalOK {
+	if momentR < 0 || momentS < 0 || momentR+momentS == 0 {
 		state.Release()
 
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
-			"hawkes-moment: theoretical moment unavailable for parameters",
+			"hawkes-moment: config momentR and momentS must define a nonzero moment",
 			nil,
 		))
 	}
 
-	confidence, confidenceOK := MomentConfidence(empirical, theoretical)
+	empirical := stat.BivariateMoment(momentR, momentS, xValues, yValues, weights)
+	estimate, estimateOK := BranchingMomentEstimate(params, momentR, momentS)
+
+	if !estimateOK {
+		state.Release()
+
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"hawkes-moment: branching moment estimate unavailable for parameters",
+			nil,
+		))
+	}
+
+	confidence, confidenceOK := MomentConfidence(empirical, estimate)
 
 	if !confidenceOK {
 		return 0, errnie.Error(errnie.Err(
@@ -91,10 +89,10 @@ func (moment *Moment) Read(p []byte) (int, error) {
 
 	state.MergeOutput("value", confidence)
 	state.MergeOutput("empirical", empirical)
-	state.MergeOutput("theoretical", theoretical)
+	state.MergeOutput("estimate", estimate)
 	state.MergeOutput("confidence", confidence)
 	state.Poke("output", "root")
-	state.Poke([]string{"value", "empirical", "theoretical", "confidence"}, "inputs")
+	state.Poke([]string{"value", "empirical", "estimate", "confidence"}, "inputs")
 
 	return state.PackInto(p)
 }
@@ -162,9 +160,10 @@ func MethodOfMoments(
 }
 
 /*
-TheoreticalCentralMoment estimates the central mixed moment from fitted parameters.
+BranchingMomentEstimate returns the moment-scale diagnostic used by Moment.
+It is not an exact Hawkes central moment; exact count moments require the observation window.
 */
-func TheoreticalCentralMoment(
+func BranchingMomentEstimate(
 	params BivariateParams, momentR, momentS float64,
 ) (float64, bool) {
 	lambdaX, lambdaY, ok := params.MeanIntensity()
@@ -188,18 +187,18 @@ func TheoreticalCentralMoment(
 }
 
 /*
-MomentConfidence returns a fit score in (0, 1] from empirical and theoretical moments.
+MomentConfidence returns a fit score in (0, 1] from empirical and estimated moments.
 */
 func MomentConfidence(
-	empirical, theoretical float64,
+	empirical, estimate float64,
 ) (float64, bool) {
-	scale := math.Max(math.Abs(theoretical), math.Abs(empirical))
+	scale := math.Max(math.Abs(estimate), math.Abs(empirical))
 
 	if scale <= 0 {
 		return 0, false
 	}
 
-	residual := math.Abs(empirical-theoretical) / scale
+	residual := math.Abs(empirical-estimate) / scale
 
 	return 1 / (1 + residual), true
 }

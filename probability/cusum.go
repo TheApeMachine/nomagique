@@ -53,11 +53,7 @@ func (cusum *CUSUM) Read(payload []byte) (int, error) {
 		state.Poke("output", "root")
 		state.Poke([]string{"value"}, "inputs")
 
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"cusum: reset",
-			nil,
-		))
+		return state.PackInto(payload)
 	}
 
 	sampleKey := datura.Peek[string](cusum.artifact, "sampleKey")

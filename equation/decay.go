@@ -268,8 +268,8 @@ func depthTrend(depths []float64) float64 {
 		return 0
 	}
 
-	recent := columnMean(depths[splitIndex:])
-	prior := columnMean(depths[:splitIndex])
+	recent := stat.Mean(depths[splitIndex:], nil)
+	prior := stat.Mean(depths[:splitIndex], nil)
 
 	if prior <= 0 {
 		return 0
@@ -335,7 +335,7 @@ func imbalanceFlip(imbalances []float64, side int) float64 {
 	}
 
 	recent := imbalances[len(imbalances)-1]
-	prior := columnMean(imbalances[:len(imbalances)-1])
+	prior := stat.Mean(imbalances[:len(imbalances)-1], nil)
 
 	if side > 0 && prior > 0 && recent < 0 {
 		return math.Abs(recent) / prior
@@ -372,18 +372,4 @@ func classifyDecay(thinning, widen, fade, flip float64) int {
 	}
 
 	return category
-}
-
-func columnMean(values []float64) float64 {
-	if len(values) == 0 {
-		return 0
-	}
-
-	sum := 0.0
-
-	for _, value := range values {
-		sum += value
-	}
-
-	return sum / float64(len(values))
 }

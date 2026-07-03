@@ -10,7 +10,7 @@ import (
 
 func TestBivariateFit_LogLikelihoodGradient(testingTB *testing.T) {
 	Convey("Given a valid fit and arrival stream", testingTB, func() {
-		start := time.Now()
+		start := time.Unix(0, 0)
 		stream := NewArrivalStream(
 			[]time.Time{
 				start,
@@ -41,6 +41,45 @@ func TestBivariateFit_LogLikelihoodGradient(testingTB *testing.T) {
 			So(math.IsInf(logLikelihood, 0), ShouldBeFalse)
 			So(math.IsNaN(logLikelihood), ShouldBeFalse)
 			So(math.IsNaN(gradient[0]), ShouldBeFalse)
+		})
+
+		Convey("It should match finite-difference likelihood derivatives", func() {
+			So(ok, ShouldBeTrue)
+
+			epsilon := 1e-5
+
+			for index := range gradient {
+				left := fit
+				right := fit
+
+				switch index {
+				case 0:
+					left.MuX -= epsilon
+					right.MuX += epsilon
+				case 1:
+					left.MuY -= epsilon
+					right.MuY += epsilon
+				case 2:
+					left.AlphaXX -= epsilon
+					right.AlphaXX += epsilon
+				case 3:
+					left.AlphaXY -= epsilon
+					right.AlphaXY += epsilon
+				case 4:
+					left.AlphaYX -= epsilon
+					right.AlphaYX += epsilon
+				case 5:
+					left.AlphaYY -= epsilon
+					right.AlphaYY += epsilon
+				case 6:
+					left.Beta -= epsilon
+					right.Beta += epsilon
+				}
+
+				numerical := (right.LogLikelihood(stream, horizon) - left.LogLikelihood(stream, horizon)) / (2 * epsilon)
+
+				So(gradient[index], ShouldAlmostEqual, numerical, 1e-5)
+			}
 		})
 	})
 }

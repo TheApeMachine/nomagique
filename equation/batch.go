@@ -2,6 +2,7 @@ package equation
 
 import (
 	"io"
+	"sort"
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
@@ -51,7 +52,10 @@ func emitOutput(state *datura.Artifact, payload []byte, fields datura.Map[float6
 		outputInputs = append(outputInputs, key)
 	}
 
-	for key, value := range fields {
+	sort.Strings(outputInputs)
+
+	for _, key := range outputInputs {
+		value := fields[key]
 		state.MergeOutput(key, value)
 	}
 

@@ -78,9 +78,20 @@ func TestClassifier_Read(testingTB *testing.T) {
 
 		Convey("It should expose normalized probabilities on the artifact", func() {
 			confidence := datura.Peek[float64](artifact, "output", "confidence")
+			distribution := datura.Peek[map[string]any](artifact, "output", "distribution")
 
 			So(confidence, ShouldBeGreaterThan, 0)
 			So(confidence, ShouldBeLessThan, 1)
+			So(distribution["1"], ShouldAlmostEqual, datura.Peek[[]float64](artifact, "output", "probabilities")[0], 1e-12)
+			So(distribution["2"], ShouldAlmostEqual, datura.Peek[[]float64](artifact, "output", "probabilities")[1], 1e-12)
+			So(distribution["3"], ShouldAlmostEqual, datura.Peek[[]float64](artifact, "output", "probabilities")[2], 1e-12)
+			So(distribution["4"], ShouldAlmostEqual, datura.Peek[[]float64](artifact, "output", "probabilities")[3], 1e-12)
+		})
+
+		Convey("It should expose the no-edge confidence baseline from category count", func() {
+			So(datura.Peek[float64](artifact, "output", "confidence_baseline"), ShouldAlmostEqual, 0.25, 1e-12)
+			So(datura.Peek[float64](artifact, "output", "entry_baseline"), ShouldAlmostEqual, 0.25, 1e-12)
+			So(datura.Peek[float64](artifact, "output", "exit_baseline"), ShouldAlmostEqual, 0.25, 1e-12)
 		})
 
 		Convey("It should propagate score keys on output wire", func() {
@@ -91,6 +102,10 @@ func TestClassifier_Read(testingTB *testing.T) {
 			So(inputs, ShouldContain, "s2")
 			So(inputs, ShouldContain, "s3")
 			So(inputs, ShouldContain, "category")
+			So(inputs, ShouldContain, "confidence_baseline")
+			So(inputs, ShouldContain, "distribution")
+			So(inputs, ShouldContain, "entry_baseline")
+			So(inputs, ShouldContain, "exit_baseline")
 			So(inputs, ShouldContain, "value")
 		})
 	})
@@ -148,6 +163,9 @@ func TestClassifier_Read(testingTB *testing.T) {
 
 		Convey("It should emit uniform confidence without error", func() {
 			So(datura.Peek[float64](artifact, "output", "confidence"), ShouldAlmostEqual, 0.25, 1e-9)
+			So(datura.Peek[float64](artifact, "output", "confidence_baseline"), ShouldAlmostEqual, 0.25, 1e-12)
+			So(datura.Peek[float64](artifact, "output", "entry_baseline"), ShouldAlmostEqual, 0.25, 1e-12)
+			So(datura.Peek[float64](artifact, "output", "exit_baseline"), ShouldAlmostEqual, 0.25, 1e-12)
 			So(datura.Peek[float64](artifact, "output", "strength"), ShouldEqual, 0)
 		})
 	})
@@ -205,6 +223,9 @@ func TestClassifier_Number(testingTB *testing.T) {
 
 		Convey("It should return the winning category as float64", func() {
 			So(datura.Peek[float64](artifact, "output", "value"), ShouldEqual, 2)
+			So(datura.Peek[float64](artifact, "output", "confidence_baseline"), ShouldAlmostEqual, 1.0/3.0, 1e-12)
+			So(datura.Peek[float64](artifact, "output", "entry_baseline"), ShouldAlmostEqual, 1.0/3.0, 1e-12)
+			So(datura.Peek[float64](artifact, "output", "exit_baseline"), ShouldAlmostEqual, 1.0/3.0, 1e-12)
 		})
 	})
 }

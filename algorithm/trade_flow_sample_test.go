@@ -60,15 +60,17 @@ func TestTradeFlowSampleRead(testingTB *testing.T) {
 		})
 	})
 
-	Convey("Given a single valid trade before history warms", testingTB, func() {
+	Convey("Given a single valid trade", testingTB, func() {
 		sample := NewTradeFlowSample(datura.Acquire("trade-flow-config", datura.APPJSON))
 		base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC).UnixNano()
 		frame := tradeFrame("BTC/USD", "buy", 100, 1, base)
 
 		err := nomagique.RoundTripArtifact(frame, sample)
 
-		Convey("It should be nonfatal until trade history warms", func() {
+		Convey("It should publish a feature sample from the first valid trade", func() {
 			So(err, ShouldBeNil)
+			So(datura.Peek[string](frame, "root"), ShouldEqual, "features")
+			So(len(datura.Peek[[]float64](frame, "features")), ShouldBeGreaterThan, 0)
 		})
 	})
 }

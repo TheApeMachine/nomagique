@@ -149,10 +149,11 @@ func TestBookflowSample_ReadStagesColdStart(t *testing.T) {
 
 		err := nomagique.RoundTripArtifact(state, encoder)
 
-		Convey("It should be a nonfatal not-ready sample", func() {
+		Convey("It should publish a feature sample from the first valid book frame", func() {
 			So(err, ShouldBeNil)
-			So(datura.Peek[bool](state, "output", "ready"), ShouldBeFalse)
-			So(len(datura.Peek[[]float64](state, "features")), ShouldEqual, 0)
+			So(datura.Peek[bool](state, "output", "ready"), ShouldBeTrue)
+			So(datura.Peek[string](state, "root"), ShouldEqual, "features")
+			So(len(datura.Peek[[]float64](state, "features")), ShouldBeGreaterThan, 0)
 
 			state.Release()
 		})
@@ -179,10 +180,11 @@ func TestBookflowSample_ReadPipelineColdStart(t *testing.T) {
 
 		err := nomagique.RoundTripArtifact(state, pipeline)
 
-		Convey("It should stop cleanly before the classifier", func() {
+		Convey("It should publish a classified measurement from the first valid book frame", func() {
 			So(err, ShouldBeNil)
 			So(datura.Peek[string](state, "channel"), ShouldEqual, "book")
-			So(datura.Peek[string](state, "root"), ShouldEqual, "")
+			So(datura.Peek[string](state, "root"), ShouldEqual, "output")
+			So(datura.Peek[float64](state, "output", "confidence"), ShouldBeGreaterThan, 0)
 			So(datura.Peek[string](state, "data", 0, "symbol"), ShouldEqual, "BTC/USD")
 
 			state.Release()

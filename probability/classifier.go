@@ -312,13 +312,8 @@ func (classifier *Classifier) Apply(state *datura.Artifact) error {
 		}
 	}
 
-	outputs := map[string]any{
-		"probabilities": probabilities,
-		"category":      categoryIndex,
-		"confidence":    confidence,
-		"strength":      strength,
-		"value":         categoryIndex,
-	}
+	confidenceBaseline := 1.0 / float64(len(categories))
+	distribution := map[string]float64{}
 
 	for index, probability := range probabilities {
 		wireCategoryIndex := float64(index + 1)
@@ -327,25 +322,38 @@ func (classifier *Classifier) Apply(state *datura.Artifact) error {
 			wireCategoryIndex = categoryIndexes[index]
 		}
 
-		outputs[fmt.Sprintf("category.%d", int(wireCategoryIndex))] = probability
+		distribution[fmt.Sprintf("%d", int(wireCategoryIndex))] = probability
+	}
+
+	outputs := map[string]any{
+		"probabilities":       probabilities,
+		"category":            categoryIndex,
+		"confidence":          confidence,
+		"confidence_baseline": confidenceBaseline,
+		"distribution":        distribution,
+		"entry_baseline":      confidenceBaseline,
+		"exit_baseline":       confidenceBaseline,
+		"strength":            strength,
+		"value":               categoryIndex,
 	}
 
 	state.MergeOutputs(outputs)
 	state.Poke("output", "root")
 
-	outputInputs := make([]string, 0, len(categories)+len(probabilities)+5)
+	outputInputs := make([]string, 0, len(categories)+8)
 	outputInputs = append(outputInputs, categories...)
-	outputInputs = append(outputInputs, "probabilities", "category", "confidence", "strength", "value")
-
-	for index := range probabilities {
-		wireCategoryIndex := float64(index + 1)
-
-		if len(categoryIndexes) > 0 {
-			wireCategoryIndex = categoryIndexes[index]
-		}
-
-		outputInputs = append(outputInputs, fmt.Sprintf("category.%d", int(wireCategoryIndex)))
-	}
+	outputInputs = append(
+		outputInputs,
+		"probabilities",
+		"category",
+		"confidence",
+		"confidence_baseline",
+		"distribution",
+		"entry_baseline",
+		"exit_baseline",
+		"strength",
+		"value",
+	)
 
 	state.Poke(outputInputs, "inputs")
 

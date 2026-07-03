@@ -1,6 +1,7 @@
 package learning
 
 import (
+	"fmt"
 	"io"
 	"math"
 	"testing"
@@ -8,6 +9,7 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/nomagique"
+	"github.com/theapemachine/nomagique/probability"
 )
 
 func logitScoresConfig() *datura.Artifact {
@@ -372,6 +374,109 @@ func TestLogitScoresRead(testingTB *testing.T) {
 				datura.Peek[float64](artifact, "output", "ignition"),
 			)
 		})
+	})
+}
+
+func TestLogitScoresReadClassifiedCategories(testingTB *testing.T) {
+	Convey("Given controlled pumpdump ticker score inputs", testingTB, func() {
+		type logitCase struct {
+			name         string
+			rvol         float64
+			precursor    float64
+			value        float64
+			ignition     float64
+			rvolDecline  float64
+			wantCategory int
+			wantScore    string
+		}
+
+		assertHighestProbability := func(outbound *datura.Artifact, category int) {
+			probabilities := datura.Peek[[]float64](outbound, "output", "probabilities")
+			So(len(probabilities), ShouldEqual, 4)
+
+			selected := probabilities[category-1]
+			for index, probability := range probabilities {
+				So(datura.Peek[float64](outbound, "output", "category."+fmt.Sprint(index+1)), ShouldAlmostEqual, probability, 1e-12)
+				if index != category-1 {
+					So(selected, ShouldBeGreaterThan, probability)
+				}
+			}
+		}
+
+		cases := []logitCase{
+			{
+				name:         "vertical ignition",
+				rvol:         3.0,
+				precursor:    2.5,
+				value:        0.1,
+				ignition:     20.0,
+				wantCategory: 2,
+				wantScore:    "ignition",
+			},
+			{
+				name:         "coiled compression",
+				rvol:         0.1,
+				precursor:    0.1,
+				value:        20.0,
+				ignition:     0.0,
+				wantCategory: 1,
+				wantScore:    "compression",
+			},
+			{
+				name:         "organic trend",
+				rvol:         3.0,
+				precursor:    3.0,
+				value:        0.0,
+				ignition:     0.0,
+				wantCategory: 3,
+				wantScore:    "trend",
+			},
+			{
+				name:         "faded exhaustion",
+				rvol:         0.1,
+				precursor:    0.1,
+				value:        0.0,
+				ignition:     0.0,
+				rvolDecline:  1.0,
+				wantCategory: 4,
+				wantScore:    "exhaustion",
+			},
+		}
+
+		for _, testCase := range cases {
+			testCase := testCase
+
+			Convey("When classifying "+testCase.name, func() {
+				stage := nomagique.Number(
+					NewLogitScores(logitScoresConfig()),
+					probability.NewClassifier(
+						datura.Acquire("logit-scores-classifier", datura.APPJSON).Poke(
+							[]string{"compression", "ignition", "trend", "exhaustion"},
+							"inputs",
+						),
+					),
+				)
+				artifact := datura.Acquire("logit-scores-classified-test", datura.APPJSON)
+				artifact.Poke("output", "root")
+				artifact.Poke([]string{"rvol", "precursor", "compression", "ignition", "value", "rvolDecline"}, "inputs")
+				artifact.MergeOutput("rvol", testCase.rvol)
+				artifact.MergeOutput("precursor", testCase.precursor)
+				artifact.MergeOutput("compression", testCase.value)
+				artifact.MergeOutput("value", testCase.value)
+				artifact.MergeOutput("ignition", testCase.ignition)
+				artifact.MergeOutput("rvolDecline", testCase.rvolDecline)
+
+				err := nomagique.RoundTripArtifact(artifact, stage)
+
+				So(err, ShouldBeNil)
+
+				Convey("It should put the intended ticker category on top", func() {
+					So(int(datura.Peek[float64](artifact, "output", "category")), ShouldEqual, testCase.wantCategory)
+					So(datura.Peek[float64](artifact, "output", testCase.wantScore), ShouldBeGreaterThan, 0)
+					assertHighestProbability(artifact, testCase.wantCategory)
+				})
+			})
+		}
 	})
 }
 

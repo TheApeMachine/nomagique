@@ -376,7 +376,19 @@ func (bookflowSample *BookflowSample) features(window *bookflowWindow) []float64
 	historyCount := len(window.weightedHist)
 
 	if historyCount == 0 {
-		return nil
+		return []float64{
+			0,
+			0,
+			0,
+			0,
+			window.lastMid,
+			window.lastSpread,
+			window.touchDepth,
+			window.tradePressure,
+			0,
+			0,
+			0,
+		}
 	}
 
 	_, longWindow, err := statistic.ResolveWindows(window.weightedHist, 0, 0)

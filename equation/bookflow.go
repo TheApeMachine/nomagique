@@ -114,7 +114,9 @@ func evaluateBookflow(state *datura.Artifact, inputKeys []string) bookflowOutcom
 	}
 
 	if mid <= 0 || spread <= 0 || len(weightedHistory) == 0 || len(level1History) == 0 {
-		return bookflowOutcome{}
+		return bookflowOutcome{
+			eligible: true,
+		}
 	}
 
 	weightedThreshold := bookflowMedianAbsolute(weightedHistory)
@@ -185,7 +187,7 @@ func evaluateBookflow(state *datura.Artifact, inputKeys []string) bookflowOutcom
 
 	quoteVol := mid * touchDepth
 
-	if quoteVol <= 0 {
+	if quoteVol <= 0 && strength > 0 {
 		return bookflowOutcome{}
 	}
 

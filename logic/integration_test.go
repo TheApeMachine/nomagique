@@ -6,7 +6,6 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/nomagique"
-	"github.com/theapemachine/nomagique/adaptive"
 	"github.com/theapemachine/nomagique/logic"
 )
 
@@ -21,14 +20,10 @@ func TestIntegration(t *testing.T) {
 		})
 
 		Convey("When Circuit routes above threshold to consequence branch", func() {
-			consequence := adaptive.NewEMA(datura.Acquire("ema-config", datura.APPJSON).
-				Poke("sample", "input").
-				Poke(2, "period").
-				Poke(2, "smoothing"))
 			circuit := logic.NewCircuit(circuitConfig(), logic.Rules{
 				{
 					Condition: logic.GreaterThan{Right: constantStage(2)},
-					Then:      consequence,
+					Then:      constantStage(7),
 				},
 				{
 					Condition: logic.True{Operand: true},
@@ -42,22 +37,7 @@ func TestIntegration(t *testing.T) {
 			err := nomagique.RoundTripArtifact(artifact, nomagique.Number(circuit))
 
 			So(err, ShouldBeNil)
-
-			expectedArtifact := scalarWire(datura.Acquire("test", datura.APPJSON), 3)
-			reference := adaptive.NewEMA(datura.Acquire("ema-config-reference", datura.APPJSON).
-				Poke("sample", "input").
-				Poke(2, "period").
-				Poke(2, "smoothing"))
-			_ = nomagique.RoundTripArtifact(expectedArtifact, reference)
-			expectedArtifact = scalarWire(datura.Acquire("test", datura.APPJSON), 4)
-			err = nomagique.RoundTripArtifact(expectedArtifact, reference)
-
-			So(err, ShouldBeNil)
-			So(
-				datura.Peek[float64](artifact, "output", "value"),
-				ShouldEqual,
-				datura.Peek[float64](expectedArtifact, "output", "value"),
-			)
+			So(datura.Peek[float64](artifact, "output", "value"), ShouldEqual, 7)
 		})
 
 		Convey("When Circuit falls through to default branch", func() {

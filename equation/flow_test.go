@@ -5,78 +5,83 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/datura"
-	"github.com/theapemachine/nomagique"
 	"github.com/theapemachine/nomagique/equation"
 	"github.com/theapemachine/nomagique/probability"
 )
 
-func TestFlow_Read(testingTB *testing.T) {
+func TestFlow_Measure(testingTB *testing.T) {
 	Convey("Given aggressive buy flow with rising price", testingTB, func() {
-		stage := equation.NewFlow(equation.FlowConfig())
-		err := writeFeatureStage(stage, equation.FlowInputKeys,
-			500, 0, 5, 0, 100,
-			100, 100.01, 100.02, 100.03, 100.04,
-		)
-
-		So(err, ShouldBeNil)
-
-		outbound, err := readStageOutput(stage)
+		flow := equation.NewFlow()
+		output, err := flow.Measure(equation.FlowInput{
+			BuyNotional:    500,
+			TradeCount:     5,
+			MedianNotional: 100,
+			Prices:         []float64{100, 100.01, 100.02, 100.03, 100.04},
+		})
 
 		So(err, ShouldBeNil)
 
 		Convey("It should classify aggressive drive", func() {
-			So(int(datura.Peek[float64](outbound, "output", "category")), ShouldEqual, 2)
-			So(datura.Peek[float64](outbound, "output", "drive"), ShouldAlmostEqual, 1, 0.001)
-			So(datura.Peek[float64](outbound, "output", "value"), ShouldAlmostEqual, 1, 0.001)
+			So(int(output.Category), ShouldEqual, 2)
+			So(output.Drive, ShouldAlmostEqual, 1, 0.001)
+			So(output.Value, ShouldAlmostEqual, 1, 0.001)
 		})
 	})
 
 	Convey("Given aggressive buy flow with flat price", testingTB, func() {
-		stage := equation.NewFlow(equation.FlowConfig())
-		err := writeFeatureStage(stage, equation.FlowInputKeys,
-			200, 0, 4, 0, 50,
-			50, 50.001, 50, 50.001,
-		)
-
-		So(err, ShouldBeNil)
-
-		outbound, err := readStageOutput(stage)
+		flow := equation.NewFlow()
+		output, err := flow.Measure(equation.FlowInput{
+			BuyNotional:    200,
+			TradeCount:     4,
+			MedianNotional: 50,
+			Prices:         []float64{50, 50.001, 50, 50.001},
+		})
 
 		So(err, ShouldBeNil)
 
 		Convey("It should classify hidden absorption", func() {
-			So(int(datura.Peek[float64](outbound, "output", "category")), ShouldEqual, 1)
-			So(datura.Peek[float64](outbound, "output", "absorption"), ShouldBeGreaterThan, 0)
+			So(int(output.Category), ShouldEqual, 1)
+			So(output.Absorption, ShouldBeGreaterThan, 0)
 		})
 	})
 }
 
-func TestFlow_ReadClassifiedCategories(testingTB *testing.T) {
-	Convey("Given controlled trade-flow feature batches", testingTB, func() {
+func TestFlow_MeasureClassifiedCategories(testingTB *testing.T) {
+	Convey("Given controlled trade-flow inputs", testingTB, func() {
 		type flowCase struct {
 			name         string
-			values       []float64
+			input        equation.FlowInput
 			wantCategory int
-			wantScore    string
+			wantScore    func(equation.FlowOutput) float64
 		}
 
-		assertHighestProbability := func(outbound *datura.Artifact, category int) {
-			probabilities := datura.Peek[[]float64](outbound, "output", "probabilities")
-			distribution := datura.Peek[map[string]any](outbound, "output", "distribution")
-			So(len(probabilities), ShouldEqual, 4)
-			So(len(distribution), ShouldEqual, 4)
+		assertHighestProbability := func(output equation.FlowOutput, category int) {
+			classifier := probability.NewScoreClassifier(
+				[]string{"absorption", "drive", "balance", "starvation"},
+				nil,
+			)
+			result, err := classifier.Classify(map[string]float64{
+				"absorption": output.Absorption,
+				"drive":      output.Drive,
+				"balance":    output.Balance,
+				"starvation": output.Starvation,
+				"strength":   output.Value,
+			})
 
-			selected := probabilities[category-1]
+			So(err, ShouldBeNil)
+			So(len(result.Probabilities), ShouldEqual, 4)
+			So(len(result.Distribution), ShouldEqual, 4)
+
+			selected := result.Probabilities[category-1]
 			total := 0.0
 
-			for index, probability := range probabilities {
-				total += probability
-				mass, ok := distribution[strconv.Itoa(index+1)].(float64)
+			for index, item := range result.Probabilities {
+				total += item
+				mass, ok := result.Distribution[strconv.Itoa(index+1)]
 				So(ok, ShouldBeTrue)
-				So(mass, ShouldAlmostEqual, probability, 1e-12)
+				So(mass, ShouldAlmostEqual, item, 1e-12)
 				if index != category-1 {
-					So(selected, ShouldBeGreaterThan, probability)
+					So(selected, ShouldBeGreaterThan, item)
 				}
 			}
 
@@ -86,39 +91,49 @@ func TestFlow_ReadClassifiedCategories(testingTB *testing.T) {
 		cases := []flowCase{
 			{
 				name: "hidden absorption",
-				values: []float64{
-					200, 0, 4, 0, 50,
-					50, 50.001, 50, 50.001,
+				input: equation.FlowInput{
+					BuyNotional:    200,
+					TradeCount:     4,
+					MedianNotional: 50,
+					Prices:         []float64{50, 50.001, 50, 50.001},
 				},
 				wantCategory: 1,
-				wantScore:    "absorption",
+				wantScore:    func(output equation.FlowOutput) float64 { return output.Absorption },
 			},
 			{
 				name: "aggressive drive",
-				values: []float64{
-					500, 0, 5, 0, 100,
-					100, 100.01, 100.02, 100.03, 100.04,
+				input: equation.FlowInput{
+					BuyNotional:    500,
+					TradeCount:     5,
+					MedianNotional: 100,
+					Prices:         []float64{100, 100.01, 100.02, 100.03, 100.04},
 				},
 				wantCategory: 2,
-				wantScore:    "drive",
+				wantScore:    func(output equation.FlowOutput) float64 { return output.Drive },
 			},
 			{
 				name: "balanced flow",
-				values: []float64{
-					250, 250, 5, 0, 100,
-					100, 100.01, 100.02, 100.03, 100.04,
+				input: equation.FlowInput{
+					BuyNotional:    250,
+					SellNotional:   250,
+					TradeCount:     5,
+					MedianNotional: 100,
+					Prices:         []float64{100, 100.01, 100.02, 100.03, 100.04},
 				},
 				wantCategory: 3,
-				wantScore:    "balance",
+				wantScore:    func(output equation.FlowOutput) float64 { return output.Balance },
 			},
 			{
 				name: "flow starvation",
-				values: []float64{
-					100, 100, 2, 0, 100,
-					100, 100.01,
+				input: equation.FlowInput{
+					BuyNotional:    100,
+					SellNotional:   100,
+					TradeCount:     2,
+					MedianNotional: 100,
+					Prices:         []float64{100, 100.01},
 				},
 				wantCategory: 4,
-				wantScore:    "starvation",
+				wantScore:    func(output equation.FlowOutput) float64 { return output.Starvation },
 			},
 		}
 
@@ -126,45 +141,33 @@ func TestFlow_ReadClassifiedCategories(testingTB *testing.T) {
 			testCase := testCase
 
 			Convey("When classifying "+testCase.name, func() {
-				stage := nomagique.Number(
-					equation.NewFlow(equation.FlowConfig()),
-					probability.NewClassifier(
-						datura.Acquire("flow-classifier", datura.APPJSON).Poke(
-							[]string{"absorption", "drive", "balance", "starvation"},
-							"inputs",
-						),
-					),
-				)
-				err := writeFeatureStage(stage, equation.FlowInputKeys, testCase.values...)
-
-				So(err, ShouldBeNil)
-
-				outbound, err := readStageOutput(stage)
+				flow := equation.NewFlow()
+				output, err := flow.Measure(testCase.input)
 
 				So(err, ShouldBeNil)
 
 				Convey("It should put the intended category on top", func() {
-					So(int(datura.Peek[float64](outbound, "output", "category")), ShouldEqual, testCase.wantCategory)
-					So(datura.Peek[float64](outbound, "output", testCase.wantScore), ShouldBeGreaterThan, 0)
-					assertHighestProbability(outbound, testCase.wantCategory)
+					So(int(output.Category), ShouldEqual, testCase.wantCategory)
+					So(testCase.wantScore(output), ShouldBeGreaterThan, 0)
+					assertHighestProbability(output, testCase.wantCategory)
 				})
 			})
 		}
 	})
 }
 
-func BenchmarkFlowRead(b *testing.B) {
-	stage := equation.NewFlow(equation.FlowConfig())
-	values := []float64{
-		500, 0, 5, 0, 100,
-		100, 100.01, 100.02, 100.03, 100.04,
+func BenchmarkFlowMeasure(benchmark *testing.B) {
+	flow := equation.NewFlow()
+	input := equation.FlowInput{
+		BuyNotional:    500,
+		TradeCount:     5,
+		MedianNotional: 100,
+		Prices:         []float64{100, 100.01, 100.02, 100.03, 100.04},
 	}
 
-	b.ReportAllocs()
+	benchmark.ReportAllocs()
 
-	for b.Loop() {
-		_ = writeFeatureStage(stage, equation.FlowInputKeys, values...)
-		frame := make([]byte, 4096)
-		_, _ = stage.Read(frame)
+	for benchmark.Loop() {
+		_, _ = flow.Measure(input)
 	}
 }

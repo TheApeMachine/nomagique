@@ -1,30 +1,75 @@
 package algorithm
 
 import (
-	"io"
+	"fmt"
 	"math"
 
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/nomagique/causal"
 )
 
-const pearlSampleNodeCount = 4
+const (
+	pearlDefaultMinHistory = 5
+	pearlSampleNodeCount   = 4
+	pearlNodeMacro         = 0
+	pearlNodeLiquidity     = 1
+	pearlNodeFlow          = 2
+	pearlNodeTarget        = 3
+)
 
 /*
-PearlSample turns Kraken trade and ticker frames into aligned node streams for Pearl.
-Macro, liquidity, flow, and target nodes are derived from observed market fields.
+PearlSample turns ticker, book, and trade rows into aligned causal rows.
 */
 type PearlSample struct {
-	artifact     *datura.Artifact
-	pendingFrame bool
-	output       []byte
-	windows      map[string]*pearlWindow
-	buffer       []byte
+	minHistory int
+	history    int
+	windows    map[string]*pearlWindow
+}
+
+/*
+PearlTickerInput is one ticker observation.
+*/
+type PearlTickerInput struct {
+	Symbol    string
+	Last      float64
+	ChangePct float64
+	Bid       float64
+	Ask       float64
+	BidQty    float64
+	AskQty    float64
+}
+
+/*
+PearlBookInput is one book observation.
+*/
+type PearlBookInput struct {
+	Symbol string
+	Bids   []BookLevel
+	Asks   []BookLevel
+}
+
+/*
+PearlTradeInput is one trade observation.
+*/
+type PearlTradeInput struct {
+	Symbol   string
+	Price    float64
+	Quantity float64
+	Side     string
+}
+
+/*
+PearlSampleOutput is the current causal row and retained table.
+*/
+type PearlSampleOutput struct {
+	Symbol string
+	Row    []float64
+	Rows   [][]float64
 }
 
 type pearlWindow struct {
-	nodeRing      *causal.NodeRing
+	rows          [][]float64
+	bids          map[float64]float64
+	asks          map[float64]float64
 	lastMacro     float64
 	lastLiquidity float64
 	lastFlow      float64
@@ -32,253 +77,253 @@ type pearlWindow struct {
 }
 
 /*
-NewPearlSample returns a causal node encoder wired from a config artifact.
+NewPearlSample returns a direct Pearl sampler.
 */
-func NewPearlSample(config *datura.Artifact) *PearlSample {
+func NewPearlSample(configs ...PearlConfig) *PearlSample {
+	config := PearlConfig{}
+
+	if len(configs) > 0 {
+		config = configs[0]
+	}
+
+	minHistory := config.MinHistory
+
+	if minHistory <= 0 {
+		minHistory = pearlDefaultMinHistory
+	}
+
+	history := config.History
+
+	if history < minHistory {
+		history = minHistory
+	}
+
 	return &PearlSample{
-		artifact: config,
-		windows:  map[string]*pearlWindow{},
-		buffer:   make([]byte, 65536),
+		minHistory: minHistory,
+		history:    history,
+		windows:    map[string]*pearlWindow{},
 	}
 }
 
-func (pearlSample *PearlSample) Write(payload []byte) (int, error) {
-	if len(payload) == 0 {
-		pearlSample.pendingFrame = false
-		pearlSample.output = nil
-
-		return 0, nil
-	}
-
-	pearlSample.artifact.WithPayload(payload)
-	pearlSample.pendingFrame = true
-	pearlSample.output = nil
-
-	return len(payload), nil
-}
-
-func (pearlSample *PearlSample) Read(payload []byte) (int, error) {
-	if len(pearlSample.output) > 0 {
-		return pearlSample.readOutput(payload)
-	}
-
-	if !pearlSample.pendingFrame {
-		return 0, io.EOF
-	}
-
-	state := datura.Acquire("pearl-sample-state", datura.APPJSON)
-	inbound := pearlSample.artifact.DecryptPayload()
-
-	if len(inbound) == 0 {
-		state.Release()
-		pearlSample.pendingFrame = false
-
-		return 0, io.EOF
-	}
-
-	if _, err := state.Unpack(inbound); err != nil {
-		state.Release()
-		pearlSample.pendingFrame = false
-
-		return 0, errnie.Error(errnie.Err(
+/*
+MeasureTicker observes one ticker row.
+*/
+func (pearlSample *PearlSample) MeasureTicker(
+	input PearlTickerInput,
+) (PearlSampleOutput, bool, error) {
+	if input.Symbol == "" || input.Last <= 0 {
+		return PearlSampleOutput{}, false, errnie.Error(errnie.Err(
 			errnie.Validation,
-			"algorithm-pearl-sample: state write failed",
-			err,
+			"pearl-sample: ticker requires symbol and last",
+			nil,
 		))
 	}
 
-	defer state.Release()
-
-	if datura.Peek[float64](state, "table", "rowCount") > 0 {
-		pearlSample.output = state.Pack()
-
-		return pearlSample.readOutput(payload)
-	}
-
-	row, window := pearlSample.ingestRow(state)
-
-	if len(row) != pearlSampleNodeCount || window == nil {
-		pearlSample.pendingFrame = false
-
-		return 0, io.EOF
-	}
-
-	frame := datura.Acquire("pearl-node-frame", datura.APPJSON)
-	frame.Poke(row, "batch")
-	wire := frame.Pack()
-	frame.Release()
-
-	if len(wire) > 0 {
-		_, _ = window.nodeRing.Write(wire)
-		_, _ = window.nodeRing.Read(pearlSample.buffer)
-	}
-
-	window.nodeRing.CopyStreamsTo(state)
-
-	pearlSample.output = state.Pack()
-
-	return pearlSample.readOutput(payload)
-}
-
-func (pearlSample *PearlSample) readOutput(payload []byte) (int, error) {
-	n := copy(payload, pearlSample.output)
-
-	if n < len(pearlSample.output) {
-		return n, io.ErrShortBuffer
-	}
-
-	pearlSample.output = nil
-	pearlSample.pendingFrame = false
-
-	return n, io.EOF
-}
-
-func (pearlSample *PearlSample) Close() error {
-	return nil
-}
-
-func (pearlSample *PearlSample) ingestRow(state *datura.Artifact) ([]float64, *pearlWindow) {
-	channel := datura.Peek[string](state, "channel")
-	symbol := datura.Peek[string](state, "data", 0, "symbol")
-	row := false
-
-	if symbol == "" {
-		symbol = datura.Peek[string](state, "symbol")
-		row = symbol != ""
-	}
-
-	if symbol == "" {
-		return nil, nil
-	}
-
-	if channel == "" && row {
-		if datura.Peek[float64](state, "price") > 0 &&
-			datura.Peek[float64](state, "qty") > 0 {
-			channel = "trade"
-		}
-
-		if datura.Peek[float64](state, "last") > 0 {
-			channel = "ticker"
-		}
-
-		if datura.Peek[float64](state, "bids", 0, "price") > 0 ||
-			datura.Peek[float64](state, "asks", 0, "price") > 0 {
-			channel = "book"
-		}
-	}
-
-	window := pearlSample.window(symbol)
-
-	switch channel {
-	case "trade":
-		return pearlSample.ingestTrade(state, window, row), window
-	case "ticker":
-		return pearlSample.ingestTicker(state, window, row), window
-	case "book":
-		return pearlSample.ingestBook(state, window, row), window
-	}
-
-	return nil, nil
-}
-
-func (pearlSample *PearlSample) ingestTrade(
-	state *datura.Artifact,
-	window *pearlWindow,
-	row bool,
-) []float64 {
-	root := []any{"data", 0}
-	if row {
-		root = nil
-	}
-
-	price := peekFloat(state, root, "price")
-	quantity := peekFloat(state, root, "qty")
-	side := peekString(state, root, "side")
-
-	if price <= 0 || quantity <= 0 {
-		return nil
-	}
-
-	flow := quantity
-
-	if side == "sell" {
-		flow = -quantity
-	}
-
-	window.lastFlow = flow
-
-	return []float64{
-		window.lastMacro,
-		window.lastLiquidity,
-		flow,
-		window.velocity(price),
-	}
-}
-
-func (pearlSample *PearlSample) ingestTicker(
-	state *datura.Artifact,
-	window *pearlWindow,
-	row bool,
-) []float64 {
-	root := []any{"data", 0}
-	if row {
-		root = nil
-	}
-
-	last := peekFloat(state, root, "last")
-	changePct := peekFloat(state, root, "change_pct")
-
-	if last <= 0 {
-		return nil
-	}
-
-	liquidity := liquidityStress(
-		peekFloat(state, root, "bid"),
-		peekFloat(state, root, "ask"),
-		peekFloat(state, root, "bid_qty"),
-		peekFloat(state, root, "ask_qty"),
-	)
+	window := pearlSample.window(input.Symbol)
+	liquidity := pearlSample.liquidityStress(input.Bid, input.Ask, input.BidQty, input.AskQty)
 
 	if liquidity > 0 {
 		window.lastLiquidity = liquidity
 	}
 
-	window.lastMacro = changePct / 100
-
-	return []float64{
+	window.lastMacro = input.ChangePct / 100
+	row := []float64{
 		window.lastMacro,
 		window.lastLiquidity,
 		window.lastFlow,
-		window.velocity(last),
+		window.velocity(input.Last),
 	}
+
+	return pearlSample.append(input.Symbol, row, window), len(window.rows) >= pearlSample.minHistory, nil
 }
 
-func (pearlSample *PearlSample) ingestBook(
-	state *datura.Artifact,
-	window *pearlWindow,
-	row bool,
-) []float64 {
-	root := []any{"data", 0}
-	if row {
-		root = nil
+/*
+MeasureBook observes one book row.
+*/
+func (pearlSample *PearlSample) MeasureBook(
+	input PearlBookInput,
+) (PearlSampleOutput, bool, error) {
+	if input.Symbol == "" {
+		return PearlSampleOutput{}, false, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"pearl-sample: book requires symbol",
+			nil,
+		))
 	}
 
-	bid, bidQty := bestBid(state, root)
-	ask, askQty := bestAsk(state, root)
-	liquidity := liquidityStress(bid, ask, bidQty, askQty)
+	window := pearlSample.window(input.Symbol)
+	pearlSample.applyLevels(window.bids, input.Bids)
+	pearlSample.applyLevels(window.asks, input.Asks)
+
+	bid, bidQty := pearlSample.bestBid(window.bids)
+	ask, askQty := pearlSample.bestAsk(window.asks)
+	liquidity := pearlSample.liquidityStress(bid, ask, bidQty, askQty)
 
 	if liquidity <= 0 {
-		return nil
+		return PearlSampleOutput{}, false, nil
 	}
 
 	window.lastLiquidity = liquidity
-
-	return []float64{
+	row := []float64{
 		window.lastMacro,
-		liquidity,
+		window.lastLiquidity,
 		window.lastFlow,
 		window.velocity((bid + ask) / 2),
 	}
+
+	return pearlSample.append(input.Symbol, row, window), len(window.rows) >= pearlSample.minHistory, nil
+}
+
+/*
+MeasureTrade observes one trade row.
+*/
+func (pearlSample *PearlSample) MeasureTrade(
+	input PearlTradeInput,
+) (PearlSampleOutput, bool, error) {
+	if input.Symbol == "" || input.Price <= 0 || input.Quantity <= 0 {
+		return PearlSampleOutput{}, false, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"pearl-sample: trade requires symbol, price, and quantity",
+			nil,
+		))
+	}
+
+	if input.Side != "buy" && input.Side != "sell" {
+		return PearlSampleOutput{}, false, errnie.Error(errnie.Err(
+			errnie.Validation,
+			fmt.Sprintf("pearl-sample: unknown side %q", input.Side),
+			nil,
+		))
+	}
+
+	window := pearlSample.window(input.Symbol)
+	flow := input.Quantity
+
+	if input.Side == "sell" {
+		flow = -input.Quantity
+	}
+
+	window.lastFlow = flow
+	row := []float64{
+		window.lastMacro,
+		window.lastLiquidity,
+		window.lastFlow,
+		window.velocity(input.Price),
+	}
+
+	return pearlSample.append(input.Symbol, row, window), len(window.rows) >= pearlSample.minHistory, nil
+}
+
+func (pearlSample *PearlSample) append(
+	symbol string,
+	row []float64,
+	window *pearlWindow,
+) PearlSampleOutput {
+	window.rows = append(window.rows, append([]float64(nil), row...))
+
+	if len(window.rows) > pearlSample.history {
+		window.rows = window.rows[len(window.rows)-pearlSample.history:]
+	}
+
+	rows := make([][]float64, 0, len(window.rows))
+
+	for _, retained := range window.rows {
+		rows = append(rows, append([]float64(nil), retained...))
+	}
+
+	return PearlSampleOutput{
+		Symbol: symbol,
+		Row:    append([]float64(nil), row...),
+		Rows:   rows,
+	}
+}
+
+func (pearlSample *PearlSample) window(symbol string) *pearlWindow {
+	window, ok := pearlSample.windows[symbol]
+
+	if ok {
+		return window
+	}
+
+	window = &pearlWindow{
+		bids: map[float64]float64{},
+		asks: map[float64]float64{},
+	}
+	pearlSample.windows[symbol] = window
+
+	return window
+}
+
+func (pearlSample *PearlSample) applyLevels(book map[float64]float64, levels []BookLevel) {
+	for _, level := range levels {
+		if level.Price <= 0 {
+			continue
+		}
+
+		if level.Quantity <= 0 {
+			delete(book, level.Price)
+			continue
+		}
+
+		book[level.Price] = level.Quantity
+	}
+}
+
+func (pearlSample *PearlSample) bestBid(book map[float64]float64) (float64, float64) {
+	price := 0.0
+	quantity := 0.0
+
+	for levelPrice, levelQuantity := range book {
+		if levelPrice <= price {
+			continue
+		}
+
+		price = levelPrice
+		quantity = levelQuantity
+	}
+
+	return price, quantity
+}
+
+func (pearlSample *PearlSample) bestAsk(book map[float64]float64) (float64, float64) {
+	price := 0.0
+	quantity := 0.0
+
+	for levelPrice, levelQuantity := range book {
+		if price > 0 && levelPrice >= price {
+			continue
+		}
+
+		price = levelPrice
+		quantity = levelQuantity
+	}
+
+	return price, quantity
+}
+
+func (pearlSample *PearlSample) liquidityStress(
+	bid float64,
+	ask float64,
+	bidQty float64,
+	askQty float64,
+) float64 {
+	if bid <= 0 || ask <= 0 || ask <= bid {
+		return 0
+	}
+
+	depth := bidQty + askQty
+
+	if depth <= 0 {
+		return 0
+	}
+
+	stress := (ask - bid) / depth
+
+	if math.IsNaN(stress) || math.IsInf(stress, 0) {
+		return 0
+	}
+
+	return stress
 }
 
 func (window *pearlWindow) velocity(price float64) float64 {
@@ -293,93 +338,4 @@ func (window *pearlWindow) velocity(price float64) float64 {
 	}
 
 	return velocity
-}
-
-func (pearlSample *PearlSample) window(symbol string) *pearlWindow {
-	if window, ok := pearlSample.windows[symbol]; ok {
-		return window
-	}
-
-	capacity := datura.Peek[float64](pearlSample.artifact, "history")
-
-	if capacity <= 0 {
-		capacity = datura.Peek[float64](pearlSample.artifact, "minHistory")
-	}
-
-	window := &pearlWindow{
-		nodeRing: causal.NewNodeRing(
-			datura.Acquire("pearl-node-ring", datura.APPJSON).WithAttributes(datura.Map[any]{
-				"nodeCount": float64(pearlSampleNodeCount),
-				"capacity":  capacity,
-			}).WithPayload([]byte("{}")),
-		),
-	}
-
-	pearlSample.windows[symbol] = window
-
-	return window
-}
-
-func liquidityStress(bid, ask, bidQty, askQty float64) float64 {
-	if bid <= 0 || ask <= 0 || ask <= bid {
-		return 0
-	}
-
-	depth := bidQty + askQty
-
-	if depth <= 0 {
-		return 0
-	}
-
-	return (ask - bid) / depth
-}
-
-func bestBid(state *datura.Artifact, root []any) (price, quantity float64) {
-	for index := 0; ; index++ {
-		levelRoot := append(append([]any{}, root...), "bids", index)
-		levelPrice := datura.Peek[float64](state, append(levelRoot, "price")...)
-
-		if levelPrice <= 0 {
-			return price, quantity
-		}
-
-		if levelPrice > price {
-			price = levelPrice
-			quantity = datura.Peek[float64](state, append(levelRoot, "qty")...)
-		}
-	}
-}
-
-func bestAsk(state *datura.Artifact, root []any) (price, quantity float64) {
-	for index := 0; ; index++ {
-		levelRoot := append(append([]any{}, root...), "asks", index)
-		levelPrice := datura.Peek[float64](state, append(levelRoot, "price")...)
-
-		if levelPrice <= 0 {
-			return price, quantity
-		}
-
-		if price == 0 || levelPrice < price {
-			price = levelPrice
-			quantity = datura.Peek[float64](state, append(levelRoot, "qty")...)
-		}
-	}
-}
-
-func peekFloat(state *datura.Artifact, root []any, key string) float64 {
-	path := append(append([]any{}, root...), key)
-
-	value := datura.Peek[float64](state, path...)
-
-	if math.IsNaN(value) || math.IsInf(value, 0) {
-		return 0
-	}
-
-	return value
-}
-
-func peekString(state *datura.Artifact, root []any, key string) string {
-	path := append(append([]any{}, root...), key)
-
-	return datura.Peek[string](state, path...)
 }

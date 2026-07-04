@@ -2,13 +2,10 @@ package algorithm
 
 import (
 	"fmt"
-	"io"
 	"math"
 	"sort"
 	"time"
 
-	"github.com/bytedance/sonic"
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/probability"
 	"gonum.org/v1/gonum/stat"
@@ -192,103 +189,72 @@ func maxFloat(left, right float64) float64 {
 }
 
 /*
-GateQuantile retains observations on the config artifact and emits a quantile
-gate under output.value. Config attributes: percentile, minSamples.
+GateQuantile retains observations and emits a quantile gate.
 */
 type GateQuantile struct {
-	artifact *datura.Artifact
+	percentile float64
+	minSamples int
+	history    []float64
 }
 
 /*
-NewGateQuantile wires a gate stage from a config artifact.
+GateQuantileConfig describes a quantile gate.
 */
-func NewGateQuantile(artifact *datura.Artifact) *GateQuantile {
-	artifact.Poke([]float64{}, "history")
-
-	return &GateQuantile{
-		artifact: artifact,
-	}
+type GateQuantileConfig struct {
+	Percentile float64
+	MinSamples int
 }
 
-func (gate *GateQuantile) Write(payload []byte) (int, error) {
-	gate.artifact.WithPayload(payload)
-	return len(payload), nil
-}
-
-func (gate *GateQuantile) Read(payload []byte) (int, error) {
-	state := datura.Acquire("gate-quantile-state", datura.APPJSON)
-
-	if _, err := state.Unpack(gate.artifact.DecryptPayload()); err != nil {
-		state.Release()
-
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"algorithm: state write failed",
-			err,
-		))
-	}
-
-	defer state.Release()
-
-	sample := datura.Peek[float64](state, "sample")
-	percentile := datura.Peek[float64](state, "percentile")
-
-	if percentile <= 0 {
-		percentile = datura.Peek[float64](gate.artifact, "percentile")
-	}
-
-	minSamples := int(datura.Peek[float64](gate.artifact, "minSamples"))
+/*
+NewGateQuantile returns a direct quantile gate.
+*/
+func NewGateQuantile(config GateQuantileConfig) *GateQuantile {
+	minSamples := config.MinSamples
 
 	if minSamples < 1 {
 		minSamples = 3
 	}
 
-	if sample > 0 && !math.IsNaN(sample) && !math.IsInf(sample, 0) {
-		history := datura.Peek[[]float64](gate.artifact, "history")
-		history = append(history, sample)
-
-		capacity := gateHistoryCapacity(history, minSamples)
-
-		if len(history) > capacity {
-			history = history[len(history)-capacity:]
-		}
-
-		gate.artifact.Poke(history, "history")
+	return &GateQuantile{
+		percentile: config.Percentile,
+		minSamples: minSamples,
+		history:    []float64{},
 	}
-
-	gateValue := gate.value(percentile)
-
-	state.MergeOutput("value", gateValue)
-	state.Poke("output", "root")
-	state.Poke([]string{"value"}, "inputs")
-
-	return state.PackInto(payload)
 }
 
 /*
-value returns the configured quantile over persisted history.
+Observe records one sample and returns the updated quantile.
+*/
+func (gate *GateQuantile) Observe(sample float64, percentileOverride float64) float64 {
+	if sample > 0 && !math.IsNaN(sample) && !math.IsInf(sample, 0) {
+		gate.history = append(gate.history, sample)
+
+		capacity := gateHistoryCapacity(gate.history, gate.minSamples)
+
+		if len(gate.history) > capacity {
+			gate.history = gate.history[len(gate.history)-capacity:]
+		}
+	}
+
+	return gate.Value(percentileOverride)
+}
+
+/*
+Value returns the configured quantile over persisted history.
 percentileOverride replaces the config percentile when positive.
 */
-func (gate *GateQuantile) value(percentileOverride float64) float64 {
+func (gate *GateQuantile) Value(percentileOverride float64) float64 {
 	percentile := percentileOverride
 
 	if percentile <= 0 {
-		percentile = datura.Peek[float64](gate.artifact, "percentile")
+		percentile = gate.percentile
 	}
 
-	minSamples := int(datura.Peek[float64](gate.artifact, "minSamples"))
-
-	if minSamples < 1 {
-		minSamples = 3
-	}
-
-	history := datura.Peek[[]float64](gate.artifact, "history")
-
-	if len(history) < minSamples {
+	if len(gate.history) < gate.minSamples {
 		return 0
 	}
 
-	value, err := gateSampleQuantile(percentile, history)
+	value, err := gateSampleQuantile(percentile, gate.history)
 
 	if err != nil {
 		errnie.Error(errnie.Err(
@@ -304,65 +270,10 @@ func (gate *GateQuantile) value(percentileOverride float64) float64 {
 }
 
 /*
-observe records one sample through the wire bus and returns the updated quantile.
+Ready reports whether the gate has enough observations to emit.
 */
-func (gate *GateQuantile) observe(sample float64, percentileOverride float64) float64 {
-	fields := datura.Map[float64]{"sample": sample}
-
-	if percentileOverride > 0 {
-		fields["percentile"] = percentileOverride
-	}
-
-	payload := errnie.Does(func() ([]byte, error) {
-		return sonic.Marshal(fields)
-	}).Or(func(err error) {
-		errnie.Error(errnie.Err(errnie.IO, "gate-quantile: marshal observe payload", err))
-	}).Value()
-
-	frame := datura.Acquire("gate-frame", datura.APPJSON)
-
-	if frame.WithPayload(payload) == nil {
-		frame.Release()
-
-		return 0
-	}
-
-	packed := frame.Pack()
-
-	frame.Release()
-
-	if len(packed) == 0 {
-		return 0
-	}
-
-	if _, err := gate.Write(packed); err != nil {
-		return 0
-	}
-
-	bufferSize := max(len(packed)*2, len(packed)+1)
-	buffer := make([]byte, bufferSize)
-	readCount, err := gate.Read(buffer)
-
-	for err == io.ErrShortBuffer {
-		bufferSize *= 2
-		buffer = make([]byte, bufferSize)
-		readCount, err = gate.Read(buffer)
-	}
-
-	if err != nil && err != io.EOF && err != io.ErrShortBuffer {
-		return 0
-	}
-
-	outbound := datura.Acquire("gate-read", datura.APPJSON)
-	_, _ = outbound.Unpack(buffer[:readCount])
-	value := datura.Peek[float64](outbound, "output", "value")
-	outbound.Release()
-
-	return value
-}
-
-func (gate *GateQuantile) Close() error {
-	return nil
+func (gate *GateQuantile) Ready() bool {
+	return len(gate.history) >= gate.minSamples
 }
 
 func gateHistoryCapacity(values []float64, minSamples int) int {
@@ -459,10 +370,6 @@ func supportRatioGate(threshold float64, vacuumLow float64, vacuumReady bool) fl
 	return vacuumLow / threshold
 }
 
-func gateReady(config *datura.Artifact) bool {
-	return len(datura.Peek[[]float64](config, "history")) >= 3
-}
-
 func mathInf(sign int) float64 {
 	return math.Inf(sign)
 }
@@ -519,5 +426,3 @@ func gateDistinctSpan(values []float64) (float64, error) {
 
 	return float64(distinct), nil
 }
-
-var _ io.ReadWriteCloser = (*GateQuantile)(nil)

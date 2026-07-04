@@ -175,11 +175,10 @@ func TestCancelFillRatio(testingTB *testing.T) {
 
 func TestGateQuantile(testingTB *testing.T) {
 	Convey("Given insufficient ring history", testingTB, func() {
-		gate := NewGateQuantile(
-			datura.Acquire("churn-gate", datura.APPJSON).
-				WithAttribute("percentile", 0.75).
-				WithAttribute("minSamples", 3.0),
-		)
+		gate := NewGateQuantile(GateQuantileConfig{
+			Percentile: 0.75,
+			MinSamples: 3,
+		})
 
 		Convey("It should return zero before warmup", func() {
 			So(runGateSample(gate, 0, 0), ShouldEqual, 0)
@@ -187,31 +186,11 @@ func TestGateQuantile(testingTB *testing.T) {
 	})
 
 	Convey("Given populated observation rings", testingTB, func() {
-		churnGate := NewGateQuantile(
-			datura.Acquire("churn-gate", datura.APPJSON).
-				WithAttribute("percentile", 0.75).
-				WithAttribute("minSamples", 3.0),
-		)
-		fillMatchGate := NewGateQuantile(
-			datura.Acquire("fill-match-gate", datura.APPJSON).
-				WithAttribute("percentile", 0.5).
-				WithAttribute("minSamples", 3.0),
-		)
-		cancelQtyGate := NewGateQuantile(
-			datura.Acquire("cancel-qty-gate", datura.APPJSON).
-				WithAttribute("percentile", 0.5).
-				WithAttribute("minSamples", 3.0),
-		)
-		levelSizeGate := NewGateQuantile(
-			datura.Acquire("level-size-gate", datura.APPJSON).
-				WithAttribute("percentile", 0.75).
-				WithAttribute("minSamples", 3.0),
-		)
-		vacuumGate := NewGateQuantile(
-			datura.Acquire("vacuum-gate", datura.APPJSON).
-				WithAttribute("percentile", 0.9).
-				WithAttribute("minSamples", 3.0),
-		)
+		churnGate := NewGateQuantile(GateQuantileConfig{Percentile: 0.75, MinSamples: 3})
+		fillMatchGate := NewGateQuantile(GateQuantileConfig{Percentile: 0.5, MinSamples: 3})
+		cancelQtyGate := NewGateQuantile(GateQuantileConfig{Percentile: 0.5, MinSamples: 3})
+		levelSizeGate := NewGateQuantile(GateQuantileConfig{Percentile: 0.75, MinSamples: 3})
+		vacuumGate := NewGateQuantile(GateQuantileConfig{Percentile: 0.9, MinSamples: 3})
 
 		for _, value := range []float64{1, 2, 3, 4} {
 			runGateSample(churnGate, value, 0)
@@ -228,18 +207,18 @@ func TestGateQuantile(testingTB *testing.T) {
 				100, 0,
 				runGateSample(cancelQtyGate, 0, 0),
 				runGateSample(levelSizeGate, 0, 0),
-				gateReady(cancelQtyGate.artifact),
-				gateReady(levelSizeGate.artifact),
+				cancelQtyGate.Ready(),
+				levelSizeGate.Ready(),
 			), ShouldBeGreaterThan, 0)
 			So(vacuumStrengthLimit(
 				0.5, 0,
 				runGateSample(vacuumGate, 0, 0),
-				gateReady(vacuumGate.artifact),
+				vacuumGate.Ready(),
 			), ShouldBeGreaterThan, 0)
 			So(supportRatioGate(
 				0.5,
 				runGateSample(vacuumGate, 0, 0.25),
-				gateReady(vacuumGate.artifact),
+				vacuumGate.Ready(),
 			), ShouldBeGreaterThan, 0)
 		})
 	})
@@ -260,34 +239,24 @@ func TestGateQuantile(testingTB *testing.T) {
 
 func runGateSample(gate *GateQuantile, sample float64, percentile float64) float64 {
 	if sample <= 0 {
-		return gate.value(percentile)
+		return gate.Value(percentile)
 	}
 
-	return gate.observe(sample, percentile)
+	return gate.Observe(sample, percentile)
 }
 
-func TestGateQuantileObserveWireBus(testingTB *testing.T) {
-	Convey("Given a gate stage and JSON sample payload on the wire", testingTB, func() {
-		gate := NewGateQuantile(
-			datura.Acquire("vacuum-gate", datura.APPJSON).
-				WithAttribute("percentile", 0.75).
-				WithAttribute("minSamples", 3.0),
-		)
+func TestGateQuantile_Observe(testingTB *testing.T) {
+	Convey("Given a direct gate stage", testingTB, func() {
+		gate := NewGateQuantile(GateQuantileConfig{Percentile: 0.75, MinSamples: 3})
 
 		for _, sample := range []float64{1, 2, 3, 4} {
-			So(gate.observe(sample, 0), ShouldBeGreaterThanOrEqualTo, 0)
+			So(gate.Observe(sample, 0), ShouldBeGreaterThanOrEqualTo, 0)
 		}
 
-		Convey("It should persist history and emit quantile on the bus", func() {
-			So(len(datura.Peek[[]float64](gate.artifact, "history")), ShouldBeGreaterThanOrEqualTo, 3)
-			So(gate.value(0), ShouldBeGreaterThan, 0)
-
-			inbound := datura.Acquire("gate-inbound", datura.APPJSON).
-				WithPayload([]byte(`{"sample":5}`))
-
-			So(nomagique.RoundTripArtifact(inbound, gate), ShouldBeNil)
-			So(datura.Peek[float64](inbound, "output", "value"), ShouldBeGreaterThan, 0)
-			So(len(inbound.DecryptPayload()), ShouldBeGreaterThan, 0)
+		Convey("It should retain history and emit quantiles", func() {
+			So(gate.Ready(), ShouldBeTrue)
+			So(gate.Value(0), ShouldBeGreaterThan, 0)
+			So(gate.Value(0.25), ShouldBeGreaterThan, 0)
 		})
 	})
 }

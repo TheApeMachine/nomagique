@@ -1,115 +1,98 @@
 package equation
 
 import (
-	"io"
 	"math"
 
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 )
 
 /*
 Conviction classifies risk-on breadth versus idiosyncratic leadership.
-The constructor artifact holds schema inputs; Write buffers inbound wire on its payload.
 */
-type Conviction struct {
-	artifact *datura.Artifact
+type Conviction struct{}
+
+/*
+ConvictionInput contains the float-only market breadth inputs.
+*/
+type ConvictionInput struct {
+	Breadth        float64
+	Change         float64
+	SurgeThreshold float64
+	Leader         bool
 }
 
 /*
-NewConviction returns a market-breadth conviction stage wired from config attributes.
+ConvictionOutput contains the float-only conviction scores.
 */
-func NewConviction(artifact *datura.Artifact) io.ReadWriteCloser {
-	return &Conviction{
-		artifact: artifact,
-	}
+type ConvictionOutput struct {
+	Value          float64
+	SurgeScore     float64
+	DivergentScore float64
+	SlumpScore     float64
+	Strength       float64
+	Category       float64
+	Breadth        float64
+	Change         float64
 }
 
-func (conviction *Conviction) Write(p []byte) (int, error) {
-	conviction.artifact.WithPayload(p)
-	return len(p), nil
+/*
+NewConviction returns a market-breadth conviction calculator.
+*/
+func NewConviction() *Conviction {
+	return &Conviction{}
 }
 
-func (conviction *Conviction) Read(p []byte) (int, error) {
-	state, err := stageState(conviction.artifact.DecryptPayload())
-
-	if err != nil {
-		return 0, err
-	}
-
-	inputKeys := EnsureFeatureSchema(state, conviction.artifact, ConvictionInputKeys)
-
-	fields, err := FeatureFields(state, inputKeys)
-
-	if err != nil || len(fields) < len(ConvictionInputKeys) {
-		return rejectStage(state, "equation: invalid stage input")
-	}
-
-	breadth := fields[0]
-	change := fields[1]
-	surgeThreshold := fields[2]
-
-	for _, value := range []float64{breadth, change, surgeThreshold} {
+/*
+Measure calculates conviction scores from floats without artifact transport.
+*/
+func (conviction *Conviction) Measure(
+	input ConvictionInput,
+) (ConvictionOutput, error) {
+	for _, value := range []float64{input.Breadth, input.Change, input.SurgeThreshold} {
 		if math.IsNaN(value) || math.IsInf(value, 0) {
-			return rejectStage(state, "equation: invalid stage input")
+			return ConvictionOutput{}, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"conviction: invalid input",
+				nil,
+			))
 		}
 	}
 
-	if surgeThreshold <= 0 {
-		return 0, errnie.Error(errnie.Err(
+	if input.SurgeThreshold <= 0 {
+		return ConvictionOutput{}, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"conviction: surgeThreshold must be positive",
 			nil,
 		))
 	}
 
+	surgeThreshold := input.SurgeThreshold
 	if surgeThreshold > 1 {
 		surgeThreshold = 1
 	}
 
-	leader := fields[3] > 0
-	category := classifyConviction(breadth, change, surgeThreshold, leader)
-
-	surgeScore := 0.0
-	divergentScore := 0.0
-	slumpScore := 0.0
+	category := conviction.classify(input.Breadth, input.Change, surgeThreshold, input.Leader)
+	output := ConvictionOutput{
+		Category: float64(category),
+		Breadth:  input.Breadth,
+		Change:   input.Change,
+	}
 
 	switch category {
 	case 1:
-		surgeScore = breadth
+		output.SurgeScore = input.Breadth
+		output.Strength = output.SurgeScore
 	case 2:
-		divergentScore = math.Abs(change)
+		output.DivergentScore = math.Abs(input.Change)
+		output.Strength = output.DivergentScore
 	case 3:
-		slumpScore = math.Max(math.Max(0, surgeThreshold-breadth), math.Abs(change))
+		output.SlumpScore = math.Max(math.Max(0, surgeThreshold-input.Breadth), math.Abs(input.Change))
+		output.Strength = output.SlumpScore
 	}
 
-	strength := breadth
+	output.Value = output.Strength
 
-	if category == 2 {
-		strength = divergentScore
-	}
-
-	if category == 3 {
-		strength = slumpScore
-	}
-
-	if strength < 0 {
-		return rejectStage(state, "equation: invalid stage input")
-	}
-
-	return emitOutput(state, p, datura.Map[float64]{
-		"value":          strength,
-		"surgeScore":     surgeScore,
-		"divergentScore": divergentScore,
-		"slumpScore":     slumpScore,
-		"category":       float64(category),
-		"breadth":        breadth,
-		"change":         change,
-	})
-}
-
-func (conviction *Conviction) Close() error {
-	return nil
+	return output, nil
 }
 
 func classifyConviction(
@@ -125,4 +108,11 @@ func classifyConviction(
 	}
 
 	return 3
+}
+
+func (conviction *Conviction) classify(
+	breadth, change, surgeThreshold float64,
+	leader bool,
+) int {
+	return classifyConviction(breadth, change, surgeThreshold, leader)
 }

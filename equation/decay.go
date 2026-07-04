@@ -1,11 +1,9 @@
 package equation
 
 import (
-	"io"
 	"math"
 	"sort"
 
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/probability"
 	"gonum.org/v1/gonum/stat"
@@ -13,77 +11,74 @@ import (
 
 /*
 Decay classifies book thinning, spread widening, pressure fade, and imbalance flip.
-The constructor artifact holds schema inputs; Write buffers inbound wire on its payload.
 */
-type Decay struct {
-	artifact *datura.Artifact
+type Decay struct{}
+
+/*
+DecayInput contains the float-only microstructure decay inputs.
+*/
+type DecayInput struct {
+	LastPrice  float64
+	BidDepths  []float64
+	AskDepths  []float64
+	Densities  []float64
+	Spreads    []float64
+	Pressures  []float64
+	Imbalances []float64
 }
 
 /*
-NewDecay returns a microstructure decay stage wired from config attributes.
+DecayOutput contains the float-only decay scores.
 */
-func NewDecay(artifact *datura.Artifact) io.ReadWriteCloser {
-	return &Decay{
-		artifact: artifact,
-	}
+type DecayOutput struct {
+	Value      float64
+	Strength   float64
+	Mechanical float64
+	Fragile    float64
+	Thermal    float64
+	Reversal   float64
+	Urgency    float64
+	Category   float64
 }
 
-func (decay *Decay) Write(p []byte) (int, error) {
-	decay.artifact.WithPayload(p)
-	return len(p), nil
+/*
+NewDecay returns a microstructure decay calculator.
+*/
+func NewDecay() *Decay {
+	return &Decay{}
 }
 
-func (decay *Decay) Read(p []byte) (int, error) {
-	state, err := stageState(decay.artifact.DecryptPayload())
-
-	if err != nil {
-		return 0, err
+/*
+Measure calculates decay scores from floats without artifact transport.
+*/
+func (decay *Decay) Measure(input DecayInput) (DecayOutput, error) {
+	if input.LastPrice <= 0 {
+		return DecayOutput{}, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"decay: last price must be positive",
+			nil,
+		))
 	}
 
-	inputKeys := EnsureFeatureSchema(state, decay.artifact, DecayInputKeys)
-
-	fields, err := FeatureFields(state, inputKeys)
-
-	if err != nil || len(fields) < len(DecayInputKeys) {
-		return rejectStage(state, "equation: invalid stage input")
-	}
-
-	lastPrice := fields[0]
-
-	if lastPrice <= 0 {
-		return rejectStage(state, "equation: invalid stage input")
-	}
-
-	counts := fields[1:]
-	offset := len(inputKeys)
-	features := Features(state)
-	series := make([][]float64, len(counts))
-
-	for index, count := range counts {
-		segmentCount := int(count)
-
-		if segmentCount < 0 || offset+segmentCount > len(features) {
-			return rejectStage(state, "equation: invalid stage input")
-		}
-
-		series[index] = features[offset : offset+segmentCount]
-		offset += segmentCount
+	series := [][]float64{
+		input.BidDepths,
+		input.AskDepths,
+		input.Densities,
+		input.Spreads,
+		input.Pressures,
+		input.Imbalances,
 	}
 
 	longOutcome, err := decay.exitSide(series, 1)
 
 	if err != nil {
-		state.Release()
-
-		return 0, err
+		return DecayOutput{}, err
 	}
 
 	shortOutcome, err := decay.exitSide(series, -1)
 
 	if err != nil {
-		state.Release()
-
-		return 0, err
+		return DecayOutput{}, err
 	}
 
 	mechanical := longOutcome.mechanical
@@ -102,20 +97,16 @@ func (decay *Decay) Read(p []byte) (int, error) {
 		category = shortOutcome.category
 	}
 
-	return emitOutput(state, p, datura.Map[float64]{
-		"value":      urgency,
-		"strength":   urgency,
-		"mechanical": mechanical,
-		"fragile":    fragile,
-		"thermal":    thermal,
-		"reversal":   reversal,
-		"urgency":    urgency,
-		"category":   float64(category),
-	})
-}
-
-func (decay *Decay) Close() error {
-	return nil
+	return DecayOutput{
+		Value:      urgency,
+		Strength:   urgency,
+		Mechanical: mechanical,
+		Fragile:    fragile,
+		Thermal:    thermal,
+		Reversal:   reversal,
+		Urgency:    urgency,
+		Category:   float64(category),
+	}, nil
 }
 
 type decaySideOutcome struct {

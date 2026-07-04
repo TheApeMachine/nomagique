@@ -3,10 +3,9 @@ package equation
 import (
 	"errors"
 	"fmt"
-	"io"
 	"math"
 
-	"github.com/theapemachine/datura"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/probability"
 )
 
@@ -14,117 +13,118 @@ var errNoBookQualityCategory = errors.New("no book quality category matched")
 
 /*
 BookQuality classifies toxic bluff, liquidity vacuum, and hard support.
-The constructor artifact holds schema inputs; Write buffers inbound wire on its payload.
 */
-type BookQuality struct {
-	artifact *datura.Artifact
+type BookQuality struct{}
+
+/*
+BookQualityInput contains the float-only book quality inputs.
+*/
+type BookQualityInput struct {
+	CancelBid          float64
+	FillBid            float64
+	CancelAsk          float64
+	FillAsk            float64
+	BidDepth           float64
+	AskDepth           float64
+	ToxicNear          bool
+	ToxicBluffStrength float64
+	Threshold          float64
+	ChurnGate          float64
+	SupportGate        float64
+	VacuumStrengthCap  float64
+	LastPrice          float64
 }
 
 /*
-NewBookQuality returns a book-flow quality stage wired from config attributes.
+BookQualityOutput contains the float-only book quality scores.
 */
-func NewBookQuality(artifact *datura.Artifact) io.ReadWriteCloser {
-	return &BookQuality{
-		artifact: artifact,
-	}
+type BookQualityOutput struct {
+	Value        float64
+	BluffScore   float64
+	VacuumScore  float64
+	SupportScore float64
+	Strength     float64
+	Category     float64
+	Price        float64
 }
 
-func (bookQuality *BookQuality) Write(p []byte) (int, error) {
-	bookQuality.artifact.WithPayload(p)
-	return len(p), nil
+/*
+NewBookQuality returns a book-flow quality calculator.
+*/
+func NewBookQuality() *BookQuality {
+	return &BookQuality{}
 }
 
-func (bookQuality *BookQuality) Read(p []byte) (int, error) {
-	state, err := stageState(bookQuality.artifact.DecryptPayload())
-
-	if err != nil {
-		return 0, err
-	}
-
-	inputKeys := EnsureFeatureSchema(state, bookQuality.artifact, BookQualityInputKeys)
-
-	fields, err := FeatureFields(state, inputKeys)
-
-	if err != nil {
-		return rejectStage(state, "bookquality: missing feature field")
-	}
-
-	if len(fields) < len(BookQualityInputKeys) {
-		return rejectStage(state, "bookquality: insufficient payload")
-	}
-
-	cancelBid := fields[0]
-	fillBid := fields[1]
-	cancelAsk := fields[2]
-	fillAsk := fields[3]
-	bidDepth := fields[4]
-	askDepth := fields[5]
-	toxicNear := fields[6] > 0
-	toxicBluffStrength := fields[7]
-	threshold := fields[8]
-	churnGate := fields[9]
-	supportGate := fields[10]
-	vacuumStrengthCap := fields[11]
-	lastPrice := fields[12]
-
-	if lastPrice <= 0 {
-		return rejectStage(state, "bookquality: lastPrice must be positive")
+/*
+Measure calculates book-quality scores from floats without artifact transport.
+*/
+func (bookQuality *BookQuality) Measure(
+	input BookQualityInput,
+) (BookQualityOutput, error) {
+	if input.LastPrice <= 0 {
+		return BookQualityOutput{}, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"bookquality: last price must be positive",
+			nil,
+		))
 	}
 
 	category, strength, bluffScore, vacuumScore, supportScore, err := classifyBookQuality(
-		cancelBid, fillBid, cancelAsk, fillAsk,
-		bidDepth, askDepth,
-		toxicNear, toxicBluffStrength,
-		threshold, churnGate, supportGate, vacuumStrengthCap,
+		input.CancelBid, input.FillBid, input.CancelAsk, input.FillAsk,
+		input.BidDepth, input.AskDepth,
+		input.ToxicNear, input.ToxicBluffStrength,
+		input.Threshold, input.ChurnGate, input.SupportGate, input.VacuumStrengthCap,
 	)
 
 	if err != nil {
 		if errors.Is(err, errNoBookQualityCategory) {
-			return emitNeutralBookQuality(state, p, lastPrice)
+			return bookQuality.neutral(input.LastPrice), nil
 		}
 
-		return rejectStage(state, fmt.Sprintf("bookquality: %v", err))
+		return BookQualityOutput{}, errnie.Error(errnie.Err(
+			errnie.Validation,
+			fmt.Sprintf("bookquality: %v", err),
+			err,
+		))
 	}
 
 	if category == 0 || strength <= 0 {
-		return emitNeutralBookQuality(state, p, lastPrice)
+		return bookQuality.neutral(input.LastPrice), nil
 	}
 
 	if math.IsNaN(strength) || math.IsInf(strength, 0) {
-		return rejectStage(state, "bookquality: strength is non-finite")
+		return BookQualityOutput{}, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"bookquality: strength is non-finite",
+			nil,
+		))
 	}
 
 	evidence := math.Max(bluffScore, math.Max(vacuumScore, supportScore))
 
 	if evidence <= 0 {
-		return rejectStage(state, "bookquality: no positive evidence")
+		return BookQualityOutput{}, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"bookquality: no positive evidence",
+			nil,
+		))
 	}
 
-	return emitOutput(state, p, datura.Map[float64]{
-		"value":        strength,
-		"bluffScore":   bluffScore,
-		"vacuumScore":  vacuumScore,
-		"supportScore": supportScore,
-		"strength":     strength,
-		"category":     float64(category),
-		"price":        lastPrice,
-	})
+	return BookQualityOutput{
+		Value:        strength,
+		BluffScore:   bluffScore,
+		VacuumScore:  vacuumScore,
+		SupportScore: supportScore,
+		Strength:     strength,
+		Category:     float64(category),
+		Price:        input.LastPrice,
+	}, nil
 }
 
-func emitNeutralBookQuality(state *datura.Artifact, payload []byte, lastPrice float64) (int, error) {
-	return emitOutput(state, payload, datura.Map[float64]{
-		"value":        0,
-		"bluffScore":   0,
-		"vacuumScore":  0,
-		"supportScore": 0,
-		"strength":     0,
-		"category":     0,
-		"price":        lastPrice,
-	})
-}
-
-func (bookQuality *BookQuality) Close() error {
-	return nil
+func (bookQuality *BookQuality) neutral(lastPrice float64) BookQualityOutput {
+	return BookQualityOutput{
+		Price: lastPrice,
+	}
 }
 
 func classifyBookQuality(

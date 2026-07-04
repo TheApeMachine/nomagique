@@ -4,65 +4,56 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/nomagique/equation"
-	"github.com/theapemachine/nomagique/tests"
 )
 
-func TestDepthEvaluate(testingTB *testing.T) {
+func TestDepthMeasure(testingTB *testing.T) {
 	Convey("Given deep quote volume versus peers", testingTB, func() {
-		depth := equation.NewDepth(equation.DepthConfig())
-		err := tests.WriteSamples(depth,
-			1200, 4,
-			800, 900, 1000, 1100,
-			1, 0,
-		)
-
-		So(err, ShouldBeNil)
-
-		outbound, err := readOutbound(depth)
+		depth := equation.NewDepth()
+		output, err := depth.Measure(equation.DepthInput{
+			QuoteVolume:    1200,
+			Peers:          []float64{800, 900, 1000, 1100},
+			RelativeVolume: 1,
+			BaselineReady:  false,
+		})
 
 		So(err, ShouldBeNil)
 
 		Convey("It should classify robust liquidity", func() {
-			So(datura.Peek[float64](outbound, "output", "value"), ShouldBeGreaterThan, 0)
-			So(int(datura.Peek[float64](outbound, "output", "category")), ShouldEqual, 3)
+			So(output.Value, ShouldBeGreaterThan, 0)
+			So(int(output.Category), ShouldEqual, 3)
 		})
 	})
 
 	Convey("Given peak scarcity volume", testingTB, func() {
-		depth := equation.NewDepth(equation.DepthConfig())
-		err := tests.WriteSamples(depth,
-			50, 3,
-			1100, 950, 50,
-			1, 0,
-		)
-
-		So(err, ShouldBeNil)
-
-		outbound, err := readOutbound(depth)
+		depth := equation.NewDepth()
+		output, err := depth.Measure(equation.DepthInput{
+			QuoteVolume:    50,
+			Peers:          []float64{1100, 950, 50},
+			RelativeVolume: 1,
+			BaselineReady:  false,
+		})
 
 		So(err, ShouldBeNil)
 
 		Convey("It should classify extreme scarcity", func() {
-			So(int(datura.Peek[float64](outbound, "output", "category")), ShouldEqual, 1)
+			So(int(output.Category), ShouldEqual, 1)
 		})
 	})
 }
 
-func BenchmarkDepthRead(b *testing.B) {
-	depth := equation.NewDepth(equation.DepthConfig())
-	samples := []float64{
-		1200, 4,
-		800, 900, 1000, 1100,
-		1, 0,
+func BenchmarkDepthMeasure(benchmark *testing.B) {
+	depth := equation.NewDepth()
+	input := equation.DepthInput{
+		QuoteVolume:    1200,
+		Peers:          []float64{800, 900, 1000, 1100},
+		RelativeVolume: 1,
+		BaselineReady:  false,
 	}
-	frame := make([]byte, 4096)
 
-	b.ReportAllocs()
+	benchmark.ReportAllocs()
 
-	for b.Loop() {
-		_ = tests.WriteSamples(depth, samples...)
-		_, _ = depth.Read(frame)
+	for benchmark.Loop() {
+		_, _ = depth.Measure(input)
 	}
 }

@@ -4,205 +4,186 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/transport"
 	"github.com/theapemachine/nomagique/equation"
 	"github.com/theapemachine/nomagique/probability"
 )
 
-func TestBookQuality_Read(testingTB *testing.T) {
+func TestBookQuality_Measure(testingTB *testing.T) {
 	Convey("Given near-touch toxic churn above gate", testingTB, func() {
-		stage := equation.NewBookQuality(equation.BookQualityConfig())
-		err := writeFeatureStage(stage, equation.BookQualityInputKeys,
-			0, 0.1, 0, 0.1,
-			80, 80,
-			1, 4.5,
-			0.15, 0.8, 0, 2,
-			100,
-		)
-
-		So(err, ShouldBeNil)
-
-		outbound, err := readStageOutput(stage)
+		bookQuality := equation.NewBookQuality()
+		output, err := bookQuality.Measure(equation.BookQualityInput{
+			FillBid:            0.1,
+			FillAsk:            0.1,
+			BidDepth:           80,
+			AskDepth:           80,
+			ToxicNear:          true,
+			ToxicBluffStrength: 4.5,
+			Threshold:          0.15,
+			ChurnGate:          0.8,
+			VacuumStrengthCap:  2,
+			LastPrice:          100,
+		})
 
 		So(err, ShouldBeNil)
 
 		Convey("It should classify toxic bluff", func() {
-			So(int(datura.Peek[float64](outbound, "output", "category")), ShouldEqual, 1)
-			So(datura.Peek[float64](outbound, "output", "value"), ShouldEqual, 4.5)
+			So(int(output.Category), ShouldEqual, 1)
+			So(output.Value, ShouldEqual, 4.5)
 		})
 	})
 
 	Convey("Given balanced depth with fills and no cancels", testingTB, func() {
-		stage := equation.NewBookQuality(equation.BookQualityConfig())
-		err := writeFeatureStage(stage, equation.BookQualityInputKeys,
-			0, 0.1, 0, 0.1,
-			80, 80,
-			0, 0,
-			0.15, 0, 0, 1,
-			100,
-		)
-
-		So(err, ShouldBeNil)
-
-		outbound, err := readStageOutput(stage)
+		bookQuality := equation.NewBookQuality()
+		output, err := bookQuality.Measure(equation.BookQualityInput{
+			FillBid:           0.1,
+			FillAsk:           0.1,
+			BidDepth:          80,
+			AskDepth:          80,
+			Threshold:         0.15,
+			VacuumStrengthCap: 1,
+			LastPrice:         100,
+		})
 
 		So(err, ShouldBeNil)
 
 		Convey("It should classify hard support", func() {
-			So(int(datura.Peek[float64](outbound, "output", "category")), ShouldEqual, 3)
-			So(datura.Peek[float64](outbound, "output", "value"), ShouldEqual, 1)
+			So(int(output.Category), ShouldEqual, 3)
+			So(output.Value, ShouldEqual, 1)
 		})
 	})
 
 	Convey("Given balanced depth without category evidence", testingTB, func() {
-		stage := transport.NewPipeline(
-			equation.NewBookQuality(equation.BookQualityConfig()),
-			probability.NewClassifier(
-				datura.Acquire("toxicity-classifier", datura.APPJSON).WithAttributes(datura.Map[any]{
-					"inputs":    []string{"bluffScore", "vacuumScore", "supportScore"},
-					"scoreRoot": "output",
-				}),
-			),
-		)
-		err := writeFeatureStage(stage, equation.BookQualityInputKeys,
-			0, 0, 0, 0,
-			80, 80,
-			0, 0,
-			0.15, 0, 0, 1,
-			100,
-		)
-
-		So(err, ShouldBeNil)
-
-		outbound, err := readStageOutput(stage)
+		bookQuality := equation.NewBookQuality()
+		output, err := bookQuality.Measure(equation.BookQualityInput{
+			BidDepth:          80,
+			AskDepth:          80,
+			Threshold:         0.15,
+			VacuumStrengthCap: 1,
+			LastPrice:         100,
+		})
 
 		So(err, ShouldBeNil)
 
 		Convey("It should emit uniform neutral confidence instead of rejecting", func() {
-			So(datura.Peek[float64](outbound, "output", "confidence"), ShouldAlmostEqual, 1.0/3.0)
-			So(datura.Peek[float64](outbound, "output", "strength"), ShouldEqual, 0)
+			classified := classifyBookQualityOutput(output)
+
+			So(classified.Confidence, ShouldAlmostEqual, 1.0/3.0)
+			So(classified.Strength, ShouldEqual, 0)
 		})
 	})
 
 	Convey("Given cancel/fill evidence before the adaptive threshold is ready", testingTB, func() {
-		stage := transport.NewPipeline(
-			equation.NewBookQuality(equation.BookQualityConfig()),
-			probability.NewClassifier(
-				datura.Acquire("toxicity-classifier", datura.APPJSON).WithAttributes(datura.Map[any]{
-					"inputs":    []string{"bluffScore", "vacuumScore", "supportScore"},
-					"scoreRoot": "output",
-				}),
-			),
-		)
-		err := writeFeatureStage(stage, equation.BookQualityInputKeys,
-			0.3, 0.1, 0, 0,
-			80, 80,
-			0, 0,
-			0, 0, 0, 1,
-			100,
-		)
-
-		So(err, ShouldBeNil)
-
-		outbound, err := readStageOutput(stage)
+		bookQuality := equation.NewBookQuality()
+		output, err := bookQuality.Measure(equation.BookQualityInput{
+			CancelBid:         0.3,
+			FillBid:           0.1,
+			BidDepth:          80,
+			AskDepth:          80,
+			VacuumStrengthCap: 1,
+			LastPrice:         100,
+		})
 
 		So(err, ShouldBeNil)
 
 		Convey("It should remain neutral instead of rejecting threshold warmup", func() {
-			So(datura.Peek[float64](outbound, "output", "confidence"), ShouldAlmostEqual, 1.0/3.0)
-			So(datura.Peek[float64](outbound, "output", "strength"), ShouldEqual, 0)
+			classified := classifyBookQualityOutput(output)
+
+			So(classified.Confidence, ShouldAlmostEqual, 1.0/3.0)
+			So(classified.Strength, ShouldEqual, 0)
 		})
 	})
 
 	Convey("Given liquidity vacuum evidence without a configured strength cap", testingTB, func() {
-		stage := equation.NewBookQuality(equation.BookQualityConfig())
-		err := writeFeatureStage(stage, equation.BookQualityInputKeys,
-			0.3, 0.1, 0, 0,
-			80, 80,
-			0, 0,
-			0.15, 0, 0, 0,
-			100,
-		)
-
-		So(err, ShouldBeNil)
-
-		outbound, err := readStageOutput(stage)
+		bookQuality := equation.NewBookQuality()
+		output, err := bookQuality.Measure(equation.BookQualityInput{
+			CancelBid: 0.3,
+			FillBid:   0.1,
+			BidDepth:  80,
+			AskDepth:  80,
+			Threshold: 0.15,
+			LastPrice: 100,
+		})
 
 		So(err, ShouldBeNil)
 
 		Convey("It should use bounded vacuum evidence as strength", func() {
-			So(int(datura.Peek[float64](outbound, "output", "category")), ShouldEqual, 2)
-			So(datura.Peek[float64](outbound, "output", "value"), ShouldAlmostEqual, datura.Peek[float64](outbound, "output", "vacuumScore"))
-			So(datura.Peek[float64](outbound, "output", "value"), ShouldBeLessThan, 1)
+			So(int(output.Category), ShouldEqual, 2)
+			So(output.Value, ShouldAlmostEqual, output.VacuumScore)
+			So(output.Value, ShouldBeLessThan, 1)
 		})
 	})
 
 	Convey("Given cancels without fills on one side", testingTB, func() {
-		stage := transport.NewPipeline(
-			equation.NewBookQuality(equation.BookQualityConfig()),
-			probability.NewClassifier(
-				datura.Acquire("toxicity-classifier", datura.APPJSON).WithAttributes(datura.Map[any]{
-					"inputs":    []string{"bluffScore", "vacuumScore", "supportScore"},
-					"scoreRoot": "output",
-				}),
-			),
-		)
-		err := writeFeatureStage(stage, equation.BookQualityInputKeys,
-			0, 0, 4, 0,
-			80, 80,
-			0, 0,
-			0.15, 0, 0, 1,
-			100,
-		)
-
-		So(err, ShouldBeNil)
-
-		outbound, err := readStageOutput(stage)
+		bookQuality := equation.NewBookQuality()
+		output, err := bookQuality.Measure(equation.BookQualityInput{
+			CancelAsk:         4,
+			BidDepth:          80,
+			AskDepth:          80,
+			Threshold:         0.15,
+			VacuumStrengthCap: 1,
+			LastPrice:         100,
+		})
 
 		So(err, ShouldBeNil)
 
 		Convey("It should remain neutral instead of inventing a ratio", func() {
-			So(datura.Peek[float64](outbound, "output", "confidence"), ShouldAlmostEqual, 1.0/3.0)
-			So(datura.Peek[float64](outbound, "output", "strength"), ShouldEqual, 0)
+			classified := classifyBookQualityOutput(output)
+
+			So(classified.Confidence, ShouldAlmostEqual, 1.0/3.0)
+			So(classified.Strength, ShouldEqual, 0)
 		})
 	})
 }
 
-func BenchmarkBookQualityRead(b *testing.B) {
-	stage := equation.NewBookQuality(equation.BookQualityConfig())
-	values := []float64{
-		0.3, 0.1, 0, 0,
-		10, 10,
-		0, 0,
-		0.15, 0, 0, 2,
-		50000,
+func BenchmarkBookQualityMeasure(benchmark *testing.B) {
+	bookQuality := equation.NewBookQuality()
+	input := equation.BookQualityInput{
+		CancelBid:         0.3,
+		FillBid:           0.1,
+		BidDepth:          10,
+		AskDepth:          10,
+		Threshold:         0.15,
+		VacuumStrengthCap: 2,
+		LastPrice:         50000,
 	}
 
-	b.ReportAllocs()
+	benchmark.ReportAllocs()
 
-	for b.Loop() {
-		_ = writeFeatureStage(stage, equation.BookQualityInputKeys, values...)
-		frame := make([]byte, 4096)
-		_, _ = stage.Read(frame)
+	for benchmark.Loop() {
+		_, _ = bookQuality.Measure(input)
 	}
 }
 
-func BenchmarkBookQualityReadNeutral(b *testing.B) {
-	stage := equation.NewBookQuality(equation.BookQualityConfig())
-	values := []float64{
-		0, 0, 0, 0,
-		10, 10,
-		0, 0,
-		0.15, 0, 0, 2,
-		50000,
+func BenchmarkBookQualityMeasureNeutral(benchmark *testing.B) {
+	bookQuality := equation.NewBookQuality()
+	input := equation.BookQualityInput{
+		BidDepth:          10,
+		AskDepth:          10,
+		Threshold:         0.15,
+		VacuumStrengthCap: 2,
+		LastPrice:         50000,
 	}
 
-	b.ReportAllocs()
+	benchmark.ReportAllocs()
 
-	for b.Loop() {
-		_ = writeFeatureStage(stage, equation.BookQualityInputKeys, values...)
-		frame := make([]byte, 4096)
-		_, _ = stage.Read(frame)
+	for benchmark.Loop() {
+		_, _ = bookQuality.Measure(input)
 	}
+}
+
+func classifyBookQualityOutput(output equation.BookQualityOutput) probability.ScoreResult {
+	classifier := probability.NewScoreClassifier(
+		[]string{"bluffScore", "vacuumScore", "supportScore"},
+		nil,
+	)
+	result, err := classifier.Classify(map[string]float64{
+		"bluffScore":   output.BluffScore,
+		"vacuumScore":  output.VacuumScore,
+		"supportScore": output.SupportScore,
+		"strength":     output.Strength,
+	})
+
+	So(err, ShouldBeNil)
+
+	return result
 }

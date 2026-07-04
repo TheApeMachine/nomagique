@@ -4,68 +4,72 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/nomagique/equation"
-	"github.com/theapemachine/nomagique/tests"
 )
 
-func TestConvictionEvaluate(testingTB *testing.T) {
+func TestConvictionMeasure(testingTB *testing.T) {
 	Convey("Given broad positive breadth with leadership", testingTB, func() {
-		conviction := equation.NewConviction(equation.ConvictionConfig())
-		err := tests.WriteSamples(conviction, 1.0, 2.0, 0.5, 1, 2.0)
-
-		So(err, ShouldBeNil)
-
-		outbound, err := readOutbound(conviction)
+		conviction := equation.NewConviction()
+		output, err := conviction.Measure(equation.ConvictionInput{
+			Breadth:        1.0,
+			Change:         2.0,
+			SurgeThreshold: 0.5,
+			Leader:         true,
+		})
 
 		So(err, ShouldBeNil)
 
 		Convey("It should classify risk-on surge", func() {
-			So(datura.Peek[float64](outbound, "output", "value"), ShouldBeGreaterThan, 0)
-			So(int(datura.Peek[float64](outbound, "output", "category")), ShouldEqual, 1)
+			So(output.Value, ShouldBeGreaterThan, 0)
+			So(int(output.Category), ShouldEqual, 1)
 		})
 	})
 
 	Convey("Given a local leader in a weak market", testingTB, func() {
-		conviction := equation.NewConviction(equation.ConvictionConfig())
-		err := tests.WriteSamples(conviction, 0.33, 4.0, 0.5, 1, 4.0)
-
-		So(err, ShouldBeNil)
-
-		outbound, err := readOutbound(conviction)
+		conviction := equation.NewConviction()
+		output, err := conviction.Measure(equation.ConvictionInput{
+			Breadth:        0.33,
+			Change:         4.0,
+			SurgeThreshold: 0.5,
+			Leader:         true,
+		})
 
 		So(err, ShouldBeNil)
 
 		Convey("It should classify divergent move", func() {
-			So(int(datura.Peek[float64](outbound, "output", "category")), ShouldEqual, 2)
+			So(int(output.Category), ShouldEqual, 2)
 		})
 	})
 
 	Convey("Given weak breadth without leadership", testingTB, func() {
-		conviction := equation.NewConviction(equation.ConvictionConfig())
-		err := tests.WriteSamples(conviction, 0.2, -1.0, 0.5, 0, -1.0)
-
-		So(err, ShouldBeNil)
-
-		outbound, err := readOutbound(conviction)
+		conviction := equation.NewConviction()
+		output, err := conviction.Measure(equation.ConvictionInput{
+			Breadth:        0.2,
+			Change:         -1.0,
+			SurgeThreshold: 0.5,
+			Leader:         false,
+		})
 
 		So(err, ShouldBeNil)
 
 		Convey("It should classify systemic slump", func() {
-			So(int(datura.Peek[float64](outbound, "output", "category")), ShouldEqual, 3)
+			So(int(output.Category), ShouldEqual, 3)
 		})
 	})
 }
 
-func BenchmarkConvictionRead(b *testing.B) {
-	conviction := equation.NewConviction(equation.ConvictionConfig())
-	samples := []float64{1.0, 2.0, 0.5, 1, 2.0}
-	frame := make([]byte, 4096)
+func BenchmarkConvictionMeasure(benchmark *testing.B) {
+	conviction := equation.NewConviction()
+	input := equation.ConvictionInput{
+		Breadth:        1.0,
+		Change:         2.0,
+		SurgeThreshold: 0.5,
+		Leader:         true,
+	}
 
-	b.ReportAllocs()
+	benchmark.ReportAllocs()
 
-	for b.Loop() {
-		_ = tests.WriteSamples(conviction, samples...)
-		_, _ = conviction.Read(frame)
+	for benchmark.Loop() {
+		_, _ = conviction.Measure(input)
 	}
 }

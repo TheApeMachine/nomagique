@@ -4,7 +4,6 @@ import (
 	"math"
 	"time"
 
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/adaptive"
 	"github.com/theapemachine/nomagique/hawkes"
@@ -31,18 +30,17 @@ type excitationReading struct {
 }
 
 type excitationSymbol struct {
-	fit                hawkes.BivariateFit
-	hasFit             bool
-	lastFitEventKey    fitEventKey
-	lastFitTime        time.Time
-	fitCooldown        time.Duration
-	minFitEvents       int
-	rawBase            *adaptive.EMA
-	lastRawNorm        float64
-	lastCategory       hawkes.FitCategory
-	spectralRadii      []float64
-	asymmetries        []float64
-	bookTouchImbalance float64
+	fit             hawkes.BivariateFit
+	hasFit          bool
+	lastFitEventKey fitEventKey
+	lastFitTime     time.Time
+	fitCooldown     time.Duration
+	minFitEvents    int
+	rawBase         *adaptive.EMA
+	lastRawNorm     float64
+	lastCategory    hawkes.FitCategory
+	spectralRadii   []float64
+	asymmetries     []float64
 }
 
 type fitEventKey struct {
@@ -55,9 +53,7 @@ type fitEventKey struct {
 func newExcitationSymbol() *excitationSymbol {
 	return &excitationSymbol{
 		minFitEvents: bivariateParamCount * 2,
-		rawBase: adaptive.NewEMA(
-			datura.Acquire("excitation-ema", datura.APPJSON).Poke("sample", "input"),
-		),
+		rawBase:      adaptive.NewEMA(),
 	}
 }
 
@@ -65,10 +61,9 @@ func (symbol *excitationSymbol) measure(
 	buyTimes, sellTimes []time.Time,
 	horizon time.Time,
 	fitCooldown time.Duration,
-	touchImbalance float64,
+	_ float64,
 ) (excitationReading, bool) {
 	symbol.fitCooldown = fitCooldown
-	symbol.bookTouchImbalance = touchImbalance
 
 	stream := hawkes.NewArrivalStream(buyTimes, sellTimes)
 	context, adaptiveStream, ok := fitContextFromStream(stream, horizon)
@@ -177,7 +172,6 @@ func (symbol *excitationSymbol) enrichReading(
 func (symbol *excitationSymbol) measureFit(fit hawkes.BivariateFit) (excitationReading, bool) {
 	sellSide := fit.Asymmetry(true) > fit.Asymmetry(false)
 	asymmetry := fit.Asymmetry(sellSide)
-	asymmetry = confirmAsymmetryWithBook(asymmetry, sellSide, symbol.bookTouchImbalance)
 
 	intensity, baseline := fit.IntensityX, fit.MuX
 
@@ -255,36 +249,15 @@ func (symbol *excitationSymbol) measureFit(fit hawkes.BivariateFit) (excitationR
 }
 
 func (symbol *excitationSymbol) rawBaseStep(sample float64) float64 {
-	inbound := datura.Acquire("excitation-ema-in", datura.APPJSON)
-	inbound.Poke("wire", "root")
-	inbound.Poke([]string{"sample"}, "inputs")
-	inbound.Merge("wire", map[string]any{"sample": sample})
-	frame := inbound.Pack()
+	value, err := symbol.rawBase.Measure(sample)
 
-	if len(frame) == 0 {
+	if err != nil {
+		errnie.Error(errnie.Err(errnie.Validation, "excitation: raw EMA failed", err))
+
 		return sample
 	}
 
-	_, _ = symbol.rawBase.Write(frame)
-	out := make([]byte, 4096)
-	readCount, _ := symbol.rawBase.Read(out)
-
-	if readCount == 0 {
-		return sample
-	}
-
-	outbound := datura.Acquire("excitation-ema-out", datura.Artifact_Type_json)
-	_, _ = outbound.Unpack(out[:readCount])
-	if outbound.HasPayload() {
-		payload := outbound.DecryptPayload()
-		value, ok := payloadScalar(payload)
-
-		if ok {
-			return value
-		}
-	}
-
-	return sample
+	return value
 }
 
 func (symbol *excitationSymbol) recordFitGates(spectralRadius, asymmetry float64) {
@@ -531,38 +504,4 @@ func branchingRatio(fit hawkes.BivariateFit, stream hawkes.ArrivalStream) float6
 	}
 
 	return (buyBranching*buyCount + sellBranching*sellCount) / totalCount
-}
-
-func confirmAsymmetryWithBook(
-	asymmetry float64,
-	sellSide bool,
-	touchImbalance float64,
-) float64 {
-	if math.IsNaN(touchImbalance) || math.IsInf(touchImbalance, 0) || touchImbalance == 0 {
-		return asymmetry
-	}
-
-	bookMagnitude := math.Abs(touchImbalance)
-
-	if bookMagnitude > 1 {
-		bookMagnitude = 1
-	}
-
-	hawkesSign := 1.0
-
-	if sellSide {
-		hawkesSign = -1.0
-	}
-
-	bookSign := 1.0
-
-	if touchImbalance < 0 {
-		bookSign = -1.0
-	}
-
-	if hawkesSign*bookSign > 0 {
-		return math.Min(1, asymmetry+bookMagnitude*(1-asymmetry))
-	}
-
-	return asymmetry * (1 - bookMagnitude)
 }

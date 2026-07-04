@@ -1,116 +1,126 @@
 package equation
 
 import (
-	"io"
 	"math"
 
-	"github.com/theapemachine/datura"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/statistic"
 )
 
 /*
 Flow classifies signed trade pressure against price response in a rolling window.
-The constructor artifact holds schema inputs; Write buffers inbound wire on its payload.
 */
-type Flow struct {
-	artifact *datura.Artifact
+type Flow struct{}
+
+/*
+FlowInput contains the float-only trade-flow inputs.
+*/
+type FlowInput struct {
+	BuyNotional    float64
+	SellNotional   float64
+	TradeCount     int
+	GrossFloor     float64
+	MedianNotional float64
+	Prices         []float64
 }
 
 /*
-NewFlow returns a CVD flow stage wired from config attributes.
+FlowOutput contains the float-only trade-flow scores.
 */
-func NewFlow(artifact *datura.Artifact) io.ReadWriteCloser {
-	return &Flow{
-		artifact: artifact,
-	}
+type FlowOutput struct {
+	Value       float64
+	Absorption  float64
+	Drive       float64
+	Balance     float64
+	Starvation  float64
+	Net         float64
+	NetFraction float64
+	Category    float64
 }
 
-func (flow *Flow) Write(p []byte) (int, error) {
-	flow.artifact.WithPayload(p)
-	return len(p), nil
+/*
+NewFlow returns a CVD flow calculator.
+*/
+func NewFlow() *Flow {
+	return &Flow{}
 }
 
-func (flow *Flow) Read(p []byte) (int, error) {
-	state, err := stageState(flow.artifact.DecryptPayload())
+/*
+Measure calculates flow scores from floats without artifact transport.
+*/
+func (flow *Flow) Measure(input FlowInput) (FlowOutput, error) {
+	gross := input.BuyNotional + input.SellNotional
 
-	if err != nil {
-		return 0, err
+	if gross <= 0 || input.TradeCount <= 0 || len(input.Prices) == 0 {
+		return FlowOutput{}, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"flow: invalid input",
+			nil,
+		))
 	}
 
-	inputKeys := EnsureFeatureSchema(state, flow.artifact, FlowInputKeys)
-
-	fields, err := FeatureFields(state, inputKeys)
-
-	if err != nil || len(fields) < len(FlowInputKeys) {
-		return rejectStage(state, "equation: invalid stage input")
-	}
-
-	buyNotional := fields[0]
-	sellNotional := fields[1]
-	tradeCount := int(fields[2])
-	grossFloor := fields[3]
-	medianNotional := fields[4]
-
-	prices, err := FeatureSlice(state, len(inputKeys), len(Features(state))-len(inputKeys))
-
-	if err != nil {
-		return rejectStage(state, "equation: invalid stage input")
-	}
-
-	gross := buyNotional + sellNotional
-
-	if gross <= 0 || tradeCount <= 0 || len(prices) == 0 {
-		return rejectStage(state, "equation: invalid stage input")
-	}
-
-	net := buyNotional - sellNotional
+	net := input.BuyNotional - input.SellNotional
 	netFraction := math.Abs(net) / gross
 
-	if len(prices) < 2 {
-		return emitOutput(state, p, datura.Map[float64]{
-			"value":       0,
-			"absorption":  0,
-			"drive":       0,
-			"balance":     0,
-			"starvation":  0,
-			"net":         net,
-			"netFraction": netFraction,
-			"category":    0,
-		})
+	if len(input.Prices) < 2 {
+		return FlowOutput{
+			Net:         net,
+			NetFraction: netFraction,
+		}, nil
 	}
 
-	firstPrice := prices[0]
-	lastPrice := prices[len(prices)-1]
+	firstPrice := input.Prices[0]
+	lastPrice := input.Prices[len(input.Prices)-1]
 
 	if firstPrice <= 0 || lastPrice <= 0 {
-		return rejectStage(state, "equation: invalid stage input")
+		return FlowOutput{}, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"flow: invalid price input",
+			nil,
+		))
 	}
 
-	if medianNotional <= 0 || math.IsNaN(medianNotional) || math.IsInf(medianNotional, 0) {
-		return rejectStage(state, "equation: medianNotional must be positive")
+	if input.MedianNotional <= 0 ||
+		math.IsNaN(input.MedianNotional) ||
+		math.IsInf(input.MedianNotional, 0) {
+		return FlowOutput{}, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"flow: median notional must be positive",
+			nil,
+		))
 	}
 
 	priceResponseBps := math.Abs(lastPrice/firstPrice-1) * basisPointsPerUnit
-	flowPressure := gross / medianNotional
+	flowPressure := gross / input.MedianNotional
 
 	if flowPressure <= 0 || math.IsNaN(flowPressure) || math.IsInf(flowPressure, 0) {
-		return rejectStage(state, "equation: invalid stage input")
+		return FlowOutput{}, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"flow: invalid pressure input",
+			nil,
+		))
 	}
 
 	impactEfficiency := priceResponseBps / flowPressure
 	priceDrift := lastPrice - firstPrice
-	flatThreshold := medianAbsoluteMove(prices)
-	driveThreshold := 1 / math.Sqrt(float64(tradeCount))
+	flatThreshold := medianAbsoluteMove(input.Prices)
+	driveThreshold := 1 / math.Sqrt(float64(input.TradeCount))
 
 	highNet := netFraction >= driveThreshold
 	flowAligned := (net > 0 && priceDrift > 0) || (net < 0 && priceDrift < 0)
 	hiddenAbsorption := flowHiddenAbsorption(
-		highNet, flowPressure, impactEfficiency, priceDrift, flatThreshold, tradeCount,
+		highNet, flowPressure, impactEfficiency, priceDrift, flatThreshold, input.TradeCount,
 	)
-	flatPrice := hiddenAbsorption || flowFlatPrice(priceDrift, flatThreshold, tradeCount)
+	flatPrice := hiddenAbsorption || flowFlatPrice(priceDrift, flatThreshold, input.TradeCount)
 
 	category := flowCategory(
-		highNet, flowAligned, flatPrice, gross, grossFloor, tradeCount, hiddenAbsorption,
+		highNet,
+		flowAligned,
+		flatPrice,
+		gross,
+		input.GrossFloor,
+		input.TradeCount,
+		hiddenAbsorption,
 	)
 
 	absorption := 0.0
@@ -131,12 +141,12 @@ func (flow *Flow) Read(p []byte) (int, error) {
 	}
 
 	if category == flowCategoryStarvation {
-		if grossFloor > 0 && gross < grossFloor {
-			starvation = math.Max(0, 1-gross/grossFloor)
+		if input.GrossFloor > 0 && gross < input.GrossFloor {
+			starvation = math.Max(0, 1-gross/input.GrossFloor)
 		}
 
-		if tradeCount < 3 && !highNet {
-			starvation = math.Max(starvation, 1-float64(tradeCount)/3)
+		if input.TradeCount < 3 && !highNet {
+			starvation = math.Max(starvation, 1-float64(input.TradeCount)/3)
 			absorption = 0
 			drive = 0
 			balance = 0
@@ -145,20 +155,16 @@ func (flow *Flow) Read(p []byte) (int, error) {
 
 	strength := math.Max(absorption, math.Max(drive, math.Max(balance, starvation)))
 
-	return emitOutput(state, p, datura.Map[float64]{
-		"value":       strength,
-		"absorption":  absorption,
-		"drive":       drive,
-		"balance":     balance,
-		"starvation":  starvation,
-		"net":         net,
-		"netFraction": netFraction,
-		"category":    float64(category),
-	})
-}
-
-func (flow *Flow) Close() error {
-	return nil
+	return FlowOutput{
+		Value:       strength,
+		Absorption:  absorption,
+		Drive:       drive,
+		Balance:     balance,
+		Starvation:  starvation,
+		Net:         net,
+		NetFraction: netFraction,
+		Category:    float64(category),
+	}, nil
 }
 
 const (

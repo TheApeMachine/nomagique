@@ -26,6 +26,18 @@ func featureExtractorSchema() *datura.Artifact {
 		}, "ticker")
 }
 
+func featureExtractorEMASchema() *datura.Artifact {
+	return datura.Acquire("feature-extractor-ema-test", datura.APPJSON).
+		Poke(map[string]any{
+			"root":         "data",
+			"elementIndex": 0.0,
+			"inputs":       []string{"volume"},
+			"transforms": map[string]any{
+				"volume": "ema",
+			},
+		}, "ticker")
+}
+
 func TestNewFeatureExtractor(t *testing.T) {
 	Convey("Given a schema artifact", t, func() {
 		schema := datura.Acquire("feature-extractor-schema", datura.APPJSON)
@@ -36,7 +48,7 @@ func TestNewFeatureExtractor(t *testing.T) {
 			Convey("It should retain the schema and initialize transform cache", func() {
 				So(extractor, ShouldNotBeNil)
 				So(extractor.artifact, ShouldEqual, schema)
-				So(extractor.transforms, ShouldNotBeNil)
+				So(extractor.emas, ShouldNotBeNil)
 			})
 		})
 	})
@@ -199,6 +211,28 @@ func BenchmarkFeatureExtractor_Read(b *testing.B) {
 	b.ReportAllocs()
 
 	for range b.N {
+		inbound := datura.Acquire("bench-inbound", datura.APPJSON).
+			WithPayload(featureExtractorPayloadFixture)
+
+		if _, err := nomagique.WriteArtifact(extractor, inbound); err != nil {
+			b.Fatal(err)
+		}
+
+		if _, err := extractor.Read(buffer); err != nil && err != io.EOF {
+			b.Fatal(err)
+		}
+
+		inbound.Release()
+	}
+}
+
+func BenchmarkFeatureExtractor_EMATransform(b *testing.B) {
+	extractor := NewFeatureExtractor(featureExtractorEMASchema())
+	buffer := make([]byte, 65536)
+
+	b.ReportAllocs()
+
+	for b.Loop() {
 		inbound := datura.Acquire("bench-inbound", datura.APPJSON).
 			WithPayload(featureExtractorPayloadFixture)
 

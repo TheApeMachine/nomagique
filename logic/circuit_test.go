@@ -6,7 +6,6 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/nomagique"
-	"github.com/theapemachine/nomagique/adaptive"
 	"github.com/theapemachine/nomagique/logic"
 )
 
@@ -119,7 +118,7 @@ func BenchmarkCircuitRead(benchmark *testing.B) {
 			Condition: logic.GreaterThan{
 				Right: constantStage(2),
 			},
-			Then: adaptive.NewEMA(datura.Acquire("ema-config", datura.APPJSON).Poke(2, "period")),
+			Then: constantStage(3),
 		},
 		{
 			Condition: logic.True{Operand: true},

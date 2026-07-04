@@ -123,16 +123,13 @@ func TestForecaster_learningComposition(testingTB *testing.T) {
 
 func TestForecaster_withAdaptiveSignal(testingTB *testing.T) {
 	Convey("Given EMA and forecast feedback", testingTB, func() {
-		exponential := adaptive.NewEMA(datura.Acquire("ema-config", datura.APPJSON).Poke("sample", "input").Poke(2, "period").Poke(2, "smoothing"))
+		exponential := adaptive.NewEMA(adaptive.EMAConfig{Period: 2, Smoothing: 2})
 		forecaster := Forecast(pairConfig("forecast-config"))
-		signal := scalarWire(datura.Acquire("test", datura.APPJSON), "sample", 10)
-		_ = nomagique.RoundTripArtifact(signal, exponential)
-		signal = scalarWire(datura.Acquire("test", datura.APPJSON), "sample", 12)
-		err := nomagique.RoundTripArtifact(signal, exponential)
-
+		_, err := exponential.Measure(10)
 		So(err, ShouldBeNil)
 
-		level := datura.Peek[float64](signal, "output", "value")
+		level, err := exponential.Measure(12)
+		So(err, ShouldBeNil)
 
 		Convey("When comparing EMA level to the outcome", func() {
 			outcome := pairWire(datura.Acquire("test", datura.APPJSON), level, 12)

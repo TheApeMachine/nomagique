@@ -1,10 +1,8 @@
 package algorithm
 
 import (
-	"io"
 	"math"
 
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/equation"
 	"github.com/theapemachine/nomagique/statistic"
@@ -20,10 +18,7 @@ DecaySample accumulates book and trade frames into the feature batch Decay expec
 Series lengths are derived from observed update cadence, not fixed constants.
 */
 type DecaySample struct {
-	artifact     *datura.Artifact
-	pendingFrame bool
-	output       []byte
-	windows      map[string]*decayWindow
+	windows map[string]*decayWindow
 }
 
 type decayWindow struct {
@@ -41,136 +36,60 @@ type decayWindow struct {
 }
 
 /*
-NewDecaySample returns a book/trade encoder for microstructure decay classification.
+NewDecaySample returns a book/trade sampler for microstructure decay classification.
 */
-func NewDecaySample(artifact *datura.Artifact) *DecaySample {
+func NewDecaySample() *DecaySample {
 	return &DecaySample{
-		artifact: artifact,
-		windows:  map[string]*decayWindow{},
+		windows: map[string]*decayWindow{},
 	}
 }
 
-func (decaySample *DecaySample) Write(payload []byte) (int, error) {
-	if len(payload) == 0 {
-		decaySample.pendingFrame = false
-		decaySample.output = nil
-
-		return 0, nil
-	}
-
-	decaySample.artifact.WithPayload(payload)
-	decaySample.pendingFrame = true
-	decaySample.output = nil
-
-	return len(payload), nil
-}
-
-func (decaySample *DecaySample) Read(payload []byte) (int, error) {
-	if len(decaySample.output) > 0 {
-		return decaySample.readOutput(payload)
-	}
-
-	if !decaySample.pendingFrame {
-		return 0, io.EOF
-	}
-
-	state := datura.Acquire("decay-sample-state", datura.APPJSON)
-	frame := decaySample.artifact.DecryptPayload()
-
-	if len(frame) == 0 {
-		state.Release()
-		decaySample.pendingFrame = false
-
-		return 0, io.EOF
-	}
-
-	if _, err := state.Unpack(frame); err != nil {
-		state.Release()
-		decaySample.pendingFrame = false
-
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"decay-sample: state write failed",
-			err,
-		))
-	}
-
-	defer state.Release()
-
-	channel := datura.Peek[string](state, "channel")
-	symbol := datura.Peek[string](state, "data", 0, "symbol")
-	row := false
-
-	if symbol == "" {
-		symbol = datura.Peek[string](state, "symbol")
-		row = symbol != ""
-	}
-
-	if channel == "" && row {
-		if datura.Peek[float64](state, "bids", 0, "price") > 0 ||
-			datura.Peek[float64](state, "asks", 0, "price") > 0 {
-			channel = "book"
-		}
-
-		if datura.Peek[float64](state, "price") > 0 &&
-			datura.Peek[float64](state, "qty") > 0 {
-			channel = "trade"
-		}
-	}
-
-	if symbol == "" {
-		decaySample.pendingFrame = false
-
-		return 0, errnie.Error(errnie.Err(
+/*
+MeasureBook observes one book update and returns decay input when ready.
+*/
+func (decaySample *DecaySample) MeasureBook(
+	input BookflowBookInput,
+) (equation.DecayInput, bool, error) {
+	if input.Symbol == "" {
+		return equation.DecayInput{}, false, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"decay-sample: symbol required",
 			nil,
 		))
 	}
 
-	window := decaySample.window(symbol)
+	window := decaySample.window(input.Symbol)
+	decaySample.ingestBook(input, window)
 
-	switch channel {
-	case "book":
-		decaySample.ingestBook(state, window, row)
-	case "trade":
-		decaySample.ingestTrade(state, window, row)
-	}
-
-	features := decaySample.features(window)
-
-	if len(features) == 0 {
-		decaySample.pendingFrame = false
-
-		return 0, io.EOF
-	}
-
-	state.WithScope(symbol)
-	state.Merge("features", features)
-	state.MergeOutput("ready", true)
-	state.Poke("features", "root")
-	state.Poke(equation.DecayInputKeys, "inputs")
-
-	decaySample.output = state.Pack()
-
-	return decaySample.readOutput(payload)
+	return decaySample.features(window)
 }
 
-func (decaySample *DecaySample) readOutput(payload []byte) (int, error) {
-	n := copy(payload, decaySample.output)
-
-	if n < len(decaySample.output) {
-		return n, io.ErrShortBuffer
+/*
+MeasureTrade observes one trade update and returns decay input when ready.
+*/
+func (decaySample *DecaySample) MeasureTrade(
+	input BookflowTradeInput,
+) (equation.DecayInput, bool, error) {
+	if input.Symbol == "" {
+		return equation.DecayInput{}, false, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"decay-sample: symbol required",
+			nil,
+		))
 	}
 
-	decaySample.output = nil
-	decaySample.pendingFrame = false
+	if input.Price <= 0 || input.Quantity <= 0 {
+		return equation.DecayInput{}, false, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"decay-sample: trade price and quantity required",
+			nil,
+		))
+	}
 
-	return n, io.EOF
-}
+	window := decaySample.window(input.Symbol)
+	decaySample.ingestTrade(input, window)
 
-func (decaySample *DecaySample) Close() error {
-	return nil
+	return decaySample.features(window)
 }
 
 func (decaySample *DecaySample) window(symbol string) *decayWindow {
@@ -190,13 +109,9 @@ func (decaySample *DecaySample) window(symbol string) *decayWindow {
 	return window
 }
 
-func (decaySample *DecaySample) ingestBook(
-	state *datura.Artifact,
-	window *decayWindow,
-	row bool,
-) {
-	decaySample.applyLevels(state, "bids", window.bids, row)
-	decaySample.applyLevels(state, "asks", window.asks, row)
+func (decaySample *DecaySample) ingestBook(input BookflowBookInput, window *decayWindow) {
+	decaySample.applyLevels(input.Bids, window.bids)
+	decaySample.applyLevels(input.Asks, window.asks)
 
 	mid := bookflowMidPrice(window.bids, window.asks)
 	spread := bookflowSpread(window.bids, window.asks)
@@ -220,29 +135,11 @@ func (decaySample *DecaySample) ingestBook(
 	window.imbalanceHist = appendRingFloat(window.imbalanceHist, imbalance, decaySampleHistoryCap)
 }
 
-func (decaySample *DecaySample) ingestTrade(
-	state *datura.Artifact,
-	window *decayWindow,
-	row bool,
-) {
-	price := datura.Peek[float64](state, "data", 0, "price")
-	quantity := datura.Peek[float64](state, "data", 0, "qty")
-	side := datura.Peek[string](state, "data", 0, "side")
-
-	if row {
-		price = datura.Peek[float64](state, "price")
-		quantity = datura.Peek[float64](state, "qty")
-		side = datura.Peek[string](state, "side")
-	}
-
-	if price <= 0 || quantity <= 0 {
-		return
-	}
-
-	notional := price * quantity
+func (decaySample *DecaySample) ingestTrade(input BookflowTradeInput, window *decayWindow) {
+	notional := input.Price * input.Quantity
 	signedNotional := notional
 
-	if side == "sell" {
+	if input.Side == "sell" {
 		signedNotional = -notional
 	}
 
@@ -256,40 +153,32 @@ func (decaySample *DecaySample) ingestTrade(
 	window.tradePressure += smoothing * (signedNotional - window.tradePressure)
 
 	if window.lastPrice <= 0 {
-		window.lastPrice = price
+		window.lastPrice = input.Price
 	}
 }
 
 func (decaySample *DecaySample) applyLevels(
-	state *datura.Artifact,
-	sideKey string,
+	levels []BookLevel,
 	book map[float64]float64,
-	row bool,
 ) {
-	for index := 0; ; index++ {
-		price := datura.Peek[float64](state, "data", 0, sideKey, index, "price")
-		quantity := datura.Peek[float64](state, "data", 0, sideKey, index, "qty")
-
-		if row {
-			price = datura.Peek[float64](state, sideKey, index, "price")
-			quantity = datura.Peek[float64](state, sideKey, index, "qty")
+	for _, level := range levels {
+		if level.Price <= 0 {
+			return
 		}
 
-		if price <= 0 {
-			break
-		}
-
-		if quantity <= 0 {
-			delete(book, price)
+		if level.Quantity <= 0 {
+			delete(book, level.Price)
 
 			continue
 		}
 
-		book[price] = quantity
+		book[level.Price] = level.Quantity
 	}
 }
 
-func (decaySample *DecaySample) features(window *decayWindow) []float64 {
+func (decaySample *DecaySample) features(
+	window *decayWindow,
+) (equation.DecayInput, bool, error) {
 	series := [][]float64{
 		window.bidDepthHist,
 		window.askDepthHist,
@@ -308,30 +197,28 @@ func (decaySample *DecaySample) features(window *decayWindow) []float64 {
 	}
 
 	if minLength < decaySampleMinHistory {
-		return nil
+		return equation.DecayInput{}, false, nil
 	}
 
 	_, longWindow, err := statistic.ResolveWindows(window.densityHist, 0, 0)
 
 	if err != nil || minLength < longWindow {
-		return nil
+		return equation.DecayInput{}, false, nil
 	}
 
 	if window.lastPrice <= 0 {
-		return nil
+		return equation.DecayInput{}, false, nil
 	}
 
-	payload := []float64{window.lastPrice}
-
-	for _, segment := range series {
-		payload = append(payload, float64(len(segment)))
-	}
-
-	for _, segment := range series {
-		payload = append(payload, segment...)
-	}
-
-	return payload
+	return equation.DecayInput{
+		LastPrice:  window.lastPrice,
+		BidDepths:  append([]float64(nil), window.bidDepthHist...),
+		AskDepths:  append([]float64(nil), window.askDepthHist...),
+		Densities:  append([]float64(nil), window.densityHist...),
+		Spreads:    append([]float64(nil), window.spreadHist...),
+		Pressures:  append([]float64(nil), window.pressureHist...),
+		Imbalances: append([]float64(nil), window.imbalanceHist...),
+	}, true, nil
 }
 
 func decaySideDepth(book map[float64]float64) float64 {

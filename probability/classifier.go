@@ -1,9 +1,7 @@
 package probability
 
 import (
-	"fmt"
 	"io"
-	"math"
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
@@ -169,9 +167,9 @@ func (classifier *Classifier) Apply(state *datura.Artifact) error {
 		))
 	}
 
-	scores := make([]float64, len(categories))
+	scores := make(map[string]float64, len(categories)+1)
 
-	for index, category := range categories {
+	for _, category := range categories {
 		if category == "" {
 			return errnie.Error(errnie.Err(
 				errnie.Validation,
@@ -217,52 +215,7 @@ func (classifier *Classifier) Apply(state *datura.Artifact) error {
 			))
 		}
 
-		if math.IsNaN(score) || math.IsInf(score, 0) {
-			return errnie.Error(errnie.Err(
-				errnie.Validation,
-				"classifier: score is non-finite",
-				nil,
-			))
-		}
-
-		scores[index] = score
-	}
-
-	allZeroEvidence := true
-
-	for _, score := range scores {
-		if score > 0 {
-			allZeroEvidence = false
-
-			break
-		}
-	}
-
-	probabilities, err := SoftmaxScoresNormalized(scores)
-
-	if err != nil {
-		return errnie.Error(errnie.Err(
-			errnie.Validation,
-			"classifier: unable to compute softmax probabilities",
-			err,
-		))
-	}
-
-	winnerIndex := ArgmaxIndex(probabilities)
-	categoryIndex := float64(winnerIndex + 1)
-
-	if len(categoryIndexes) > 0 {
-		categoryIndex = categoryIndexes[winnerIndex]
-	}
-
-	confidence, err := CategoryShareConfidence(scores, winnerIndex+1)
-
-	if err != nil {
-		return errnie.Error(errnie.Err(
-			errnie.Validation,
-			"classifier: unable to compute category confidence",
-			err,
-		))
+		scores[category] = score
 	}
 
 	var strength float64
@@ -302,42 +255,13 @@ func (classifier *Classifier) Apply(state *datura.Artifact) error {
 		))
 	}
 
-	if strength <= 0 || math.IsNaN(strength) || math.IsInf(strength, 0) {
-		if !allZeroEvidence {
-			return errnie.Error(errnie.Err(
-				errnie.Validation,
-				"classifier: strength must be positive and finite",
-				nil,
-			))
-		}
+	scores["strength"] = strength
+	result, err := NewScoreClassifier(categories, categoryIndexes).Classify(scores)
+	if err != nil {
+		return err
 	}
 
-	confidenceBaseline := 1.0 / float64(len(categories))
-	distribution := map[string]float64{}
-
-	for index, probability := range probabilities {
-		wireCategoryIndex := float64(index + 1)
-
-		if len(categoryIndexes) > 0 {
-			wireCategoryIndex = categoryIndexes[index]
-		}
-
-		distribution[fmt.Sprintf("%d", int(wireCategoryIndex))] = probability
-	}
-
-	outputs := map[string]any{
-		"probabilities":       probabilities,
-		"category":            categoryIndex,
-		"confidence":          confidence,
-		"confidence_baseline": confidenceBaseline,
-		"distribution":        distribution,
-		"entry_baseline":      confidenceBaseline,
-		"exit_baseline":       confidenceBaseline,
-		"strength":            strength,
-		"value":               categoryIndex,
-	}
-
-	state.MergeOutputs(outputs)
+	state.MergeOutputs(result.Outputs())
 	state.Poke("output", "root")
 
 	outputInputs := make([]string, 0, len(categories)+8)

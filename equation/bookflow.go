@@ -1,10 +1,8 @@
 package equation
 
 import (
-	"io"
 	"math"
 
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/nomagique/statistic"
 )
 
@@ -12,131 +10,76 @@ const minBookGateHistory = 3
 
 /*
 Bookflow classifies weighted book imbalance with touch skew and trade pressure.
-The constructor artifact holds schema inputs; Write buffers inbound wire on its payload.
 */
-type Bookflow struct {
-	artifact *datura.Artifact
+type Bookflow struct{}
+
+/*
+BookflowInput contains the float-only book-flow inputs.
+*/
+type BookflowInput struct {
+	Weighted        float64
+	Level1          float64
+	Flat            float64
+	FlatOK          bool
+	Mid             float64
+	Spread          float64
+	TouchDepth      float64
+	TradePressure   float64
+	WeightedHistory []float64
+	Level1History   []float64
+	FlatHistory     []float64
 }
 
 /*
-NewBookflow returns a depth-flow stage wired from config attributes.
+BookflowOutput contains the float-only book-flow scores.
 */
-func NewBookflow(artifact *datura.Artifact) *Bookflow {
-	return &Bookflow{
-		artifact: artifact,
-	}
+type BookflowOutput struct {
+	Value        float64
+	Strength     float64
+	LoadedScore  float64
+	SpoofScore   float64
+	ThinScore    float64
+	NeutralScore float64
+	Category     float64
+	Ready        bool
 }
 
-func (bookflow *Bookflow) Read(p []byte) (int, error) {
-	state, err := stageState(bookflow.artifact.DecryptPayload())
-
-	if err != nil {
-		return 0, err
-	}
-
-	inputKeys := EnsureFeatureSchema(state, bookflow.artifact, BookflowInputKeys)
-	outcome := evaluateBookflow(state, inputKeys)
-
-	if !outcome.eligible {
-		state.Release()
-
-		return 0, io.EOF
-	}
-
-	return emitOutput(state, p, datura.Map[float64]{
-		"value":        outcome.strength,
-		"strength":     outcome.strength,
-		"loadedScore":  outcome.loadedScore,
-		"spoofScore":   outcome.spoofScore,
-		"thinScore":    outcome.thinScore,
-		"neutralScore": outcome.neutralScore,
-		"category":     float64(outcome.category),
-	})
+/*
+NewBookflow returns a depth-flow calculator.
+*/
+func NewBookflow() *Bookflow {
+	return &Bookflow{}
 }
 
-func (bookflow *Bookflow) Write(p []byte) (int, error) {
-	bookflow.artifact.WithPayload(p)
-	return len(p), nil
-}
-
-func (bookflow *Bookflow) Close() error {
-	return nil
-}
-
-type bookflowOutcome struct {
-	loadedScore  float64
-	spoofScore   float64
-	thinScore    float64
-	neutralScore float64
-	strength     float64
-	category     int
-	eligible     bool
-}
-
-func evaluateBookflow(state *datura.Artifact, inputKeys []string) bookflowOutcome {
-	fields, err := FeatureFields(state, inputKeys)
-
-	if err != nil || len(fields) < len(BookflowInputKeys) {
-		return bookflowOutcome{}
+/*
+Measure calculates book-flow scores from floats without artifact transport.
+*/
+func (bookflow *Bookflow) Measure(input BookflowInput) (BookflowOutput, error) {
+	if input.Mid <= 0 ||
+		input.Spread <= 0 ||
+		len(input.WeightedHistory) == 0 ||
+		len(input.Level1History) == 0 {
+		return BookflowOutput{}, nil
 	}
 
-	weighted := fields[0]
-	level1 := fields[1]
-	flat := fields[2]
-	flatOK := fields[3] > 0
-	mid := fields[4]
-	spread := fields[5]
-	touchDepth := fields[6]
-	tradePressure := fields[7]
-	weightedCount := int(fields[8])
-	level1Count := int(fields[9])
-	flatCount := int(fields[10])
-
-	offset := len(inputKeys)
-	features := Features(state)
-
-	weightedHistory, offset, ok := bookflowHistorySegment(features, offset, weightedCount)
-
-	if !ok {
-		return bookflowOutcome{}
-	}
-
-	level1History, offset, ok := bookflowHistorySegment(features, offset, level1Count)
-
-	if !ok {
-		return bookflowOutcome{}
-	}
-
-	flatHistory, _, ok := bookflowHistorySegment(features, offset, flatCount)
-
-	if !ok {
-		return bookflowOutcome{}
-	}
-
-	if mid <= 0 || spread <= 0 || len(weightedHistory) == 0 || len(level1History) == 0 {
-		return bookflowOutcome{
-			eligible: true,
-		}
-	}
-
-	weightedThreshold := bookflowMedianAbsolute(weightedHistory)
-	level1Threshold := bookflowMedianAbsolute(level1History)
-	spoofContrast := bookflowSpoofContrast(weightedHistory, level1History)
-	depthGate := bookflowThinningGate(weightedHistory, flatHistory)
+	weightedThreshold := bookflowMedianAbsolute(input.WeightedHistory)
+	level1Threshold := bookflowMedianAbsolute(input.Level1History)
+	spoofContrast := bookflowSpoofContrast(input.WeightedHistory, input.Level1History)
+	depthGate := bookflowThinningGate(input.WeightedHistory, input.FlatHistory)
 
 	spoofed := bookflowIsSpoofSkew(
-		weighted, level1, weightedThreshold, level1Threshold, spoofContrast,
+		input.Weighted, input.Level1, weightedThreshold, level1Threshold, spoofContrast,
 	)
 
-	if flatOK {
+	if input.FlatOK {
 		spoofed = spoofed || bookflowIsSpoofSkew(
-			flat, level1, weightedThreshold, level1Threshold, spoofContrast,
+			input.Flat, input.Level1, weightedThreshold, level1Threshold, spoofContrast,
 		)
 	}
 
-	thinning := bookflowIsBookThinning(weighted, flat, flatOK, depthGate)
+	thinning := bookflowIsBookThinning(input.Weighted, input.Flat, input.FlatOK, depthGate)
 	loaded := !spoofed && !thinning &&
-		math.Abs(weighted) >= weightedThreshold &&
+		math.Abs(input.Weighted) >= weightedThreshold &&
 		weightedThreshold > 0
 
 	category := bookflowClassify(spoofed, thinning, loaded)
@@ -144,9 +87,13 @@ func evaluateBookflow(state *datura.Artifact, inputKeys []string) bookflowOutcom
 	loadedScore := 0.0
 
 	if loaded {
-		loadedScore = math.Abs(weighted)
+		loadedScore = math.Abs(input.Weighted)
 
-		pressureScale := bookflowLoadedPressureScale(weighted, tradePressure, weightedThreshold)
+		pressureScale := bookflowLoadedPressureScale(
+			input.Weighted,
+			input.TradePressure,
+			weightedThreshold,
+		)
 
 		if pressureScale > 0 {
 			loadedScore *= pressureScale
@@ -156,22 +103,22 @@ func evaluateBookflow(state *datura.Artifact, inputKeys []string) bookflowOutcom
 	spoofScore := 0.0
 
 	if spoofed {
-		spoofScore = math.Abs(weighted - level1)
+		spoofScore = math.Abs(input.Weighted - input.Level1)
 	}
 
 	thinScore := 0.0
 
 	if thinning {
-		thinScore = math.Abs(weighted) - math.Abs(flat)
+		thinScore = math.Abs(input.Weighted) - math.Abs(input.Flat)
 	}
 
 	neutralScore := 0.0
 
 	if category == 4 {
-		neutralScore = math.Max(0, 1-math.Abs(weighted))
+		neutralScore = math.Max(0, 1-math.Abs(input.Weighted))
 	}
 
-	strength := math.Abs(weighted)
+	strength := math.Abs(input.Weighted)
 
 	if category == 2 {
 		strength = spoofScore
@@ -185,29 +132,30 @@ func evaluateBookflow(state *datura.Artifact, inputKeys []string) bookflowOutcom
 		strength = neutralScore
 	}
 
-	quoteVol := mid * touchDepth
+	quoteVol := input.Mid * input.TouchDepth
 
 	if quoteVol <= 0 && strength > 0 {
-		return bookflowOutcome{}
+		return BookflowOutput{}, nil
 	}
 
-	return bookflowOutcome{
-		loadedScore:  loadedScore,
-		spoofScore:   spoofScore,
-		thinScore:    thinScore,
-		neutralScore: neutralScore,
-		strength:     strength,
-		category:     category,
-		eligible:     true,
-	}
+	return BookflowOutput{
+		Value:        strength,
+		Strength:     strength,
+		LoadedScore:  loadedScore,
+		SpoofScore:   spoofScore,
+		ThinScore:    thinScore,
+		NeutralScore: neutralScore,
+		Category:     float64(category),
+		Ready:        true,
+	}, nil
 }
 
-func bookflowHistorySegment(features []float64, offset, count int) ([]float64, int, bool) {
-	if count < 0 || offset+count > len(features) {
+func bookflowHistorySegment(values []float64, offset, count int) ([]float64, int, bool) {
+	if count < 0 || offset+count > len(values) {
 		return nil, offset, false
 	}
 
-	segment := append([]float64(nil), features[offset:offset+count]...)
+	segment := append([]float64(nil), values[offset:offset+count]...)
 
 	return segment, offset + count, true
 }

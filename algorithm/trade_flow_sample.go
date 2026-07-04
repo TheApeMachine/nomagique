@@ -2,10 +2,8 @@ package algorithm
 
 import (
 	"fmt"
-	"io"
 	"math"
 
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/equation"
 	"github.com/theapemachine/nomagique/statistic"
@@ -21,8 +19,17 @@ TradeFlowSample accumulates signed trade notionals into the feature batch Flow e
 Window sizing and gross floors are derived from observed notionals, not fixed constants.
 */
 type TradeFlowSample struct {
-	artifact *datura.Artifact
-	windows  map[string]*tradeFlowWindow
+	windows map[string]*tradeFlowWindow
+}
+
+/*
+TradeFlowInput is one executed trade observation.
+*/
+type TradeFlowInput struct {
+	Symbol   string
+	Price    float64
+	Quantity float64
+	Side     string
 }
 
 type tradeFlowWindow struct {
@@ -36,102 +43,55 @@ type tradeFlowTick struct {
 }
 
 /*
-NewTradeFlowSample returns a trade encoder for CVD flow classification.
+NewTradeFlowSample returns a trade sampler for CVD flow classification.
 */
-func NewTradeFlowSample(artifact *datura.Artifact) *TradeFlowSample {
+func NewTradeFlowSample() *TradeFlowSample {
 	return &TradeFlowSample{
-		artifact: artifact,
-		windows:  map[string]*tradeFlowWindow{},
+		windows: map[string]*tradeFlowWindow{},
 	}
 }
 
-func (tradeFlowSample *TradeFlowSample) Write(payload []byte) (int, error) {
-	tradeFlowSample.artifact.WithPayload(payload)
-	return len(payload), nil
-}
-
-func (tradeFlowSample *TradeFlowSample) Read(payload []byte) (int, error) {
-	state := datura.Acquire("trade-flow-sample-state", datura.APPJSON)
-
-	if _, err := state.Unpack(tradeFlowSample.artifact.DecryptPayload()); err != nil {
-		state.Release()
-
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"trade-flow-sample: state write failed",
-			err,
-		))
-	}
-
-	defer state.Release()
-
-	channel := datura.Peek[string](state, "channel")
-	row := false
-
-	if channel == "" &&
-		datura.Peek[string](state, "symbol") != "" &&
-		datura.Peek[float64](state, "price") > 0 &&
-		datura.Peek[float64](state, "qty") > 0 {
-		channel = "trade"
-		row = true
-	}
-
-	if channel != "trade" {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			fmt.Sprintf("trade-flow-sample: expected trade channel, got %q", channel),
-			nil,
-		))
-	}
-
-	symbol := datura.Peek[string](state, "data", 0, "symbol")
-	price := datura.Peek[float64](state, "data", 0, "price")
-	quantity := datura.Peek[float64](state, "data", 0, "qty")
-	side := datura.Peek[string](state, "data", 0, "side")
-
-	if row {
-		symbol = datura.Peek[string](state, "symbol")
-		price = datura.Peek[float64](state, "price")
-		quantity = datura.Peek[float64](state, "qty")
-		side = datura.Peek[string](state, "side")
-	}
-
-	if symbol == "" || price <= 0 || quantity <= 0 {
-		return 0, errnie.Error(errnie.Err(
+/*
+Measure observes one trade and returns flow input when the window is ready.
+*/
+func (tradeFlowSample *TradeFlowSample) Measure(
+	input TradeFlowInput,
+) (equation.FlowInput, bool, error) {
+	if input.Symbol == "" || input.Price <= 0 || input.Quantity <= 0 {
+		return equation.FlowInput{}, false, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"trade-flow-sample: trade frame requires symbol, price, and qty",
 			nil,
 		))
 	}
 
-	window := tradeFlowSample.window(symbol)
-	notional := price * quantity
+	if input.Side != "buy" && input.Side != "sell" {
+		return equation.FlowInput{}, false, errnie.Error(errnie.Err(
+			errnie.Validation,
+			fmt.Sprintf("trade-flow-sample: unknown side %q", input.Side),
+			nil,
+		))
+	}
+
+	window := tradeFlowSample.window(input.Symbol)
+	notional := input.Price * input.Quantity
 	window.ticks = append(window.ticks, tradeFlowTick{
-		buy:      side == "buy",
+		buy:      input.Side == "buy",
 		notional: notional,
-		price:    price,
+		price:    input.Price,
 	})
 
 	if len(window.ticks) > flowSampleHistoryCap {
 		window.ticks = window.ticks[len(window.ticks)-flowSampleHistoryCap:]
 	}
 
-	features := tradeFlowSample.features(window)
+	features, ok := tradeFlowSample.features(window)
 
-	if len(features) == 0 {
-		return 0, io.EOF
+	if !ok {
+		return equation.FlowInput{}, false, nil
 	}
 
-	state.WithScope(symbol)
-	state.Merge("features", features)
-	state.Poke("features", "root")
-	state.Poke(equation.FlowInputKeys, "inputs")
-
-	return state.PackInto(payload)
-}
-
-func (tradeFlowSample *TradeFlowSample) Close() error {
-	return nil
+	return features, true, nil
 }
 
 func (tradeFlowSample *TradeFlowSample) window(symbol string) *tradeFlowWindow {
@@ -147,11 +107,13 @@ func (tradeFlowSample *TradeFlowSample) window(symbol string) *tradeFlowWindow {
 	return window
 }
 
-func (tradeFlowSample *TradeFlowSample) features(window *tradeFlowWindow) []float64 {
+func (tradeFlowSample *TradeFlowSample) features(
+	window *tradeFlowWindow,
+) (equation.FlowInput, bool) {
 	tradeCount := len(window.ticks)
 
 	if tradeCount == 0 {
-		return nil
+		return equation.FlowInput{}, false
 	}
 
 	notionals := make([]float64, tradeCount)
@@ -163,7 +125,7 @@ func (tradeFlowSample *TradeFlowSample) features(window *tradeFlowWindow) []floa
 	_, longWindow, err := statistic.ResolveWindows(notionals, 0, 0)
 
 	if err != nil || tradeCount < longWindow {
-		return nil
+		return equation.FlowInput{}, false
 	}
 
 	active := window.ticks[len(window.ticks)-longWindow:]
@@ -190,20 +152,17 @@ func (tradeFlowSample *TradeFlowSample) features(window *tradeFlowWindow) []floa
 	medianNotional := grossFloor
 
 	if medianNotional <= 0 {
-		return nil
+		return equation.FlowInput{}, false
 	}
 
-	features := make([]float64, 0, flowSampleHeader+len(prices))
-	features = append(features,
-		buyNotional,
-		sellNotional,
-		float64(len(prices)),
-		grossFloor,
-		medianNotional,
-	)
-	features = append(features, prices...)
-
-	return features
+	return equation.FlowInput{
+		BuyNotional:    buyNotional,
+		SellNotional:   sellNotional,
+		TradeCount:     len(prices),
+		GrossFloor:     grossFloor,
+		MedianNotional: medianNotional,
+		Prices:         prices,
+	}, true
 }
 
 func medianPositive(values []float64) float64 {

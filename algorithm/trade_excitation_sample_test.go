@@ -1,41 +1,35 @@
 package algorithm
 
 import (
-	"fmt"
 	"testing"
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/datura"
-	"github.com/theapemachine/nomagique"
-	"github.com/theapemachine/nomagique/probability"
 )
 
-func TestTradeExcitationSampleRead(testingTB *testing.T) {
+func TestTradeExcitationSample_MeasureTrade(testingTB *testing.T) {
 	Convey("Given one trade before excitation history is warm", testingTB, func() {
-		sample := NewTradeExcitationSample(datura.Acquire("trade-excitation-config", datura.APPJSON))
-		frame := tradeFrame(
+		sample := NewTradeExcitationSample()
+		input, ready, err := sample.MeasureTrade(tradeExcitationInput(
 			"ALT/EUR",
 			"buy",
-			1,
-			1,
-			time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC).UnixNano(),
-		)
+			time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC),
+		))
 
-		err := nomagique.RoundTripArtifact(frame, sample)
-
-		Convey("It should stage quietly without publishing features", func() {
+		Convey("It should stage without publishing features", func() {
 			So(err, ShouldBeNil)
-			So(len(datura.Peek[[]float64](frame, "features")), ShouldEqual, 0)
+			So(ready, ShouldBeFalse)
+			So(input.Symbol, ShouldEqual, "")
 		})
 	})
 
 	Convey("Given alternating buy and sell trades", testingTB, func() {
-		sample := NewTradeExcitationSample(datura.Acquire("trade-excitation-config", datura.APPJSON))
+		sample := NewTradeExcitationSample()
 		base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
 
-		var last *datura.Artifact
-		var lastErr error
+		var last ExcitationInput
+		var ready bool
+		var err error
 
 		for index := range 64 {
 			side := "buy"
@@ -44,304 +38,85 @@ func TestTradeExcitationSampleRead(testingTB *testing.T) {
 				side = "sell"
 			}
 
-			frame := tradeFrame(
-				"ALT/EUR",
-				side,
-				1,
-				1,
-				base.Add(time.Duration(index)*100*time.Millisecond).UnixNano(),
+			last, ready, err = sample.MeasureTrade(
+				tradeExcitationInput(
+					"ALT/EUR",
+					side,
+					base.Add(time.Duration(index)*100*time.Millisecond),
+				),
 			)
-			lastErr = nomagique.RoundTripArtifact(frame, sample)
-			last = frame
 		}
 
 		Convey("It should publish an excitation feature batch", func() {
-			So(lastErr, ShouldBeNil)
-			features := datura.Peek[[]float64](last, "features")
-			So(len(features), ShouldBeGreaterThan, 8)
-		})
-	})
-
-	Convey("Given row-level trade artifacts", testingTB, func() {
-		sample := NewTradeExcitationSample(datura.Acquire("trade-excitation-config", datura.APPJSON))
-		base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
-
-		var last *datura.Artifact
-		var lastErr error
-
-		for index := range 64 {
-			side := "buy"
-
-			if index%2 == 0 {
-				side = "sell"
-			}
-
-			frame := datura.Acquire("trade-excitation-row", datura.APPJSON).
-				WithRole("measurement").
-				WithScope("ALT/EUR").
-				WithPayload(datura.Map[any]{
-					"symbol":    "ALT/EUR",
-					"side":      side,
-					"price":     1.0,
-					"qty":       1.0,
-					"timestamp": base.Add(time.Duration(index) * 100 * time.Millisecond).Format(time.RFC3339Nano),
-				}.Marshal())
-			frame.SetTimestamp(base.Add(time.Duration(index) * 100 * time.Millisecond).UnixNano())
-
-			lastErr = nomagique.RoundTripArtifact(frame, sample)
-			last = frame
-		}
-
-		Convey("It should publish the same excitation feature batch shape", func() {
-			So(lastErr, ShouldBeNil)
-			features := datura.Peek[[]float64](last, "features")
-			So(len(features), ShouldBeGreaterThan, 8)
-			So(features[0], ShouldAlmostEqual, float64(base.Add(63*100*time.Millisecond).UnixNano())/float64(time.Second), 0.001)
-		})
-	})
-
-	Convey("Given a warmed excitation pipeline", testingTB, func() {
-		excitation := NewExcitation(datura.Acquire("excitation-config", datura.APPJSON))
-		pipeline := nomagique.Number(
-			NewTradeExcitationSample(datura.Acquire("trade-excitation-config", datura.APPJSON)),
-			excitation,
-		)
-		base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
-
-		var last *datura.Artifact
-
-		for index := range 128 {
-			side := "buy"
-
-			if index%2 == 0 {
-				side = "sell"
-			}
-
-			frame := tradeFrame(
-				"ALT/EUR",
-				side,
-				1,
-				1,
-				base.Add(time.Duration(index)*100*time.Millisecond).UnixNano(),
-			)
-
-			_ = nomagique.RoundTripArtifact(frame, pipeline)
-			last = frame
-		}
-
-		for range 4 {
-			if flopArtifact(last, pipeline) == nil {
-				break
-			}
-		}
-
-		Convey("It should publish excitation thermal scores", func() {
-			So(datura.Peek[float64](last, "output", "strength"), ShouldBeGreaterThan, 0)
-		})
-	})
-
-	Convey("Given warmed excitation output classified in place", testingTB, func() {
-		pipeline := nomagique.Number(
-			NewTradeExcitationSample(datura.Acquire("trade-excitation-config", datura.APPJSON)),
-			NewExcitation(datura.Acquire("excitation-config", datura.APPJSON)),
-		)
-		classifier := probability.NewClassifier(datura.Acquire(
-			"excitation-classifier-config", datura.APPJSON,
-		).WithAttributes(datura.Map[any]{
-			"inputs": []string{
-				"frenzy",
-				"saturation",
-				"organic",
-				"exhaustion",
-			},
-		}))
-		base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
-		var last *datura.Artifact
-
-		for index := range 128 {
-			side := "buy"
-
-			if index%2 == 0 {
-				side = "sell"
-			}
-
-			frame := tradeFrame(
-				"ALT/EUR",
-				side,
-				1,
-				1,
-				base.Add(time.Duration(index)*100*time.Millisecond).UnixNano(),
-			)
-
-			_ = nomagique.RoundTripArtifact(frame, pipeline)
-			last = frame
-		}
-
-		Convey("It should classify from excitation scores", func() {
-			So(classifier.Apply(last), ShouldBeNil)
-			So(datura.Peek[float64](last, "output", "category"), ShouldBeGreaterThan, 0)
-			So(datura.Peek[float64](last, "output", "confidence"), ShouldBeGreaterThan, 0)
-		})
-	})
-
-	Convey("Given sample output wired directly into excitation", testingTB, func() {
-		sample := NewTradeExcitationSample(datura.Acquire("trade-excitation-config", datura.APPJSON))
-		excitation := NewExcitation(datura.Acquire("excitation-config", datura.APPJSON))
-		base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
-
-		var last *datura.Artifact
-
-		for index := range 128 {
-			side := "buy"
-
-			if index%2 == 0 {
-				side = "sell"
-			}
-
-			frame := tradeFrame(
-				"ALT/EUR",
-				side,
-				1,
-				1,
-				base.Add(time.Duration(index)*100*time.Millisecond).UnixNano(),
-			)
-
-			if nomagique.RoundTripArtifact(frame, sample) == nil {
-				last = frame
-			}
-		}
-
-		batch := datura.Peek[[]float64](last, "features")
-		inbound := daturaBurstArtifact("ALT/EUR", batch)
-
-		for range 4 {
-			if flopArtifact(inbound, excitation) == nil {
-				break
-			}
-		}
-
-		Convey("It should publish excitation thermal scores", func() {
-			So(datura.Peek[float64](inbound, "output", "strength"), ShouldBeGreaterThan, 0)
-		})
-	})
-
-	Convey("Given a book frame before trades", testingTB, func() {
-		book := bookTouchFrame("ALT/EUR", 1000, 200)
-
-		Convey("It should derive touch imbalance from top-of-book quantities", func() {
-			So(bookTouchImbalance(book), ShouldAlmostEqual, 2.0/3.0, 0.001)
-		})
-	})
-
-	Convey("Given a book frame through the runtime flipflop path", testingTB, func() {
-		sample := NewTradeExcitationSample(datura.Acquire("trade-excitation-config", datura.APPJSON))
-		book := bookTouchFrame("ALT/EUR", 1000, 200)
-
-		err := nomagique.RoundTripArtifact(book, sample)
-
-		Convey("It should buffer touch state without publishing or logging a validation error", func() {
 			So(err, ShouldBeNil)
-			So(len(datura.Peek[[]float64](book, "features")), ShouldEqual, 0)
-		})
-	})
-
-	Convey("Given a book frame before a warmed trade pipeline", testingTB, func() {
-		pipeline := nomagique.Number(
-			NewTradeExcitationSample(datura.Acquire("trade-excitation-config", datura.APPJSON)),
-			NewExcitation(datura.Acquire("excitation-config", datura.APPJSON)),
-		)
-		book := bookTouchFrame("ALT/EUR", 80, 2)
-		_, err := pipeline.Write(book.Pack())
-
-		So(err, ShouldBeNil)
-
-		base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
-		var last *datura.Artifact
-
-		for index := range 64 {
-			side := "buy"
-
-			if index%2 == 0 {
-				side = "sell"
-			}
-
-			frame := tradeFrame(
-				"ALT/EUR",
-				side,
-				1,
-				1,
-				base.Add(time.Duration(index)*100*time.Millisecond).UnixNano(),
-			)
-
-			if nomagique.RoundTripArtifact(frame, pipeline) == nil {
-				last = frame
-			}
-		}
-
-		Convey("It should include touch imbalance in the feature batch", func() {
-			features := datura.Peek[[]float64](last, "features")
-			So(len(features), ShouldBeGreaterThanOrEqualTo, 5)
-			So(features[4], ShouldAlmostEqual, (80-2)/82.0, 0.001)
-		})
-	})
-
-	Convey("Given a book frame before a warmed trade sample", testingTB, func() {
-		sample := NewTradeExcitationSample(datura.Acquire("trade-excitation-config", datura.APPJSON))
-		book := bookTouchFrame("ALT/EUR", 1000, 200)
-		_, err := sample.Write(book.Pack())
-
-		So(err, ShouldBeNil)
-
-		base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
-		var last *datura.Artifact
-		var lastErr error
-
-		for index := range 64 {
-			side := "buy"
-
-			if index%2 == 0 {
-				side = "sell"
-			}
-
-			frame := tradeFrame(
-				"ALT/EUR",
-				side,
-				1,
-				1,
-				base.Add(time.Duration(index)*100*time.Millisecond).UnixNano(),
-			)
-			lastErr = nomagique.RoundTripArtifact(frame, sample)
-			last = frame
-		}
-
-		Convey("It should include touch imbalance in the feature batch", func() {
-			So(lastErr, ShouldBeNil)
-			features := datura.Peek[[]float64](last, "features")
-			So(len(features), ShouldBeGreaterThanOrEqualTo, 5)
-			So(features[4], ShouldAlmostEqual, 2.0/3.0, 0.001)
+			So(ready, ShouldBeTrue)
+			So(last.Symbol, ShouldEqual, "ALT/EUR")
+			So(len(last.BuySeconds), ShouldBeGreaterThan, 0)
+			So(len(last.SellSeconds), ShouldBeGreaterThan, 0)
 		})
 	})
 }
 
-func BenchmarkTradeExcitationSampleRead(b *testing.B) {
-	sample := NewTradeExcitationSample(datura.Acquire("trade-excitation-bench", datura.APPJSON))
+func TestTradeExcitationSample_MeasureBook(testingTB *testing.T) {
+	Convey("Given a book frame before a warmed trade sample", testingTB, func() {
+		sample := NewTradeExcitationSample()
+		err := sample.MeasureBook(bookTouchInput("ALT/EUR", 1000, 200))
+		base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
+
+		var last ExcitationInput
+
+		for index := range 64 {
+			side := "buy"
+
+			if index%2 == 0 {
+				side = "sell"
+			}
+
+			last, _, _ = sample.MeasureTrade(
+				tradeExcitationInput(
+					"ALT/EUR",
+					side,
+					base.Add(time.Duration(index)*100*time.Millisecond),
+				),
+			)
+		}
+
+		Convey("It should include touch imbalance in the feature batch", func() {
+			So(err, ShouldBeNil)
+			So(last.TouchImbalance, ShouldAlmostEqual, 2.0/3.0, 0.001)
+		})
+	})
+}
+
+func BenchmarkTradeExcitationSample_MeasureTrade(b *testing.B) {
+	sample := NewTradeExcitationSample()
 	base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
 
 	b.ReportAllocs()
 
 	for b.Loop() {
-		frame := tradeFrame("ALT/EUR", "buy", 1, 1, base.Add(time.Duration(b.N)*time.Millisecond).UnixNano())
-		_ = nomagique.RoundTripArtifact(frame, sample)
+		_, _, _ = sample.MeasureTrade(
+			tradeExcitationInput("ALT/EUR", "buy", base.Add(time.Duration(b.N)*time.Millisecond)),
+		)
 	}
 }
 
-func bookTouchFrame(symbol string, bidQty, askQty float64) *datura.Artifact {
-	payload := fmt.Sprintf(
-		`{"channel":"book","type":"update","data":[{"symbol":%q,"bids":[{"price":1,"qty":%g}],"asks":[{"price":1.01,"qty":%g}]}]}`,
-		symbol, bidQty, askQty,
-	)
-	artifact := datura.Acquire("book-touch-test", datura.APPJSON)
-	artifact.WithPayload([]byte(payload))
+func tradeExcitationInput(symbol string, side string, at time.Time) TradeExcitationInput {
+	return TradeExcitationInput{
+		Symbol:    symbol,
+		Side:      side,
+		Timestamp: at,
+	}
+}
 
-	return artifact
+func bookTouchInput(symbol string, bidQty, askQty float64) BookflowBookInput {
+	return BookflowBookInput{
+		Symbol: symbol,
+		Bids: []BookLevel{
+			{Price: 1, Quantity: bidQty},
+		},
+		Asks: []BookLevel{
+			{Price: 1.01, Quantity: askQty},
+		},
+	}
 }

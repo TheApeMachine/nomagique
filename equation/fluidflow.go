@@ -1,149 +1,168 @@
 package equation
 
 import (
-	"io"
 	"math"
 
-	"github.com/theapemachine/datura"
+	"github.com/theapemachine/errnie"
 )
 
 /*
 Fluidflow classifies laminar, turbulent, inertial, and viscous book-flow regimes.
-The constructor artifact holds schema inputs; Write buffers inbound wire on its payload.
 */
-type Fluidflow struct {
-	artifact *datura.Artifact
+type Fluidflow struct{}
+
+/*
+FluidflowInput contains the float-only fluid-flow inputs.
+*/
+type FluidflowInput struct {
+	Reynolds       float64
+	Divergence     float64
+	Viscosity      float64
+	MidAddRate     float64
+	MidExecuteRate float64
+	LaminarCeiling float64
+	TurbulentFloor float64
+	TurbulentReady bool
+	DivergenceEdge float64
+	IcebergScore   float64
+	Vorticity      float64
+	Turbulence     float64
+	Memory         float64
+	Price          float64
+	SpreadBPS      float64
+	ChangePct      float64
+	Volume         float64
 }
 
 /*
-NewFluidflow returns a fluid-dynamics stage wired from config attributes.
+FluidflowOutput contains the float-only fluid-flow scores.
 */
-func NewFluidflow(artifact *datura.Artifact) io.ReadWriteCloser {
-	return &Fluidflow{
-		artifact: artifact,
-	}
+type FluidflowOutput struct {
+	Value          float64
+	LaminarScore   float64
+	TurbulentScore float64
+	InertialScore  float64
+	ViscousScore   float64
+	Strength       float64
+	Category       float64
+	Price          float64
+	SpreadBPS      float64
+	ChangePct      float64
+	Volume         float64
 }
 
-func (fluidflow *Fluidflow) Write(p []byte) (int, error) {
-	fluidflow.artifact.WithPayload(p)
-	return len(p), nil
+/*
+NewFluidflow returns a fluid-dynamics calculator.
+*/
+func NewFluidflow() *Fluidflow {
+	return &Fluidflow{}
 }
 
-func (fluidflow *Fluidflow) Read(p []byte) (int, error) {
-	state, err := stageState(fluidflow.artifact.DecryptPayload())
-
-	if err != nil {
-		return 0, err
+/*
+Measure calculates fluid-flow scores from floats without artifact transport.
+*/
+func (fluidflow *Fluidflow) Measure(
+	input FluidflowInput,
+) (FluidflowOutput, error) {
+	if input.Price <= 0 ||
+		input.SpreadBPS <= 0 ||
+		input.Volume <= 0 ||
+		math.IsNaN(input.ChangePct) ||
+		math.IsInf(input.ChangePct, 0) {
+		return FluidflowOutput{}, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"fluidflow: invalid market input",
+			nil,
+		))
 	}
 
-	inputKeys := EnsureFeatureSchema(state, fluidflow.artifact, FluidflowInputKeys)
-
-	fields, err := FeatureFields(state, inputKeys)
-
-	if err != nil || len(fields) < len(FluidflowInputKeys) {
-		return rejectStage(state, "equation: invalid stage input")
+	if input.Viscosity <= 0 ||
+		math.IsNaN(input.Reynolds) ||
+		math.IsInf(input.Reynolds, 0) {
+		return FluidflowOutput{}, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"fluidflow: invalid mechanics input",
+			nil,
+		))
 	}
 
-	reynolds := fields[0]
-	divergence := fields[1]
-	viscosity := fields[2]
-	midAddRate := fields[3]
-	midExecuteRate := fields[4]
-	laminarCeiling := fields[5]
-	turbulentFloor := fields[6]
-	turbulentReady := fields[7] > 0
-	divergenceEdge := fields[8]
-	icebergScore := fields[9]
-	vorticity := fields[10]
-	turbulence := fields[11]
-	memory := fields[12]
-	price := fields[13]
-	spreadBPS := fields[14]
-	changePct := fields[15]
-	volume := fields[16]
-
-	if price <= 0 || spreadBPS <= 0 || volume <= 0 || math.IsNaN(changePct) || math.IsInf(changePct, 0) {
-		return rejectStage(state, "equation: invalid stage input")
-	}
-
-	if viscosity <= 0 || math.IsNaN(reynolds) || math.IsInf(reynolds, 0) {
-		return rejectStage(state, "equation: invalid stage input")
-	}
-
-	if divergenceEdge <= 0 && divergence > 0 {
-		divergenceEdge = divergence
+	divergenceEdge := input.DivergenceEdge
+	if divergenceEdge <= 0 && input.Divergence > 0 {
+		divergenceEdge = input.Divergence
 	}
 
 	laminarScore := 0.0
-	lowReynolds := reynolds <= 0 || (laminarCeiling > 0 && reynolds <= laminarCeiling)
-	lowDivergence := divergence <= 0 || (divergenceEdge > 0 && divergence <= divergenceEdge)
+	lowReynolds := input.Reynolds <= 0 ||
+		(input.LaminarCeiling > 0 && input.Reynolds <= input.LaminarCeiling)
+	lowDivergence := input.Divergence <= 0 ||
+		(divergenceEdge > 0 && input.Divergence <= divergenceEdge)
 
 	if lowReynolds && lowDivergence {
-		laminarScore = viscosity
+		laminarScore = input.Viscosity
 
-		if divergenceEdge > 0 && divergence > 0 {
-			laminarScore = viscosity * (1 - divergence/divergenceEdge)
+		if divergenceEdge > 0 && input.Divergence > 0 {
+			laminarScore = input.Viscosity * (1 - input.Divergence/divergenceEdge)
 		}
 	}
 
 	turbulentScore := 0.0
 
-	if turbulentReady && reynolds >= turbulentFloor {
-		turbulentScore = reynolds / turbulentFloor
+	if input.TurbulentReady && input.Reynolds >= input.TurbulentFloor {
+		turbulentScore = input.Reynolds / input.TurbulentFloor
 	}
 
-	if turbulence > 0 && turbulentReady {
-		turbulentFromField := turbulence * reynolds
+	if input.Turbulence > 0 && input.TurbulentReady {
+		turbulentFromField := input.Turbulence * input.Reynolds
 
 		if turbulentFromField > turbulentScore {
 			turbulentScore = turbulentFromField
 		}
 	}
 
-	if vorticity > 0 && turbulentReady {
-		vortScore := vorticity * turbulence
+	if input.Vorticity > 0 && input.TurbulentReady {
+		vortScore := input.Vorticity * input.Turbulence
 
 		if vortScore > turbulentScore {
 			turbulentScore = vortScore
 		}
 	}
 
-	inertialScore := divergence
+	inertialScore := input.Divergence
 	viscousScore := 0.0
 
-	if viscosity > 0 {
-		viscousScore = divergence / viscosity
+	if input.Viscosity > 0 {
+		viscousScore = input.Divergence / input.Viscosity
 	}
 
-	if icebergScore > 0 {
-		viscousScore = math.Max(viscousScore, icebergScore)
+	if input.IcebergScore > 0 {
+		viscousScore = math.Max(viscousScore, input.IcebergScore)
 	}
 
-	if !math.IsNaN(memory) && !math.IsInf(memory, 0) && memory > 0 {
-		viscousScore = math.Max(viscousScore, memory*viscosity)
+	if !math.IsNaN(input.Memory) && !math.IsInf(input.Memory, 0) && input.Memory > 0 {
+		viscousScore = math.Max(viscousScore, input.Memory*input.Viscosity)
 	}
 
-	midActivity := midAddRate + midExecuteRate
+	midActivity := input.MidAddRate + input.MidExecuteRate
 
 	if midActivity > 0 {
-		executeShare := midExecuteRate / midActivity
-		addShare := midAddRate / midActivity
+		executeShare := input.MidExecuteRate / midActivity
+		addShare := input.MidAddRate / midActivity
 
-		inertialScore = math.Max(inertialScore, executeShare*divergence)
+		inertialScore = math.Max(inertialScore, executeShare*input.Divergence)
 
 		if addShare > executeShare {
-			laminarRegime := laminarCeiling > 0 &&
-				reynolds <= laminarCeiling &&
+			laminarRegime := input.LaminarCeiling > 0 &&
+				input.Reynolds <= input.LaminarCeiling &&
 				divergenceEdge > 0 &&
-				divergence <= divergenceEdge
+				input.Divergence <= divergenceEdge
 
 			if !laminarRegime {
-				viscousScore = math.Max(viscousScore, addShare*viscosity)
+				viscousScore = math.Max(viscousScore, addShare*input.Viscosity)
 			}
 		}
 
-		if turbulentReady && executeShare > 0 {
-			turbulentScore = math.Max(turbulentScore, executeShare*reynolds)
+		if input.TurbulentReady && executeShare > 0 {
+			turbulentScore = math.Max(turbulentScore, executeShare*input.Reynolds)
 		}
 	}
 
@@ -165,13 +184,16 @@ func (fluidflow *Fluidflow) Read(p []byte) (int, error) {
 		category = 4
 	}
 
-	if best <= 0 && price > 0 && laminarCeiling > 0 && reynolds <= laminarCeiling {
+	if best <= 0 &&
+		input.Price > 0 &&
+		input.LaminarCeiling > 0 &&
+		input.Reynolds <= input.LaminarCeiling {
 		category = 1
-		laminarScore = viscosity
+		laminarScore = input.Viscosity
 		best = laminarScore
 	}
 
-	strength := reynolds
+	strength := input.Reynolds
 
 	if strength <= 0 || math.IsNaN(strength) || math.IsInf(strength, 0) {
 		strength = math.Max(
@@ -181,24 +203,24 @@ func (fluidflow *Fluidflow) Read(p []byte) (int, error) {
 	}
 
 	if strength <= 0 || math.IsNaN(strength) || math.IsInf(strength, 0) {
-		return rejectStage(state, "equation: invalid stage input")
+		return FluidflowOutput{}, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"fluidflow: invalid strength",
+			nil,
+		))
 	}
 
-	return emitOutput(state, p, datura.Map[float64]{
-		"value":          strength,
-		"laminarScore":   laminarScore,
-		"turbulentScore": turbulentScore,
-		"inertialScore":  inertialScore,
-		"viscousScore":   viscousScore,
-		"strength":       strength,
-		"category":       float64(category),
-		"price":          price,
-		"spreadBPS":      spreadBPS,
-		"changePct":      changePct,
-		"volume":         volume,
-	})
-}
-
-func (fluidflow *Fluidflow) Close() error {
-	return nil
+	return FluidflowOutput{
+		Value:          strength,
+		LaminarScore:   laminarScore,
+		TurbulentScore: turbulentScore,
+		InertialScore:  inertialScore,
+		ViscousScore:   viscousScore,
+		Strength:       strength,
+		Category:       float64(category),
+		Price:          input.Price,
+		SpreadBPS:      input.SpreadBPS,
+		ChangePct:      input.ChangePct,
+		Volume:         input.Volume,
+	}, nil
 }

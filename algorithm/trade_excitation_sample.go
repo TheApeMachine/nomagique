@@ -1,12 +1,9 @@
 package algorithm
 
 import (
-	"fmt"
-	"io"
 	"math"
 	"time"
 
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 )
 
@@ -14,12 +11,33 @@ const excitationSampleHistoryCap = 128
 const excitationSampleSideCap = 64
 
 /*
+TradeExcitationInput is one trade arrival observation for Hawkes excitation.
+*/
+type TradeExcitationInput struct {
+	Symbol    string
+	Side      string
+	Timestamp time.Time
+	UnixNano  int64
+}
+
+/*
+ExcitationInput contains the direct float batch Excitation expects.
+*/
+type ExcitationInput struct {
+	Symbol             string
+	HorizonSeconds     float64
+	FitCooldownSeconds float64
+	TouchImbalance     float64
+	BuySeconds         []float64
+	SellSeconds        []float64
+}
+
+/*
 TradeExcitationSample accumulates trade arrival times into the batch Excitation expects.
 Horizon and fit cooldown are derived from the observed arrival span.
 */
 type TradeExcitationSample struct {
-	artifact *datura.Artifact
-	windows  map[string]*tradeExcitationWindow
+	windows map[string]*tradeExcitationWindow
 }
 
 type tradeExcitationWindow struct {
@@ -29,136 +47,86 @@ type tradeExcitationWindow struct {
 }
 
 /*
-NewTradeExcitationSample returns a trade arrival encoder for Hawkes excitation.
+NewTradeExcitationSample returns a trade arrival sampler for Hawkes excitation.
 */
-func NewTradeExcitationSample(artifact *datura.Artifact) *TradeExcitationSample {
+func NewTradeExcitationSample() *TradeExcitationSample {
 	return &TradeExcitationSample{
-		artifact: artifact,
-		windows:  map[string]*tradeExcitationWindow{},
+		windows: map[string]*tradeExcitationWindow{},
 	}
 }
 
-func (tradeExcitationSample *TradeExcitationSample) Write(payload []byte) (int, error) {
-	tradeExcitationSample.artifact.WithPayload(payload)
-
-	state := datura.Acquire("trade-excitation-write-state", datura.APPJSON)
-
-	if _, err := state.Unpack(payload); err != nil {
-		state.Release()
-
-		return 0, errnie.Error(errnie.Err(
+/*
+MeasureBook observes touch imbalance for later trade excitation batches.
+*/
+func (tradeExcitationSample *TradeExcitationSample) MeasureBook(
+	input BookflowBookInput,
+) error {
+	if input.Symbol == "" {
+		return errnie.Error(errnie.Err(
 			errnie.Validation,
-			"trade-excitation-sample: state write failed",
-			err,
-		))
-	}
-
-	channel := datura.Peek[string](state, "channel")
-
-	if channel == "book" {
-		symbol := datura.Peek[string](state, "data", 0, "symbol")
-		window := tradeExcitationSample.window(symbol)
-		window.touchImbalance = bookTouchImbalance(state)
-	}
-
-	state.Release()
-
-	return len(payload), nil
-}
-
-func (tradeExcitationSample *TradeExcitationSample) Read(payload []byte) (int, error) {
-	state := datura.Acquire("trade-excitation-sample-state", datura.APPJSON)
-
-	if _, err := state.Unpack(tradeExcitationSample.artifact.DecryptPayload()); err != nil {
-		state.Release()
-
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"trade-excitation-sample: state write failed",
-			err,
-		))
-	}
-
-	defer state.Release()
-
-	channel := datura.Peek[string](state, "channel")
-	row := false
-
-	if channel == "book" {
-		return 0, io.EOF
-	}
-
-	if channel == "" &&
-		datura.Peek[string](state, "symbol") != "" &&
-		(datura.Peek[string](state, "side") == "buy" ||
-			datura.Peek[string](state, "side") == "sell") {
-		channel = "trade"
-		row = true
-	}
-
-	if channel != "trade" {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			fmt.Sprintf("trade-excitation-sample: expected trade channel, got %q", channel),
+			"trade-excitation-sample: symbol required",
 			nil,
 		))
 	}
 
-	symbol := datura.Peek[string](state, "data", 0, "symbol")
-	side := datura.Peek[string](state, "data", 0, "side")
+	window := tradeExcitationSample.window(input.Symbol)
+	window.touchImbalance = bookTouchImbalance(input)
 
-	if row {
-		symbol = datura.Peek[string](state, "symbol")
-		side = datura.Peek[string](state, "side")
-	}
+	return nil
+}
 
-	if symbol == "" || (side != "buy" && side != "sell") {
-		return 0, errnie.Error(errnie.Err(
+/*
+MeasureTrade observes a trade arrival and returns an excitation batch when ready.
+*/
+func (tradeExcitationSample *TradeExcitationSample) MeasureTrade(
+	input TradeExcitationInput,
+) (ExcitationInput, bool, error) {
+	if input.Symbol == "" || (input.Side != "buy" && input.Side != "sell") {
+		return ExcitationInput{}, false, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"trade-excitation-sample: trade frame requires symbol and buy/sell side",
 			nil,
 		))
 	}
 
-	arrival := tradeExcitationSample.arrivalSecond(state)
-	window := tradeExcitationSample.window(symbol)
+	arrival := input.ArrivalSecond()
 
-	if side == "buy" {
+	if arrival <= 0 {
+		return ExcitationInput{}, false, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"trade-excitation-sample: timestamp required",
+			nil,
+		))
+	}
+
+	window := tradeExcitationSample.window(input.Symbol)
+
+	if input.Side == "buy" {
 		window.buySeconds = append(window.buySeconds, arrival)
 	}
 
-	if side == "sell" {
+	if input.Side == "sell" {
 		window.sellSeconds = append(window.sellSeconds, arrival)
 	}
 
-	if len(window.buySeconds) > excitationSampleSideCap {
-		window.buySeconds = window.buySeconds[len(window.buySeconds)-excitationSampleSideCap:]
-	}
+	window.trim()
 
-	if len(window.sellSeconds) > excitationSampleSideCap {
-		window.sellSeconds = window.sellSeconds[len(window.sellSeconds)-excitationSampleSideCap:]
-	}
-
-	tradeExcitationSample.trimWindow(window)
-
-	features := tradeExcitationSample.features(window)
-
-	if len(features) == 0 {
-		return 0, io.EOF
-	}
-
-	state.WithScope(symbol)
-	state.Merge("features", features)
-	state.Poke("features", "root")
-	state.Poke(ExcitationSampleInputKeys, "inputs")
-	state.Poke(float64(len(window.buySeconds)), "config", "xCount")
-	state.Poke(float64(len(window.sellSeconds)), "config", "yCount")
-
-	return state.PackInto(payload)
+	return window.features(input.Symbol)
 }
 
-func (tradeExcitationSample *TradeExcitationSample) Close() error {
-	return nil
+/*
+ArrivalSecond returns the trade arrival in floating-point unix seconds.
+*/
+func (input TradeExcitationInput) ArrivalSecond() float64 {
+	if !input.Timestamp.IsZero() {
+		return float64(input.Timestamp.UnixNano()) / float64(time.Second)
+	}
+
+	if input.UnixNano > 0 {
+		return float64(input.UnixNano) / float64(time.Second)
+	}
+
+	return 0
 }
 
 func (tradeExcitationSample *TradeExcitationSample) window(symbol string) *tradeExcitationWindow {
@@ -174,32 +142,15 @@ func (tradeExcitationSample *TradeExcitationSample) window(symbol string) *trade
 	return window
 }
 
-func (tradeExcitationSample *TradeExcitationSample) arrivalSecond(state *datura.Artifact) float64 {
-	timestamp := state.Timestamp()
-
-	if timestamp > 0 {
-		return float64(timestamp) / float64(time.Second)
+func (window *tradeExcitationWindow) trim() {
+	if len(window.buySeconds) > excitationSampleSideCap {
+		window.buySeconds = window.buySeconds[len(window.buySeconds)-excitationSampleSideCap:]
 	}
 
-	for _, timestamp := range []string{
-		datura.Peek[string](state, "timestamp"),
-		datura.Peek[string](state, "data", 0, "timestamp"),
-	} {
-		if timestamp == "" {
-			continue
-		}
-
-		observed, err := time.Parse(time.RFC3339Nano, timestamp)
-
-		if err == nil {
-			return float64(observed.UnixNano()) / float64(time.Second)
-		}
+	if len(window.sellSeconds) > excitationSampleSideCap {
+		window.sellSeconds = window.sellSeconds[len(window.sellSeconds)-excitationSampleSideCap:]
 	}
 
-	return 0
-}
-
-func (tradeExcitationSample *TradeExcitationSample) trimWindow(window *tradeExcitationWindow) {
 	total := len(window.buySeconds) + len(window.sellSeconds)
 
 	if total <= excitationSampleHistoryCap {
@@ -219,20 +170,35 @@ func (tradeExcitationSample *TradeExcitationSample) trimWindow(window *tradeExci
 	}
 }
 
-func (tradeExcitationSample *TradeExcitationSample) features(window *tradeExcitationWindow) []float64 {
+func (window *tradeExcitationWindow) features(
+	symbol string,
+) (ExcitationInput, bool, error) {
 	eventCount := len(window.buySeconds) + len(window.sellSeconds)
 
 	if eventCount < excitationSampleMinEvents(eventCount) {
-		return nil
+		return ExcitationInput{}, false, nil
 	}
 
+	first, last := window.bounds()
+	span := time.Duration((last - first) * float64(time.Second))
+
+	if span <= 0 {
+		span = time.Second
+	}
+
+	return ExcitationInput{
+		Symbol:             symbol,
+		HorizonSeconds:     last,
+		FitCooldownSeconds: DeriveFitCooldown(span).Seconds(),
+		TouchImbalance:     window.touchImbalance,
+		BuySeconds:         append([]float64(nil), window.buySeconds...),
+		SellSeconds:        append([]float64(nil), window.sellSeconds...),
+	}, true, nil
+}
+
+func (window *tradeExcitationWindow) bounds() (float64, float64) {
 	allSeconds := append([]float64(nil), window.buySeconds...)
 	allSeconds = append(allSeconds, window.sellSeconds...)
-
-	if len(allSeconds) == 0 {
-		return nil
-	}
-
 	first := allSeconds[0]
 	last := allSeconds[0]
 
@@ -246,26 +212,7 @@ func (tradeExcitationSample *TradeExcitationSample) features(window *tradeExcita
 		}
 	}
 
-	span := time.Duration((last - first) * float64(time.Second))
-
-	if span <= 0 {
-		span = time.Second
-	}
-
-	horizon := last
-	cooldown := DeriveFitCooldown(span).Seconds()
-
-	features := []float64{
-		horizon,
-		cooldown,
-		float64(len(window.buySeconds)),
-		float64(len(window.sellSeconds)),
-		window.touchImbalance,
-	}
-	features = append(features, window.buySeconds...)
-	features = append(features, window.sellSeconds...)
-
-	return features
+	return first, last
 }
 
 func excitationSampleMinEvents(eventCount int) int {
@@ -278,9 +225,13 @@ func excitationSampleMinEvents(eventCount int) int {
 	return required
 }
 
-func bookTouchImbalance(state *datura.Artifact) float64 {
-	bidQty := datura.Peek[float64](state, "data", 0, "bids", 0, "qty")
-	askQty := datura.Peek[float64](state, "data", 0, "asks", 0, "qty")
+func bookTouchImbalance(input BookflowBookInput) float64 {
+	if len(input.Bids) == 0 || len(input.Asks) == 0 {
+		return 0
+	}
+
+	bidQty := input.Bids[0].Quantity
+	askQty := input.Asks[0].Quantity
 	total := bidQty + askQty
 
 	if total <= 0 {

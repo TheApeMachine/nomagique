@@ -1,10 +1,8 @@
 package algorithm
 
 import (
-	"io"
 	"math"
 
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/equation"
 	"github.com/theapemachine/nomagique/statistic"
@@ -19,10 +17,34 @@ BookflowSample accumulates book and trade frames into the feature batch Bookflow
 Decay rate and history windows are derived from observed spread and imbalance history.
 */
 type BookflowSample struct {
-	artifact     *datura.Artifact
-	pendingFrame bool
-	output       []byte
-	windows      map[string]*bookflowWindow
+	windows map[string]*bookflowWindow
+}
+
+/*
+BookLevel is one price/quantity level.
+*/
+type BookLevel struct {
+	Price    float64
+	Quantity float64
+}
+
+/*
+BookflowBookInput is one book update for a symbol.
+*/
+type BookflowBookInput struct {
+	Symbol string
+	Bids   []BookLevel
+	Asks   []BookLevel
+}
+
+/*
+BookflowTradeInput is one trade update for a symbol.
+*/
+type BookflowTradeInput struct {
+	Symbol   string
+	Price    float64
+	Quantity float64
+	Side     string
 }
 
 type bookflowWindow struct {
@@ -44,136 +66,60 @@ type bookflowWindow struct {
 }
 
 /*
-NewBookflowSample returns a book/trade encoder for depth-flow classification.
+NewBookflowSample returns a book/trade sampler for depth-flow classification.
 */
-func NewBookflowSample(artifact *datura.Artifact) *BookflowSample {
+func NewBookflowSample() *BookflowSample {
 	return &BookflowSample{
-		artifact: artifact,
-		windows:  map[string]*bookflowWindow{},
+		windows: map[string]*bookflowWindow{},
 	}
 }
 
-func (bookflowSample *BookflowSample) Write(payload []byte) (int, error) {
-	if len(payload) == 0 {
-		bookflowSample.pendingFrame = false
-		bookflowSample.output = nil
-
-		return 0, nil
-	}
-
-	bookflowSample.artifact.WithPayload(payload)
-	bookflowSample.pendingFrame = true
-	bookflowSample.output = nil
-
-	return len(payload), nil
-}
-
-func (bookflowSample *BookflowSample) Read(payload []byte) (int, error) {
-	if len(bookflowSample.output) > 0 {
-		return bookflowSample.readOutput(payload)
-	}
-
-	if !bookflowSample.pendingFrame {
-		return 0, io.EOF
-	}
-
-	state := datura.Acquire("bookflow-sample-state", datura.APPJSON)
-	frame := bookflowSample.artifact.DecryptPayload()
-
-	if len(frame) == 0 {
-		state.Release()
-		bookflowSample.pendingFrame = false
-
-		return 0, io.EOF
-	}
-
-	if _, err := state.Unpack(frame); err != nil {
-		state.Release()
-		bookflowSample.pendingFrame = false
-
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"bookflow-sample: state write failed",
-			err,
-		))
-	}
-
-	defer state.Release()
-
-	channel := datura.Peek[string](state, "channel")
-	symbol := datura.Peek[string](state, "data", 0, "symbol")
-	row := false
-
-	if symbol == "" {
-		symbol = datura.Peek[string](state, "symbol")
-		row = symbol != ""
-	}
-
-	if channel == "" && row {
-		if datura.Peek[float64](state, "bids", 0, "price") > 0 ||
-			datura.Peek[float64](state, "asks", 0, "price") > 0 {
-			channel = "book"
-		}
-
-		if datura.Peek[float64](state, "price") > 0 &&
-			datura.Peek[float64](state, "qty") > 0 {
-			channel = "trade"
-		}
-	}
-
-	if symbol == "" {
-		bookflowSample.pendingFrame = false
-
-		return 0, errnie.Error(errnie.Err(
+/*
+MeasureBook observes one book update and returns book-flow input when ready.
+*/
+func (bookflowSample *BookflowSample) MeasureBook(
+	input BookflowBookInput,
+) (equation.BookflowInput, bool, error) {
+	if input.Symbol == "" {
+		return equation.BookflowInput{}, false, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"bookflow-sample: symbol required",
 			nil,
 		))
 	}
 
-	window := bookflowSample.window(symbol)
+	window := bookflowSample.window(input.Symbol)
+	bookflowSample.ingestBook(input, window)
 
-	switch channel {
-	case "book":
-		bookflowSample.ingestBook(state, window, row)
-	case "trade":
-		bookflowSample.ingestTrade(state, window, row)
-	}
-
-	features := bookflowSample.features(window)
-
-	if len(features) == 0 {
-		bookflowSample.pendingFrame = false
-
-		return 0, io.EOF
-	}
-
-	state.WithScope(symbol)
-	state.Merge("features", features)
-	state.MergeOutput("ready", true)
-	state.Poke("features", "root")
-	state.Poke(equation.BookflowInputKeys, "inputs")
-
-	bookflowSample.output = state.Pack()
-
-	return bookflowSample.readOutput(payload)
+	return bookflowSample.features(window)
 }
 
-func (bookflowSample *BookflowSample) readOutput(payload []byte) (int, error) {
-	n := copy(payload, bookflowSample.output)
-
-	if n < len(bookflowSample.output) {
-		return n, io.ErrShortBuffer
+/*
+MeasureTrade observes one trade update and returns book-flow input when ready.
+*/
+func (bookflowSample *BookflowSample) MeasureTrade(
+	input BookflowTradeInput,
+) (equation.BookflowInput, bool, error) {
+	if input.Symbol == "" {
+		return equation.BookflowInput{}, false, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"bookflow-sample: symbol required",
+			nil,
+		))
 	}
 
-	bookflowSample.output = nil
-	bookflowSample.pendingFrame = false
+	if input.Price <= 0 || input.Quantity <= 0 {
+		return equation.BookflowInput{}, false, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"bookflow-sample: trade price and quantity required",
+			nil,
+		))
+	}
 
-	return n, io.EOF
-}
+	window := bookflowSample.window(input.Symbol)
+	bookflowSample.ingestTrade(input, window)
 
-func (bookflowSample *BookflowSample) Close() error {
-	return nil
+	return bookflowSample.features(window)
 }
 
 func (bookflowSample *BookflowSample) window(symbol string) *bookflowWindow {
@@ -193,18 +139,14 @@ func (bookflowSample *BookflowSample) window(symbol string) *bookflowWindow {
 	return window
 }
 
-func (bookflowSample *BookflowSample) ingestBook(
-	state *datura.Artifact,
-	window *bookflowWindow,
-	row bool,
-) {
+func (bookflowSample *BookflowSample) ingestBook(input BookflowBookInput, window *bookflowWindow) {
 	window.touchCancelBid = 0
 	window.touchCancelAsk = 0
 	window.frameAddBid = 0
 	window.frameAddAsk = 0
 
-	bookflowSample.applyLevels(state, "bids", window.bids, window, SideBid, row)
-	bookflowSample.applyLevels(state, "asks", window.asks, window, SideAsk, row)
+	bookflowSample.applyLevels(input.Bids, window.bids, window, SideBid)
+	bookflowSample.applyLevels(input.Asks, window.asks, window, SideAsk)
 
 	mid := bookflowMidPrice(window.bids, window.asks)
 	spread := bookflowSpread(window.bids, window.asks)
@@ -247,28 +189,13 @@ func (bookflowSample *BookflowSample) ingestBook(
 }
 
 func (bookflowSample *BookflowSample) ingestTrade(
-	state *datura.Artifact,
+	input BookflowTradeInput,
 	window *bookflowWindow,
-	row bool,
 ) {
-	price := datura.Peek[float64](state, "data", 0, "price")
-	quantity := datura.Peek[float64](state, "data", 0, "qty")
-	side := datura.Peek[string](state, "data", 0, "side")
-
-	if row {
-		price = datura.Peek[float64](state, "price")
-		quantity = datura.Peek[float64](state, "qty")
-		side = datura.Peek[string](state, "side")
-	}
-
-	if price <= 0 || quantity <= 0 {
-		return
-	}
-
-	notional := price * quantity
+	notional := input.Price * input.Quantity
 	signedNotional := notional
 
-	if side == "sell" {
+	if input.Side == "sell" {
 		signedNotional = -notional
 	}
 
@@ -283,32 +210,22 @@ func (bookflowSample *BookflowSample) ingestTrade(
 }
 
 func (bookflowSample *BookflowSample) applyLevels(
-	state *datura.Artifact,
-	sideKey string,
+	levels []BookLevel,
 	book map[float64]float64,
 	window *bookflowWindow,
 	side byte,
-	row bool,
 ) {
-	for index := 0; ; index++ {
-		price := datura.Peek[float64](state, "data", 0, sideKey, index, "price")
-		quantity := datura.Peek[float64](state, "data", 0, sideKey, index, "qty")
-
-		if row {
-			price = datura.Peek[float64](state, sideKey, index, "price")
-			quantity = datura.Peek[float64](state, sideKey, index, "qty")
+	for _, level := range levels {
+		if level.Price <= 0 {
+			return
 		}
 
-		if price <= 0 {
-			break
-		}
+		previousQty := book[level.Price]
 
-		previousQty := book[price]
+		if level.Quantity <= 0 {
+			delete(book, level.Price)
 
-		if quantity <= 0 {
-			delete(book, price)
-
-			if previousQty > 0 && bookflowSample.isTouchPrice(side, price, book) {
+			if previousQty > 0 && bookflowSample.isTouchPrice(side, level.Price, book) {
 				if side == SideBid {
 					window.touchCancelBid += previousQty
 				}
@@ -321,13 +238,13 @@ func (bookflowSample *BookflowSample) applyLevels(
 			continue
 		}
 
-		delta := quantity - previousQty
-		book[price] = quantity
+		delta := level.Quantity - previousQty
+		book[level.Price] = level.Quantity
 
 		if delta <= 0 {
 			removed := -delta
 
-			if bookflowSample.isTouchPrice(side, price, book) {
+			if bookflowSample.isTouchPrice(side, level.Price, book) {
 				if side == SideBid {
 					window.touchCancelBid += removed
 				}
@@ -372,58 +289,43 @@ func bookflowToxicPenalty(touchCancel, frameAdd, touchDepth float64) float64 {
 	return math.Min(1, churn*(touchCancel/touchDepth))
 }
 
-func (bookflowSample *BookflowSample) features(window *bookflowWindow) []float64 {
+func (bookflowSample *BookflowSample) features(
+	window *bookflowWindow,
+) (equation.BookflowInput, bool, error) {
 	historyCount := len(window.weightedHist)
 
 	if historyCount == 0 {
-		return []float64{
-			0,
-			0,
-			0,
-			0,
-			window.lastMid,
-			window.lastSpread,
-			window.touchDepth,
-			window.tradePressure,
-			0,
-			0,
-			0,
-		}
+		return equation.BookflowInput{
+			Mid:           window.lastMid,
+			Spread:        window.lastSpread,
+			TouchDepth:    window.touchDepth,
+			TradePressure: window.tradePressure,
+		}, true, nil
 	}
 
 	_, longWindow, err := statistic.ResolveWindows(window.weightedHist, 0, 0)
 
 	if err != nil || historyCount < longWindow {
-		return nil
+		return equation.BookflowInput{}, false, nil
 	}
 
-	weightedCount := len(window.weightedHist)
-	level1Count := len(window.level1Hist)
-	flatCount := len(window.flatHist)
-
-	features := make([]float64, 0, 11+weightedCount+level1Count+flatCount)
 	weighted := window.weightedHist[len(window.weightedHist)-1]
 	level1 := window.level1Hist[len(window.level1Hist)-1]
 	flat := window.flatHist[len(window.flatHist)-1]
 
-	features = append(features,
-		weighted,
-		level1,
-		flat,
-		window.flatOK,
-		window.lastMid,
-		window.lastSpread,
-		window.touchDepth,
-		window.tradePressure,
-		float64(weightedCount),
-		float64(level1Count),
-		float64(flatCount),
-	)
-	features = append(features, window.weightedHist...)
-	features = append(features, window.level1Hist...)
-	features = append(features, window.flatHist...)
-
-	return features
+	return equation.BookflowInput{
+		Weighted:        weighted,
+		Level1:          level1,
+		Flat:            flat,
+		FlatOK:          window.flatOK > 0,
+		Mid:             window.lastMid,
+		Spread:          window.lastSpread,
+		TouchDepth:      window.touchDepth,
+		TradePressure:   window.tradePressure,
+		WeightedHistory: append([]float64(nil), window.weightedHist...),
+		Level1History:   append([]float64(nil), window.level1Hist...),
+		FlatHistory:     append([]float64(nil), window.flatHist...),
+	}, true, nil
 }
 
 func bookflowMidPrice(bids, asks map[float64]float64) float64 {

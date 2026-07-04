@@ -4,59 +4,51 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/nomagique/equation"
 )
 
-func TestDepth_Read(testingTB *testing.T) {
+func TestDepth_Measure(testingTB *testing.T) {
 	Convey("Given deep quote volume versus peers", testingTB, func() {
-		stage := equation.NewDepth(depthConfig())
-		err := writeFeatureStage(stage, equation.DepthInputKeys,
-			1200, 4,
-			800, 900, 1000, 1100,
-			1, 0,
-		)
-
-		So(err, ShouldBeNil)
-
-		outbound, err := readStageOutput(stage)
+		depth := equation.NewDepth()
+		output, err := depth.Measure(equation.DepthInput{
+			QuoteVolume:    1200,
+			Peers:          []float64{800, 900, 1000, 1100},
+			RelativeVolume: 1,
+			BaselineReady:  false,
+		})
 
 		So(err, ShouldBeNil)
 
 		Convey("It should classify robust liquidity", func() {
-			So(int(datura.Peek[float64](outbound, "output", "category")), ShouldEqual, 3)
-			So(datura.Peek[float64](outbound, "output", "value"), ShouldAlmostEqual, 0.3333333333333333, 0.001)
+			So(int(output.Category), ShouldEqual, 3)
+			So(output.Value, ShouldAlmostEqual, 0.3333333333333333, 0.001)
 		})
 	})
 
 	Convey("Given peak scarcity volume", testingTB, func() {
-		stage := equation.NewDepth(depthConfig())
-		err := writeFeatureStage(stage, equation.DepthInputKeys,
-			50, 3,
-			1100, 950, 50,
-			1, 0,
-		)
-
-		So(err, ShouldBeNil)
-
-		outbound, err := readStageOutput(stage)
+		depth := equation.NewDepth()
+		output, err := depth.Measure(equation.DepthInput{
+			QuoteVolume:    50,
+			Peers:          []float64{1100, 950, 50},
+			RelativeVolume: 1,
+			BaselineReady:  false,
+		})
 
 		So(err, ShouldBeNil)
 
 		Convey("It should classify extreme scarcity", func() {
-			So(int(datura.Peek[float64](outbound, "output", "category")), ShouldEqual, 1)
-			So(datura.Peek[float64](outbound, "output", "scarcityScore"), ShouldBeGreaterThan, 0)
-			So(datura.Peek[float64](outbound, "output", "scarcityScore"), ShouldBeLessThan, 1)
+			So(int(output.Category), ShouldEqual, 1)
+			So(output.ScarcityScore, ShouldBeGreaterThan, 0)
+			So(output.ScarcityScore, ShouldBeLessThan, 1)
 		})
 	})
 
 	Convey("Given an incomplete depth feature batch", testingTB, func() {
-		stage := equation.NewDepth(depthConfig())
-		err := writeFeatureStage(stage, equation.DepthInputKeys, 1000)
-
-		So(err, ShouldBeNil)
-
-		_, err = stage.Read(make([]byte, 4096))
+		depth := equation.NewDepth()
+		_, err := depth.Measure(equation.DepthInput{
+			QuoteVolume: 1000,
+			Peers:       []float64{1000},
+		})
 
 		Convey("It should reject incomplete payload", func() {
 			So(err, ShouldNotBeNil)
@@ -64,19 +56,18 @@ func TestDepth_Read(testingTB *testing.T) {
 	})
 }
 
-func BenchmarkDepthRead(b *testing.B) {
-	stage := equation.NewDepth(depthConfig())
-	values := []float64{
-		1200, 4,
-		800, 900, 1000, 1100,
-		1, 0,
+func BenchmarkDepthMeasure(benchmark *testing.B) {
+	depth := equation.NewDepth()
+	input := equation.DepthInput{
+		QuoteVolume:    1200,
+		Peers:          []float64{800, 900, 1000, 1100},
+		RelativeVolume: 1,
+		BaselineReady:  false,
 	}
 
-	b.ReportAllocs()
+	benchmark.ReportAllocs()
 
-	for b.Loop() {
-		_ = writeFeatureStage(stage, equation.DepthInputKeys, values...)
-		frame := make([]byte, 4096)
-		_, _ = stage.Read(frame)
+	for benchmark.Loop() {
+		_, _ = depth.Measure(input)
 	}
 }

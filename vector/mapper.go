@@ -1,12 +1,10 @@
 package vector
 
 import (
-	"io"
 	"math"
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/nomagique"
 	"github.com/theapemachine/nomagique/adaptive"
 	"github.com/theapemachine/nomagique/statistic"
 )
@@ -18,9 +16,8 @@ optionally wraps the result in a transform (e.g. ema), and writes it under outpu
 Driven entirely by the "mappings" config attribute, generic across signals.
 */
 type Mapper struct {
-	artifact     *datura.Artifact
-	transforms   map[string]func(*datura.Artifact) io.ReadWriteCloser
-	transformers map[string]io.ReadWriteCloser
+	artifact *datura.Artifact
+	emas     map[string]*adaptive.EMA
 }
 
 /*
@@ -29,12 +26,7 @@ NewMapper builds a mapper wired from the "mappings" config attribute.
 func NewMapper(artifact *datura.Artifact) *Mapper {
 	return &Mapper{
 		artifact: artifact,
-		transforms: map[string]func(*datura.Artifact) io.ReadWriteCloser{
-			"ema": func(config *datura.Artifact) io.ReadWriteCloser {
-				return adaptive.NewEMA(config)
-			},
-		},
-		transformers: map[string]io.ReadWriteCloser{},
+		emas:     map[string]*adaptive.EMA{},
 	}
 }
 
@@ -129,41 +121,27 @@ func (mapper *Mapper) value(state *datura.Artifact, index int) (float64, error) 
 }
 
 /*
-apply wraps a scalar in a stateful transform stage, reusing one persistent
-instance per outputKey so transforms like ema accumulate across frames.
+apply transforms a scalar, reusing one persistent calculator per outputKey so
+transforms like ema accumulate across frames.
 */
 func (mapper *Mapper) apply(transform, outputKey string, value float64) (float64, error) {
-	factory, ok := mapper.transforms[transform]
-
-	if !ok {
+	if transform != "ema" {
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation, "mapper: transform not registered", nil,
 		))
 	}
 
-	stage, ok := mapper.transformers[outputKey]
+	ema, ok := mapper.emas[outputKey]
 
 	if !ok {
-		config := datura.Acquire("mapper-transform-"+outputKey, datura.APPJSON)
-		config.Poke("sample", "input")
-		stage = factory(config)
-		mapper.transformers[outputKey] = stage
+		ema = adaptive.NewEMA()
+		mapper.emas[outputKey] = ema
 	}
 
-	scratch := datura.Acquire("mapper-transform-scratch", datura.APPJSON)
-	defer scratch.Release()
-	scratch.WithPayload(datura.Map[any]{
-		"features": []float64{value},
-		"root":     "features",
-		"inputs":   []string{"sample"},
-	}.Marshal())
-
-	if err := nomagique.RoundTripArtifact(scratch, stage); err != nil {
+	out, err := ema.Measure(value)
+	if err != nil {
 		return 0, err
 	}
-
-	scratchRoot := datura.Peek[string](scratch, "root")
-	out := datura.Peek[float64](scratch, scratchRoot, "value")
 
 	if math.IsNaN(out) || math.IsInf(out, 0) {
 		return 0, errnie.Error(errnie.Err(

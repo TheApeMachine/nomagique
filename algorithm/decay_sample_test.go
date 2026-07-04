@@ -1,219 +1,105 @@
 package algorithm
 
 import (
-	"fmt"
-	"io"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/transport"
-	"github.com/theapemachine/nomagique"
 	"github.com/theapemachine/nomagique/equation"
 	"github.com/theapemachine/nomagique/probability"
 )
 
-func TestDecaySample_Read(t *testing.T) {
-	Convey("Given no inbound frame", t, func() {
-		encoder := NewDecaySample(datura.Acquire("decay-sample", datura.APPJSON))
-		buffer := make([]byte, 4096)
-
-		n, err := encoder.Read(buffer)
-
-		Convey("It should report no frame without trying to unpack stale payload", func() {
-			So(n, ShouldEqual, 0)
-			So(err, ShouldEqual, io.EOF)
-		})
-	})
-
-	Convey("Given an empty inbound frame", t, func() {
-		encoder := NewDecaySample(datura.Acquire("decay-sample", datura.APPJSON))
-		buffer := make([]byte, 4096)
-
-		n, writeErr := encoder.Write(nil)
-		readN, readErr := encoder.Read(buffer)
-
-		Convey("It should drain cleanly without validation noise", func() {
-			So(n, ShouldEqual, 0)
-			So(writeErr, ShouldBeNil)
-			So(readN, ShouldEqual, 0)
-			So(readErr, ShouldEqual, io.EOF)
-		})
-	})
-
-	Convey("Given deteriorating bid depth on repeated book frames", t, func() {
-		encoder := NewDecaySample(datura.Acquire("decay-sample", datura.APPJSON))
-		decay := equation.NewDecay(equation.DecayConfig())
-		classifier := probability.NewClassifier(
-			datura.Acquire("exhaust-classifier", datura.APPJSON).WithAttributes(datura.Map[any]{
-				"inputs":    []string{"mechanical", "fragile", "thermal", "reversal"},
-				"scoreRoot": "output",
-			}),
+func TestDecaySample_MeasureBook(testingTB *testing.T) {
+	Convey("Given deteriorating bid depth on repeated book frames", testingTB, func() {
+		sample := NewDecaySample()
+		decay := equation.NewDecay()
+		classifier := probability.NewScoreClassifier(
+			[]string{"mechanical", "fragile", "thermal", "reversal"},
+			nil,
 		)
-		pipeline := transport.NewPipeline(encoder, decay, classifier)
-
 		quantities := []float64{20, 18, 16, 14, 12, 10, 8, 6, 4}
 
-		var result *datura.Artifact
+		var (
+			input equation.DecayInput
+			ok    bool
+			err   error
+		)
 
-		for index, bidQty := range quantities {
-			frame := []byte(fmt.Sprintf(
-				`{"channel":"book","type":"update","data":[{"symbol":"BTC/USD","bids":[{"price":100,"qty":%g}],"asks":[{"price":101,"qty":10}]}]}`,
-				bidQty,
-			))
-			state := datura.Acquire("measurement", datura.APPJSON).
-				WithRole("measurement").
-				WithScope("update").
-				WithPayload(frame)
-
-			err := nomagique.RoundTripArtifact(state, pipeline)
-
-			if index == len(quantities)-1 {
-				So(err, ShouldBeNil)
-			}
-
-			if result != nil {
-				result.Release()
-			}
-
-			result = state
+		for _, bidQuantity := range quantities {
+			input, ok, err = sample.MeasureBook(decayBookInput(bidQuantity, 10))
 		}
+
+		So(err, ShouldBeNil)
+
+		output, err := decay.Measure(input)
+		So(err, ShouldBeNil)
+
+		result, err := classifier.Classify(map[string]float64{
+			"mechanical": output.Mechanical,
+			"fragile":    output.Fragile,
+			"thermal":    output.Thermal,
+			"reversal":   output.Reversal,
+			"strength":   output.Strength,
+		})
+		So(err, ShouldBeNil)
 
 		Convey("It should emit calibrated decay output", func() {
-			So(result, ShouldNotBeNil)
-			So(datura.Peek[bool](result, "output", "ready"), ShouldBeTrue)
-			So(datura.Peek[float64](result, "output", "value"), ShouldBeGreaterThan, 0)
-			So(datura.Peek[float64](result, "output", "confidence"), ShouldBeGreaterThan, 0.25)
-
-			result.Release()
+			So(ok, ShouldBeTrue)
+			So(output.Value, ShouldBeGreaterThan, 0)
+			So(result.Confidence, ShouldBeGreaterThan, 0.25)
 		})
 	})
 
-	Convey("Given stable bid depth on repeated book frames", t, func() {
-		encoder := NewDecaySample(datura.Acquire("decay-sample", datura.APPJSON))
-		decay := equation.NewDecay(equation.DecayConfig())
-		classifier := probability.NewClassifier(
-			datura.Acquire("exhaust-classifier", datura.APPJSON).WithAttributes(datura.Map[any]{
-				"inputs":    []string{"mechanical", "fragile", "thermal", "reversal"},
-				"scoreRoot": "output",
-			}),
-		)
-		pipeline := transport.NewPipeline(encoder, decay, classifier)
+	Convey("Given stable bid depth on repeated book frames", testingTB, func() {
+		sample := NewDecaySample()
 
-		frame := []byte(`{"channel":"book","type":"update","data":[{"symbol":"BTC/USD","bids":[{"price":100,"qty":10}],"asks":[{"price":101,"qty":10}]}]}`)
-
-		var lastErr error
-
+		var err error
 		for range 12 {
-			state := datura.Acquire("measurement", datura.APPJSON).
-				WithRole("measurement").
-				WithScope("update").
-				WithPayload(frame)
-
-			lastErr = nomagique.RoundTripArtifact(state, pipeline)
-			state.Release()
+			_, _, err = sample.MeasureBook(decayBookInput(10, 10))
 		}
 
-		Convey("It should complete the pipeline after history accumulates", func() {
-			So(lastErr, ShouldBeNil)
+		Convey("It should complete sampling after history accumulates", func() {
+			So(err, ShouldBeNil)
 		})
 	})
 
-	Convey("Given deteriorating row-level book artifacts", t, func() {
-		encoder := NewDecaySample(datura.Acquire("decay-sample", datura.APPJSON))
-		decay := equation.NewDecay(equation.DecayConfig())
-		classifier := probability.NewClassifier(
-			datura.Acquire("exhaust-classifier", datura.APPJSON).WithAttributes(datura.Map[any]{
-				"inputs": []string{"mechanical", "fragile", "thermal", "reversal"},
-			}),
-		)
-		pipeline := transport.NewPipeline(encoder, decay, classifier)
-		quantities := []float64{20, 18, 16, 14, 12, 10, 8, 6, 4}
-
-		var result *datura.Artifact
-
-		for index, bidQty := range quantities {
-			frame := []byte(fmt.Sprintf(
-				`{"symbol":"BTC/USD","bids":[{"price":100,"qty":%g}],"asks":[{"price":101,"qty":10}]}`,
-				bidQty,
-			))
-			state := datura.Acquire("measurement", datura.APPJSON).
-				WithRole("measurement").
-				WithScope("BTC/USD").
-				WithPayload(frame)
-
-			err := nomagique.RoundTripArtifact(state, pipeline)
-
-			if index == len(quantities)-1 {
-				So(err, ShouldBeNil)
-			}
-
-			if result != nil {
-				result.Release()
-			}
-
-			result = state
-		}
-
-		Convey("It should emit classified decay output without a Kraken envelope", func() {
-			So(result, ShouldNotBeNil)
-			So(datura.Peek[string](result, "symbol"), ShouldEqual, "BTC/USD")
-			So(datura.Peek[string](result, "root"), ShouldEqual, "output")
-			So(datura.Peek[float64](result, "output", "category"), ShouldBeGreaterThan, 0)
-			So(datura.Peek[float64](result, "output", "confidence"), ShouldBeGreaterThan, 0)
-
-			result.Release()
-		})
-	})
-}
-
-func TestDecaySample_ReadStagesColdStart(t *testing.T) {
-	Convey("Given a valid first book frame before feature history is ready", t, func() {
-		encoder := NewDecaySample(datura.Acquire("decay-sample", datura.APPJSON))
-		frame := []byte(`{"channel":"book","type":"update","data":[{"symbol":"BTC/USD","bids":[{"price":100,"qty":10}],"asks":[{"price":101,"qty":10}]}]}`)
-		state := datura.Acquire("measurement", datura.APPJSON).WithPayload(frame)
-
-		err := nomagique.RoundTripArtifact(state, encoder)
+	Convey("Given a valid first book frame before feature history is ready", testingTB, func() {
+		sample := NewDecaySample()
+		input, ok, err := sample.MeasureBook(decayBookInput(10, 10))
 
 		Convey("It should be a nonfatal not-ready sample", func() {
 			So(err, ShouldBeNil)
-			So(datura.Peek[bool](state, "output", "ready"), ShouldBeFalse)
-			So(len(datura.Peek[[]float64](state, "features")), ShouldEqual, 0)
+			So(ok, ShouldBeFalse)
+			So(input.LastPrice, ShouldEqual, 0)
+		})
+	})
 
-			state.Release()
+	Convey("Given a book frame without symbol", testingTB, func() {
+		sample := NewDecaySample()
+		_, _, err := sample.MeasureBook(BookflowBookInput{
+			Bids: []BookLevel{{Price: 100, Quantity: 10}},
+			Asks: []BookLevel{{Price: 101, Quantity: 10}},
+		})
+
+		Convey("It should return a validation error", func() {
+			So(err, ShouldNotBeNil)
 		})
 	})
 }
 
-func TestDecaySample_ReadRejectsMissingSymbol(t *testing.T) {
-	Convey("Given a book frame without symbol", t, func() {
-		encoder := NewDecaySample(datura.Acquire("decay-sample", datura.APPJSON))
-		frame := []byte(`{"channel":"book","type":"update","data":[{"bids":[{"price":100,"qty":10}],"asks":[{"price":101,"qty":10}]}]}`)
-		state := datura.Acquire("measurement", datura.APPJSON).WithPayload(frame)
+func BenchmarkDecaySampleMeasureBook(benchmark *testing.B) {
+	sample := NewDecaySample()
 
-		err := nomagique.RoundTripArtifact(state, encoder)
+	benchmark.ReportAllocs()
 
-		So(err, ShouldNotBeNil)
-		state.Release()
-	})
+	for benchmark.Loop() {
+		_, _, _ = sample.MeasureBook(decayBookInput(10, 10))
+	}
 }
 
-func BenchmarkDecaySample_Read(b *testing.B) {
-	encoder := NewDecaySample(datura.Acquire("decay-sample", datura.APPJSON))
-	bookPayload := []byte(`{"channel":"book","type":"update","data":[{"symbol":"BTC/USD","bids":[{"price":100,"qty":10}],"asks":[{"price":101,"qty":10}]}]}`)
-	frame := make([]byte, 262144)
-
-	b.ReportAllocs()
-
-	for b.Loop() {
-		state := datura.Acquire("measurement", datura.APPJSON).WithPayload(bookPayload)
-		packed := state.Pack()
-
-		if len(packed) == 0 {
-			b.Fatal("decay_sample: artifact pack failed")
-		}
-
-		_, _ = encoder.Write(packed)
-		_, _ = encoder.Read(frame)
+func decayBookInput(bidQuantity float64, askQuantity float64) BookflowBookInput {
+	return BookflowBookInput{
+		Symbol: "BTC/USD",
+		Bids:  []BookLevel{{Price: 100, Quantity: bidQuantity}},
+		Asks:  []BookLevel{{Price: 101, Quantity: askQuantity}},
 	}
 }

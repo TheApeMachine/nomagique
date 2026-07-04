@@ -5,136 +5,68 @@ import (
 
 	"github.com/cinar/indicator/v2/helper"
 	"github.com/cinar/indicator/v2/trend"
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 )
 
 /*
-EMA is an exponential moving average stage backed by cinar/indicator trend.Ema.
-The constructor artifact holds config attributes; Write buffers wire on artifact payload.
+EMA is an exponential moving average calculator backed by cinar/indicator.
 */
 type EMA struct {
-	artifact *datura.Artifact
-	inner    *trend.Ema[float64]
+	inner *trend.Ema[float64]
 }
 
 /*
-NewEMA returns an EMA stage wired from config attributes on the artifact.
+EMAConfig describes direct EMA parameters.
 */
-func NewEMA(artifact *datura.Artifact) *EMA {
-	inner := trend.NewEma[float64]()
+type EMAConfig struct {
+	Period    int
+	Smoothing float64
+}
 
-	if period := int(datura.Peek[float64](artifact, "period")); period > 0 {
-		inner.Period = period
+/*
+NewEMA returns a direct EMA calculator.
+*/
+func NewEMA(configs ...EMAConfig) *EMA {
+	config := EMAConfig{}
+
+	if len(configs) > 0 {
+		config = configs[0]
 	}
 
-	if smoothing := datura.Peek[float64](artifact, "smoothing"); smoothing > 0 {
-		inner.Smoothing = smoothing
+	inner := trend.NewEma[float64]()
+
+	if config.Period > 0 {
+		inner.Period = config.Period
+	}
+
+	if config.Smoothing > 0 {
+		inner.Smoothing = config.Smoothing
 	}
 
 	return &EMA{
-		artifact: artifact,
-		inner:    inner,
+		inner: inner,
 	}
 }
 
-func (ema *EMA) Read(payload []byte) (int, error) {
-	state := datura.Acquire("ema-state", datura.APPJSON)
-
-	if _, err := state.Unpack(ema.artifact.DecryptPayload()); err != nil {
+/*
+Measure returns the latest EMA for the provided samples.
+*/
+func (ema *EMA) Measure(samples ...float64) (float64, error) {
+	if len(samples) == 0 {
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
-			"ema: state write failed",
-			err,
-		))
-	}
-
-	rootKey := datura.Peek[string](state, "root")
-
-	if rootKey == "" {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"ema: root required",
+			"ema: samples required",
 			nil,
 		))
 	}
 
-	inputs := datura.Peek[[]string](state, "inputs")
-
-	if len(inputs) == 0 {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"ema: inputs required",
-			nil,
-		))
-	}
-
-	configInput := datura.Peek[string](ema.artifact, "input")
-
-	if configInput == "" {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"ema: input required",
-			nil,
-		))
-	}
-
-	currentSamples := make([]float64, 0, len(inputs))
-
-	for index, input := range inputs {
-		if input != configInput {
-			continue
-		}
-
-		sample := datura.Peek[float64](state, rootKey, input)
-
-		if rootKey == "features" {
-			features := datura.Peek[[]float64](state, rootKey)
-
-			if index >= len(features) {
-				return 0, errnie.Error(errnie.Err(
-					errnie.Validation,
-					"ema: feature index out of range",
-					nil,
-				))
-			}
-
-			sample = features[index]
-		}
-
-		currentSamples = append(currentSamples, sample)
-	}
-
-	if len(currentSamples) == 0 {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"ema: input not in inputs",
-			nil,
-		))
-	}
-
-	inputChannel := helper.SliceToChanWithContext(context.Background(), currentSamples)
+	inputChannel := helper.SliceToChanWithContext(context.Background(), samples)
 	outputChannel := ema.inner.ComputeWithContext(context.Background(), inputChannel)
-	emaValues := helper.ChanToSlice(outputChannel)
+	values := helper.ChanToSlice(outputChannel)
 
-	latestEMA := currentSamples[len(currentSamples)-1]
-
-	if len(emaValues) > 0 {
-		latestEMA = emaValues[len(emaValues)-1]
+	if len(values) == 0 {
+		return samples[len(samples)-1], nil
 	}
 
-	state.MergeOutput("value", latestEMA)
-	state.Poke("output", "root")
-	state.Poke([]string{"value"}, "inputs")
-
-	return state.PackInto(payload)
-}
-
-func (ema *EMA) Write(payload []byte) (int, error) {
-	ema.artifact.WithPlaintextPayload(payload)
-	return len(payload), nil
-}
-
-func (ema *EMA) Close() error {
-	return nil
+	return values[len(values)-1], nil
 }

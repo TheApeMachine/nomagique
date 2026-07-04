@@ -4,98 +4,93 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/nomagique/equation"
-	"github.com/theapemachine/nomagique/tests"
 )
 
 func TestBookQualityToxicBluff(testingTB *testing.T) {
 	Convey("Given near-touch toxic churn above gate", testingTB, func() {
-		bookQuality := equation.NewBookQuality(equation.BookQualityConfig())
-		err := tests.WriteSamples(bookQuality,
-			0, 0.1, 0, 0.1,
-			80, 80,
-			1, 4.5,
-			0.15, 0.8, 0, 2,
-			100,
-		)
-
-		So(err, ShouldBeNil)
-
-		outbound, err := readOutbound(bookQuality)
+		bookQuality := equation.NewBookQuality()
+		output, err := bookQuality.Measure(equation.BookQualityInput{
+			FillBid:            0.1,
+			FillAsk:            0.1,
+			BidDepth:           80,
+			AskDepth:           80,
+			ToxicNear:          true,
+			ToxicBluffStrength: 4.5,
+			Threshold:          0.15,
+			ChurnGate:          0.8,
+			VacuumStrengthCap:  2,
+			LastPrice:          100,
+		})
 
 		So(err, ShouldBeNil)
 
 		Convey("It should classify toxic bluff", func() {
-			So(int(datura.Peek[float64](outbound, "output", "category")), ShouldEqual, 1)
-			So(datura.Peek[float64](outbound, "output", "value"), ShouldEqual, 4.5)
+			So(int(output.Category), ShouldEqual, 1)
+			So(output.Value, ShouldEqual, 4.5)
 		})
 	})
 }
 
 func TestBookQualityLiquidityVacuum(testingTB *testing.T) {
 	Convey("Given cancel/fill asymmetry with fill flow", testingTB, func() {
-		bookQuality := equation.NewBookQuality(equation.BookQualityConfig())
-		err := tests.WriteSamples(bookQuality,
-			0.3, 0.1, 0, 0,
-			10, 10,
-			0, 0,
-			0.15, 0, 0, 2,
-			50000,
-		)
-
-		So(err, ShouldBeNil)
-
-		outbound, err := readOutbound(bookQuality)
+		bookQuality := equation.NewBookQuality()
+		output, err := bookQuality.Measure(equation.BookQualityInput{
+			CancelBid:         0.3,
+			FillBid:           0.1,
+			BidDepth:          10,
+			AskDepth:          10,
+			Threshold:         0.15,
+			VacuumStrengthCap: 2,
+			LastPrice:         50000,
+		})
 
 		So(err, ShouldBeNil)
 
 		Convey("It should classify liquidity vacuum", func() {
-			So(int(datura.Peek[float64](outbound, "output", "category")), ShouldEqual, 2)
-			So(datura.Peek[float64](outbound, "output", "value"), ShouldBeGreaterThan, 0)
+			So(int(output.Category), ShouldEqual, 2)
+			So(output.Value, ShouldBeGreaterThan, 0)
 		})
 	})
 }
 
 func TestBookQualityHardSupport(testingTB *testing.T) {
 	Convey("Given balanced depth with fills and no cancels", testingTB, func() {
-		bookQuality := equation.NewBookQuality(equation.BookQualityConfig())
-		err := tests.WriteSamples(bookQuality,
-			0, 0.1, 0, 0.1,
-			80, 80,
-			0, 0,
-			0.15, 0, 0, 1,
-			100,
-		)
-
-		So(err, ShouldBeNil)
-
-		outbound, err := readOutbound(bookQuality)
+		bookQuality := equation.NewBookQuality()
+		output, err := bookQuality.Measure(equation.BookQualityInput{
+			FillBid:           0.1,
+			FillAsk:           0.1,
+			BidDepth:          80,
+			AskDepth:          80,
+			Threshold:         0.15,
+			VacuumStrengthCap: 1,
+			LastPrice:         100,
+		})
 
 		So(err, ShouldBeNil)
 
 		Convey("It should classify hard support", func() {
-			So(int(datura.Peek[float64](outbound, "output", "category")), ShouldEqual, 3)
-			So(datura.Peek[float64](outbound, "output", "value"), ShouldEqual, 1)
+			So(int(output.Category), ShouldEqual, 3)
+			So(output.Value, ShouldEqual, 1)
 		})
 	})
 }
 
-func BenchmarkBookQualityRead(b *testing.B) {
-	bookQuality := equation.NewBookQuality(equation.BookQualityConfig())
-	samples := []float64{
-		0.3, 0.1, 0, 0,
-		10, 10,
-		0, 0,
-		0.15, 0, 0, 2,
-		50000,
+func BenchmarkBookQualityMeasure(benchmark *testing.B) {
+	bookQuality := equation.NewBookQuality()
+	input := equation.BookQualityInput{
+		CancelBid:         0.3,
+		FillBid:           0.1,
+		BidDepth:          10,
+		AskDepth:          10,
+		Threshold:         0.15,
+		VacuumStrengthCap: 2,
+		LastPrice:         50000,
 	}
-	frame := make([]byte, 4096)
 
-	b.ReportAllocs()
+	benchmark.ReportAllocs()
 
-	for b.Loop() {
-		_ = tests.WriteSamples(bookQuality, samples...)
-		_, _ = bookQuality.Read(frame)
+	for benchmark.Loop() {
+		_, _ = bookQuality.Measure(input)
 	}
 }

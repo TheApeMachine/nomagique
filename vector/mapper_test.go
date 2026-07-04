@@ -80,3 +80,27 @@ func TestMapperEMATransformAccumulates(testingTB *testing.T) {
 		testingTB.Errorf("ema output not produced: %v", last)
 	}
 }
+
+func BenchmarkMapper_EMATransform(b *testing.B) {
+	config := datura.Acquire("mapper-ema", datura.APPJSON).WithAttributes(datura.Map[any]{
+		"mappings": []datura.Map[any]{
+			{"inputs": []string{"rvol"}, "transform": "ema", "outputKey": "rvolEMA"},
+		},
+	})
+	mapper := NewMapper(config)
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		frame := datura.Acquire("mapper-ema-frame", datura.APPJSON)
+		frame.Poke("features", "root")
+		frame.Poke([]string{"rvol"}, "inputs")
+		frame.Merge("features", []float64{4.0})
+
+		if err := nomagique.RoundTripArtifact(frame, mapper); err != nil {
+			b.Fatal(err)
+		}
+
+		frame.Release()
+	}
+}

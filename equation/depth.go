@@ -1,75 +1,68 @@
 package equation
 
 import (
-	"io"
 	"math"
 	"sort"
 
-	"github.com/theapemachine/datura"
+	"github.com/theapemachine/errnie"
 	"gonum.org/v1/gonum/stat"
 )
 
 /*
 Depth ranks quote volume against peer quartiles with optional baseline scaling.
-The constructor artifact holds schema inputs; Write buffers inbound wire on its payload.
 */
-type Depth struct {
-	artifact *datura.Artifact
+type Depth struct{}
+
+/*
+DepthInput contains the float-only liquidity inputs.
+*/
+type DepthInput struct {
+	QuoteVolume    float64
+	Peers          []float64
+	RelativeVolume float64
+	BaselineReady  bool
 }
 
 /*
-NewDepth returns a cross-section liquidity depth stage wired from config attributes.
+DepthOutput contains the float-only liquidity scores.
 */
-func NewDepth(artifact *datura.Artifact) io.ReadWriteCloser {
-	return &Depth{
-		artifact: artifact,
-	}
+type DepthOutput struct {
+	Value         float64
+	ScarcityScore float64
+	MedianScore   float64
+	DepthScore    float64
+	Strength      float64
+	Category      float64
 }
 
-func (depth *Depth) Write(p []byte) (int, error) {
-	depth.artifact.WithPayload(p)
-	return len(p), nil
+/*
+NewDepth returns a cross-section liquidity depth calculator.
+*/
+func NewDepth() *Depth {
+	return &Depth{}
 }
 
-func (depth *Depth) Read(p []byte) (int, error) {
-	state, err := stageState(depth.artifact.DecryptPayload())
-
-	if err != nil {
-		return 0, err
+/*
+Measure calculates depth scores from floats without artifact transport.
+*/
+func (depth *Depth) Measure(input DepthInput) (DepthOutput, error) {
+	if len(input.Peers) < 2 {
+		return DepthOutput{}, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"depth: insufficient peer count",
+			nil,
+		))
 	}
 
-	inputKeys := EnsureFeatureSchema(state, depth.artifact, DepthInputKeys)
-
-	fields, err := FeatureFields(state, inputKeys)
-
-	if err != nil || len(fields) < len(DepthInputKeys) {
-		return rejectStage(state, "depth: incomplete feature fields")
+	if math.IsNaN(input.QuoteVolume) || math.IsInf(input.QuoteVolume, 0) {
+		return DepthOutput{}, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"depth: quote volume must be finite",
+			nil,
+		))
 	}
 
-	scaledQuoteVol := fields[0]
-	peerCount := int(fields[1])
-	headerLen := len(inputKeys)
-
-	peers, err := FeatureSlice(state, headerLen, peerCount)
-
-	if err != nil {
-		return rejectStage(state, "depth: peer slice unavailable")
-	}
-
-	trailer, err := FeatureSlice(state, headerLen+peerCount, 2)
-
-	if err != nil {
-		return rejectStage(state, "depth: trailer slice unavailable")
-	}
-
-	relativeVolume := trailer[0]
-	baselineReady := trailer[1] > 0
-
-	if peerCount < 2 {
-		return rejectStage(state, "depth: insufficient peer count")
-	}
-
-	sortedPeers := append([]float64(nil), peers...)
+	sortedPeers := append([]float64(nil), input.Peers...)
 	sort.Float64s(sortedPeers)
 
 	lower := stat.Quantile(0.25, stat.LinInterp, sortedPeers, nil)
@@ -77,39 +70,43 @@ func (depth *Depth) Read(p []byte) (int, error) {
 	median := stat.Quantile(0.5, stat.LinInterp, sortedPeers, nil)
 
 	if median <= 0 {
-		return rejectStage(state, "depth: peer median must be positive")
+		return DepthOutput{}, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"depth: peer median must be positive",
+			nil,
+		))
 	}
 
-	peakScarcity := isPeakScarcity(scaledQuoteVol, peers)
+	peakScarcity := isPeakScarcity(input.QuoteVolume, input.Peers)
 	historicallyLiquid := depthHistoricallyLiquid(
-		relativeVolume,
-		baselineReady,
-		peers,
-		scaledQuoteVol,
+		input.RelativeVolume,
+		input.BaselineReady,
+		input.Peers,
+		input.QuoteVolume,
 	)
 
 	category := classifyDepth(
-		scaledQuoteVol,
+		input.QuoteVolume,
 		lower,
 		upper,
 		peakScarcity,
 		historicallyLiquid,
 	)
-
 	if category == 0 {
-		return rejectStage(state, "depth: unclassified liquidity state")
+		return DepthOutput{}, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"depth: unclassified liquidity state",
+			nil,
+		))
 	}
 
-	scarcityRaw := math.Max(0, (median-scaledQuoteVol)/median)
-	depthRaw := math.Max(0, (scaledQuoteVol-median)/median)
-
-	scarcityScore := scarcityRaw
-
-	medianScore := medianDepthEvidence(scaledQuoteVol, lower, upper)
-	strength := scarcityRaw
+	scarcityScore := math.Max(0, (median-input.QuoteVolume)/median)
+	depthScore := math.Max(0, (input.QuoteVolume-median)/median)
+	medianScore := medianDepthEvidence(input.QuoteVolume, lower, upper)
+	strength := scarcityScore
 
 	if category == 3 {
-		strength = depthRaw
+		strength = depthScore
 	}
 
 	if category == 2 {
@@ -117,21 +114,21 @@ func (depth *Depth) Read(p []byte) (int, error) {
 	}
 
 	if strength <= 0 && category != 2 {
-		return rejectStage(state, "depth: non-positive strength")
+		return DepthOutput{}, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"depth: non-positive strength",
+			nil,
+		))
 	}
 
-	return emitOutput(state, p, datura.Map[float64]{
-		"value":         strength,
-		"scarcityScore": scarcityScore,
-		"medianScore":   medianScore,
-		"depthScore":    depthRaw,
-		"strength":      strength,
-		"category":      float64(category),
-	})
-}
-
-func (depth *Depth) Close() error {
-	return nil
+	return DepthOutput{
+		Value:         strength,
+		ScarcityScore: scarcityScore,
+		MedianScore:   medianScore,
+		DepthScore:    depthScore,
+		Strength:      strength,
+		Category:      float64(category),
+	}, nil
 }
 
 func classifyDepth(

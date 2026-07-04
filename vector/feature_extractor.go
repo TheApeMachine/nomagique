@@ -1,25 +1,23 @@
 package vector
 
 import (
-	"io"
 	"math"
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/nomagique"
 	"github.com/theapemachine/nomagique/adaptive"
 )
 
 /*
-FeatureExtractor is an atomic compute primitive (io.ReadWriteCloser).
+FeatureExtractor is an atomic compute primitive.
 
 The constructor artifact is config (attributes); its payload buses inbound wire
 from Write to Read. Read unpacks the frame, extracts features, and emits output.
 */
 type FeatureExtractor struct {
-	artifact   *datura.Artifact
-	transforms map[string]func(*datura.Artifact) io.ReadWriteCloser
-	writes     []byte
+	artifact *datura.Artifact
+	emas     map[string]*adaptive.EMA
+	writes   []byte
 }
 
 /*
@@ -28,11 +26,7 @@ NewFeatureExtractor builds an extractor wired from schema attributes.
 func NewFeatureExtractor(artifact *datura.Artifact) *FeatureExtractor {
 	return &FeatureExtractor{
 		artifact: artifact,
-		transforms: map[string]func(*datura.Artifact) io.ReadWriteCloser{
-			"ema": func(config *datura.Artifact) io.ReadWriteCloser {
-				return adaptive.NewEMA(config)
-			},
-		},
+		emas:     map[string]*adaptive.EMA{},
 	}
 }
 
@@ -116,78 +110,11 @@ func (extractor *FeatureExtractor) Read(payload []byte) (int, error) {
 			continue
 		}
 
-		transformer, ok := extractor.transforms[transform]
-
-		if !ok {
-			return 0, errnie.Error(errnie.Err(
-				errnie.Validation,
-				"feature-extractor: transform not registered",
-				nil,
-			))
-		}
-
-		scratch := datura.Acquire("feature-extractor-scratch", datura.APPJSON)
-		scratch.WithPayload(datura.Map[any]{"sample": sample}.Marshal())
-
-		config := datura.Acquire("feature-extractor-ema", datura.APPJSON)
-
-		if err := nomagique.RoundTripArtifact(scratch, transformer(config)); err != nil {
-			scratch.Release()
-			config.Release()
-
+		var err error
+		sample, err = extractor.transform(transform, role+":"+input, sample)
+		if err != nil {
 			return 0, err
 		}
-
-		config.Release()
-
-		scratchRoot := datura.Peek[string](scratch, "root")
-
-		if scratchRoot == "" {
-			scratch.Release()
-
-			return 0, errnie.Error(errnie.Err(
-				errnie.Validation,
-				"feature-extractor: transform root required",
-				nil,
-			))
-		}
-
-		scratchInputs := datura.Peek[[]string](scratch, "inputs")
-
-		if len(scratchInputs) == 0 {
-			scratch.Release()
-
-			return 0, errnie.Error(errnie.Err(
-				errnie.Validation,
-				"feature-extractor: transform inputs required",
-				nil,
-			))
-		}
-
-		transformOutput := ""
-		transformFound := false
-
-		for _, scratchInput := range scratchInputs {
-			if scratchInput != "value" {
-				continue
-			}
-
-			transformOutput = scratchInput
-			transformFound = true
-		}
-
-		if !transformFound {
-			scratch.Release()
-
-			return 0, errnie.Error(errnie.Err(
-				errnie.Validation,
-				"feature-extractor: transform value output required",
-				nil,
-			))
-		}
-
-		sample = datura.Peek[float64](scratch, scratchRoot, transformOutput)
-		scratch.Release()
 
 		features[index] = sample
 	}
@@ -200,6 +127,41 @@ func (extractor *FeatureExtractor) Read(payload []byte) (int, error) {
 	state.Poke(inputs, "sourceInputs")
 
 	return state.PackInto(payload)
+}
+
+func (extractor *FeatureExtractor) transform(
+	transform string,
+	key string,
+	sample float64,
+) (float64, error) {
+	if transform != "ema" {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"feature-extractor: transform not registered",
+			nil,
+		))
+	}
+
+	ema, ok := extractor.emas[key]
+	if !ok {
+		ema = adaptive.NewEMA()
+		extractor.emas[key] = ema
+	}
+
+	out, err := ema.Measure(sample)
+	if err != nil {
+		return 0, err
+	}
+
+	if math.IsNaN(out) || math.IsInf(out, 0) {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"feature-extractor: transform output non-finite",
+			nil,
+		))
+	}
+
+	return out, nil
 }
 
 func (extractor *FeatureExtractor) Write(p []byte) (int, error) {

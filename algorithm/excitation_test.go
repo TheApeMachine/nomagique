@@ -5,52 +5,48 @@ import (
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/datura"
-	"github.com/theapemachine/nomagique"
-	"github.com/theapemachine/nomagique/equation"
 	"github.com/theapemachine/nomagique/hawkes"
 )
 
-func TestExcitationMeasure(testingTB *testing.T) {
+func TestExcitation_Measure(testingTB *testing.T) {
 	Convey("Given a clustered buy/sell burst", testingTB, func() {
-		excitation := NewExcitation(datura.Acquire("excitation-config", datura.APPJSON))
+		excitation := NewExcitation()
 		base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
-		samples := excitationBurstSamples(base, 128)
-		inbound := daturaBurstArtifact("ALT/EUR", samples)
+		input := excitationBurstInput("ALT/EUR", base, 128)
+		outcome := ExcitationOutcome{}
+		ready := false
+		var err error
 
 		for range 4 {
-			if flopArtifact(inbound, excitation) == nil {
+			outcome, ready, err = excitation.Measure(input)
+
+			if err == nil && ready {
 				break
 			}
 		}
 
 		Convey("It should publish thermal scores", func() {
-			So(datura.Peek[bool](inbound, "output", "ready"), ShouldBeTrue)
-			So(datura.Peek[float64](inbound, "output", "strength"), ShouldBeGreaterThan, 0)
+			So(err, ShouldBeNil)
+			So(ready, ShouldBeTrue)
+			So(outcome.Strength, ShouldBeGreaterThan, 0)
 		})
 	})
 
 	Convey("Given a scoped feature batch before fit history is ready", testingTB, func() {
-		excitation := NewExcitation(datura.Acquire("excitation-config", datura.APPJSON))
+		excitation := NewExcitation()
 		base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
-		inbound := daturaBurstArtifact("ALT/EUR", excitationBurstSamples(base, 2))
-
-		err := nomagique.RoundTripArtifact(inbound, excitation)
+		_, ready, err := excitation.Measure(excitationBurstInput("ALT/EUR", base, 2))
 
 		Convey("It should stage quietly as not ready", func() {
 			So(err, ShouldBeNil)
-			So(datura.Peek[bool](inbound, "output", "ready"), ShouldBeFalse)
+			So(ready, ShouldBeFalse)
 		})
 	})
 
-	Convey("Given a feature batch without scope", testingTB, func() {
-		excitation := NewExcitation(datura.Acquire("excitation-config", datura.APPJSON))
+	Convey("Given a feature batch without symbol", testingTB, func() {
+		excitation := NewExcitation()
 		base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
-		samples := excitationBurstSamples(base, 32)
-		inbound := datura.Acquire("excitation-no-scope", datura.APPJSON)
-		inbound.WithPayload(equation.MarshalFeaturesPayload(samples))
-
-		err := nomagique.RoundTripArtifact(inbound, excitation)
+		_, _, err := excitation.Measure(excitationBurstInput("", base, 32))
 
 		Convey("It should return a validation error", func() {
 			So(err, ShouldNotBeNil)
@@ -108,10 +104,6 @@ func TestMeasureFitFrenzy(testingTB *testing.T) {
 
 		So(gatesReady, ShouldBeTrue)
 
-		symbolState.bookTouchImbalance = bookTouchImbalance(
-			bookTouchFrame("ALT/EUR", 1000, 200),
-		)
-
 		fit := hawkes.BivariateFit{
 			MuX:            1,
 			MuY:            1,
@@ -124,11 +116,7 @@ func TestMeasureFitFrenzy(testingTB *testing.T) {
 
 		So(ok, ShouldBeTrue)
 
-		fitAsymmetry := confirmAsymmetryWithBook(
-			fit.Asymmetry(false),
-			false,
-			symbolState.bookTouchImbalance,
-		)
+		fitAsymmetry := fit.Asymmetry(false)
 		category, _, err := hawkes.ClassifyFit(fit, fitAsymmetry, false, gates)
 
 		So(err, ShouldBeNil)
@@ -158,7 +146,7 @@ func TestRevisionKey(testingTB *testing.T) {
 	})
 }
 
-func excitationBurstSamples(base time.Time, count int) []float64 {
+func excitationBurstInput(symbol string, base time.Time, count int) ExcitationInput {
 	buyTimes := make([]float64, 0, count/2)
 	sellTimes := make([]float64, 0, count/2)
 
@@ -178,37 +166,24 @@ func excitationBurstSamples(base time.Time, count int) []float64 {
 	span := base.Add(time.Duration(count) * 100 * time.Millisecond).Sub(base)
 	cooldown := DeriveFitCooldown(span).Seconds()
 
-	samples := []float64{
-		horizon,
-		cooldown,
-		float64(len(buyTimes)),
-		float64(len(sellTimes)),
-		0,
+	return ExcitationInput{
+		Symbol:             symbol,
+		HorizonSeconds:     horizon,
+		FitCooldownSeconds: cooldown,
+		TouchImbalance:     0,
+		BuySeconds:         buyTimes,
+		SellSeconds:        sellTimes,
 	}
-	samples = append(samples, buyTimes...)
-	samples = append(samples, sellTimes...)
-
-	return samples
 }
 
-func daturaBurstArtifact(scope string, samples []float64) *datura.Artifact {
-	inbound := datura.Acquire("excitation-test", datura.APPJSON)
-	inbound.WithScope(scope)
-	inbound.WithPayload(equation.MarshalFeaturesPayload(samples))
-
-	return inbound
-}
-
-func BenchmarkExcitationRead(b *testing.B) {
-	excitation := NewExcitation(datura.Acquire("excitation-config-bench", datura.APPJSON))
+func BenchmarkExcitation_Measure(b *testing.B) {
+	excitation := NewExcitation()
 	base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
-	samples := excitationBurstSamples(base, 128)
+	input := excitationBurstInput("ALT/EUR", base, 128)
 
 	b.ReportAllocs()
 
 	for b.Loop() {
-		inbound := daturaBurstArtifact("ALT/EUR", samples)
-		_ = nomagique.RoundTripArtifact(inbound, excitation)
-		inbound.Release()
+		_, _, _ = excitation.Measure(input)
 	}
 }

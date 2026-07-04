@@ -1,105 +1,92 @@
 package algorithm
 
 import (
-	"fmt"
 	"testing"
 
-	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/transport"
-	"github.com/theapemachine/nomagique"
 	"github.com/theapemachine/nomagique/equation"
-	"github.com/theapemachine/nomagique/probability"
 )
 
-func bookFrameBytes(bidQty, askQty float64) []byte {
-	return []byte(fmt.Sprintf(
-		`{"channel":"book","type":"update","data":[{"symbol":"BTC/USD","bids":[{"price":100,"qty":%g}],"asks":[{"price":101,"qty":%g}]}]}`,
-		bidQty, askQty,
-	))
+func level3TouchAddFrame(
+	orderID string,
+	reserveID string,
+	quantity float64,
+) BookQualityLevel3Input {
+	return BookQualityLevel3Input{
+		Symbol: "BTC/USD",
+		Bids: []BookQualityOrderEvent{
+			{Event: "add", OrderID: orderID, Price: 100, Quantity: quantity},
+			{Event: "add", OrderID: reserveID, Price: 100, Quantity: quantity / 5},
+		},
+		Asks: []BookQualityOrderEvent{
+			{Event: "add", OrderID: "A1", Price: 101, Quantity: quantity},
+		},
+	}
+}
+
+func level3TouchDeleteFrame(orderID string, quantity float64) BookQualityLevel3Input {
+	return BookQualityLevel3Input{
+		Symbol: "BTC/USD",
+		Bids: []BookQualityOrderEvent{
+			{Event: "delete", OrderID: orderID, Price: 100, Quantity: quantity},
+		},
+	}
 }
 
 func replayBookQuality(
-	frames [][]byte,
-) (*datura.Artifact, float64, float64, float64) {
-	encoder := NewBookQualitySample(bookQualitySampleConfig())
-	bookQuality := equation.NewBookQuality(equation.BookQualityConfig())
-	classifier := probability.NewClassifier(
-		datura.Acquire("toxicity-classifier", datura.APPJSON).WithAttributes(datura.Map[any]{
-			"inputs":    []string{"bluffScore", "vacuumScore", "supportScore"},
-			"scoreRoot": "output",
-		}),
-	)
-	pipeline := transport.NewPipeline(encoder, bookQuality, classifier)
-
-	var (
-		result    *datura.Artifact
-		bestBluff float64
-	)
+	frames []BookQualityLevel3Input,
+) (equation.BookQualityOutput, bool, error) {
+	sample := NewBookQualitySample(bookQualitySampleConfig())
+	bookQuality := equation.NewBookQuality()
+	bestOutput := equation.BookQualityOutput{}
+	seen := false
 
 	for _, frame := range frames {
-		state := datura.Acquire("measurement", datura.APPJSON).
-			WithRole("measurement").
-			WithScope("update").
-			WithPayload(frame)
+		input, ready, err := sample.MeasureLevel3(frame)
 
-		if nomagique.RoundTripArtifact(state, pipeline) != nil {
-			state.Release()
+		if err != nil {
+			return equation.BookQualityOutput{}, false, err
+		}
+
+		if !ready {
 			continue
 		}
 
-		bluffScore := datura.Peek[float64](state, "output", "bluffScore")
+		output, measureErr := bookQuality.Measure(input)
 
-		if bluffScore > bestBluff {
-			if result != nil {
-				result.Release()
-			}
+		if measureErr != nil {
+			return equation.BookQualityOutput{}, false, measureErr
+		}
 
-			result = state
-			bestBluff = bluffScore
-
+		if output.BluffScore <= bestOutput.BluffScore {
 			continue
 		}
 
-		state.Release()
+		bestOutput = output
+		seen = true
 	}
 
-	if result == nil {
-		return nil, 0, 0, 0
-	}
-
-	confidence := datura.Peek[float64](result, "output", "confidence")
-	category := datura.Peek[float64](result, "output", "category")
-	bluffScore := datura.Peek[float64](result, "output", "bluffScore")
-
-	return result, bluffScore, confidence, category
+	return bestOutput, seen, nil
 }
 
-func bookQualityBluffReplayFrames() [][]byte {
-	frames := make([][]byte, 0, 32)
-
-	for range 5 {
-		frames = append(frames, bookFrameBytes(10, 10))
+func bookQualityBluffReplayFrames() []BookQualityLevel3Input {
+	return []BookQualityLevel3Input{
+		level3TouchAddFrame("B1", "B2", 100),
+		level3TouchDeleteFrame("B1", 100),
 	}
-
-	for range 3 {
-		frames = append(frames, bookFrameBytes(100, 10), bookFrameBytes(2, 10), bookFrameBytes(10, 10))
-	}
-
-	frames = append(frames, bookFrameBytes(120, 10), bookFrameBytes(1, 10))
-
-	return frames
 }
 
 func TestBookQualityBluffReplay(t *testing.T) {
-	result, bluffScore, confidence, category := replayBookQuality(bookQualityBluffReplayFrames())
+	output, seen, err := replayBookQuality(bookQualityBluffReplayFrames())
 
-	if result == nil {
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !seen {
 		t.Fatal("no bluff measurement")
 	}
 
-	defer result.Release()
-
-	if bluffScore <= 0 || int(category) != 1 {
-		t.Fatalf("bluff=%g category=%g confidence=%g", bluffScore, category, confidence)
+	if output.BluffScore <= 0 || int(output.Category) != 1 {
+		t.Fatalf("bluff=%g category=%g strength=%g", output.BluffScore, output.Category, output.Strength)
 	}
 }

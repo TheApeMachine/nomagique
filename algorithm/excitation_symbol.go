@@ -21,6 +21,7 @@ type excitationReading struct {
 	exhaustion         float64
 	strength           float64
 	branchingRatio     float64
+	spectralRadius     float64
 	stationarityMargin float64
 	baselineMu         float64
 	intensityRatio     float64
@@ -151,7 +152,8 @@ func (symbol *excitationSymbol) enrichReading(
 		return excitationReading{}, false
 	}
 
-	reading.branchingRatio = fit.SpectralRadius
+	reading.branchingRatio = branchingRatio(fit, stream)
+	reading.spectralRadius = fit.SpectralRadius
 	reading.stationarityMargin = 1 - fit.SpectralRadius
 	reading.baselineMu = fit.MuX + fit.MuY
 	reading.intensityRatio = fit.IntensityX + fit.IntensityY
@@ -243,7 +245,7 @@ func (symbol *excitationSymbol) measureFit(fit hawkes.BivariateFit) (excitationR
 		saturation:         saturation,
 		organic:            organic,
 		exhaustion:         exhaustion,
-		branchingRatio:     fit.SpectralRadius,
+		spectralRadius:     fit.SpectralRadius,
 		stationarityMargin: 1 - fit.SpectralRadius,
 		baselineMu:         fit.MuX + fit.MuY,
 		intensityRatio:     raw,
@@ -463,10 +465,14 @@ func organicHeadroomScores(
 
 	if fit.SpectralRadius < saturationRadius {
 		margin := saturationRadius - fit.SpectralRadius
-		saturation, err := competitionMargin(margin, saturationRadius)
+		saturationHeadroom, err := competitionMargin(margin, saturationRadius)
 
-		if err == nil && saturation > headroom {
-			headroom = saturation
+		if err == nil {
+			saturation = saturationHeadroom
+
+			if saturation > headroom {
+				headroom = saturation
+			}
 		}
 	}
 
@@ -481,10 +487,14 @@ func organicHeadroomScores(
 
 	if asymmetry < frenzyAsymmetry {
 		margin := frenzyAsymmetry - asymmetry
-		frenzy, err := competitionMargin(margin, frenzyAsymmetry)
+		frenzyHeadroom, err := competitionMargin(margin, frenzyAsymmetry)
 
-		if err == nil && frenzy > headroom {
-			headroom = frenzy
+		if err == nil {
+			frenzy = frenzyHeadroom
+
+			if frenzy > headroom {
+				headroom = frenzy
+			}
 		}
 	}
 
@@ -503,6 +513,24 @@ func organicHeadroomScores(
 
 func competitionMargin(excess, span float64) (float64, error) {
 	return probability.CompetitionMargin(excess, span)
+}
+
+func branchingRatio(fit hawkes.BivariateFit, stream hawkes.ArrivalStream) float64 {
+	if fit.Beta <= 0 {
+		return 0
+	}
+
+	buyBranching := (fit.AlphaXX + fit.AlphaYX) / fit.Beta
+	sellBranching := (fit.AlphaXY + fit.AlphaYY) / fit.Beta
+	buyCount := float64(len(stream.BuyTimes()))
+	sellCount := float64(len(stream.SellTimes()))
+	totalCount := buyCount + sellCount
+
+	if totalCount <= 0 {
+		return (buyBranching + sellBranching) / 2
+	}
+
+	return (buyBranching*buyCount + sellBranching*sellCount) / totalCount
 }
 
 func confirmAsymmetryWithBook(

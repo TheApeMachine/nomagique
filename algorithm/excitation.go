@@ -33,6 +33,7 @@ type ExcitationOutcome struct {
 	Exhaustion         float64
 	Strength           float64
 	BranchingRatio     float64
+	SpectralRadius     float64
 	StationarityMargin float64
 	BaselineMu         float64
 	IntensityRatio     float64
@@ -113,7 +114,7 @@ func (excitation *Excitation) Read(payload []byte) (int, error) {
 		state.MergeOutput("exhaustion", excitation.outcome.Exhaustion)
 		state.MergeOutput("strength", excitation.outcome.Strength)
 		state.MergeOutput("branchingRatio", excitation.outcome.BranchingRatio)
-		state.MergeOutput("spectralRadius", excitation.outcome.BranchingRatio)
+		state.MergeOutput("spectralRadius", excitation.outcome.SpectralRadius)
 		state.MergeOutput("stationarityMargin", excitation.outcome.StationarityMargin)
 		state.MergeOutput("baselineMu", excitation.outcome.BaselineMu)
 		state.MergeOutput("intensityRatio", excitation.outcome.IntensityRatio)
@@ -224,6 +225,7 @@ func excitationOutcomeFromReading(reading excitationReading) ExcitationOutcome {
 		Exhaustion:         reading.exhaustion,
 		Strength:           reading.strength,
 		BranchingRatio:     reading.branchingRatio,
+		SpectralRadius:     reading.spectralRadius,
 		StationarityMargin: reading.stationarityMargin,
 		BaselineMu:         reading.baselineMu,
 		IntensityRatio:     reading.intensityRatio,
@@ -246,7 +248,7 @@ func excitationEligible(outcome ExcitationOutcome) bool {
 		return true
 	}
 
-	if outcome.BranchingRatio >= 1 {
+	if outcome.SpectralRadius >= 1 {
 		return false
 	}
 

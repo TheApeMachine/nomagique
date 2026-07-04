@@ -4,7 +4,6 @@ import (
 	"github.com/bytedance/sonic"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/nomagique/statistic"
 )
 
 var BookQualityInputKeys = []string{
@@ -122,16 +121,35 @@ var LagInputKeys = []string{
 FeatureFields reads named scalars in order; missing keys return validation errors.
 */
 func FeatureFields(state *datura.Artifact, keys []string) ([]float64, error) {
+	inputs := datura.Peek[[]string](state, "inputs")
+
+	if len(inputs) == 0 {
+		inputs = datura.Peek[[]string](state, "featureInputs")
+	}
+
+	features := datura.Peek[[]float64](state, "features")
 	values := make([]float64, len(keys))
 
 	for index, key := range keys {
-		value, err := statistic.FeatureColumn(state, key)
+		found := false
 
-		if err != nil {
-			return nil, err
+		for column, input := range inputs {
+			if input != key || column >= len(features) {
+				continue
+			}
+
+			values[index] = features[column]
+			found = true
+			break
 		}
 
-		values[index] = value
+		if !found {
+			return nil, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"feature-column: key not found",
+				nil,
+			))
+		}
 	}
 
 	return values, nil

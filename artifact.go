@@ -4,9 +4,22 @@ import (
 	"bytes"
 	"errors"
 	"io"
+	"sync"
 
 	"github.com/theapemachine/datura"
 )
+
+var artifactReadBufferPool = sync.Pool{
+	New: func() any {
+		return make([]byte, 262144)
+	},
+}
+
+var artifactFrameBufferPool = sync.Pool{
+	New: func() any {
+		return new(bytes.Buffer)
+	},
+}
 
 /*
 WriteArtifact writes one packed artifact frame to destination.
@@ -35,8 +48,12 @@ func ReadArtifact(source io.Reader, artifact *datura.Artifact) error {
 		return errors.New("nomagique: nil artifact")
 	}
 
-	var frame bytes.Buffer
-	chunk := make([]byte, 262144)
+	frame := artifactFrameBufferPool.Get().(*bytes.Buffer)
+	frame.Reset()
+	defer artifactFrameBufferPool.Put(frame)
+
+	chunk := artifactReadBufferPool.Get().([]byte)
+	defer artifactReadBufferPool.Put(chunk)
 
 	for {
 		readCount, err := source.Read(chunk)

@@ -204,6 +204,29 @@ func TestMeanMedianRatioRead(testingTB *testing.T) {
 		})
 	})
 
+	Convey("Given a zero dynamic sample before a positive baseline exists", testingTB, func() {
+		config := datura.Acquire("mean-median-ratio-zero-dynamic-config", datura.APPJSON).
+			Poke(0.0, "stageIndex").
+			Poke([]string{"rvol"}, "order").
+			Poke(map[string]any{
+				"input":       "volume",
+				"shortWindow": 0.0,
+				"longWindow":  0.0,
+				"outputKey":   "rvol",
+			}, "rvol")
+
+		stage := NewMeanMedianRatio(config)
+		artifact := datura.Acquire("mean-median-ratio-zero-dynamic-frame", datura.APPJSON)
+		artifact.Poke("features", "root")
+		artifact.Poke([]string{"volume"}, "inputs")
+		artifact.Merge("features", []float64{0})
+
+		err := nomagique.RoundTripArtifact(artifact, stage)
+
+		So(err, ShouldBeNil)
+		So(datura.Peek[float64](artifact, "output", "rvol"), ShouldEqual, 0)
+	})
+
 	Convey("Given nested block configuration from attributes", testingTB, func() {
 		config := datura.Acquire("mean-median-ratio-attribute-config", datura.APPJSON).
 			WithAttributes(datura.Map[any]{

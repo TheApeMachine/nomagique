@@ -281,18 +281,13 @@ func (meanMedianRatio *MeanMedianRatio) Read(payload []byte) (int, error) {
 		longMedian, ok = MedianOf(positiveLong)
 	}
 
+	ratio := 0.0
 	if !ok || longMedian <= 0 {
-		state.Release()
-		meanMedianRatio.pendingFrame = false
-
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"mean-median-ratio: long median is invalid",
-			nil,
-		))
+		longMedian = shortMean
 	}
-
-	ratio := shortMean / longMedian
+	if longMedian > 0 {
+		ratio = shortMean / longMedian
+	}
 
 	if len(features) > 0 {
 		state.Merge("features", features)

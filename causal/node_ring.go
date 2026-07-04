@@ -6,7 +6,6 @@ import (
 	"strconv"
 
 	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/structure"
 	"github.com/theapemachine/errnie"
 )
 
@@ -19,15 +18,40 @@ NewZip so table.* attributes materialize for downstream causal stages.
 The constructor artifact holds config and stream history; Write buffers inbound wire.
 */
 type NodeRing struct {
-	artifact *datura.Artifact
+	artifact  *datura.Artifact
+	nodeCount int
+	capacity  int
+	streams   [][]float64
 }
 
 /*
 NewNodeRing returns a bounded multi-node history accumulator wired from config attributes.
 */
 func NewNodeRing(artifact *datura.Artifact) *NodeRing {
+	nodeCount := int(datura.Peek[float64](artifact, "nodeCount"))
+	if nodeCount <= 0 {
+		nodeCount = 1
+	}
+
+	capacity := int(datura.Peek[float64](artifact, "capacity"))
+	if capacity <= 0 {
+		capacity = 1
+	}
+
+	streams := make([][]float64, nodeCount)
+	for nodeIndex := range nodeCount {
+		values := datura.Peek[[]float64](artifact, "streams", strconv.Itoa(nodeIndex))
+		if len(values) > capacity {
+			values = values[len(values)-capacity:]
+		}
+		streams[nodeIndex] = append([]float64(nil), values...)
+	}
+
 	return &NodeRing{
-		artifact: artifact,
+		artifact:  artifact,
+		nodeCount: nodeCount,
+		capacity:  capacity,
+		streams:   streams,
 	}
 }
 
@@ -42,8 +66,6 @@ func (nodeRing *NodeRing) Read(p []byte) (int, error) {
 		))
 	}
 
-	nodeCount := nodeRing.nodeCountFromArtifact()
-	capacity := nodeRing.capacityFromArtifact()
 	row := datura.Peek[[]float64](state, "batch")
 
 	if len(row) == 0 {
@@ -54,10 +76,10 @@ func (nodeRing *NodeRing) Read(p []byte) (int, error) {
 		))
 	}
 
-	if len(row) != nodeCount {
+	if len(row) != nodeRing.nodeCount {
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
-			fmt.Sprintf("causal node-ring: batch length %d does not match nodeCount %d", len(row), nodeCount),
+			fmt.Sprintf("causal node-ring: batch length %d does not match nodeCount %d", len(row), nodeRing.nodeCount),
 			nil,
 		))
 	}
@@ -73,13 +95,14 @@ func (nodeRing *NodeRing) Read(p []byte) (int, error) {
 			))
 		}
 
-		stream := nodeRing.loadStream(nodeIndex, capacity)
-		stream.Push(sample)
-		nodeRing.persistStream(nodeIndex, stream)
+		nodeRing.streams[nodeIndex] = append(nodeRing.streams[nodeIndex], sample)
+		if len(nodeRing.streams[nodeIndex]) > nodeRing.capacity {
+			copy(nodeRing.streams[nodeIndex], nodeRing.streams[nodeIndex][len(nodeRing.streams[nodeIndex])-nodeRing.capacity:])
+			nodeRing.streams[nodeIndex] = nodeRing.streams[nodeIndex][:nodeRing.capacity]
+		}
 	}
 
-	nodeRing.artifact.Poke(float64(nodeCount), "streams", "nodeCount")
-	output = row[nodeCount-1]
+	output = row[nodeRing.nodeCount-1]
 
 	nodeRing.copyStreamsTo(state)
 	state.MergeOutput("value", output)
@@ -90,9 +113,7 @@ func (nodeRing *NodeRing) Read(p []byte) (int, error) {
 }
 
 func (nodeRing *NodeRing) Write(p []byte) (int, error) {
-	preserved := preserveStreams(nodeRing.artifact)
 	nodeRing.artifact.WithPayload(p)
-	restoreStreams(nodeRing.artifact, preserved)
 	return len(p), nil
 }
 
@@ -115,17 +136,14 @@ func (nodeRing *NodeRing) AlignedLength() int {
 		return 0
 	}
 
-	nodeCount := int(datura.Peek[float64](nodeRing.artifact, "streams", "nodeCount"))
-
-	if nodeCount <= 0 {
+	if nodeRing.nodeCount <= 0 {
 		return 0
 	}
 
 	length := 0
 
-	for nodeIndex := range nodeCount {
-		streamLength := len(datura.Peek[[]float64](nodeRing.artifact, "streams", strconv.Itoa(nodeIndex)))
-
+	for nodeIndex := range nodeRing.nodeCount {
+		streamLength := len(nodeRing.streams[nodeIndex])
 		if streamLength == 0 {
 			return 0
 		}
@@ -139,58 +157,13 @@ func (nodeRing *NodeRing) AlignedLength() int {
 }
 
 func (nodeRing *NodeRing) copyStreamsTo(state *datura.Artifact) {
-	nodeCount := int(datura.Peek[float64](nodeRing.artifact, "streams", "nodeCount"))
-
-	if nodeCount <= 0 {
+	if nodeRing.nodeCount <= 0 {
 		return
 	}
 
-	state.Poke(float64(nodeCount), "streams", "nodeCount")
+	state.Poke(float64(nodeRing.nodeCount), "streams", "nodeCount")
 
-	for nodeIndex := range nodeCount {
-		key := strconv.Itoa(nodeIndex)
-		state.Poke(datura.Peek[[]float64](nodeRing.artifact, "streams", key), "streams", key)
+	for nodeIndex := range nodeRing.nodeCount {
+		state.Poke(nodeRing.streams[nodeIndex], "streams", strconv.Itoa(nodeIndex))
 	}
-}
-
-func (nodeRing *NodeRing) loadStream(nodeIndex int, capacity int) *structure.ListRing[float64] {
-	key := strconv.Itoa(nodeIndex)
-	values := datura.Peek[[]float64](nodeRing.artifact, "streams", key)
-	stream := structure.NewListRing[float64](capacity)
-
-	for _, value := range values {
-		stream.Push(value)
-	}
-
-	return stream
-}
-
-func (nodeRing *NodeRing) persistStream(nodeIndex int, stream *structure.ListRing[float64]) {
-	values := make([]float64, 0, stream.Len())
-
-	stream.Do(func(value float64) {
-		values = append(values, value)
-	})
-
-	nodeRing.artifact.Poke(values, "streams", strconv.Itoa(nodeIndex))
-}
-
-func (nodeRing *NodeRing) nodeCountFromArtifact() int {
-	nodeCount := int(datura.Peek[float64](nodeRing.artifact, "nodeCount"))
-
-	if nodeCount <= 0 {
-		nodeCount = 1
-	}
-
-	return nodeCount
-}
-
-func (nodeRing *NodeRing) capacityFromArtifact() int {
-	capacity := int(datura.Peek[float64](nodeRing.artifact, "capacity"))
-
-	if capacity <= 0 {
-		capacity = 1
-	}
-
-	return capacity
 }

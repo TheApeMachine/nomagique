@@ -47,25 +47,23 @@ func emitOutput(state *datura.Artifact, payload []byte, fields datura.Map[float6
 	defer state.Release()
 
 	outputInputs := make([]string, 0, len(fields)+1)
+	output := make(map[string]any, len(fields)+1)
 
-	for key := range fields {
+	for key, value := range fields {
+		output[key] = value
 		outputInputs = append(outputInputs, key)
 	}
 
 	sort.Strings(outputInputs)
 
-	for _, key := range outputInputs {
-		value := fields[key]
-		state.MergeOutput(key, value)
-	}
-
 	if _, hasStrength := fields["strength"]; !hasStrength {
 		if value, ok := fields["value"]; ok {
-			state.MergeOutput("strength", value)
+			output["strength"] = value
 			outputInputs = append(outputInputs, "strength")
 		}
 	}
 
+	state.MergeOutputs(output)
 	state.Poke("output", "root")
 	state.Poke(outputInputs, "inputs")
 

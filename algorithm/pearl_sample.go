@@ -20,6 +20,7 @@ type PearlSample struct {
 	pendingFrame bool
 	output       []byte
 	windows      map[string]*pearlWindow
+	buffer       []byte
 }
 
 type pearlWindow struct {
@@ -37,6 +38,7 @@ func NewPearlSample(config *datura.Artifact) *PearlSample {
 	return &PearlSample{
 		artifact: config,
 		windows:  map[string]*pearlWindow{},
+		buffer:   make([]byte, 65536),
 	}
 }
 
@@ -108,9 +110,7 @@ func (pearlSample *PearlSample) Read(payload []byte) (int, error) {
 
 	if len(wire) > 0 {
 		_, _ = window.nodeRing.Write(wire)
-
-		ringBuffer := make([]byte, 65536)
-		_, _ = window.nodeRing.Read(ringBuffer)
+		_, _ = window.nodeRing.Read(pearlSample.buffer)
 	}
 
 	window.nodeRing.CopyStreamsTo(state)

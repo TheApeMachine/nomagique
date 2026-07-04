@@ -2,6 +2,7 @@ package causal
 
 import (
 	"errors"
+	"io"
 	"strconv"
 
 	"github.com/theapemachine/datura"
@@ -37,7 +38,8 @@ func (zipStage *Zip) Read(p []byte) (int, error) {
 		))
 	}
 
-	if datura.Peek[float64](state, "table", "rowCount") > 0 {
+	streams, ok := zipStage.streamsFromPayload(state)
+	if !ok && datura.Peek[float64](state, "table", "rowCount") > 0 {
 		rows, tableErr := tableRows(state)
 
 		if tableErr != nil {
@@ -50,8 +52,6 @@ func (zipStage *Zip) Read(p []byte) (int, error) {
 
 		return state.PackInto(p)
 	}
-
-	streams, ok := zipStage.streamsFromPayload(state)
 
 	if !ok {
 		return 0, errnie.Error(errnie.Err(
@@ -73,6 +73,11 @@ func (zipStage *Zip) Read(p []byte) (int, error) {
 
 	rowCount := len(rows)
 	nodeCount := len(rows[0])
+
+	if minHistory := int(datura.Peek[float64](zipStage.artifact, "minHistory")); minHistory > 0 && rowCount < minHistory {
+		return 0, io.EOF
+	}
+
 	flat := make([]float64, 0, rowCount*nodeCount)
 
 	for rowIndex := range rows {

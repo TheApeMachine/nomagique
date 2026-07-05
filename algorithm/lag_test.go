@@ -5,63 +5,52 @@ import (
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/nomagique/correlation"
-	"github.com/theapemachine/nomagique/tests"
 )
 
 var barInterval = 5 * time.Minute
 
 func TestLagEvaluateFollowerSync(testingTB *testing.T) {
 	Convey("Given aligned follower correlation before anchor move gate warms", testingTB, func() {
-		lag := NewLag(datura.Acquire("lag-config", datura.APPJSON))
-		err := tests.WriteSamples(lag,
-			0, 100,
-			0, 0, 0,
-			0, 0, 0,
-			1, 0.9,
-			16,
-		)
+		lag := NewLag()
+		outcome, err := lag.Measure(LagInput{
+			Price:       100,
+			ContempOK:   true,
+			ContempCorr: 0.9,
+			SampleCount: 16,
+		})
+
 		So(err, ShouldBeNil)
-		_, _ = lag.Read(make([]byte, 4096))
 
 		Convey("It should classify synchronized drift", func() {
-			So(lag.outcome.Eligible, ShouldBeTrue)
-			So(lag.outcome.Category, ShouldEqual, 2)
+			So(outcome.Eligible, ShouldBeTrue)
+			So(outcome.Category, ShouldEqual, 2)
 		})
 	})
 }
 
 func TestLagEvaluateAnchorStall(testingTB *testing.T) {
 	Convey("Given a warmed flat anchor path", testingTB, func() {
-		lag := NewLag(datura.Acquire("lag-config", datura.APPJSON))
-		err := tests.WriteSamples(lag,
-			1, 50000,
-			1, 0, 0.6,
-			0, 0, 0,
-			0, 0,
-			0,
-		)
+		lag := NewLag()
+		outcome, err := lag.Measure(LagInput{
+			IsAnchor:    true,
+			Price:       50000,
+			MoveReady:   true,
+			StallMargin: 0.6,
+		})
+
 		So(err, ShouldBeNil)
-		_, _ = lag.Read(make([]byte, 4096))
 
 		Convey("It should classify anchor stall", func() {
-			So(lag.outcome.Category, ShouldEqual, 4)
-			So(lag.outcome.Strength, ShouldBeGreaterThan, 0)
+			So(outcome.Category, ShouldEqual, 4)
+			So(outcome.Strength, ShouldBeGreaterThan, 0)
 		})
 	})
 }
 
-func TestLagReadInsufficientFields(testingTB *testing.T) {
+func TestLagInputFromFields(testingTB *testing.T) {
 	Convey("Given fewer than eleven lag feature fields", testingTB, func() {
-		lag := NewLag(datura.Acquire("lag-config", datura.APPJSON))
-		err := tests.WriteSamples(lag,
-			0, 100,
-			0, 0, 0,
-		)
-		So(err, ShouldBeNil)
-
-		_, err = lag.Read(make([]byte, 4096))
+		_, err := LagInputFromFields([]float64{0, 100, 0, 0, 0})
 
 		Convey("It should return a validation error", func() {
 			So(err, ShouldNotBeNil)
@@ -106,20 +95,21 @@ func TestCrossLagScore(testingTB *testing.T) {
 	})
 }
 
-func BenchmarkLagRead(b *testing.B) {
-	lag := NewLag(datura.Acquire("lag-config-bench", datura.APPJSON))
-	samples := []float64{
-		0, 100,
-		1, 1, 0,
-		1, 3, 0.8,
-		0, 0,
-		16,
+func BenchmarkLagMeasure(b *testing.B) {
+	lag := NewLag()
+	input := LagInput{
+		Price:       100,
+		MoveReady:   true,
+		MoveMoved:   true,
+		LagOK:       true,
+		LagBars:     3,
+		LagCorr:     0.8,
+		SampleCount: 16,
 	}
 
 	b.ReportAllocs()
 
 	for b.Loop() {
-		_ = tests.WriteSamples(lag, samples...)
-		_, _ = lag.Read(make([]byte, 4096))
+		_, _ = lag.Measure(input)
 	}
 }

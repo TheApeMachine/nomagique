@@ -4,25 +4,38 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/nomagique/equation"
 )
 
-func TestManifoldstate_Read(testingTB *testing.T) {
+func TestManifoldstate_Measure(testingTB *testing.T) {
 	Convey("Given dominant pressure gradient", testingTB, func() {
-		stage := equation.NewManifoldstate(equation.ManifoldConfig())
-		err := writeFeatureStage(stage, equation.ManifoldInputKeys, 12, 0.2, 0.5, 0.5, 50000)
-
-		So(err, ShouldBeNil)
-
-		outbound, err := readStageOutput(stage)
+		stage := equation.NewManifoldstate()
+		frame := equation.NewFeatureFrame(
+			equation.ManifoldInputKeys,
+			[]float64{12, 0.2, 0.5, 0.5, 50000},
+		)
+		output, err := stage.Measure(frame)
 
 		So(err, ShouldBeNil)
 
 		Convey("It should emit bounded category evidence", func() {
-			So(int(datura.Peek[float64](outbound, "output", "category")), ShouldEqual, 2)
-			So(datura.Peek[float64](outbound, "output", "shockScore"), ShouldBeLessThan, 1)
-			So(datura.Peek[float64](outbound, "output", "value"), ShouldBeLessThan, 1)
+			So(output.Category, ShouldEqual, 2)
+			So(output.ShockScore, ShouldBeLessThan, 1)
+			So(output.Strength, ShouldBeLessThan, 1)
 		})
 	})
+}
+
+func BenchmarkManifoldstateMeasure(testingTB *testing.B) {
+	stage := equation.NewManifoldstate()
+	frame := equation.NewFeatureFrame(
+		equation.ManifoldInputKeys,
+		[]float64{0.5, 8, 1, 0.5, 50000},
+	)
+
+	testingTB.ReportAllocs()
+
+	for testingTB.Loop() {
+		_, _ = stage.Measure(frame)
+	}
 }

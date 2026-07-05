@@ -3,74 +3,95 @@ package hawkes
 import (
 	"math"
 
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"gonum.org/v1/gonum/stat"
 )
 
 /*
 Moment validates bivariate exponential-kernel parameters through empirical moments.
-The constructor artifact holds config; Write buffers inbound wire on its payload.
 */
 type Moment struct {
-	artifact *datura.Artifact
+	config MomentConfig
 }
 
 /*
-NewMoment creates a Hawkes moment-confidence stage wired from config attributes.
-momentR and momentS on the artifact select the mixed moment used for fit diagnostics.
+MomentConfig selects the mixed moment used for fit diagnostics.
 */
-func NewMoment(artifact *datura.Artifact) *Moment {
-	return &Moment{
-		artifact: artifact,
-	}
+type MomentConfig struct {
+	Params  BivariateParams
+	MomentR float64
+	MomentS float64
 }
 
-func (moment *Moment) Read(p []byte) (int, error) {
-	state := datura.Acquire("hawkes-moment-state", datura.APPJSON)
+/*
+MomentInput carries aligned count streams.
+*/
+type MomentInput struct {
+	X       []float64
+	Y       []float64
+	Weights []float64
+}
 
-	if _, err := state.Unpack(moment.artifact.DecryptPayload()); err != nil {
-		state.Release()
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"hawkes-moment: state write failed",
-			err,
-		))
-	}
+/*
+MomentOutput carries empirical and estimated moment evidence.
+*/
+type MomentOutput struct {
+	Value      float64
+	Empirical  float64
+	Estimate   float64
+	Confidence float64
+}
 
-	xValues, yValues, weights, ok := momentSamples(state, moment.artifact)
-
-	if !ok {
-		state.Release()
-
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"hawkes-moment: require aligned sample streams of at least two observations",
-			nil,
-		))
-	}
-
-	params := bivariateParamsFromArtifact(moment.artifact)
-	momentR := datura.Peek[float64](moment.artifact, "config", "momentR")
-	momentS := datura.Peek[float64](moment.artifact, "config", "momentS")
-
-	if momentR < 0 || momentS < 0 || momentR+momentS == 0 {
-		state.Release()
-
-		return 0, errnie.Error(errnie.Err(
+/*
+NewMoment creates a typed Hawkes moment diagnostic.
+*/
+func NewMoment(config MomentConfig) (*Moment, error) {
+	if config.MomentR < 0 || config.MomentS < 0 || config.MomentR+config.MomentS == 0 {
+		return nil, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"hawkes-moment: config momentR and momentS must define a nonzero moment",
 			nil,
 		))
 	}
 
-	empirical := stat.BivariateMoment(momentR, momentS, xValues, yValues, weights)
-	estimate, estimateOK := BranchingMomentEstimate(params, momentR, momentS)
+	return &Moment{config: config}, nil
+}
+
+/*
+Measure evaluates empirical moments against configured Hawkes parameters.
+*/
+func (moment *Moment) Measure(input MomentInput) (MomentOutput, error) {
+	if len(input.X) != len(input.Y) || len(input.X) < 2 {
+		return MomentOutput{}, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"hawkes-moment: require aligned sample streams of at least two observations",
+			nil,
+		))
+	}
+
+	if len(input.Weights) != 0 && len(input.Weights) != len(input.X) {
+		return MomentOutput{}, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"hawkes-moment: weights must align with sample streams",
+			nil,
+		))
+	}
+
+	empirical := stat.BivariateMoment(
+		moment.config.MomentR,
+		moment.config.MomentS,
+		input.X,
+		input.Y,
+		input.Weights,
+	)
+	estimate, estimateOK := BranchingMomentEstimate(
+		moment.config.Params,
+		moment.config.MomentR,
+		moment.config.MomentS,
+	)
 
 	if !estimateOK {
-		state.Release()
-
-		return 0, errnie.Error(errnie.Err(
+		return MomentOutput{}, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"hawkes-moment: branching moment estimate unavailable for parameters",
 			nil,
@@ -80,30 +101,19 @@ func (moment *Moment) Read(p []byte) (int, error) {
 	confidence, confidenceOK := MomentConfidence(empirical, estimate)
 
 	if !confidenceOK {
-		return 0, errnie.Error(errnie.Err(
+		return MomentOutput{}, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"hawkes-moment: confidence could not be derived",
 			nil,
 		))
 	}
 
-	state.MergeOutput("value", confidence)
-	state.MergeOutput("empirical", empirical)
-	state.MergeOutput("estimate", estimate)
-	state.MergeOutput("confidence", confidence)
-	state.Poke("output", "root")
-	state.Poke([]string{"value", "empirical", "estimate", "confidence"}, "inputs")
-
-	return state.PackInto(p)
-}
-
-func (moment *Moment) Write(p []byte) (int, error) {
-	moment.artifact.WithPayload(p)
-	return len(p), nil
-}
-
-func (moment *Moment) Close() error {
-	return nil
+	return MomentOutput{
+		Value:      confidence,
+		Empirical:  empirical,
+		Estimate:   estimate,
+		Confidence: confidence,
+	}, nil
 }
 
 /*

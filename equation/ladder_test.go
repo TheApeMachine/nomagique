@@ -84,6 +84,15 @@ func TestReadingNew(testingTB *testing.T) {
 	if reading == nil {
 		testingTB.Fatal("expected reading")
 	}
+
+	value, err := reading.Measure(map[string]float64{"uplift": 0.42})
+	if err != nil {
+		testingTB.Fatal(err)
+	}
+
+	if value != 0.42 {
+		testingTB.Fatalf("value = %f, want 0.42", value)
+	}
 }
 
 func BenchmarkRegimeLadderMeasure(testingTB *testing.B) {

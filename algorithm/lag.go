@@ -4,10 +4,8 @@ import (
 	"math"
 	"time"
 
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/correlation"
-	"github.com/theapemachine/nomagique/equation"
 	"github.com/theapemachine/nomagique/statistic"
 )
 
@@ -28,118 +26,100 @@ type LagOutcome struct {
 }
 
 /*
-Lag classifies anchor stall, inefficient lag, synchronized drift, and decoupling.
-
-Payload layout: isAnchor, price, moveReady, moveMoved, stallMargin, lagOK, lagBars,
-lagCorr, contempOK, contempCorr, sampleCount.
+LagInput carries typed lead-lag evidence.
 */
-type Lag struct {
-	artifact *datura.Artifact
-	outcome  LagOutcome
+type LagInput struct {
+	IsAnchor    bool
+	Price       float64
+	MoveReady   bool
+	MoveMoved   bool
+	StallMargin float64
+	LagOK       bool
+	LagBars     int
+	LagCorr     float64
+	ContempOK   bool
+	ContempCorr float64
+	SampleCount int
 }
 
 /*
-NewLag returns a lead-lag classification stage wired from config on the artifact.
+Lag classifies anchor stall, inefficient lag, synchronized drift, and decoupling.
 */
-func NewLag(artifact *datura.Artifact) *Lag {
-	return &Lag{
-		artifact: artifact,
-	}
+type Lag struct {
+	outcome LagOutcome
 }
 
-func (lag *Lag) Write(payload []byte) (int, error) {
-	lag.artifact.WithPayload(payload)
-	return len(payload), nil
+/*
+NewLag returns a typed lead-lag classifier.
+*/
+func NewLag() *Lag {
+	return &Lag{}
 }
 
-func (lag *Lag) Read(payload []byte) (int, error) {
-	state := datura.Acquire("lag-state", datura.APPJSON)
-
-	if _, err := state.Unpack(lag.artifact.DecryptPayload()); err != nil {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"lag: state write failed",
-			err,
-		))
-	}
-
-	inputKeys := equation.EnsureFeatureSchema(state, lag.artifact, equation.LagInputKeys)
-	fields, err := equation.FeatureFields(state, inputKeys)
-
-	if err != nil {
-		return 0, err
-	}
-
+/*
+LagInputFromFields decodes the legacy ordered feature vector into typed input.
+*/
+func LagInputFromFields(fields []float64) (LagInput, error) {
 	if len(fields) < lagPayloadFields {
-		return 0, errnie.Error(errnie.Err(
+		return LagInput{}, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"lag: insufficient feature fields",
 			nil,
 		))
 	}
 
-	lag.outcome = lag.evaluateFields(fields)
+	return LagInput{
+		IsAnchor:    fields[0] > 0,
+		Price:       fields[1],
+		MoveReady:   fields[2] > 0,
+		MoveMoved:   fields[3] > 0,
+		StallMargin: fields[4],
+		LagOK:       fields[5] > 0,
+		LagBars:     int(fields[6]),
+		LagCorr:     fields[7],
+		ContempOK:   fields[8] > 0,
+		ContempCorr: fields[9],
+		SampleCount: int(fields[10]),
+	}, nil
+}
+
+/*
+Measure classifies typed lead-lag evidence.
+*/
+func (lag *Lag) Measure(input LagInput) (LagOutcome, error) {
+	lag.outcome = lag.evaluate(input)
 
 	if !lag.outcome.Eligible || lag.outcome.Strength <= 0 {
-		return 0, errnie.Error(errnie.Err(
+		return LagOutcome{}, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"lag: insufficient signal eligibility",
 			nil,
 		))
 	}
 
-	state.MergeOutput("inefficient", lag.outcome.InefficientScore)
-	state.MergeOutput("sync", lag.outcome.SyncScore)
-	state.MergeOutput("decoupled", lag.outcome.DecoupledScore)
-	state.MergeOutput("stall", lag.outcome.StallScore)
-	state.MergeOutput("strength", lag.outcome.Strength)
-	state.MergeOutput("value", float64(lag.outcome.Category))
-	state.Poke("output", "root")
-	state.Poke([]string{"inefficient", "sync", "decoupled", "stall", "strength"}, "inputs")
-
-	return state.PackInto(payload)
+	return lag.outcome, nil
 }
 
-func (lag *Lag) Close() error {
-	return nil
-}
-
-func (lag *Lag) evaluateFields(fields []float64) LagOutcome {
-	if len(fields) < lagPayloadFields {
+func (lag *Lag) evaluate(input LagInput) LagOutcome {
+	if input.Price <= 0 {
 		return LagOutcome{}
 	}
 
-	isAnchor := fields[0] > 0
-	price := fields[1]
-	moveReady := fields[2] > 0
-	moveMoved := fields[3] > 0
-	stallMargin := fields[4]
-	lagOK := fields[5] > 0
-	lagBars := int(fields[6])
-	lagCorr := fields[7]
-	contempOK := fields[8] > 0
-	contempCorr := fields[9]
-	sampleCount := int(fields[10])
-
-	if price <= 0 {
-		return LagOutcome{}
-	}
-
-	if isAnchor {
-		return lag.evaluateAnchor(price, moveReady, moveMoved, stallMargin)
+	if input.IsAnchor {
+		return lag.evaluateAnchor(input.Price, input.MoveReady, input.MoveMoved, input.StallMargin)
 	}
 
 	return lag.evaluateFollower(
-		price,
-		moveReady,
-		moveMoved,
-		stallMargin,
-		lagOK,
-		lagBars,
-		lagCorr,
-		contempOK,
-		contempCorr,
-		sampleCount,
+		input.Price,
+		input.MoveReady,
+		input.MoveMoved,
+		input.StallMargin,
+		input.LagOK,
+		input.LagBars,
+		input.LagCorr,
+		input.ContempOK,
+		input.ContempCorr,
+		input.SampleCount,
 	)
 }
 
@@ -382,50 +362,30 @@ func (lag *Lag) StallReading() *LagReading {
 }
 
 type LagReading struct {
-	artifact *datura.Artifact
-	lag      *Lag
-	project  func(LagOutcome) float64
+	lag     *Lag
+	project func(LagOutcome) float64
 }
 
 func newLagReading(lag *Lag, project func(LagOutcome) float64) *LagReading {
 	return &LagReading{
-		artifact: datura.Acquire("lag-reading", datura.Artifact_Type_json),
-		lag:      lag,
-		project:  project,
+		lag:     lag,
+		project: project,
 	}
 }
 
-func (reading *LagReading) Write(p []byte) (int, error) {
-	reading.artifact.WithPayload(p)
-	return len(p), nil
-}
-
-func (reading *LagReading) Read(payload []byte) (int, error) {
-	state := datura.Acquire("lag-reading-state", datura.APPJSON)
-
-	if _, err := state.Unpack(reading.artifact.DecryptPayload()); err != nil {
+/*
+Measure projects one score from the last lag outcome.
+*/
+func (reading *LagReading) Measure() (float64, error) {
+	if reading.lag == nil || reading.project == nil {
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
-			"lag: state write failed",
-			err,
+			"lag: reading is incomplete",
+			nil,
 		))
 	}
 
-	value := 0.0
-
-	if reading.lag != nil && reading.project != nil {
-		value = reading.project(reading.lag.outcome)
-	}
-
-	state.MergeOutput("value", value)
-	state.Poke("output", "root")
-	state.Poke([]string{"value"}, "inputs")
-
-	return state.PackInto(payload)
-}
-
-func (reading *LagReading) Close() error {
-	return nil
+	return reading.project(reading.lag.outcome), nil
 }
 
 /*

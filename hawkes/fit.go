@@ -4,66 +4,75 @@ import (
 	"math"
 	"time"
 
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 )
 
 /*
 Fit estimates bivariate Hawkes parameters from timestamp arrival streams.
-The constructor artifact holds config; Write buffers inbound wire on its payload.
 */
 type Fit struct {
-	artifact *datura.Artifact
+	config FitConfig
 }
 
 /*
-NewFit creates a timestamp-stream Hawkes fit stage wired from config attributes.
-horizonUnixNano on the artifact is the observation horizon in Unix nanoseconds.
+FitConfig carries the observation horizon and optional prior.
 */
-func NewFit(artifact *datura.Artifact) *Fit {
-	if artifact == nil {
-		artifact = datura.Acquire("hawkes-fit", datura.APPJSON)
-	}
-
-	return &Fit{
-		artifact: artifact,
-	}
+type FitConfig struct {
+	Horizon time.Time
+	Prior   BivariateFit
 }
 
-func (fit *Fit) Read(p []byte) (int, error) {
-	state := datura.Acquire("hawkes-fit-state", datura.APPJSON)
+/*
+FitInput carries timestamp arrival streams.
+*/
+type FitInput struct {
+	XTimes []time.Time
+	YTimes []time.Time
+}
 
-	if _, err := state.Unpack(fit.artifact.DecryptPayload()); err != nil {
-		state.Release()
+/*
+FitOutput carries the fitted process and excitation evidence.
+*/
+type FitOutput struct {
+	Value           float64
+	ExcitationRatio float64
+	SpectralRadius  float64
+	Asymmetry       float64
+	Fit             BivariateFit
+}
 
-		return 0, errnie.Error(errnie.Err(
+/*
+NewFit creates a typed timestamp-stream Hawkes fit stage.
+*/
+func NewFit(config FitConfig) (*Fit, error) {
+	if config.Horizon.IsZero() {
+		return nil, errnie.Error(errnie.Err(
 			errnie.Validation,
-			"hawkes-moment: state write failed",
-			err,
+			"hawkes-fit: horizon required",
+			nil,
 		))
 	}
 
-	xTimes, yTimes, ok := fitTimes(state, fit.artifact)
+	return &Fit{config: config}, nil
+}
 
-	if !ok {
-		state.Release()
-
-		return 0, errnie.Error(errnie.Err(
+/*
+Measure estimates bivariate Hawkes parameters from arrival streams.
+*/
+func (fit *Fit) Measure(input FitInput) (FitOutput, error) {
+	if len(input.XTimes)+len(input.YTimes) < 2 {
+		return FitOutput{}, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"hawkes-fit: require aligned arrival timestamp streams",
 			nil,
 		))
 	}
 
-	stream := NewArrivalStream(fitTimesToTime(xTimes), fitTimesToTime(yTimes))
-	horizon := fitHorizon(fit.artifact)
-	prior := bivariateFitFromArtifact(fit.artifact)
-	fitted := NewBivariateEstimator(prior).Fit(stream, horizon)
+	stream := NewArrivalStream(input.XTimes, input.YTimes)
+	fitted := NewBivariateEstimator(fit.config.Prior).Fit(stream, fit.config.Horizon)
 
 	if !fitted.Valid() {
-		state.Release()
-
-		return 0, errnie.Error(errnie.Err(
+		return FitOutput{}, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"hawkes-fit: fit did not converge to valid parameters",
 			nil,
@@ -81,23 +90,13 @@ func (fit *Fit) Read(p []byte) (int, error) {
 		ratio = fitted.IntensityY / fitted.MuY
 	}
 
-	state.MergeOutput("value", ratio)
-	state.MergeOutput("excitationRatio", ratio)
-	state.MergeOutput("spectralRadius", fitted.SpectralRadius)
-	state.MergeOutput("asymmetry", asymmetry)
-	state.Poke("output", "root")
-	state.Poke([]string{"value", "excitationRatio", "spectralRadius", "asymmetry"}, "inputs")
-
-	return state.PackInto(p)
-}
-
-func (fit *Fit) Write(p []byte) (int, error) {
-	fit.artifact.WithPayload(p)
-	return len(p), nil
-}
-
-func (fit *Fit) Close() error {
-	return nil
+	return FitOutput{
+		Value:           ratio,
+		ExcitationRatio: ratio,
+		SpectralRadius:  fitted.SpectralRadius,
+		Asymmetry:       asymmetry,
+		Fit:             fitted,
+	}, nil
 }
 
 const criticalBranch = 1.0

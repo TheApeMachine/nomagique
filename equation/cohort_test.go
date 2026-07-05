@@ -4,7 +4,6 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/nomagique/equation"
 )
 
@@ -36,7 +35,7 @@ func cohortBatch(
 	return batch
 }
 
-func TestCohort_Read(testingTB *testing.T) {
+func TestCohort_Measure(testingTB *testing.T) {
 	cases := []struct {
 		name     string
 		batch    []float64
@@ -80,40 +79,34 @@ func TestCohort_Read(testingTB *testing.T) {
 		testCase := testCase
 
 		Convey("Given cohort payload "+testCase.name, testingTB, func() {
-			stage := equation.NewCohort(cohortConfig())
-			err := writeFeatureStage(stage, equation.CohortInputKeys, testCase.batch...)
-
-			So(err, ShouldBeNil)
+			cohort := equation.NewCohort()
+			frame := equation.NewFeatureFrame(equation.CohortInputKeys, testCase.batch)
+			output, err := cohort.Measure(frame)
 
 			if !testCase.eligible {
 				Convey("It should reject invalid payload", func() {
-					frame := make([]byte, 4096)
-					_, err := stage.Read(frame)
-
 					So(err, ShouldNotBeNil)
 				})
 
 				return
 			}
 
-			outbound, err := readStageOutput(stage)
-
 			So(err, ShouldBeNil)
 
 			Convey("It should classify the cohort", func() {
-				So(datura.Peek[float64](outbound, "output", "value"), ShouldBeGreaterThan, 0)
-				So(int(datura.Peek[float64](outbound, "output", "category")), ShouldEqual, testCase.wantCat)
+				So(output.Strength, ShouldBeGreaterThan, 0)
+				So(output.Category, ShouldEqual, testCase.wantCat)
 
 				if testCase.wantCat == 1 {
-					So(datura.Peek[float64](outbound, "output", "peakScore"), ShouldBeGreaterThan, 0)
+					So(output.PeakScore, ShouldBeGreaterThan, 0)
 				}
 			})
 		})
 	}
 }
 
-func BenchmarkCohortRead(b *testing.B) {
-	stage := equation.NewCohort(cohortConfig())
+func BenchmarkCohortMeasure(b *testing.B) {
+	cohort := equation.NewCohort()
 	values := cohortBatch(
 		4,
 		60,
@@ -122,12 +115,11 @@ func BenchmarkCohortRead(b *testing.B) {
 		[]float64{0.1, 0.2, 0.3, 0.4},
 		[]float64{0.1, 0.2, 0.3, 0.4},
 	)
+	frame := equation.NewFeatureFrame(equation.CohortInputKeys, values)
 
 	b.ReportAllocs()
 
 	for b.Loop() {
-		_ = writeFeatureStage(stage, equation.CohortInputKeys, values...)
-		frame := make([]byte, 4096)
-		_, _ = stage.Read(frame)
+		_, _ = cohort.Measure(frame)
 	}
 }

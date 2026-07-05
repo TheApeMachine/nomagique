@@ -1,51 +1,61 @@
 package equation
 
 import (
-	"io"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/datura"
 )
 
-func TestStageState(testingTB *testing.T) {
-	Convey("Given no inbound frame bytes", testingTB, func() {
-		state, err := stageState(nil)
+func TestFeatureFrame_FeatureFields(testingTB *testing.T) {
+	Convey("Given a typed feature frame", testingTB, func() {
+		frame := NewFeatureFrame(
+			[]string{"alpha", "beta", "gamma"},
+			[]float64{1, 2, 3},
+		)
 
-		Convey("It should report EOF without manufacturing state", func() {
-			So(state, ShouldBeNil)
-			So(err, ShouldEqual, io.EOF)
+		values, err := frame.FeatureFields([]string{"gamma", "alpha"})
+
+		Convey("It should read fields in requested order", func() {
+			So(err, ShouldBeNil)
+			So(values, ShouldResemble, []float64{3, 1})
+		})
+
+		Convey("It should reject missing schema keys", func() {
+			_, err := frame.FeatureFields([]string{"missing"})
+
+			So(err, ShouldNotBeNil)
 		})
 	})
 }
 
-func TestEmitOutput(testingTB *testing.T) {
+func TestOutputKeys(testingTB *testing.T) {
 	Convey("Given output fields from a map", testingTB, func() {
-		state := datura.Acquire("equation-test", datura.APPJSON)
-		payload := make([]byte, 4096)
-
-		n, err := emitOutput(state, payload, datura.Map[float64]{
+		keys := outputKeys(map[string]float64{
 			"zeta":  3,
 			"value": 2,
 			"alpha": 1,
 		})
 
-		So(err == nil || err == io.EOF, ShouldBeTrue)
-
-		outbound := datura.Acquire("equation-test-out", datura.APPJSON)
-		defer outbound.Release()
-
-		_, err = outbound.Unpack(payload[:n])
-
-		So(err == nil || err == io.EOF, ShouldBeTrue)
-
 		Convey("It should stamp deterministic input order", func() {
-			So(datura.Peek[[]string](outbound, "inputs"), ShouldResemble, []string{
+			So(keys, ShouldResemble, []string{
 				"alpha",
+				"strength",
 				"value",
 				"zeta",
-				"strength",
 			})
 		})
 	})
+}
+
+func BenchmarkFeatureFrameFeatureFields(b *testing.B) {
+	frame := NewFeatureFrame(
+		[]string{"alpha", "beta", "gamma"},
+		[]float64{1, 2, 3},
+	)
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_, _ = frame.FeatureFields([]string{"gamma", "alpha"})
+	}
 }

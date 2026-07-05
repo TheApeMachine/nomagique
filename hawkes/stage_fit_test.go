@@ -1,87 +1,50 @@
 package hawkes
 
 import (
-	"encoding/binary"
-	"math"
 	"testing"
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/datura"
 )
 
-func encodeFitPayload(samples ...float64) []byte {
-	payload := make([]byte, 8*len(samples))
-
-	for index, sample := range samples {
-		offset := index * 8
-		binary.BigEndian.PutUint64(payload[offset:offset+8], math.Float64bits(sample))
-	}
-
-	return payload
-}
-
-func TestFitTimesFromBinaryPayload(testingTB *testing.T) {
-	Convey("Given binary arrival timestamps on the artifact payload", testingTB, func() {
+func TestFitMeasure(testingTB *testing.T) {
+	Convey("Given arrival timestamps with enough events", testingTB, func() {
 		start := time.Now()
-		xTimes := make([]float64, 32)
-		yTimes := make([]float64, 32)
+		xTimes := make([]time.Time, 32)
+		yTimes := make([]time.Time, 32)
 
 		for index := range xTimes {
-			xTimes[index] = float64(
-				start.Add(time.Duration(index) * 100 * time.Millisecond).UnixNano(),
-			)
-			yTimes[index] = float64(
-				start.Add(time.Duration(index)*100*time.Millisecond + 50*time.Millisecond).UnixNano(),
-			)
+			xTimes[index] = start.Add(time.Duration(index) * 100 * time.Millisecond)
+			yTimes[index] = start.Add(time.Duration(index)*100*time.Millisecond + 50*time.Millisecond)
 		}
 
-		inbound := datura.Acquire("hawkes-fit-stage-test", datura.APPJSON).
-			Poke(float64(len(xTimes)), "config", "xCount").
-			Poke(float64(len(yTimes)), "config", "yCount").
-			WithPayload(encodeFitPayload(append(xTimes, yTimes...)...))
-
-		frame := inbound.Pack()
-
-		So(len(frame), ShouldBeGreaterThan, 0)
-
-		fitStage := NewFit(fitConfigArtifact(
-			float64(start.Add(4*time.Second).UnixNano()),
-			BivariateFit{},
-		))
-		_, err := fitStage.Write(frame)
-
+		fitStage, err := NewFit(FitConfig{Horizon: start.Add(4 * time.Second)})
 		So(err, ShouldBeNil)
 
-		state := datura.Acquire("hawkes-fit-decode-test", datura.APPJSON)
-		_, writeStateErr := state.Unpack(fitStage.artifact.DecryptPayload())
+		output, err := fitStage.Measure(FitInput{
+			XTimes: xTimes,
+			YTimes: yTimes,
+		})
 
-		So(writeStateErr, ShouldBeNil)
-
-		xDecoded, yDecoded, ok := fitTimes(state, fitStage.artifact)
-
-		Convey("It should decode both arrival streams", func() {
-			So(ok, ShouldBeTrue)
-			So(len(xDecoded), ShouldEqual, len(xTimes))
-			So(len(yDecoded), ShouldEqual, len(yTimes))
+		Convey("It should fit and return positive excitation evidence", func() {
+			So(err, ShouldBeNil)
+			So(output.Fit.Valid(), ShouldBeTrue)
+			So(output.SpectralRadius, ShouldBeGreaterThanOrEqualTo, 0)
+			So(output.Value, ShouldBeGreaterThan, 0)
 		})
 	})
 }
 
-func TestMomentReadRequiresAlignedSamples(testingTB *testing.T) {
+func TestMomentMeasureRequiresAlignedSamples(testingTB *testing.T) {
 	Convey("Given insufficient moment samples", testingTB, func() {
-		moment := NewMoment(momentConfigArtifact(
-			BivariateParams{MuX: 1, MuY: 1, Beta: 1},
-			1,
-			1,
-		))
-		payload := make([]byte, 0)
-		_, err := moment.Write(payload)
-
+		moment, err := NewMoment(MomentConfig{
+			Params:  BivariateParams{MuX: 1, MuY: 1, Beta: 1},
+			MomentR: 1,
+			MomentS: 1,
+		})
 		So(err, ShouldBeNil)
 
-		response := make([]byte, 4096)
-		_, err = moment.Read(response)
+		_, err = moment.Measure(MomentInput{})
 
 		Convey("It should return a validation error", func() {
 			So(err, ShouldNotBeNil)
@@ -91,14 +54,10 @@ func TestMomentReadRequiresAlignedSamples(testingTB *testing.T) {
 
 func TestFitReadRequiresAlignedTimestamps(testingTB *testing.T) {
 	Convey("Given insufficient fit timestamps", testingTB, func() {
-		fitStage := NewFit(fitConfigArtifact(float64(time.Now().UnixNano()), BivariateFit{}))
-		payload := make([]byte, 0)
-		_, err := fitStage.Write(payload)
-
+		fitStage, err := NewFit(FitConfig{Horizon: time.Now()})
 		So(err, ShouldBeNil)
 
-		response := make([]byte, 4096)
-		_, err = fitStage.Read(response)
+		_, err = fitStage.Measure(FitInput{})
 
 		Convey("It should return a validation error", func() {
 			So(err, ShouldNotBeNil)

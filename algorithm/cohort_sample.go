@@ -1,13 +1,10 @@
 package algorithm
 
 import (
-	"fmt"
-	"io"
 	"math"
 	"sort"
 	"time"
 
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/equation"
 	"github.com/theapemachine/nomagique/statistic"
@@ -25,8 +22,24 @@ CohortSample turns symbol price streams into the feature batch Cohort expects.
 The window is derived from observed per-symbol return history and shared peer depth.
 */
 type CohortSample struct {
-	artifact *datura.Artifact
-	symbols  map[string]*cohortSymbol
+	config  CohortSampleConfig
+	symbols map[string]*cohortSymbol
+}
+
+/*
+CohortSampleConfig controls only structural history retention.
+*/
+type CohortSampleConfig struct {
+	HistoryCap int
+}
+
+/*
+CohortSampleInput is one observed ticker price.
+*/
+type CohortSampleInput struct {
+	Symbol string
+	Price  float64
+	At     time.Time
 }
 
 type cohortSymbol struct {
@@ -37,49 +50,42 @@ type cohortSymbol struct {
 }
 
 /*
-NewCohortSample returns a cohort encoder wired from config attributes.
+NewCohortSample returns a typed cohort encoder.
 */
-func NewCohortSample(artifact *datura.Artifact) *CohortSample {
-	if artifact == nil {
-		artifact = datura.Acquire("cohort-sample", datura.APPJSON)
-	}
-
+func NewCohortSample(config ...CohortSampleConfig) *CohortSample {
 	return &CohortSample{
-		artifact: artifact,
-		symbols:  map[string]*cohortSymbol{},
+		config:  cohortSampleConfig(config),
+		symbols: map[string]*cohortSymbol{},
 	}
 }
 
-func (cohortSample *CohortSample) Write(payload []byte) (int, error) {
-	cohortSample.artifact.WithPayload(payload)
-	return len(payload), nil
-}
-
-func (cohortSample *CohortSample) Read(payload []byte) (int, error) {
-	state := datura.Acquire("cohort-sample-state", datura.APPJSON)
-
-	if _, err := state.Unpack(cohortSample.artifact.DecryptPayload()); err != nil {
-		state.Release()
-
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"cohort-sample: state write failed",
-			err,
-		))
+func cohortSampleConfig(config []CohortSampleConfig) CohortSampleConfig {
+	if len(config) == 0 {
+		return CohortSampleConfig{HistoryCap: cohortHistoryCap}
 	}
 
-	defer state.Release()
+	if config[0].HistoryCap < cohortMinimumWindow {
+		config[0].HistoryCap = cohortHistoryCap
+	}
 
-	sample, err := cohortSample.sample(state)
+	return config[0]
+}
 
+/*
+Measure observes a tick and emits a feature frame once peer history is ready.
+*/
+func (cohortSample *CohortSample) Measure(
+	input CohortSampleInput,
+) (equation.FeatureFrame, bool, error) {
+	sample, err := cohortSample.sample(input)
 	if err != nil {
-		return 0, err
+		return equation.FeatureFrame{}, false, err
 	}
 
 	window := cohortSample.window(sample.name)
 
 	if window < cohortMinimumWindow {
-		return 0, io.EOF
+		return equation.FeatureFrame{}, false, nil
 	}
 
 	pairCorrelations, peerCorrelations, peerEnergies, energy, barSpacingSeconds :=
@@ -90,7 +96,7 @@ func (cohortSample *CohortSample) Read(payload []byte) (int, error) {
 		len(peerEnergies) < cohortMinimumPeers ||
 		energy <= 0 ||
 		barSpacingSeconds <= 0 {
-		return 0, io.EOF
+		return equation.FeatureFrame{}, false, nil
 	}
 
 	features := cohortFeatures(
@@ -102,16 +108,7 @@ func (cohortSample *CohortSample) Read(payload []byte) (int, error) {
 		peerEnergies,
 	)
 
-	state.Merge("features", features)
-	state.MergeOutput("ready", true)
-	state.Poke("features", "root")
-	state.Poke(equation.CohortInputKeys, "inputs")
-
-	return state.PackInto(payload)
-}
-
-func (cohortSample *CohortSample) Close() error {
-	return nil
+	return equation.NewFeatureFrame(equation.CohortInputKeys, features), true, nil
 }
 
 type cohortTick struct {
@@ -120,34 +117,11 @@ type cohortTick struct {
 	at    int64
 }
 
-func (cohortSample *CohortSample) sample(state *datura.Artifact) (cohortTick, error) {
-	expectedChannel := datura.Peek[string](cohortSample.artifact, "channel")
-	channel := datura.Peek[string](state, "channel")
-
-	if expectedChannel != "" && channel != expectedChannel {
-		return cohortTick{}, errnie.Error(errnie.Err(
-			errnie.Validation,
-			fmt.Sprintf("cohort-sample: expected %s channel, got %q", expectedChannel, channel),
-			nil,
-		))
-	}
-
-	root := datura.Peek[string](cohortSample.artifact, "root")
-	symbolInput := datura.Peek[string](cohortSample.artifact, "symbolInput")
-	priceInput := datura.Peek[string](cohortSample.artifact, "priceInput")
-
-	if root == "" || symbolInput == "" || priceInput == "" {
-		return cohortTick{}, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"cohort-sample: root, symbolInput, and priceInput are required",
-			nil,
-		))
-	}
-
+func (cohortSample *CohortSample) sample(input CohortSampleInput) (cohortTick, error) {
 	tick := cohortTick{
-		name:  datura.Peek[string](state, root, 0, symbolInput),
-		price: datura.Peek[float64](state, root, 0, priceInput),
-		at:    state.Timestamp(),
+		name:  input.Symbol,
+		price: input.Price,
+		at:    input.At.UnixNano(),
 	}
 
 	if tick.name == "" || tick.price <= 0 || tick.at <= 0 {
@@ -211,16 +185,11 @@ func (cohortSample *CohortSample) symbol(name string) *cohortSymbol {
 }
 
 func (cohortSample *CohortSample) historyCap() int {
-	configured := datura.Peek[float64](cohortSample.artifact, "historyCap")
-	if configured <= 0 {
-		configured = datura.Peek[float64](cohortSample.artifact, "config", "historyCap")
-	}
-
-	if configured < cohortMinimumWindow {
+	if cohortSample.config.HistoryCap < cohortMinimumWindow {
 		return cohortHistoryCap
 	}
 
-	return int(configured)
+	return cohortSample.config.HistoryCap
 }
 
 func (cohortSample *CohortSample) window(symbol string) int {

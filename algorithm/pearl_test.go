@@ -9,168 +9,94 @@ import (
 
 func pearlConfig() algorithm.PearlConfig {
 	return algorithm.PearlConfig{
-		MinHistory:      5,
+		Target:          2,
+		Treatment:       1,
+		Controls:        []int{0},
+		MinHistory:      6,
 		History:         16,
 		CategoryIndexes: []float64{1, 2, 3, 4},
 	}
 }
 
-func TestPearl_MeasureTrade(testingTB *testing.T) {
-	Convey("Given local flow that builds price association", testingTB, func() {
+func TestPearl_Measure(t *testing.T) {
+	Convey("Given numeric rows with a treatment effect", t, func() {
 		pearl := algorithm.NewPearl(pearlConfig())
-		price := 100.0
 		var output algorithm.PearlOutput
 		var ready bool
 		var err error
 
 		for index := range 12 {
-			flow := 1 + float64(index)
-			price *= 1 + flow*0.001
-			output, ready, err = pearl.MeasureTrade(algorithm.PearlTradeInput{
-				Symbol:   "BTC/USD",
-				Price:    price,
-				Quantity: flow,
-				Side:     "buy",
+			control := float64(index % 3)
+			treatment := float64(index)
+			target := 0.5*control + 2*treatment
+
+			output, ready, err = pearl.Measure(algorithm.PearlInput{
+				Key:          "primary",
+				Row:          []float64{control, treatment, target},
+				Intervention: 20,
 			})
 		}
 
-		output, ready, err = pearl.MeasureTrade(algorithm.PearlTradeInput{
-			Symbol:   "BTC/USD",
-			Price:    price,
-			Quantity: 1,
-			Side:     "buy",
-		})
-
-		Convey("It emits counterfactual alpha from direct numeric inputs", func() {
+		Convey("It emits Pearl ladder and do-calculus evidence", func() {
 			So(err, ShouldBeNil)
 			So(ready, ShouldBeTrue)
-			So(output.AlphaScore, ShouldBeGreaterThan, 0)
+			So(output.AssociationScore, ShouldBeGreaterThan, 0)
+			So(output.InterventionScore, ShouldBeGreaterThan, 0)
+			So(output.DoExpectation, ShouldBeGreaterThan, 0)
+			So(output.Counterfactual, ShouldBeGreaterThan, output.DoExpectation/2)
 			So(output.UpliftScore, ShouldBeGreaterThan, 0)
-			So(output.Category, ShouldEqual, 1)
+			So(output.Probabilities, ShouldHaveLength, 4)
 		})
 	})
 }
 
-func TestPearl_MeasureBook(testingTB *testing.T) {
-	Convey("Given liquidity stress that outruns its own history", testingTB, func() {
-		pearl := algorithm.NewPearl(pearlConfig())
-		var output algorithm.PearlOutput
-		var ready bool
-		var err error
-
-		for index := range 8 {
-			price := 100 + float64(index)*0.01
-			depth := 100 - float64(index)
-			_, _, err = pearl.MeasureTicker(algorithm.PearlTickerInput{
-				Symbol:    "BTC/USD",
-				Last:      price,
-				ChangePct: 0.01,
-				Bid:       price - 0.01,
-				Ask:       price + 0.01,
-				BidQty:    depth,
-				AskQty:    depth,
-			})
-			So(err, ShouldBeNil)
-		}
-
-		output, ready, err = pearl.MeasureBook(algorithm.PearlBookInput{
-			Symbol: "BTC/USD",
-			Bids:   []algorithm.BookLevel{{Price: 90, Quantity: 0.01}},
-			Asks:   []algorithm.BookLevel{{Price: 110, Quantity: 0.01}},
-		})
-
-		Convey("It emits liquidity shock without artifact round-tripping", func() {
-			So(err, ShouldBeNil)
-			So(ready, ShouldBeTrue)
-			So(output.ShockScore, ShouldBeGreaterThan, 0)
-			So(output.Inverted, ShouldBeTrue)
-			So(output.Category, ShouldEqual, 3)
-		})
-	})
-}
-
-func TestPearlSample_MeasureTicker(testingTB *testing.T) {
-	Convey("Given ticker rows for two symbols", testingTB, func() {
+func TestPearlSample_Measure(t *testing.T) {
+	Convey("Given rows for two keys", t, func() {
 		sample := algorithm.NewPearlSample(pearlConfig())
-		var btc algorithm.PearlSampleOutput
+		var primary algorithm.PearlSampleOutput
 
 		for index := range 6 {
 			var ready bool
 			var err error
-			btc, ready, err = sample.MeasureTicker(algorithm.PearlTickerInput{
-				Symbol:    "BTC/USD",
-				Last:      100 + float64(index),
-				ChangePct: 0.01 * float64(index),
-				Bid:       99 + float64(index),
-				Ask:       101 + float64(index),
-				BidQty:    20,
-				AskQty:    18,
+			primary, ready, err = sample.Measure(algorithm.PearlInput{
+				Key: "primary",
+				Row: []float64{float64(index % 3), float64(index), float64(index * 2)},
 			})
 
 			So(err, ShouldBeNil)
-			So(ready, ShouldEqual, index >= 4)
+			So(ready, ShouldEqual, index >= 5)
 		}
 
-		eth, ready, err := sample.MeasureTicker(algorithm.PearlTickerInput{
-			Symbol:    "ETH/USD",
-			Last:      50,
-			ChangePct: 0.02,
-			Bid:       49,
-			Ask:       51,
-			BidQty:    9,
-			AskQty:    8,
+		secondary, ready, err := sample.Measure(algorithm.PearlInput{
+			Key: "secondary",
+			Row: []float64{1, 2, 3},
 		})
 
-		Convey("It keeps per-symbol rolling rows separate", func() {
+		Convey("It keeps rolling rows separate by key", func() {
 			So(err, ShouldBeNil)
 			So(ready, ShouldBeFalse)
-			So(btc.Rows, ShouldHaveLength, 6)
-			So(eth.Rows, ShouldHaveLength, 1)
-			So(btc.Row[0], ShouldEqual, 0.0005)
-			So(eth.Row[0], ShouldEqual, 0.0002)
+			So(primary.Key, ShouldEqual, "primary")
+			So(secondary.Key, ShouldEqual, "secondary")
+			So(primary.Rows, ShouldHaveLength, 6)
+			So(secondary.Rows, ShouldHaveLength, 1)
 		})
 	})
 }
 
-func TestPearlSample_MeasureBook(testingTB *testing.T) {
-	Convey("Given a book row", testingTB, func() {
-		sample := algorithm.NewPearlSample(pearlConfig())
-		output, ready, err := sample.MeasureBook(algorithm.PearlBookInput{
-			Symbol: "BTC/USD",
-			Bids: []algorithm.BookLevel{
-				{Price: 100, Quantity: 4},
-				{Price: 99, Quantity: 10},
-			},
-			Asks: []algorithm.BookLevel{
-				{Price: 101, Quantity: 3},
-				{Price: 102, Quantity: 10},
-			},
-		})
-
-		Convey("It encodes liquidity stress into the causal row", func() {
-			So(err, ShouldBeNil)
-			So(ready, ShouldBeFalse)
-			So(output.Row, ShouldHaveLength, 4)
-			So(output.Row[1], ShouldBeGreaterThan, 0)
-		})
-	})
-}
-
-func BenchmarkPearl_MeasureTrade(testingTB *testing.B) {
+func BenchmarkPearl_Measure(t *testing.B) {
 	pearl := algorithm.NewPearl(pearlConfig())
-	price := 100.0
 
-	testingTB.ReportAllocs()
+	t.ReportAllocs()
 
-	for testingTB.Loop() {
+	for t.Loop() {
 		for index := range 12 {
-			flow := 1 + float64(index)
-			price *= 1 + flow*0.001
-			_, _, _ = pearl.MeasureTrade(algorithm.PearlTradeInput{
-				Symbol:   "BTC/USD",
-				Price:    price,
-				Quantity: flow,
-				Side:     "buy",
+			control := float64(index % 3)
+			treatment := float64(index)
+			target := 0.5*control + 2*treatment
+			_, _, _ = pearl.Measure(algorithm.PearlInput{
+				Key:          "primary",
+				Row:          []float64{control, treatment, target},
+				Intervention: 20,
 			})
 		}
 	}

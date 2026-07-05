@@ -7,17 +7,22 @@ import (
 	"github.com/theapemachine/errnie"
 )
 
-const (
-	pearlDefaultMinHistory = 5
-	pearlSampleNodeCount   = 4
-	pearlNodeMacro         = 0
-	pearlNodeLiquidity     = 1
-	pearlNodeFlow          = 2
-	pearlNodeTarget        = 3
-)
+const pearlDefaultMinHistory = 5
 
 /*
-PearlSample turns ticker, book, and trade rows into aligned causal rows.
+PearlInput is one keyed numeric observation for causal evaluation.
+*/
+type PearlInput struct {
+	Key          string
+	Row          []float64
+	Inverted     bool
+	Contagion    float64
+	Condition    float64
+	Intervention float64
+}
+
+/*
+PearlSample retains aligned numeric causal rows by key.
 */
 type PearlSample struct {
 	minHistory int
@@ -26,58 +31,20 @@ type PearlSample struct {
 }
 
 /*
-PearlTickerInput is one ticker observation.
-*/
-type PearlTickerInput struct {
-	Symbol    string
-	Last      float64
-	ChangePct float64
-	Bid       float64
-	Ask       float64
-	BidQty    float64
-	AskQty    float64
-}
-
-/*
-PearlBookInput is one book observation.
-*/
-type PearlBookInput struct {
-	Symbol string
-	Bids   []BookLevel
-	Asks   []BookLevel
-}
-
-/*
-PearlTradeInput is one trade observation.
-*/
-type PearlTradeInput struct {
-	Symbol   string
-	Price    float64
-	Quantity float64
-	Side     string
-}
-
-/*
 PearlSampleOutput is the current causal row and retained table.
 */
 type PearlSampleOutput struct {
-	Symbol string
-	Row    []float64
-	Rows   [][]float64
+	Key  string
+	Row  []float64
+	Rows [][]float64
 }
 
 type pearlWindow struct {
-	rows          [][]float64
-	bids          map[float64]float64
-	asks          map[float64]float64
-	lastMacro     float64
-	lastLiquidity float64
-	lastFlow      float64
-	lastPrice     float64
+	rows [][]float64
 }
 
 /*
-NewPearlSample returns a direct Pearl sampler.
+NewPearlSample returns a keyed numeric causal sampler.
 */
 func NewPearlSample(configs ...PearlConfig) *PearlSample {
 	config := PearlConfig{}
@@ -106,116 +73,62 @@ func NewPearlSample(configs ...PearlConfig) *PearlSample {
 }
 
 /*
-MeasureTicker observes one ticker row.
+Measure observes one keyed numeric causal row.
 */
-func (pearlSample *PearlSample) MeasureTicker(
-	input PearlTickerInput,
+func (pearlSample *PearlSample) Measure(
+	input PearlInput,
 ) (PearlSampleOutput, bool, error) {
-	if input.Symbol == "" || input.Last <= 0 {
+	if input.Key == "" {
 		return PearlSampleOutput{}, false, errnie.Error(errnie.Err(
 			errnie.Validation,
-			"pearl-sample: ticker requires symbol and last",
+			"pearl-sample: key required",
 			nil,
 		))
 	}
 
-	window := pearlSample.window(input.Symbol)
-	liquidity := pearlSample.liquidityStress(input.Bid, input.Ask, input.BidQty, input.AskQty)
-
-	if liquidity > 0 {
-		window.lastLiquidity = liquidity
-	}
-
-	window.lastMacro = input.ChangePct / 100
-	row := []float64{
-		window.lastMacro,
-		window.lastLiquidity,
-		window.lastFlow,
-		window.velocity(input.Last),
-	}
-
-	return pearlSample.append(input.Symbol, row, window), len(window.rows) >= pearlSample.minHistory, nil
-}
-
-/*
-MeasureBook observes one book row.
-*/
-func (pearlSample *PearlSample) MeasureBook(
-	input PearlBookInput,
-) (PearlSampleOutput, bool, error) {
-	if input.Symbol == "" {
+	if len(input.Row) == 0 {
 		return PearlSampleOutput{}, false, errnie.Error(errnie.Err(
 			errnie.Validation,
-			"pearl-sample: book requires symbol",
+			"pearl-sample: row required",
 			nil,
 		))
 	}
 
-	window := pearlSample.window(input.Symbol)
-	pearlSample.applyLevels(window.bids, input.Bids)
-	pearlSample.applyLevels(window.asks, input.Asks)
+	row := make([]float64, 0, len(input.Row))
 
-	bid, bidQty := pearlSample.bestBid(window.bids)
-	ask, askQty := pearlSample.bestAsk(window.asks)
-	liquidity := pearlSample.liquidityStress(bid, ask, bidQty, askQty)
+	for _, value := range input.Row {
+		if math.IsNaN(value) || math.IsInf(value, 0) {
+			return PearlSampleOutput{}, false, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"pearl-sample: row contains non-finite value",
+				nil,
+			))
+		}
 
-	if liquidity <= 0 {
-		return PearlSampleOutput{}, false, nil
+		row = append(row, value)
 	}
 
-	window.lastLiquidity = liquidity
-	row := []float64{
-		window.lastMacro,
-		window.lastLiquidity,
-		window.lastFlow,
-		window.velocity((bid + ask) / 2),
-	}
+	window := pearlSample.window(input.Key)
 
-	return pearlSample.append(input.Symbol, row, window), len(window.rows) >= pearlSample.minHistory, nil
-}
-
-/*
-MeasureTrade observes one trade row.
-*/
-func (pearlSample *PearlSample) MeasureTrade(
-	input PearlTradeInput,
-) (PearlSampleOutput, bool, error) {
-	if input.Symbol == "" || input.Price <= 0 || input.Quantity <= 0 {
+	if len(window.rows) > 0 && len(window.rows[0]) != len(row) {
 		return PearlSampleOutput{}, false, errnie.Error(errnie.Err(
 			errnie.Validation,
-			"pearl-sample: trade requires symbol, price, and quantity",
+			fmt.Sprintf(
+				"pearl-sample: row width %d differs from retained width %d",
+				len(row),
+				len(window.rows[0]),
+			),
 			nil,
 		))
 	}
 
-	if input.Side != "buy" && input.Side != "sell" {
-		return PearlSampleOutput{}, false, errnie.Error(errnie.Err(
-			errnie.Validation,
-			fmt.Sprintf("pearl-sample: unknown side %q", input.Side),
-			nil,
-		))
-	}
-
-	window := pearlSample.window(input.Symbol)
-	flow := input.Quantity
-
-	if input.Side == "sell" {
-		flow = -input.Quantity
-	}
-
-	window.lastFlow = flow
-	row := []float64{
-		window.lastMacro,
-		window.lastLiquidity,
-		window.lastFlow,
-		window.velocity(input.Price),
-	}
-
-	return pearlSample.append(input.Symbol, row, window), len(window.rows) >= pearlSample.minHistory, nil
+	return pearlSample.append(input.Key, row, window),
+		len(window.rows) >= pearlSample.minHistory,
+		nil
 }
 
 func (pearlSample *PearlSample) append(
-	symbol string,
+	key string,
 	row []float64,
 	window *pearlWindow,
 ) PearlSampleOutput {
@@ -232,110 +145,21 @@ func (pearlSample *PearlSample) append(
 	}
 
 	return PearlSampleOutput{
-		Symbol: symbol,
-		Row:    append([]float64(nil), row...),
-		Rows:   rows,
+		Key:  key,
+		Row:  append([]float64(nil), row...),
+		Rows: rows,
 	}
 }
 
-func (pearlSample *PearlSample) window(symbol string) *pearlWindow {
-	window, ok := pearlSample.windows[symbol]
+func (pearlSample *PearlSample) window(key string) *pearlWindow {
+	window, ok := pearlSample.windows[key]
 
 	if ok {
 		return window
 	}
 
-	window = &pearlWindow{
-		bids: map[float64]float64{},
-		asks: map[float64]float64{},
-	}
-	pearlSample.windows[symbol] = window
+	window = &pearlWindow{}
+	pearlSample.windows[key] = window
 
 	return window
-}
-
-func (pearlSample *PearlSample) applyLevels(book map[float64]float64, levels []BookLevel) {
-	for _, level := range levels {
-		if level.Price <= 0 {
-			continue
-		}
-
-		if level.Quantity <= 0 {
-			delete(book, level.Price)
-			continue
-		}
-
-		book[level.Price] = level.Quantity
-	}
-}
-
-func (pearlSample *PearlSample) bestBid(book map[float64]float64) (float64, float64) {
-	price := 0.0
-	quantity := 0.0
-
-	for levelPrice, levelQuantity := range book {
-		if levelPrice <= price {
-			continue
-		}
-
-		price = levelPrice
-		quantity = levelQuantity
-	}
-
-	return price, quantity
-}
-
-func (pearlSample *PearlSample) bestAsk(book map[float64]float64) (float64, float64) {
-	price := 0.0
-	quantity := 0.0
-
-	for levelPrice, levelQuantity := range book {
-		if price > 0 && levelPrice >= price {
-			continue
-		}
-
-		price = levelPrice
-		quantity = levelQuantity
-	}
-
-	return price, quantity
-}
-
-func (pearlSample *PearlSample) liquidityStress(
-	bid float64,
-	ask float64,
-	bidQty float64,
-	askQty float64,
-) float64 {
-	if bid <= 0 || ask <= 0 || ask <= bid {
-		return 0
-	}
-
-	depth := bidQty + askQty
-
-	if depth <= 0 {
-		return 0
-	}
-
-	stress := (ask - bid) / depth
-
-	if math.IsNaN(stress) || math.IsInf(stress, 0) {
-		return 0
-	}
-
-	return stress
-}
-
-func (window *pearlWindow) velocity(price float64) float64 {
-	velocity := 0.0
-
-	if window.lastPrice > 0 && price > 0 {
-		velocity = math.Log(price / window.lastPrice)
-	}
-
-	if price > 0 {
-		window.lastPrice = price
-	}
-
-	return velocity
 }

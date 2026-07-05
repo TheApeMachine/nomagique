@@ -122,24 +122,6 @@ func readScalar(stage io.ReadWriter, samples ...float64) float64 {
 	return datura.Peek[float64](outbound, "output", "value")
 }
 
-func flopArtifact(inbound *datura.Artifact, stage io.ReadWriter) error {
-	if _, err := stage.Write(inbound.Pack()); err != nil {
-		return err
-	}
-
-	outbound, err := readOutbound(stage)
-
-	if err != nil {
-		return err
-	}
-
-	defer outbound.Release()
-
-	_, err = inbound.Unpack(outbound.Pack())
-
-	return err
-}
-
 func observeWithWork(stage io.ReadWriter, sample float64, work float64) float64 {
 	inbound := datura.Acquire("test-in", datura.Artifact_Type_json)
 	inbound.Poke("wire", "root")
@@ -169,8 +151,4 @@ func observeWithWork(stage io.ReadWriter, sample float64, work float64) float64 
 
 func observeInputs(stage io.ReadWriter, series ...float64) float64 {
 	return readScalar(stage, series...)
-}
-
-func bookflowAlgoConfig() *datura.Artifact {
-	return equation.BookflowConfig()
 }

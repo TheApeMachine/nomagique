@@ -150,16 +150,6 @@ func (bookflow *Bookflow) Measure(input BookflowInput) (BookflowOutput, error) {
 	}, nil
 }
 
-func bookflowHistorySegment(values []float64, offset, count int) ([]float64, int, bool) {
-	if count < 0 || offset+count > len(values) {
-		return nil, offset, false
-	}
-
-	segment := append([]float64(nil), values[offset:offset+count]...)
-
-	return segment, offset + count, true
-}
-
 func bookflowMedianAbsolute(values []float64) float64 {
 	if len(values) == 0 {
 		return 0

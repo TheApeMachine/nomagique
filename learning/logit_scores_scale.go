@@ -95,28 +95,6 @@ func (logitScores *LogitScores) resolveFeatureScale(
 	return scale, nil
 }
 
-func (logitScores *LogitScores) resolveCompositeScale(
-	stageKey string,
-) (float64, error) {
-	leftKey := datura.Peek[string](logitScores.config, stageKey, "leftKey")
-	rightKey := datura.Peek[string](logitScores.config, stageKey, "rightKey")
-
-	if leftKey == "" || rightKey == "" {
-		leftKey = datura.Peek[string](logitScores.config, "joint", "leftKey")
-		rightKey = datura.Peek[string](logitScores.config, "joint", "rightKey")
-	}
-
-	if leftKey == "" || rightKey == "" {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			fmt.Sprintf("logit-scores: composite scale for %q requires leftKey and rightKey", stageKey),
-			nil,
-		))
-	}
-
-	return logitScores.resolveCompositeScaleWithKeys(stageKey, leftKey, rightKey)
-}
-
 func (logitScores *LogitScores) resolveCompositeScaleWithKeys(
 	stageKey string,
 	leftKey string,
@@ -152,12 +130,6 @@ func (logitScores *LogitScores) resolveCompositeScaleWithKeys(
 		fmt.Sprintf("logit-scores: composite scale operands for %q are non-positive", stageKey),
 		nil,
 	)
-}
-
-func (logitScores *LogitScores) hasCenteredOperand(stageKey string) bool {
-	leftKey, rightKey := logitScores.compositeOperandKeys(stageKey)
-
-	return logitScores.hasCenteredOperandKeys(leftKey, rightKey)
 }
 
 func (logitScores *LogitScores) hasCenteredOperandKeys(leftKey, rightKey string) bool {

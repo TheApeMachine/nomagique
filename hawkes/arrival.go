@@ -127,11 +127,6 @@ func (stream ArrivalStream) sellIntensityAt(
 	return decay.IntensityAt(stream.buy, stream.sell, horizon, muSell, alphaSB, alphaSS, beta)
 }
 
-func (stream ArrivalStream) kernelSupport(horizon time.Time, beta float64) (buy, sell float64) {
-	return decay.KernelSupport(stream.buy, horizon, beta),
-		decay.KernelSupport(stream.sell, horizon, beta)
-}
-
 func (stream ArrivalStream) kernelIntegralSupport(horizon time.Time, beta float64) (buy, sell float64) {
 	return decay.KernelIntegralSupport(stream.buy, horizon, beta),
 		decay.KernelIntegralSupport(stream.sell, horizon, beta)

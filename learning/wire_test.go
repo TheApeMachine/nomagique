@@ -18,11 +18,3 @@ func pairWire(artifact *datura.Artifact, predicted float64, actual float64) *dat
 
 	return artifact
 }
-
-func scalarWire(artifact *datura.Artifact, input string, sample float64) *datura.Artifact {
-	artifact.Poke("features", "root")
-	artifact.Poke([]string{input}, "inputs")
-	artifact.Merge("features", []float64{sample})
-
-	return artifact
-}

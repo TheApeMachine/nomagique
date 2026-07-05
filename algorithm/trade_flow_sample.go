@@ -10,7 +10,6 @@ import (
 )
 
 const (
-	flowSampleHeader     = 5
 	flowSampleHistoryCap = 128
 )
 

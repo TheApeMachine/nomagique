@@ -3,118 +3,7 @@ package correlation
 import (
 	"math"
 	"time"
-
-	"github.com/theapemachine/datura"
-	"github.com/theapemachine/errnie"
 )
-
-/*
-HayashiYoshida estimates asynchronous high-frequency correlation with a sliding
-sweep over overlapping return intervals. maxIntervalSeconds may be set on config.
-The constructor artifact holds config; Write buffers inbound wire on its payload.
-*/
-type HayashiYoshida struct {
-	artifact *datura.Artifact
-}
-
-/*
-NewHayashiYoshida creates a Hayashi-Yoshida correlation stage wired from config attributes.
-*/
-func NewHayashiYoshida(artifact *datura.Artifact) *HayashiYoshida {
-	return &HayashiYoshida{
-		artifact: artifact,
-	}
-}
-
-func (hayashi *HayashiYoshida) Read(p []byte) (int, error) {
-	state := datura.Acquire("hayashi-state", datura.APPJSON)
-
-	if _, err := state.Unpack(hayashi.artifact.DecryptPayload()); err != nil {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"correlation-hayashi: state write failed",
-			err,
-		))
-	}
-
-	values := datura.Peek[[]float64](state, "batch")
-
-	if len(values) == 0 {
-		left := datura.Peek[[]float64](state, "left")
-		right := datura.Peek[[]float64](state, "right")
-
-		if len(left) > 0 || len(right) > 0 {
-			values = append(append([]float64(nil), left...), right...)
-		}
-	}
-
-	count := len(values)
-
-	if count >= 4 && count%2 == 0 {
-		half := count / 2
-		left, leftOK := samplesFromScalars(values[:half])
-		right, rightOK := samplesFromScalars(values[half:])
-
-		if leftOK && rightOK {
-			correlation, ok := hayashiYoshidaCorrelation(left, right, hayashi.maxIntervalFromArtifact())
-
-			if ok {
-				state.MergeOutput("value", correlation)
-				state.Poke("output", "root")
-				state.Poke([]string{"value"}, "inputs")
-				return state.PackInto(p)
-			}
-
-			return 0, errnie.Error(errnie.Err(
-				errnie.Validation, "unable to compute Hayashi-Yoshida correlation",
-				HayashiError(HayashiErrorRequirePairedSamples),
-			))
-		}
-
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation, "unable to compute Hayashi-Yoshida correlation",
-			HayashiError(HayashiErrorRequirePairedSamples),
-		))
-	}
-
-	if count > 0 && count < 2 {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation, "unable to compute Hayashi-Yoshida correlation",
-			HayashiError(HayashiErrorRequireAtLeastTwoInputs),
-		))
-	}
-
-	if count%2 != 0 && count > 0 {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation, "unable to compute Hayashi-Yoshida correlation",
-			HayashiError(HayashiErrorRequireEqualLength),
-		))
-	}
-
-	return 0, errnie.Error(errnie.Err(
-		errnie.Validation, "unable to compute Hayashi-Yoshida correlation",
-		HayashiError(HayashiErrorRequireAtLeastTwoInputs),
-	))
-}
-
-func (hayashi *HayashiYoshida) Write(p []byte) (int, error) {
-	hayashi.artifact.WithPayload(p)
-	return len(p), nil
-}
-
-func (hayashi *HayashiYoshida) Close() error {
-	return nil
-}
-
-func (hayashi *HayashiYoshida) maxIntervalFromArtifact() time.Duration {
-	seconds := datura.Peek[float64](hayashi.artifact, "config", "maxIntervalSeconds")
-
-	if seconds <= 0 {
-		return 0
-	}
-
-	return time.Duration(seconds * float64(time.Second))
-}
 
 /*
 Sample is a time-stamped observation for asynchronous correlation.
@@ -155,7 +44,8 @@ func samplesFromScalars(values []float64) ([]Sample, bool) {
 }
 
 func hayashiYoshidaCorrelation(
-	left, right []Sample, maxInterval time.Duration,
+	left, right []Sample,
+	maxInterval time.Duration,
 ) (float64, bool) {
 	if len(left) < 2 || len(right) < 2 {
 		return 0, false
@@ -246,24 +136,20 @@ func varianceSum(samples []Sample, maxInterval time.Duration) float64 {
 	return sum
 }
 
-func validInterval(previous, current Sample, maxInterval time.Duration) bool {
-	if previous.Value <= 0 || current.Value <= 0 || !previous.At.Before(current.At) {
+func validInterval(left, right Sample, maxInterval time.Duration) bool {
+	if !left.At.Before(right.At) || left.Value <= 0 || right.Value <= 0 {
 		return false
 	}
 
-	if maxInterval <= 0 {
-		return true
-	}
-
-	return current.At.Sub(previous.At) <= maxInterval
+	return maxInterval <= 0 || right.At.Sub(left.At) <= maxInterval
 }
 
 type HayashiErrorType string
 
 const (
-	HayashiErrorRequireAtLeastTwoInputs HayashiErrorType = "require at least two inputs"
-	HayashiErrorRequireEqualLength      HayashiErrorType = "require equal length"
-	HayashiErrorRequirePairedSamples    HayashiErrorType = "require paired time-value samples"
+	HayashiErrorRequireAtLeastTwoInputs HayashiErrorType = "require at least two observations"
+	HayashiErrorRequireEqualLength      HayashiErrorType = "require equal length time/value pairs"
+	HayashiErrorRequirePairedSamples    HayashiErrorType = "require paired timestamp/value samples"
 )
 
 type HayashiError string

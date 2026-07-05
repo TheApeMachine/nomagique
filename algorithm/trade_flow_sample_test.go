@@ -82,6 +82,33 @@ func TestTradeFlowSample_Measure(testingTB *testing.T) {
 			So(input.TradeCount, ShouldBeGreaterThan, 0)
 		})
 	})
+
+	Convey("Given a four-trade directional move", testingTB, func() {
+		sample := NewTradeFlowSample()
+		var input equation.FlowInput
+		var ok bool
+		var err error
+
+		for index := range 4 {
+			input, ok, err = sample.Measure(TradeFlowInput{
+				Symbol:   "BTC/USD",
+				Side:     "buy",
+				Price:    100 + float64(index),
+				Quantity: 1,
+			})
+		}
+
+		flow := equation.NewFlow()
+		output, flowErr := flow.Measure(input)
+
+		Convey("It should retain enough history for price response", func() {
+			So(err, ShouldBeNil)
+			So(flowErr, ShouldBeNil)
+			So(ok, ShouldBeTrue)
+			So(input.TradeCount, ShouldBeGreaterThan, 2)
+			So(output.Drive, ShouldBeGreaterThan, 0)
+		})
+	})
 }
 
 func BenchmarkTradeFlowSampleMeasure(benchmark *testing.B) {

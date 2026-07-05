@@ -105,7 +105,10 @@ func BenchmarkMomentMeasure(testingTB *testing.B) {
 		MomentR: 1,
 		MomentS: 1,
 	})
-	So(err, ShouldBeNil)
+	if err != nil {
+		testingTB.Fatalf("new moment: %v", err)
+	}
+
 	input := MomentInput{
 		X: []float64{2, 4, 6, 8},
 		Y: []float64{1, 2, 3, 4},

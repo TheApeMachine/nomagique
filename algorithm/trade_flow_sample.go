@@ -121,14 +121,25 @@ func (tradeFlowSample *TradeFlowSample) features(
 		notionals[index] = tick.notional
 	}
 
-	shortWindow, longWindow, err := statistic.ResolveWindows(notionals, 0, 0)
+	windows, err := statistic.ResolveWindowSet(notionals, statistic.WindowsConfig{})
 
-	if err != nil || tradeCount < longWindow {
+	if err != nil || tradeCount < windows.LongWindow {
 		return equation.FlowInput{}, false
 	}
 
-	active := window.ticks[len(window.ticks)-shortWindow:]
-	baseline := window.ticks[len(window.ticks)-longWindow:]
+	activeWindow := windows.ShortWindow
+	responseWindow := windows.ReturnLag + 1
+
+	if responseWindow > activeWindow {
+		activeWindow = responseWindow
+	}
+
+	if activeWindow > windows.LongWindow {
+		activeWindow = windows.LongWindow
+	}
+
+	active := window.ticks[len(window.ticks)-activeWindow:]
+	baseline := window.ticks[len(window.ticks)-windows.LongWindow:]
 
 	buyNotional := 0.0
 	sellNotional := 0.0

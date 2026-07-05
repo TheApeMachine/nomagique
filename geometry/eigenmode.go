@@ -1,11 +1,6 @@
 package geometry
 
-import (
-	"math"
-
-	"github.com/theapemachine/datura"
-	"github.com/theapemachine/errnie"
-)
+import "math"
 
 /*
 Eigenmode represents a cluster of field participants whose affinity
@@ -130,10 +125,8 @@ The coupling stream is a row-major N×N affinity matrix aligned to participant o
 */
 /*
 ModePartition is an eigenmode partition stage over configured streams.
-The constructor artifact holds config; Write buffers inbound wire on its payload.
 */
 type ModePartition struct {
-	artifact  *datura.Artifact
 	threshold float64
 	origins   []float64
 	energies  []float64
@@ -143,15 +136,13 @@ type ModePartition struct {
 }
 
 /*
-NewModePartition creates an eigenmode partition stage over configured streams.
+NewModePartition creates an eigenmode partition over configured streams.
 */
 func NewModePartition(
-	artifact *datura.Artifact,
 	threshold float64,
 	origins, energies, coupling []float64,
 ) *ModePartition {
 	return &ModePartition{
-		artifact:  artifact,
 		threshold: threshold,
 		origins:   origins,
 		energies:  energies,
@@ -159,28 +150,14 @@ func NewModePartition(
 	}
 }
 
-func (partition *ModePartition) Read(payload []byte) (int, error) {
-	state := datura.Acquire("mode-partition-state", datura.APPJSON)
-
-	if _, err := state.Unpack(partition.artifact.DecryptPayload()); err != nil {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"mode-partition: state write failed",
-			err,
-		))
-	}
-
+func (partition *ModePartition) Measure() (float64, bool) {
 	participants, couplingFn, ok := partition.participantsAndCoupling()
 
 	if !ok {
 		partition.snap = nil
 		partition.output = 0
 
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"mode-partition: require aligned origin, energy, and coupling streams",
-			nil,
-		))
+		return 0, false
 	}
 
 	modes, dominant := partition.partition(participants, couplingFn)
@@ -188,38 +165,13 @@ func (partition *ModePartition) Read(payload []byte) (int, error) {
 
 	if dominant < 0 {
 		partition.output = 0
-		partition.artifact.Poke(0, "output", "value")
 
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"mode-partition: no eigenmodes detected",
-			nil,
-		))
+		return 0, false
 	}
 
 	partition.output = modes[dominant].Energy()
-	partition.artifact.Poke(partition.output, "output", "value")
-	state.MergeOutput("value", partition.output)
-	state.Poke("output", "root")
-	state.Poke([]string{"value"}, "inputs")
-	return state.PackInto(payload)
-}
 
-func (partition *ModePartition) Write(payload []byte) (int, error) {
-	if payloadHasReset(payload) {
-		partition.snap = nil
-		partition.output = 0
-		partition.artifact.WithAttributes(datura.Map[any]{})
-
-		return len(payload), nil
-	}
-
-	partition.artifact.WithPayload(payload)
-	return len(payload), nil
-}
-
-func (partition *ModePartition) Close() error {
-	return nil
+	return partition.output, true
 }
 
 /*

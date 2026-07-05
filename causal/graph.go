@@ -1,85 +1,6 @@
 package causal
 
-import (
-	"fmt"
-	"strconv"
-
-	"github.com/theapemachine/datura"
-	"github.com/theapemachine/errnie"
-)
-
-/*
-Graph evaluates Pearl's backdoor criterion from config.graphParent.* and config.* nodes.
-The constructor artifact holds config; Write buffers inbound wire on its payload.
-*/
-type Graph struct {
-	artifact *datura.Artifact
-}
-
-/*
-NewGraph returns a DAG admissibility stage wired from config attributes on the artifact.
-*/
-func NewGraph(artifact *datura.Artifact) *Graph {
-	return &Graph{
-		artifact: artifact,
-	}
-}
-
-func (graphStage *Graph) Read(p []byte) (int, error) {
-	state := datura.Acquire("graph-state", datura.APPJSON)
-
-	if _, err := state.Unpack(graphStage.artifact.DecryptPayload()); err != nil {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"causal: state write failed",
-			err,
-		))
-	}
-
-	dag, err := newDAGFromArtifact(graphStage.artifact)
-
-	if err != nil {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"causal graph: dag construction failed",
-			err,
-		))
-	}
-
-	treatment := int(datura.Peek[float64](graphStage.artifact, "treatment"))
-	target := int(datura.Peek[float64](graphStage.artifact, "target"))
-	controls := intSlice(datura.Peek[[]float64](graphStage.artifact, "controls"))
-	admissible, err := dag.backdoorAdmissible(treatment, target, controls)
-
-	if err != nil {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"causal graph: backdoor admissibility failed",
-			err,
-		))
-	}
-
-	value := 0.0
-
-	if admissible {
-		value = 1
-	}
-
-	state.MergeOutput("value", value)
-	state.MergeOutput("admissible", value)
-	state.Poke("output", "root")
-	state.Poke([]string{"value", "admissible"}, "inputs")
-	return state.PackInto(p)
-}
-
-func (graphStage *Graph) Write(p []byte) (int, error) {
-	graphStage.artifact.WithPayload(p)
-	return len(p), nil
-}
-
-func (graphStage *Graph) Close() error {
-	return nil
-}
+import "fmt"
 
 type causalDAG struct {
 	nodeCount int
@@ -92,21 +13,19 @@ type graphVisit struct {
 	fromParent bool
 }
 
-func newDAGFromArtifact(artifact *datura.Artifact) (causalDAG, error) {
-	nodeCount := int(datura.Peek[float64](artifact, "graphNodeCount"))
-
-	if nodeCount <= 0 {
+func newDAG(parents [][]int) (causalDAG, error) {
+	if len(parents) == 0 {
 		return causalDAG{}, fmt.Errorf("causal: graph requires at least one node")
 	}
 
-	parents := make([][]int, nodeCount)
+	nodeCount := len(parents)
+	parentCopy := make([][]int, nodeCount)
 	children := make([][]int, nodeCount)
 
 	for node := range nodeCount {
-		parentList := intSlice(datura.Peek[[]float64](artifact, "graphParent", strconv.Itoa(node)))
-		parents[node] = append([]int(nil), parentList...)
+		parentCopy[node] = append([]int(nil), parents[node]...)
 
-		for _, parent := range parents[node] {
+		for _, parent := range parentCopy[node] {
 			if parent < 0 || parent >= nodeCount {
 				return causalDAG{}, fmt.Errorf(
 					"causal: parent %d of node %d outside graph width %d",
@@ -124,7 +43,7 @@ func newDAGFromArtifact(artifact *datura.Artifact) (causalDAG, error) {
 
 	dag := causalDAG{
 		nodeCount: nodeCount,
-		parents:   parents,
+		parents:   parentCopy,
 		children:  children,
 	}
 

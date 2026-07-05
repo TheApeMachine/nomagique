@@ -1,165 +1,72 @@
 package adaptive
 
-import (
-	"math"
-
-	"github.com/theapemachine/datura"
-	"github.com/theapemachine/errnie"
-)
-
 /*
 Compression scores how far below the running baseline the current sample sits.
 */
 type Compression struct {
-	artifact *datura.Artifact
+	baselines map[string]float64
 }
 
 /*
-NewCompression returns a compression stage wired from config attributes on the artifact.
+CompressionOutput reports compression against the retained series baseline.
 */
-func NewCompression(artifact *datura.Artifact) *Compression {
+type CompressionOutput struct {
+	Value float64
+	Ready bool
+	Count int
+}
+
+/*
+NewCompression returns a typed compression tracker.
+*/
+func NewCompression() *Compression {
 	return &Compression{
-		artifact: artifact,
+		baselines: map[string]float64{},
 	}
 }
 
-func (compression *Compression) Read(payload []byte) (int, error) {
-	state := datura.Acquire("compression-state", datura.APPJSON)
+/*
+Measure adds one sample to the default series.
+*/
+func (compression *Compression) Measure(sample float64) (CompressionOutput, error) {
+	return compression.MeasureSeries("default", sample)
+}
 
-	if _, err := state.Unpack(compression.artifact.DecryptPayload()); err != nil {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"compression: state write failed",
-			err,
-		))
+/*
+MeasureSeries adds one sample and compares it against the series baseline.
+*/
+func (compression *Compression) MeasureSeries(series string, sample float64) (CompressionOutput, error) {
+	if err := finiteAdaptive("compression", sample); err != nil {
+		return CompressionOutput{}, err
 	}
 
-	inputKey := datura.Peek[string](compression.artifact, "compression", "input")
-	outputKey := datura.Peek[string](compression.artifact, "compression", "outputKey")
-	seriesKey := datura.Peek[string](compression.artifact, "compression", "seriesKey")
-
-	if inputKey == "" || outputKey == "" {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"compression: input and outputKey required",
-			nil,
-		))
+	if series == "" {
+		series = "default"
 	}
 
-	if seriesKey == "" {
-		seriesKey = outputKey
-	}
-
-	rootKey := datura.Peek[string](state, "root")
-
-	if rootKey == "" {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"compression: root required",
-			nil,
-		))
-	}
-
-	inputs := datura.Peek[[]string](state, "inputs")
-
-	if len(inputs) == 0 {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"compression: inputs required",
-			nil,
-		))
-	}
-
-	var sample float64
-	found := false
-
-	for index, input := range inputs {
-		if input != inputKey {
-			continue
-		}
-
-		if rootKey == "features" {
-			featureSlice := datura.Peek[[]float64](state, rootKey)
-
-			if index >= len(featureSlice) {
-				return 0, errnie.Error(errnie.Err(
-					errnie.Validation,
-					"compression: feature index out of range",
-					nil,
-				))
-			}
-
-			sample = featureSlice[index]
-		}
-
-		if rootKey != "features" {
-			sample = datura.Peek[float64](state, rootKey, input)
-		}
-
-		found = true
-	}
-
-	if !found {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"compression: input not in inputs",
-			nil,
-		))
-	}
-
-	if math.IsNaN(sample) || math.IsInf(sample, 0) {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"compression: sample is non-finite",
-			nil,
-		))
-	}
-
-	baseline := datura.Peek[float64](compression.artifact, "output", "baseline", seriesKey)
-	value := 0.0
+	baseline := compression.baselines[series]
 
 	if baseline <= 0 {
-		compression.artifact.Poke(sample, "output", "baseline", seriesKey)
-		state.MergeOutput(outputKey, value)
-		state.Poke("output", "root")
-		state.Poke(appendInputs(inputs, outputKey), "inputs")
+		compression.baselines[series] = sample
 
-		return state.PackInto(payload)
+		return CompressionOutput{
+			Ready: true,
+			Count: 1,
+		}, nil
 	}
 
 	if sample > baseline {
-		compression.artifact.Poke(sample, "output", "baseline", seriesKey)
-		state.MergeOutput(outputKey, value)
-		state.Poke("output", "root")
-		state.Poke(appendInputs(inputs, outputKey), "inputs")
+		compression.baselines[series] = sample
 
-		return state.PackInto(payload)
+		return CompressionOutput{
+			Ready: true,
+			Count: 1,
+		}, nil
 	}
 
-	value = (baseline - sample) / baseline
-
-	state.MergeOutput(outputKey, value)
-	state.Poke("output", "root")
-	state.Poke(appendInputs(inputs, outputKey), "inputs")
-
-	return state.PackInto(payload)
-}
-
-func appendInputs(inputs []string, key string) []string {
-	for _, input := range inputs {
-		if input == key {
-			return inputs
-		}
-	}
-
-	return append(append([]string(nil), inputs...), key)
-}
-
-func (compression *Compression) Write(payload []byte) (int, error) {
-	compression.artifact.WithPlaintextPayload(payload)
-	return len(payload), nil
-}
-
-func (compression *Compression) Close() error {
-	return nil
+	return CompressionOutput{
+		Value: (baseline - sample) / baseline,
+		Ready: true,
+		Count: 1,
+	}, nil
 }

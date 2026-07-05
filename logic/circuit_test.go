@@ -4,132 +4,34 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/datura"
-	"github.com/theapemachine/nomagique"
 	"github.com/theapemachine/nomagique/logic"
 )
 
-func flipFlopCircuit(circuit *logic.Circuit, sample float64) float64 {
-	artifact := scalarWire(datura.Acquire("test", datura.APPJSON), sample)
-	err := nomagique.RoundTripArtifact(artifact, circuit)
-
-	So(err, ShouldBeNil)
-
-	return datura.Peek[float64](artifact, "output", "value")
-}
-
-func TestNewCircuit(testingTB *testing.T) {
-	Convey("Given NewCircuit", testingTB, func() {
-		circuit := logic.NewCircuit(circuitConfig(), logic.Rules{
+func TestCircuit(t *testing.T) {
+	Convey("Given a typed circuit", t, func() {
+		circuit := logic.NewCircuit(logic.Rules{
 			{
-				Condition: logic.True{Operand: true},
-				Then:      constantStage(1),
+				Condition: logic.GreaterThan{Right: logic.NewConstant(10)},
+				Then:      logic.NewConstant(99),
+			},
+			{
+				Condition: logic.True{},
+				Then:      logic.NewConstant(7),
 			},
 		})
 
-		Convey("It should return a wired circuit", func() {
-			So(circuit, ShouldNotBeNil)
+		output, err := circuit.Measure(logic.NewObservation(3))
+
+		Convey("It should route through the first matching rule", func() {
+			So(err, ShouldBeNil)
+			So(output.Values, ShouldResemble, []float64{7})
+		})
+
+		output, err = circuit.Measure(logic.NewObservation(13))
+
+		Convey("It should stop after a higher-priority match", func() {
+			So(err, ShouldBeNil)
+			So(output.Values, ShouldResemble, []float64{99})
 		})
 	})
-}
-
-func TestCircuitRead(testingTB *testing.T) {
-	Convey("Given a carried signal above its threshold", testingTB, func() {
-		circuit := logic.NewCircuit(circuitConfig(), logic.Rules{
-			{
-				Condition: logic.GreaterThan{
-					Right: constantStage(2),
-				},
-				Then: constantStage(10),
-			},
-			{
-				Condition: logic.True{Operand: true},
-				Then:      constantStage(20),
-			},
-		})
-
-		above := flipFlopCircuit(circuit, 3)
-
-		resetArtifact := datura.Acquire("test", datura.APPJSON).Poke(1, "reset")
-		_ = nomagique.RoundTripArtifact(resetArtifact, circuit)
-
-		below := flipFlopCircuit(circuit, 1)
-
-		Convey("It should route through the matching branch", func() {
-			So(above, ShouldEqual, 10)
-			So(below, ShouldEqual, 20)
-		})
-	})
-}
-
-func TestCircuitReadAnd(testingTB *testing.T) {
-	Convey("Given a compound And condition", testingTB, func() {
-		circuit := logic.NewCircuit(circuitConfig(), logic.Rules{
-			{
-				Condition: logic.And{
-					logic.GreaterThan{
-						Right: constantStage(2),
-					},
-					logic.True{
-						Stage: constantStage(1),
-					},
-				},
-				Then: constantStage(10),
-			},
-			{
-				Condition: logic.True{Operand: true},
-				Then:      constantStage(20),
-			},
-		})
-
-		Convey("It should require every nested condition", func() {
-			So(flipFlopCircuit(circuit, 3), ShouldEqual, 10)
-		})
-	})
-}
-
-func TestCircuit_Reset(testingTB *testing.T) {
-	Convey("Given an observed circuit", testingTB, func() {
-		circuit := logic.NewCircuit(circuitConfig(), logic.Rules{
-			{
-				Condition: logic.True{Operand: true},
-				Then:      constantStage(7),
-			},
-		})
-		_ = flipFlopCircuit(circuit, 0)
-
-		Convey("It should reset through the artifact", func() {
-			resetArtifact := datura.Acquire("test", datura.APPJSON).Poke(1, "reset")
-			packed := resetArtifact.Pack()
-			resetArtifact.Release()
-
-			So(len(packed), ShouldBeGreaterThan, 0)
-
-			_, writeErr := circuit.Write(packed)
-			So(writeErr, ShouldBeNil)
-			So(flipFlopCircuit(circuit, 0), ShouldEqual, 7)
-		})
-	})
-}
-
-func BenchmarkCircuitRead(benchmark *testing.B) {
-	circuit := logic.NewCircuit(circuitConfig(), logic.Rules{
-		{
-			Condition: logic.GreaterThan{
-				Right: constantStage(2),
-			},
-			Then: constantStage(3),
-		},
-		{
-			Condition: logic.True{Operand: true},
-			Then:      constantStage(0),
-		},
-	})
-
-	benchmark.ReportAllocs()
-
-	for benchmark.Loop() {
-		artifact := scalarWire(datura.Acquire("test", datura.APPJSON), 3.0)
-		_ = nomagique.RoundTripArtifact(artifact, circuit)
-	}
 }

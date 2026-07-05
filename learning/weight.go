@@ -3,90 +3,94 @@ package learning
 import (
 	"math"
 
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 )
 
 /*
+LearningPair carries a predicted-vs-actual outcome.
+*/
+type LearningPair struct {
+	Predicted float64
+	Actual    float64
+}
+
+/*
+TrustWeightOutput reports the current trust state.
+*/
+type TrustWeightOutput struct {
+	Value     float64
+	Predicted float64
+	Actual    float64
+	Trust     float64
+	Rate      float64
+	Count     int
+}
+
+/*
 TrustWeight is a self-adapting rate from prediction error.
-The constructor artifact holds config; Write buffers inbound wire on its payload.
 */
 type TrustWeight struct {
-	artifact *datura.Artifact
+	trust   float64
+	prev    float64
+	minimum float64
+	maximum float64
+	rate    float64
+	count   int
 }
 
 /*
-NewTrustWeight returns a trust weight stage wired from config attributes on the artifact.
+NewTrustWeight returns a typed trust-weight learner.
 */
-func NewTrustWeight(artifact *datura.Artifact) *TrustWeight {
-	return Weight(artifact)
+func NewTrustWeight() *TrustWeight {
+	return &TrustWeight{}
 }
 
 /*
-Weight returns a trust weight stage wired from config attributes on the artifact.
+Weight returns a typed trust-weight learner.
 */
-func Weight(artifact *datura.Artifact) *TrustWeight {
-	return &TrustWeight{
-		artifact: artifact,
-	}
+func Weight() *TrustWeight {
+	return NewTrustWeight()
 }
 
-func (trustWeight *TrustWeight) Read(payload []byte) (int, error) {
-	state := datura.Acquire("trust-weight-state", datura.APPJSON)
-
-	if _, err := state.Unpack(trustWeight.artifact.DecryptPayload()); err != nil {
-		state.Release()
-
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"trust-weight: state write failed",
-			err,
-		))
-	}
-
-	defer state.Release()
-
-	predicted, actual, err := trustWeight.resolvePair(state)
+/*
+Measure updates trust from one prediction outcome.
+*/
+func (trustWeight *TrustWeight) Measure(pair LearningPair) (TrustWeightOutput, error) {
+	predicted, actual, err := validatePair(pair, "trust-weight")
 
 	if err != nil {
-		return 0, err
+		return TrustWeightOutput{}, err
 	}
 
 	residual := actual - predicted
-	trust := datura.Peek[float64](trustWeight.artifact, "output", "trust")
-	prev := datura.Peek[float64](trustWeight.artifact, "output", "prev")
-	minimum := datura.Peek[float64](trustWeight.artifact, "output", "min")
-	maximum := datura.Peek[float64](trustWeight.artifact, "output", "max")
-	rate := datura.Peek[float64](trustWeight.artifact, "output", "rate")
-	count := int(datura.Peek[float64](trustWeight.artifact, "output", "count"))
-	derived := trust
+	derived := trustWeight.trust
 
-	if count == 0 {
-		prev = predicted
-		minimum = residual
-		maximum = residual
-		trust = 1
-		count = 1
-		derived = trust
+	if trustWeight.count == 0 {
+		trustWeight.prev = predicted
+		trustWeight.minimum = residual
+		trustWeight.maximum = residual
+		trustWeight.trust = 1
+		trustWeight.count = 1
+		derived = trustWeight.trust
 	}
 
-	if count > 1 {
-		minimum = math.Min(minimum, residual)
-		maximum = math.Max(maximum, residual)
-		count++
+	if trustWeight.count > 1 {
+		trustWeight.minimum = math.Min(trustWeight.minimum, residual)
+		trustWeight.maximum = math.Max(trustWeight.maximum, residual)
+		trustWeight.count++
 	}
 
-	if count == 1 && residual != minimum {
-		minimum = math.Min(minimum, residual)
-		maximum = math.Max(maximum, residual)
-		count = 2
+	if trustWeight.count == 1 && residual != trustWeight.minimum {
+		trustWeight.minimum = math.Min(trustWeight.minimum, residual)
+		trustWeight.maximum = math.Max(trustWeight.maximum, residual)
+		trustWeight.count = 2
 	}
 
-	span := maximum - minimum
+	span := trustWeight.maximum - trustWeight.minimum
 
-	if count > 1 {
+	if trustWeight.count > 1 {
 		if span == 0 {
-			return 0, errnie.Error(errnie.Err(
+			return TrustWeightOutput{}, errnie.Error(errnie.Err(
 				errnie.Validation,
 				"trust-weight: residual span is zero",
 				nil,
@@ -94,56 +98,26 @@ func (trustWeight *TrustWeight) Read(payload []byte) (int, error) {
 		}
 
 		surprise := absExact(residual) / span
-		rate = surprise
-		targetTrust := 1 - surprise
-
-		if targetTrust < 0 {
-			targetTrust = 0
-		}
-
-		trust += surprise * (targetTrust - trust)
-		prev = predicted
-		derived = trust
+		trustWeight.rate = surprise
+		targetTrust := math.Max(0, 1-surprise)
+		trustWeight.trust += surprise * (targetTrust - trustWeight.trust)
+		trustWeight.prev = predicted
+		derived = trustWeight.trust
 	}
 
-	trustWeight.artifact.Poke(trust, "output", "trust")
-	trustWeight.artifact.Poke(prev, "output", "prev")
-	trustWeight.artifact.Poke(minimum, "output", "min")
-	trustWeight.artifact.Poke(maximum, "output", "max")
-	trustWeight.artifact.Poke(rate, "output", "rate")
-	trustWeight.artifact.Poke(float64(count), "output", "count")
-	trustWeight.artifact.Poke(derived, "output", "value")
-	state.MergeOutput("value", derived)
-	state.MergeOutput("predicted", predicted)
-	state.MergeOutput("actual", actual)
-	state.Poke("output", "root")
-	state.Poke([]string{"value", "predicted", "actual"}, "inputs")
-	return state.PackInto(payload)
+	return TrustWeightOutput{
+		Value:     derived,
+		Predicted: predicted,
+		Actual:    actual,
+		Trust:     trustWeight.trust,
+		Rate:      trustWeight.rate,
+		Count:     trustWeight.count,
+	}, nil
 }
 
-func (trustWeight *TrustWeight) resolvePair(state *datura.Artifact) (float64, float64, error) {
-	parsedPredicted, parsedActual, err := wirePair(trustWeight.artifact, state, "trust-weight")
-
-	if err != nil {
-		return 0, 0, err
-	}
-
-	if parsedActual == 0 {
-		return 0, 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"trust-weight: actual must be non-zero",
-			nil,
-		))
-	}
-
-	return parsedPredicted, parsedActual, nil
-}
-
-func (trustWeight *TrustWeight) Write(payload []byte) (int, error) {
-	trustWeight.artifact.WithPayload(payload)
-	return len(payload), nil
-}
-
-func (trustWeight *TrustWeight) Close() error {
-	return nil
+/*
+Reset clears learned trust state.
+*/
+func (trustWeight *TrustWeight) Reset() {
+	*trustWeight = TrustWeight{}
 }

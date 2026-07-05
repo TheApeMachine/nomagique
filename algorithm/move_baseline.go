@@ -4,145 +4,153 @@ import (
 	"math"
 	"sort"
 
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"gonum.org/v1/gonum/stat"
 )
 
 /*
-MoveBaseline tracks adaptive path-move thresholds for anchor gating.
+MoveBaselineConfig configures adaptive path-move thresholds.
 */
-type MoveBaseline struct {
-	artifact *datura.Artifact
+type MoveBaselineConfig struct {
+	MinObs  int
+	PathCap int
 }
 
 /*
-NewMoveBaseline returns an anchor move gate wired from config on the artifact.
+MoveBaselineOutput reports anchor move readiness and stall margin.
 */
-func NewMoveBaseline(artifact *datura.Artifact) *MoveBaseline {
+type MoveBaselineOutput struct {
+	Value       float64
+	Ready       float64
+	Moved       float64
+	StallMargin float64
+	Mean        float64
+	Variance    float64
+	Count       int
+	PathMoves   []float64
+}
+
+/*
+MoveBaseline tracks adaptive path-move thresholds for anchor gating.
+*/
+type MoveBaseline struct {
+	config    MoveBaselineConfig
+	pathMoves []float64
+	count     int
+	mean      float64
+	variance  float64
+}
+
+/*
+NewMoveBaseline returns an anchor move gate.
+*/
+func NewMoveBaseline(config MoveBaselineConfig) *MoveBaseline {
 	return &MoveBaseline{
-		artifact: artifact,
+		config: config,
 	}
 }
 
-func (baseline *MoveBaseline) Read(payload []byte) (int, error) {
-	state := datura.Acquire("move-baseline-state", datura.APPJSON)
-
-	if _, err := state.Unpack(baseline.artifact.DecryptPayload()); err != nil {
-		return 0, errnie.Error(errnie.Err(
+/*
+Measure updates path-move history and reports whether the anchor is moving.
+*/
+func (baseline *MoveBaseline) Measure(recentMove float64) (MoveBaselineOutput, error) {
+	if math.IsNaN(recentMove) || math.IsInf(recentMove, 0) {
+		return MoveBaselineOutput{}, errnie.Error(errnie.Err(
 			errnie.Validation,
-			"move-baseline: state write failed",
-			err,
-		))
-	}
-
-	rootKey := datura.Peek[string](baseline.artifact, "root")
-
-	if rootKey == "" {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"move-baseline: root required",
+			"move-baseline: sample must be finite",
 			nil,
 		))
 	}
 
-	sampleKey := datura.Peek[string](baseline.artifact, "sampleKey")
-
-	if sampleKey == "" {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"move-baseline: sampleKey required",
-			nil,
-		))
-	}
-
-	recentMove := datura.Peek[float64](state, rootKey, sampleKey)
-
-	minObs := int(datura.Peek[float64](baseline.artifact, "minObs"))
-	pathCap := int(datura.Peek[float64](baseline.artifact, "pathCap"))
-
-	if minObs < 1 || pathCap < 1 {
-		return 0, errnie.Error(errnie.Err(
+	if baseline.config.MinObs < 1 || baseline.config.PathCap < 1 {
+		return MoveBaselineOutput{}, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"move-baseline: minObs and pathCap required",
 			nil,
 		))
 	}
 
-	pathMoves := datura.Peek[[]float64](baseline.artifact, "output", "pathMoves")
-	count := int(datura.Peek[float64](baseline.artifact, "output", "count"))
-	mean := datura.Peek[float64](baseline.artifact, "output", "mean")
-	variance := datura.Peek[float64](baseline.artifact, "output", "variance")
+	baseline.pathMoves = appendRingFloat(
+		baseline.pathMoves,
+		recentMove,
+		baseline.config.PathCap,
+	)
 
-	pathMoves = appendRingFloat(pathMoves, recentMove, pathCap)
-	effectiveAlpha := 2.0 / (float64(count + 1))
+	effectiveAlpha := 2.0 / (float64(baseline.count + 1))
 
 	if effectiveAlpha > 1 {
 		effectiveAlpha = 1
 	}
 
-	minMove := pathMoveFloor(pathMoves, minObs)
 	moved := 0.0
 	stallMargin := 0.0
 	ready := 0.0
+	minMove := pathMoveFloor(baseline.pathMoves, baseline.config.MinObs)
 
-	if count < minObs {
-		mean, variance, count = updateMoveMoments(mean, variance, count, recentMove, effectiveAlpha)
-	} else {
-		historicalVar := variance
+	if baseline.count < baseline.config.MinObs {
+		baseline.mean, baseline.variance, baseline.count = updateMoveMoments(
+			baseline.mean,
+			baseline.variance,
+			baseline.count,
+			recentMove,
+			effectiveAlpha,
+		)
 
-		if historicalVar < 0 {
-			historicalVar = 0
-		}
-
-		floorVar := minMove * minMove
-		threshold := mean + math.Sqrt(historicalVar+floorVar)
-
-		if threshold <= 0 && recentMove <= 0 {
-			ready = 1
-			stallMargin = 1
-		}
-
-		if threshold > 0 || recentMove > 0 {
-			ready = 1
-
-			if recentMove > threshold {
-				moved = 1
-			}
-
-			if moved == 0 && threshold > 0 {
-				stallMargin = (threshold - recentMove) / threshold
-			}
-		}
-
-		mean, variance, count = updateMoveMoments(mean, variance, count, recentMove, effectiveAlpha)
+		return baseline.output(moved, stallMargin, ready), nil
 	}
 
-	baseline.artifact.Poke(pathMoves, "output", "pathMoves")
-	baseline.artifact.Poke(float64(count), "output", "count")
-	baseline.artifact.Poke(mean, "output", "mean")
-	baseline.artifact.Poke(variance, "output", "variance")
-	baseline.artifact.Poke(moved, "output", "moved")
-	baseline.artifact.Poke(stallMargin, "output", "stallMargin")
-	baseline.artifact.Poke(ready, "output", "ready")
-	baseline.artifact.Poke(ready, "output", "value")
-	state.MergeOutput("moved", moved)
-	state.MergeOutput("stallMargin", stallMargin)
-	state.MergeOutput("ready", ready)
-	state.MergeOutput("value", ready)
-	state.Poke("output", "root")
-	state.Poke([]string{"moved", "stallMargin", "ready", "value"}, "inputs")
+	historicalVar := baseline.variance
 
-	return state.PackInto(payload)
+	if historicalVar < 0 {
+		historicalVar = 0
+	}
+
+	floorVar := minMove * minMove
+	threshold := baseline.mean + math.Sqrt(historicalVar+floorVar)
+
+	if threshold <= 0 && recentMove <= 0 {
+		ready = 1
+		stallMargin = 1
+	}
+
+	if threshold > 0 || recentMove > 0 {
+		ready = 1
+
+		if recentMove > threshold {
+			moved = 1
+		}
+
+		if moved == 0 && threshold > 0 {
+			stallMargin = (threshold - recentMove) / threshold
+		}
+	}
+
+	baseline.mean, baseline.variance, baseline.count = updateMoveMoments(
+		baseline.mean,
+		baseline.variance,
+		baseline.count,
+		recentMove,
+		effectiveAlpha,
+	)
+
+	return baseline.output(moved, stallMargin, ready), nil
 }
 
-func (baseline *MoveBaseline) Write(payload []byte) (int, error) {
-	baseline.artifact.WithPayload(payload)
-	return len(payload), nil
-}
-
-func (baseline *MoveBaseline) Close() error {
-	return nil
+func (baseline *MoveBaseline) output(
+	moved float64,
+	stallMargin float64,
+	ready float64,
+) MoveBaselineOutput {
+	return MoveBaselineOutput{
+		Value:       ready,
+		Ready:       ready,
+		Moved:       moved,
+		StallMargin: stallMargin,
+		Mean:        baseline.mean,
+		Variance:    baseline.variance,
+		Count:       baseline.count,
+		PathMoves:   append([]float64(nil), baseline.pathMoves...),
+	}
 }
 
 func updateMoveMoments(

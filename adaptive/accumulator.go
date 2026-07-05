@@ -1,105 +1,43 @@
 package adaptive
 
-import (
-	"math"
-
-	"github.com/theapemachine/datura"
-	"github.com/theapemachine/errnie"
-)
-
 /*
 Accumulator integrates signed signal strength into a level with no bounds.
-The constructor artifact holds config; Write buffers inbound wire on artifact.
 */
 type Accumulator struct {
-	artifact *datura.Artifact
-	total    float64
+	total float64
+	count int
 }
 
 /*
-NewAccumulator returns an accumulator stage wired from config attributes on the artifact.
+AccumulatorOutput reports the accumulated level.
 */
-func NewAccumulator(artifact *datura.Artifact) *Accumulator {
-	return &Accumulator{
-		artifact: artifact,
-	}
+type AccumulatorOutput struct {
+	Value float64
+	Ready bool
+	Count int
 }
 
-func (accumulator *Accumulator) Read(payload []byte) (int, error) {
-	state := datura.Acquire("accumulator-state", datura.APPJSON)
-
-	if _, err := state.Unpack(accumulator.artifact.DecryptPayload()); err != nil {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"accumulator: state write failed",
-			err,
-		))
-	}
-
-	rootKey := datura.Peek[string](state, "root")
-
-	if rootKey == "" {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"accumulator: root required",
-			nil,
-		))
-	}
-
-	inputs := datura.Peek[[]string](state, "inputs")
-
-	if len(inputs) == 0 {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"accumulator: inputs required",
-			nil,
-		))
-	}
-
-	for index, input := range inputs {
-		var sample float64
-
-		if rootKey == "features" {
-			features := datura.Peek[[]float64](state, rootKey)
-
-			if index >= len(features) {
-				return 0, errnie.Error(errnie.Err(
-					errnie.Validation,
-					"accumulator: feature index out of range",
-					nil,
-				))
-			}
-
-			sample = features[index]
-		}
-
-		if rootKey != "features" {
-			sample = datura.Peek[float64](state, rootKey, input)
-		}
-
-		if math.IsNaN(sample) || math.IsInf(sample, 0) {
-			return 0, errnie.Error(errnie.Err(
-				errnie.Validation,
-				"accumulator: sample is non-finite",
-				nil,
-			))
-		}
-
-		accumulator.total += sample
-	}
-
-	state.Poke("output", "root")
-	state.Poke([]string{"value"}, "inputs")
-	state.MergeOutput("value", accumulator.total)
-
-	return state.PackInto(payload)
+/*
+NewAccumulator returns a typed accumulator.
+*/
+func NewAccumulator() *Accumulator {
+	return &Accumulator{}
 }
 
-func (accumulator *Accumulator) Write(p []byte) (int, error) {
-	accumulator.artifact.WithPlaintextPayload(p)
-	return len(p), nil
-}
+/*
+Measure adds one sample and returns the accumulated level.
+*/
+func (accumulator *Accumulator) Measure(sample float64) (AccumulatorOutput, error) {
+	if err := finiteAdaptive("accumulator", sample); err != nil {
+		return AccumulatorOutput{}, err
+	}
 
-func (accumulator *Accumulator) Close() error {
-	return nil
+	accumulator.total += sample
+	accumulator.count++
+
+	return AccumulatorOutput{
+		Value: accumulator.total,
+		Ready: true,
+		Count: accumulator.count,
+	}, nil
 }

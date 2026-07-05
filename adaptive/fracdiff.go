@@ -3,166 +3,107 @@ package adaptive
 import (
 	"math"
 
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 )
 
 /*
 FracDiff applies a fractional differencing filter to recent samples.
-The constructor artifact holds config; Write buffers inbound payload.
 */
 type FracDiff struct {
-	artifact *datura.Artifact
-	history  []float64
-	weights  []float64
-	min      float64
-	max      float64
-	prev     float64
-	order    float64
-	width    int
-	head     int
-	count    int
-	ready    bool
+	history []float64
+	weights []float64
+	min     float64
+	max     float64
+	prev    float64
+	order   float64
+	width   int
+	head    int
+	count   int
+	ready   bool
 }
 
 /*
-NewFracDiff returns a fractional differencing stage wired from config attributes on the artifact.
+FracDiffOutput reports the latest adaptive fractional difference.
 */
-func NewFracDiff(artifact *datura.Artifact) *FracDiff {
-	return &FracDiff{
-		artifact: artifact,
-	}
+type FracDiffOutput struct {
+	Value float64
+	Ready bool
+	Count int
 }
 
-func (fractional *FracDiff) Read(payload []byte) (int, error) {
-	state := datura.Acquire("fracdiff-state", datura.APPJSON)
+/*
+NewFracDiff returns a typed fractional-difference tracker.
+*/
+func NewFracDiff() *FracDiff {
+	return &FracDiff{}
+}
 
-	if _, err := state.Unpack(fractional.artifact.DecryptPayload()); err != nil {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"fracdiff: state write failed",
-			err,
-		))
+/*
+Measure adds one sample and returns the adaptive fractional difference when ready.
+*/
+func (fractional *FracDiff) Measure(sample float64) (FracDiffOutput, error) {
+	if err := finiteAdaptive("fracdiff", sample); err != nil {
+		return FracDiffOutput{}, err
 	}
 
-	rootKey := datura.Peek[string](state, "root")
-
-	if rootKey == "" {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"fracdiff: root required",
-			nil,
-		))
-	}
-
-	inputs := datura.Peek[[]string](state, "inputs")
-
-	if len(inputs) == 0 {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"fracdiff: inputs required",
-			nil,
-		))
-	}
-
-	for index, input := range inputs {
-		var sample float64
-
-		if rootKey == "features" {
-			features := datura.Peek[[]float64](state, rootKey)
-
-			if index >= len(features) {
-				return 0, errnie.Error(errnie.Err(
-					errnie.Validation,
-					"fracdiff: feature index out of range",
-					nil,
-				))
-			}
-
-			sample = features[index]
-		}
-
-		if rootKey != "features" {
-			sample = datura.Peek[float64](state, rootKey, input)
-		}
-
-		if math.IsNaN(sample) || math.IsInf(sample, 0) {
-			return 0, errnie.Error(errnie.Err(
-				errnie.Validation,
-				"fracdiff: sample is non-finite",
-				nil,
-			))
-		}
-
-		if !fractional.ready {
-			capacity := fracDiffMaxLag(0) + 1
-			fractional.history = make([]float64, capacity)
-			fractional.history[0] = sample
-			fractional.min = sample
-			fractional.max = sample
-			fractional.prev = sample
-			fractional.order = 0
-			fractional.width = 1
-			fractional.head = 0
-			fractional.count = 1
-			fractional.weights = []float64{1}
-			fractional.ready = true
-			mergeStageOutput(state, 0, false)
-
-			break
-		}
-
-		fractional.min = math.Min(fractional.min, sample)
-		fractional.max = math.Max(fractional.max, sample)
-
-		span := fractional.max - fractional.min
-
-		if span == 0 {
-			fractional.pushHistory(sample)
-			mergeStageOutput(state, 0, false)
-			continue
-		}
-
-		rate := math.Abs(sample-fractional.prev) / span
-		order := fracDiffOrder(rate, span)
-
-		// Smooth the calculated d to maintain weight-vector stability
-		alpha := 0.05
-		smoothedOrder := order
-		if fractional.count > 1 {
-			smoothedOrder = (1-alpha)*fractional.order + alpha*order
-		}
-
-		// Hysteresis gate to avoid rebuilding weights for micro-fluctuations
-		if fractional.count == 1 || math.Abs(smoothedOrder-fractional.order) > 0.01 {
-			fractional.rebuildWeights(smoothedOrder, span)
-		}
-
-		fractional.pushHistory(sample)
+	if !fractional.ready {
+		capacity := fracDiffMaxLag(0) + 1
+		fractional.history = make([]float64, capacity)
+		fractional.history[0] = sample
+		fractional.min = sample
+		fractional.max = sample
 		fractional.prev = sample
-		value := fractional.outputSum()
+		fractional.order = 0
+		fractional.width = 1
+		fractional.head = 0
+		fractional.count = 1
+		fractional.weights = []float64{1}
+		fractional.ready = true
 
-		if math.IsNaN(value) || math.IsInf(value, 0) {
-			return 0, errnie.Error(errnie.Err(
-				errnie.Validation,
-				"fracdiff: output value is non-finite",
-				nil,
-			))
-		}
-
-		mergeStageOutput(state, value, true)
+		return FracDiffOutput{
+			Ready: false,
+			Count: fractional.count,
+		}, nil
 	}
 
-	return state.PackInto(payload)
-}
+	fractional.min = math.Min(fractional.min, sample)
+	fractional.max = math.Max(fractional.max, sample)
+	span := fractional.max - fractional.min
 
-func (fractional *FracDiff) Write(p []byte) (int, error) {
-	fractional.artifact.WithPlaintextPayload(p)
-	return len(p), nil
-}
+	if span == 0 {
+		fractional.pushHistory(sample)
 
-func (fractional *FracDiff) Close() error {
-	return nil
+		return FracDiffOutput{
+			Ready: false,
+			Count: fractional.count,
+		}, nil
+	}
+
+	rate := math.Abs(sample-fractional.prev) / span
+	order := fracDiffOrder(rate, span)
+	smoothedOrder := order
+
+	if fractional.count > 1 {
+		smoothedOrder = 0.95*fractional.order + 0.05*order
+	}
+
+	if fractional.count == 1 || math.Abs(smoothedOrder-fractional.order) > 0.01 {
+		fractional.rebuildWeights(smoothedOrder, span)
+	}
+
+	fractional.pushHistory(sample)
+	fractional.prev = sample
+	value := fractional.outputSum()
+
+	if err := finiteAdaptive("fracdiff", value); err != nil {
+		return FracDiffOutput{}, err
+	}
+
+	return FracDiffOutput{
+		Value: value,
+		Ready: true,
+		Count: fractional.count,
+	}, nil
 }
 
 func (fractional *FracDiff) rebuildWeights(order float64, span float64) {
@@ -171,7 +112,6 @@ func (fractional *FracDiff) rebuildWeights(order float64, span float64) {
 	}
 
 	fractional.order = order
-
 	capacity := fracDiffMaxLag(span) + 1
 	weights := make([]float64, 0, capacity)
 	weights, width := buildFracDiffWeights(order, span, fractional.prev, weights)
@@ -228,6 +168,59 @@ func (fractional *FracDiff) outputSum() float64 {
 	}
 
 	return sum
+}
+
+/*
+FractionalDifferenceValue applies the same binomial fractional-difference
+kernel as FracDiff to an already normalized sample series.
+*/
+func FractionalDifferenceValue(samples []float64) (float64, bool, error) {
+	if len(samples) < 3 {
+		return 0, false, nil
+	}
+
+	minValue := samples[0]
+	maxValue := samples[0]
+
+	for _, sample := range samples {
+		if math.IsNaN(sample) || math.IsInf(sample, 0) {
+			return 0, false, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"fracdiff: sample is non-finite",
+				nil,
+			))
+		}
+
+		minValue = math.Min(minValue, sample)
+		maxValue = math.Max(maxValue, sample)
+	}
+
+	span := maxValue - minValue
+
+	if span <= 0 {
+		return 0, false, nil
+	}
+
+	tail := samples[len(samples)-1]
+	prev := samples[len(samples)-2]
+	rate := math.Abs(tail-prev) / span
+	order := fracDiffOrder(rate, span)
+	weights, width := buildFracDiffWeights(order, span, prev, nil)
+	value := 0.0
+
+	for lag := 0; lag < width && lag < len(samples); lag++ {
+		value += weights[lag] * samples[len(samples)-1-lag]
+	}
+
+	if math.IsNaN(value) || math.IsInf(value, 0) {
+		return 0, false, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"fracdiff: output value is non-finite",
+			nil,
+		))
+	}
+
+	return value, true, nil
 }
 
 func fracDiffWeightThreshold(span float64, reference float64) float64 {

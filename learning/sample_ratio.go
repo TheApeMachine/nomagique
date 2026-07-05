@@ -3,89 +3,82 @@ package learning
 import (
 	"math"
 
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 )
 
 /*
-Calibrator tracks calibration sample ratio from predicted-vs-actual pairs.
-The constructor artifact holds config; Write buffers inbound wire on its payload.
+SampleRatioOutput reports calibration ratio state.
 */
-type Calibrator struct {
-	artifact *datura.Artifact
+type SampleRatioOutput struct {
+	Value     float64
+	Predicted float64
+	Actual    float64
+	PeakRatio float64
+	Count     int
 }
 
 /*
-SampleRatio returns a calibration stage wired from config attributes on the artifact.
+Calibrator tracks calibration sample ratio from predicted-vs-actual pairs.
 */
-func SampleRatio(artifact *datura.Artifact) *Calibrator {
-	return &Calibrator{
-		artifact: artifact,
-	}
+type Calibrator struct {
+	prev      float64
+	minimum   float64
+	maximum   float64
+	peakRatio float64
+	count     int
 }
 
-func (calibrator *Calibrator) Read(payload []byte) (int, error) {
-	state := datura.Acquire("sample-ratio-state", datura.APPJSON)
+/*
+SampleRatio returns a typed calibration learner.
+*/
+func SampleRatio() *Calibrator {
+	return &Calibrator{}
+}
 
-	if _, err := state.Unpack(calibrator.artifact.DecryptPayload()); err != nil {
-		state.Release()
-
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"sample-ratio: state write failed",
-			err,
-		))
-	}
-
-	defer state.Release()
-
-	predicted, actual, err := calibrator.resolvePair(state)
+/*
+Measure updates calibration ratio from one prediction outcome.
+*/
+func (calibrator *Calibrator) Measure(pair LearningPair) (SampleRatioOutput, error) {
+	predicted, actual, err := validatePair(pair, "sample-ratio")
 
 	if err != nil {
-		return 0, err
+		return SampleRatioOutput{}, err
 	}
 
 	residual := actual - predicted
-	prev := datura.Peek[float64](calibrator.artifact, "output", "prev")
-	minimum := datura.Peek[float64](calibrator.artifact, "output", "min")
-	maximum := datura.Peek[float64](calibrator.artifact, "output", "max")
-	peakRatio := datura.Peek[float64](calibrator.artifact, "output", "peakRatio")
-	count := int(datura.Peek[float64](calibrator.artifact, "output", "count"))
 
-	if count == 0 {
-		minimum = residual
-		maximum = residual
-		prev = predicted
-		count = 1
+	if calibrator.count == 0 {
+		calibrator.minimum = residual
+		calibrator.maximum = residual
+		calibrator.prev = predicted
+		calibrator.count = 1
 	}
 
-	if count > 1 {
-		minimum = math.Min(minimum, residual)
-		maximum = math.Max(maximum, residual)
-		count++
+	if calibrator.count > 1 {
+		calibrator.minimum = math.Min(calibrator.minimum, residual)
+		calibrator.maximum = math.Max(calibrator.maximum, residual)
+		calibrator.count++
 	}
 
-	if count == 1 && residual != minimum {
-		minimum = math.Min(minimum, residual)
-		maximum = math.Max(maximum, residual)
-		count = 2
+	if calibrator.count == 1 && residual != calibrator.minimum {
+		calibrator.minimum = math.Min(calibrator.minimum, residual)
+		calibrator.maximum = math.Max(calibrator.maximum, residual)
+		calibrator.count = 2
 	}
 
-	span := maximum - minimum
+	span := calibrator.maximum - calibrator.minimum
 	ratio := actual / predicted
 
 	if actual < predicted {
-		lossRatio := 1 + actual/predicted
+		ratio = 1 + actual/predicted
 
-		if lossRatio < 0 {
-			return 0, errnie.Error(errnie.Err(
+		if ratio < 0 {
+			return SampleRatioOutput{}, errnie.Error(errnie.Err(
 				errnie.Validation,
 				"sample-ratio: loss ratio is negative",
 				nil,
 			))
 		}
-
-		ratio = lossRatio
 	}
 
 	ceiling := 1.0
@@ -94,58 +87,32 @@ func (calibrator *Calibrator) Read(payload []byte) (int, error) {
 		ceiling = 1 + 1/span
 	}
 
-	if span == 0 && absExact(prev) > 0 {
-		ceiling = 1 + 1/absExact(prev)
+	if span == 0 && absExact(calibrator.prev) > 0 {
+		ceiling = 1 + 1/absExact(calibrator.prev)
 	}
 
 	if ratio > ceiling {
 		ratio = ceiling
 	}
 
-	if ratio > peakRatio {
-		peakRatio = ratio
+	if ratio > calibrator.peakRatio {
+		calibrator.peakRatio = ratio
 	}
 
-	prev = predicted
+	calibrator.prev = predicted
 
-	calibrator.artifact.Poke(prev, "output", "prev")
-	calibrator.artifact.Poke(minimum, "output", "min")
-	calibrator.artifact.Poke(maximum, "output", "max")
-	calibrator.artifact.Poke(peakRatio, "output", "peakRatio")
-	calibrator.artifact.Poke(float64(count), "output", "count")
-	calibrator.artifact.Poke(ratio, "output", "value")
-	state.MergeOutput("value", ratio)
-	state.MergeOutput("predicted", predicted)
-	state.MergeOutput("actual", actual)
-	state.Poke("output", "root")
-	state.Poke([]string{"value", "predicted", "actual"}, "inputs")
-
-	return state.PackInto(payload)
+	return SampleRatioOutput{
+		Value:     ratio,
+		Predicted: predicted,
+		Actual:    actual,
+		PeakRatio: calibrator.peakRatio,
+		Count:     calibrator.count,
+	}, nil
 }
 
-func (calibrator *Calibrator) resolvePair(state *datura.Artifact) (float64, float64, error) {
-	parsedPredicted, parsedActual, err := wirePair(calibrator.artifact, state, "sample-ratio")
-
-	if err != nil {
-		return 0, 0, err
-	}
-
-	if parsedActual == 0 {
-		return 0, 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"sample-ratio: actual must be non-zero",
-			nil,
-		))
-	}
-
-	return parsedPredicted, parsedActual, nil
-}
-
-func (calibrator *Calibrator) Write(payload []byte) (int, error) {
-	calibrator.artifact.WithPayload(payload)
-	return len(payload), nil
-}
-
-func (calibrator *Calibrator) Close() error {
-	return nil
+/*
+Reset clears calibration state.
+*/
+func (calibrator *Calibrator) Reset() {
+	*calibrator = Calibrator{}
 }

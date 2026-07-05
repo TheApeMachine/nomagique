@@ -4,196 +4,128 @@ import (
 	"math"
 	"time"
 
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 )
 
 /*
-TimeElastic tracks a time-decayed baseline and returns sample/baseline ratios.
-The constructor artifact holds config; Write buffers inbound payload.
+TimeElasticConfig configures time-decayed baseline tracking.
 */
-type TimeElastic struct {
-	artifact *datura.Artifact
-	baseline float64
-	lastAt   time.Time
-	ready    bool
+type TimeElasticConfig struct {
+	Halflife time.Duration
+	Epsilon  float64
 }
 
 /*
-NewTimeElastic returns a time-elastic baseline stage wired from config attributes on the artifact.
+TimedValue carries a sample and its event time.
 */
-func NewTimeElastic(artifact *datura.Artifact) *TimeElastic {
+type TimedValue struct {
+	Value float64
+	At    time.Time
+}
+
+/*
+TimeElastic tracks a time-decayed baseline and returns sample/baseline ratios.
+*/
+type TimeElastic struct {
+	config   TimeElasticConfig
+	baseline float64
+	lastAt   time.Time
+	ready    bool
+	count    int
+}
+
+/*
+TimeElasticOutput reports the sample-to-baseline ratio.
+*/
+type TimeElasticOutput struct {
+	Value float64
+	Ready bool
+	Count int
+}
+
+/*
+NewTimeElastic returns a typed time-elastic baseline tracker.
+*/
+func NewTimeElastic(config TimeElasticConfig) *TimeElastic {
 	return &TimeElastic{
-		artifact: artifact,
+		config: config,
 	}
 }
 
-func (timeElastic *TimeElastic) Read(payload []byte) (int, error) {
-	state := datura.Acquire("time-elastic-state", datura.APPJSON)
-
-	if _, err := state.Unpack(timeElastic.artifact.DecryptPayload()); err != nil {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"time-elastic: state write failed",
-			err,
-		))
-	}
-
-	configInput := datura.Peek[string](timeElastic.artifact, "input")
-
-	if configInput == "" {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"time-elastic: input required",
-			nil,
-		))
-	}
-
-	wireRoot := datura.Peek[string](state, "root")
-
-	if wireRoot == "" {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"time-elastic: root required",
-			nil,
-		))
-	}
-
-	wireInputs := datura.Peek[[]string](state, "inputs")
-
-	if len(wireInputs) == 0 {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"time-elastic: inputs required",
-			nil,
-		))
-	}
-
-	var sample float64
-	sampleFound := false
-
-	for wireIndex, wireInput := range wireInputs {
-		if wireInput != configInput {
-			continue
-		}
-
-		if wireRoot == "features" {
-			features := datura.Peek[[]float64](state, wireRoot)
-
-			if wireIndex >= len(features) {
-				return 0, errnie.Error(errnie.Err(
-					errnie.Validation,
-					"time-elastic: feature index out of range",
-					nil,
-				))
-			}
-
-			sample = features[wireIndex]
-		}
-
-		if wireRoot != "features" {
-			sample = datura.Peek[float64](state, wireRoot, wireInput)
-		}
-
-		sampleFound = true
-	}
-
-	if !sampleFound {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"time-elastic: input not in inputs",
-			nil,
-		))
-	}
-
-	halflife := time.Duration(datura.Peek[float64](timeElastic.artifact, "config", "halflife"))
-	epsilon := datura.Peek[float64](timeElastic.artifact, "config", "epsilon")
-
-	if halflife <= 0 || epsilon <= 0 {
-		return 0, errnie.Error(errnie.Err(
+/*
+Measure adds one timed sample and returns sample/baseline ratio when ready.
+*/
+func (timeElastic *TimeElastic) Measure(sample TimedValue) (TimeElasticOutput, error) {
+	if timeElastic.config.Halflife <= 0 || timeElastic.config.Epsilon <= 0 {
+		return TimeElasticOutput{}, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"time-elastic: halflife and epsilon must be positive",
 			nil,
 		))
 	}
 
-	if math.IsNaN(sample) || math.IsInf(sample, 0) {
-		return 0, errnie.Error(errnie.Err(
+	if err := finiteAdaptive("time-elastic", sample.Value); err != nil {
+		return TimeElasticOutput{}, err
+	}
+
+	if sample.Value < 0 {
+		return TimeElasticOutput{}, errnie.Error(errnie.Err(
 			errnie.Validation,
-			"time-elastic: sample is non-finite",
+			"time-elastic: value must be non-negative",
 			nil,
 		))
 	}
 
-	if sample < 0 {
-		return 0, errnie.Error(errnie.Err(
+	if sample.At.IsZero() {
+		return TimeElasticOutput{}, errnie.Error(errnie.Err(
 			errnie.Validation,
-			"time-elastic: sample must be non-negative",
+			"time-elastic: event timestamp required",
 			nil,
 		))
 	}
-
-	eventAt := time.Unix(0, int64(datura.Peek[float64](state, "at")))
-	value := 1.0
-	outputReady := false
 
 	if !timeElastic.ready {
-		timeElastic.baseline = sample
-		timeElastic.lastAt = eventAt
+		timeElastic.baseline = sample.Value
+		timeElastic.lastAt = sample.At
 		timeElastic.ready = true
+		timeElastic.count = 1
+
+		return TimeElasticOutput{
+			Value: 1,
+			Ready: false,
+			Count: timeElastic.count,
+		}, nil
 	}
 
-	if timeElastic.ready && timeElastic.lastAt != eventAt {
-		if eventAt.IsZero() {
-			return 0, errnie.Error(errnie.Err(
-				errnie.Validation,
-				"time-elastic: event timestamp required",
-				nil,
-			))
-		}
+	delta := sample.At.Sub(timeElastic.lastAt)
 
-		delta := eventAt.Sub(timeElastic.lastAt)
-
-		if delta < 0 {
-			return 0, errnie.Error(errnie.Err(
-				errnie.Validation,
-				"time-elastic: event timestamp must not regress",
-				nil,
-			))
-		}
-
-		timeElastic.lastAt = eventAt
-
-		tau := float64(halflife) / math.Ln2
-		alpha := 0.0
-
-		if delta > 0 {
-			alpha = 1.0 - math.Exp(-float64(delta)/tau)
-		}
-
-		value = sample / (timeElastic.baseline + epsilon)
-		outputReady = sample != timeElastic.baseline
-		timeElastic.baseline = (1.0-alpha)*timeElastic.baseline + alpha*sample
-	}
-
-	if math.IsNaN(value) || math.IsInf(value, 0) {
-		return 0, errnie.Error(errnie.Err(
+	if delta < 0 {
+		return TimeElasticOutput{}, errnie.Error(errnie.Err(
 			errnie.Validation,
-			"time-elastic: output value is non-finite",
+			"time-elastic: event timestamp must not regress",
 			nil,
 		))
 	}
 
-	mergeStageOutput(state, value, outputReady)
+	value := sample.Value / (timeElastic.baseline + timeElastic.config.Epsilon)
+	tau := float64(timeElastic.config.Halflife) / math.Ln2
+	alpha := 0.0
 
-	return state.PackInto(payload)
-}
+	if delta > 0 {
+		alpha = 1.0 - math.Exp(-float64(delta)/tau)
+	}
 
-func (timeElastic *TimeElastic) Write(p []byte) (int, error) {
-	timeElastic.artifact.WithPlaintextPayload(p)
-	return len(p), nil
-}
+	timeElastic.baseline = (1.0-alpha)*timeElastic.baseline + alpha*sample.Value
+	timeElastic.lastAt = sample.At
+	timeElastic.count++
 
-func (timeElastic *TimeElastic) Close() error {
-	return nil
+	if err := finiteAdaptive("time-elastic", value); err != nil {
+		return TimeElasticOutput{}, err
+	}
+
+	return TimeElasticOutput{
+		Value: value,
+		Ready: delta > 0,
+		Count: timeElastic.count,
+	}, nil
 }

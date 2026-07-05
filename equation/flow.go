@@ -105,6 +105,7 @@ func (flow *Flow) Measure(input FlowInput) (FlowOutput, error) {
 	priceDrift := lastPrice - firstPrice
 	flatThreshold := medianAbsoluteMove(input.Prices)
 	driveThreshold := 1 / math.Sqrt(float64(input.TradeCount))
+	starvationPressure := flowStarvationPressure(gross, input.GrossFloor, input.MedianNotional)
 
 	highNet := netFraction >= driveThreshold
 	flowAligned := (net > 0 && priceDrift > 0) || (net < 0 && priceDrift < 0)
@@ -119,7 +120,7 @@ func (flow *Flow) Measure(input FlowInput) (FlowOutput, error) {
 		flatPrice,
 		gross,
 		input.GrossFloor,
-		input.TradeCount,
+		starvationPressure,
 		hiddenAbsorption,
 	)
 
@@ -141,16 +142,10 @@ func (flow *Flow) Measure(input FlowInput) (FlowOutput, error) {
 	}
 
 	if category == flowCategoryStarvation {
-		if input.GrossFloor > 0 && gross < input.GrossFloor {
-			starvation = math.Max(0, 1-gross/input.GrossFloor)
-		}
-
-		if input.TradeCount < 3 && !highNet {
-			starvation = math.Max(starvation, 1-float64(input.TradeCount)/3)
-			absorption = 0
-			drive = 0
-			balance = 0
-		}
+		starvation = starvationPressure
+		absorption = 0
+		drive = 0
+		balance = 0
 	}
 
 	strength := math.Max(absorption, math.Max(drive, math.Max(balance, starvation)))
@@ -216,14 +211,14 @@ func flowFlatPrice(priceDrift, stepThreshold float64, tradeCount int) bool {
 func flowCategory(
 	highNet, flowAligned, flatPrice bool,
 	gross, grossFloor float64,
-	tradeCount int,
+	starvationPressure float64,
 	hiddenAbsorption bool,
 ) int {
 	if grossFloor > 0 && gross < grossFloor {
 		return flowCategoryStarvation
 	}
 
-	if tradeCount < 3 && !highNet {
+	if starvationPressure > 0 && !highNet {
 		return flowCategoryStarvation
 	}
 
@@ -240,6 +235,30 @@ func flowCategory(
 	}
 
 	return 3
+}
+
+func flowStarvationPressure(
+	gross float64,
+	grossFloor float64,
+	medianNotional float64,
+) float64 {
+	reference := grossFloor
+
+	if reference <= 0 {
+		reference = medianNotional
+	}
+
+	if reference <= 0 || gross <= 0 {
+		return 0
+	}
+
+	pressure := gross / reference
+
+	if pressure >= 1 {
+		return 0
+	}
+
+	return 1 - pressure
 }
 
 func flowHiddenAbsorption(

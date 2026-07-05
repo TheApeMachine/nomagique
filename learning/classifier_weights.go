@@ -4,13 +4,11 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 )
 
 /*
-LogitSpec describes one classifier output as a weighted combination of
-normalized order features declared on the config artifact.
+LogitSpec describes one classifier output as a weighted combination of features.
 */
 type LogitSpec struct {
 	Terms   []string
@@ -18,10 +16,15 @@ type LogitSpec struct {
 }
 
 /*
-ClassifierWeights holds dynamically derived coefficients for configured outputs.
+ClassifierWeightsConfig describes output recipes and their order.
+*/
+type ClassifierWeightsConfig struct {
+	Outputs []string
+	Specs   map[string]LogitSpec
+}
 
-Output recipes and feature order come from the config artifact attributes;
-weights are inverse-scale balances normalized within each output's terms.
+/*
+ClassifierWeights holds dynamically derived coefficients for configured outputs.
 */
 type ClassifierWeights struct {
 	Threshold   float64
@@ -32,11 +35,10 @@ type ClassifierWeights struct {
 }
 
 /*
-NewClassifierWeights builds balanced logits from config attributes, a surprise
-threshold, and observed per-feature scales keyed by order entries.
+NewClassifierWeights builds balanced logits from typed recipes and feature scales.
 */
 func NewClassifierWeights(
-	config *datura.Artifact,
+	config ClassifierWeightsConfig,
 	threshold float64,
 	scales map[string]float64,
 ) (ClassifierWeights, error) {
@@ -47,27 +49,21 @@ func NewClassifierWeights(
 		))
 	}
 
-	outputs := datura.Peek[[]string](config, "outputs")
-
-	if len(outputs) == 0 {
+	if len(config.Outputs) == 0 {
 		return ClassifierWeights{}, errnie.Error(fmt.Errorf(
-			"learning: NewClassifierWeights requires outputs on config",
+			"learning: NewClassifierWeights requires outputs",
 		))
 	}
 
-	specs := make(map[string]LogitSpec, len(outputs))
-	termWeights := make(map[string]map[string]float64, len(outputs))
+	specs := make(map[string]LogitSpec, len(config.Outputs))
+	termWeights := make(map[string]map[string]float64, len(config.Outputs))
 
-	for _, outputKey := range outputs {
-		spec, err := logitSpec(config, outputKey)
-
-		if err != nil {
-			return ClassifierWeights{}, err
-		}
+	for _, outputKey := range config.Outputs {
+		spec := config.Specs[outputKey]
 
 		if len(spec.Terms) == 0 {
 			return ClassifierWeights{}, errnie.Error(fmt.Errorf(
-				"learning: output %q requires terms on config",
+				"learning: output %q requires terms",
 				outputKey,
 			))
 		}
@@ -84,29 +80,10 @@ func NewClassifierWeights(
 
 	return ClassifierWeights{
 		Threshold:   threshold,
-		scales:      scales,
-		outputs:     outputs,
+		scales:      cloneScales(scales),
+		outputs:     append([]string(nil), config.Outputs...),
 		specs:       specs,
 		termWeights: termWeights,
-	}, nil
-}
-
-func logitSpec(config *datura.Artifact, outputKey string) (LogitSpec, error) {
-	terms := datura.Peek[[]string](config, outputKey, "terms")
-
-	if len(terms) == 0 {
-		return LogitSpec{}, nil
-	}
-
-	inverts := map[string]bool{}
-
-	for _, featureKey := range datura.Peek[[]string](config, outputKey, "inverts") {
-		inverts[featureKey] = true
-	}
-
-	return LogitSpec{
-		Terms:   terms,
-		Inverts: inverts,
 	}, nil
 }
 
@@ -144,7 +121,7 @@ func balancedTermWeights(
 }
 
 func (weights *ClassifierWeights) FeatureScales() map[string]float64 {
-	return weights.scales
+	return cloneScales(weights.scales)
 }
 
 func positiveScale(scale float64, name string) (float64, error) {
@@ -160,8 +137,7 @@ func positiveScale(scale float64, name string) (float64, error) {
 }
 
 /*
-Scores returns one logit per configured output by evaluating its term recipe
-against the supplied feature values keyed by order entries.
+Scores returns one logit per configured output.
 */
 func (weights *ClassifierWeights) Scores(features map[string]float64) []float64 {
 	scores := make([]float64, len(weights.outputs))
@@ -274,4 +250,14 @@ func weightBounds(scales map[string]float64) (float64, float64, error) {
 
 func clamp(value, lower, upper float64) float64 {
 	return math.Min(math.Max(value, lower), upper)
+}
+
+func cloneScales(scales map[string]float64) map[string]float64 {
+	clone := make(map[string]float64, len(scales))
+
+	for key, value := range scales {
+		clone[key] = value
+	}
+
+	return clone
 }

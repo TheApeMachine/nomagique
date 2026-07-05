@@ -1,152 +1,152 @@
 package equation_test
 
 import (
-	"io"
 	"testing"
 
-	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/datura"
-	"github.com/theapemachine/nomagique"
 	"github.com/theapemachine/nomagique/equation"
 )
 
-func TestCausalStory_Read(testingTB *testing.T) {
+func TestCausalStoryMeasure(testingTB *testing.T) {
 	cases := []struct {
-		name         string
-		association  float64
-		intervention float64
-		uplift       float64
-		contagion    float64
-		condition    float64
-		inverted     float64
-		category     float64
-		score        string
+		name     string
+		input    equation.CausalStoryInput
+		category int
+		score    func(equation.CausalStoryOutput) float64
 	}{
 		{
-			name:         "endogenous uplift",
-			association:  0.2,
-			intervention: 0.6,
-			uplift:       0.8,
-			contagion:    0.1,
-			condition:    0.2,
-			category:     1,
-			score:        "alphaScore",
+			name: "endogenous uplift",
+			input: equation.CausalStoryInput{
+				Association:  0.2,
+				Intervention: 0.6,
+				Uplift:       0.8,
+				Contagion:    0.1,
+				Condition:    0.2,
+			},
+			category: 1,
+			score: func(output equation.CausalStoryOutput) float64 {
+				return output.AlphaScore
+			},
 		},
 		{
-			name:         "systemic beta",
-			association:  0.9,
-			intervention: 0.1,
-			uplift:       0.0,
-			contagion:    0.1,
-			condition:    0.2,
-			category:     2,
-			score:        "betaScore",
+			name: "systemic beta",
+			input: equation.CausalStoryInput{
+				Association:  0.9,
+				Intervention: 0.1,
+				Uplift:       0.0,
+				Contagion:    0.1,
+				Condition:    0.2,
+			},
+			category: 2,
+			score: func(output equation.CausalStoryOutput) float64 {
+				return output.BetaScore
+			},
 		},
 		{
-			name:         "liquidity shock",
-			association:  0.3,
-			intervention: 0.2,
-			uplift:       0.1,
-			contagion:    3.0,
-			condition:    0.2,
-			inverted:     1.0,
-			category:     3,
-			score:        "shockScore",
+			name: "liquidity shock",
+			input: equation.CausalStoryInput{
+				Association:  0.3,
+				Intervention: 0.2,
+				Uplift:       0.1,
+				Contagion:    3.0,
+				Condition:    0.2,
+				Inverted:     true,
+			},
+			category: 3,
+			score: func(output equation.CausalStoryOutput) float64 {
+				return output.ShockScore
+			},
 		},
 		{
-			name:         "causal noise",
-			association:  1.0,
-			intervention: 1.0,
-			uplift:       1.0,
-			contagion:    0.1,
-			condition:    0.2,
-			category:     4,
-			score:        "noiseScore",
+			name: "causal noise",
+			input: equation.CausalStoryInput{
+				Association:  1.0,
+				Intervention: 1.0,
+				Uplift:       1.0,
+				Contagion:    0.1,
+				Condition:    0.2,
+			},
+			category: 4,
+			score: func(output equation.CausalStoryOutput) float64 {
+				return output.NoiseScore
+			},
 		},
 	}
 
 	for _, testCase := range cases {
-		testCase := testCase
+		testingTB.Run(testCase.name, func(t *testing.T) {
+			stage := equation.NewCausalStory()
+			output, err := stage.Measure(testCase.input)
+			if err != nil {
+				t.Fatal(err)
+			}
 
-		Convey("Given Pearl ladder outputs with "+testCase.name, testingTB, func() {
-			stage := equation.NewCausalStory(equation.CausalStoryConfig())
-			inbound := datura.Acquire("causal-story-in", datura.APPJSON)
-			inbound.MergeOutput("association", testCase.association)
-			inbound.MergeOutput("intervention", testCase.intervention)
-			inbound.MergeOutput("uplift", testCase.uplift)
-			inbound.MergeOutput("contagion", testCase.contagion)
-			inbound.MergeOutput("condition", testCase.condition)
-			inbound.MergeOutput("inverted", testCase.inverted)
+			if !output.Ready {
+				t.Fatal("expected ready category")
+			}
 
-			err := nomagique.RoundTripArtifact(inbound, stage)
+			if testCase.score(output) <= 0 {
+				t.Fatalf("%s score is not positive", testCase.name)
+			}
 
-			So(err, ShouldBeNil)
-
-			Convey("It should emit the expected causal category score", func() {
-				So(datura.Peek[float64](inbound, "output", testCase.score), ShouldBeGreaterThan, 0)
-				So(datura.Peek[float64](inbound, "output", "category"), ShouldEqual, testCase.category)
-			})
+			if output.Category != testCase.category {
+				t.Fatalf("category = %d, want %d", output.Category, testCase.category)
+			}
 		})
 	}
 }
 
-func TestCausalStory_ReadNoCategoryEvidence(testingTB *testing.T) {
-	Convey("Given Pearl ladder output with no positive category evidence", testingTB, func() {
-		stage := equation.NewCausalStory(equation.CausalStoryConfig())
-		inbound := datura.Acquire("causal-story-in", datura.APPJSON)
-		inbound.MergeOutput("association", 0.0)
-		inbound.MergeOutput("intervention", 1.0)
-		inbound.MergeOutput("uplift", 0.0)
-		inbound.MergeOutput("contagion", 0.0)
-		inbound.MergeOutput("condition", 0.0)
-		inbound.MergeOutput("inverted", 0.0)
-		_, writeErr := nomagique.WriteArtifact(stage, inbound)
-		buffer := make([]byte, 262144)
-		read, readErr := stage.Read(buffer)
-
-		Convey("It should stop without converting no evidence into validation failure", func() {
-			So(writeErr, ShouldBeNil)
-			So(read, ShouldEqual, 0)
-			So(readErr, ShouldEqual, io.EOF)
-		})
+func TestCausalStoryNoCategoryEvidence(testingTB *testing.T) {
+	stage := equation.NewCausalStory()
+	output, err := stage.Measure(equation.CausalStoryInput{
+		Association:  0.0,
+		Intervention: 1.0,
+		Uplift:       0.0,
+		Contagion:    0.0,
+		Condition:    0.0,
 	})
+	if err != nil {
+		testingTB.Fatal(err)
+	}
+
+	if output.Ready {
+		testingTB.Fatal("expected not ready output")
+	}
 }
 
-func TestCausalStory_ReadTiedCategoryEvidence(testingTB *testing.T) {
-	Convey("Given Pearl ladder output with tied category evidence", testingTB, func() {
-		stage := equation.NewCausalStory(equation.CausalStoryConfig())
-		inbound := datura.Acquire("causal-story-in", datura.APPJSON)
-		inbound.MergeOutput("association", 1.0)
-		inbound.MergeOutput("intervention", 1.0)
-		inbound.MergeOutput("uplift", 1.0)
-		inbound.MergeOutput("contagion", 0.4)
-		inbound.MergeOutput("condition", 0.1)
-		inbound.MergeOutput("inverted", 1.0)
-		_, writeErr := nomagique.WriteArtifact(stage, inbound)
-		buffer := make([]byte, 262144)
-		read, readErr := stage.Read(buffer)
-
-		Convey("It should stop instead of resolving the tie by category order", func() {
-			So(writeErr, ShouldBeNil)
-			So(read, ShouldEqual, 0)
-			So(readErr, ShouldEqual, io.EOF)
-		})
+func TestCausalStoryTiedCategoryEvidence(testingTB *testing.T) {
+	stage := equation.NewCausalStory()
+	output, err := stage.Measure(equation.CausalStoryInput{
+		Association:  1.0,
+		Intervention: 1.0,
+		Uplift:       1.0,
+		Contagion:    0.4,
+		Condition:    0.1,
+		Inverted:     true,
 	})
+	if err != nil {
+		testingTB.Fatal(err)
+	}
+
+	if output.Ready {
+		testingTB.Fatal("expected tied evidence to be not ready")
+	}
 }
 
-func BenchmarkCausalStoryRead(b *testing.B) {
-	stage := equation.NewCausalStory(equation.CausalStoryConfig())
-	inbound := datura.Acquire("causal-story-bench", datura.APPJSON)
-	inbound.MergeOutput("association", 0.2)
-	inbound.MergeOutput("intervention", 0.6)
-	inbound.MergeOutput("uplift", 0.8)
-	inbound.MergeOutput("contagion", 0.1)
-	inbound.MergeOutput("condition", 0.2)
-	inbound.MergeOutput("inverted", 0.0)
+func BenchmarkCausalStoryMeasure(testingTB *testing.B) {
+	stage := equation.NewCausalStory()
+	input := equation.CausalStoryInput{
+		Association:  0.2,
+		Intervention: 0.6,
+		Uplift:       0.8,
+		Contagion:    0.1,
+		Condition:    0.2,
+	}
 
-	b.ReportAllocs()
+	testingTB.ReportAllocs()
 
-	for b.Loop() {
-		_ = nomagique.RoundTripArtifact(inbound, stage)
+	for testingTB.Loop() {
+		if _, err := stage.Measure(input); err != nil {
+			testingTB.Fatal(err)
+		}
 	}
 }

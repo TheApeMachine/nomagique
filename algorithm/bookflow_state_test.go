@@ -6,8 +6,6 @@ import (
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/datura"
-	"github.com/theapemachine/nomagique"
 	"github.com/theapemachine/nomagique/statistic"
 )
 
@@ -263,22 +261,16 @@ func TestGateQuantile_Observe(testingTB *testing.T) {
 
 func TestObservationRingAdversarial(testingTB *testing.T) {
 	Convey("Given non-positive observations", testingTB, func() {
-		ringConfig := datura.Acquire("observation-ring-config", datura.APPJSON).
-			Poke("sample", "input").
-			Poke("value", "outputKey").
-			Poke(8.0, "config", "capacity")
-		ring := statistic.NewObservationRing(ringConfig)
-		artifact := datura.Acquire("test", datura.APPJSON)
+		ring := statistic.NewObservationRing(statistic.ObservationRingConfig{
+			Capacity: 8,
+		})
 
 		for _, value := range []float64{0, -1} {
-			wired := artifact.Poke("features", "root").
-				Poke([]string{"sample"}, "inputs")
-			wired.Merge("features", []float64{value})
-			_ = nomagique.RoundTripArtifact(wired, ring)
+			_, _ = ring.Measure(value)
 		}
 
 		Convey("It should ignore invalid samples", func() {
-			So(len(datura.Peek[[]float64](ringConfig, "history")), ShouldEqual, 0)
+			So(len(ring.History()), ShouldEqual, 0)
 		})
 	})
 }

@@ -4,87 +4,57 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/datura"
-	"github.com/theapemachine/nomagique"
 )
 
 func TestSampleRatio(testingTB *testing.T) {
 	Convey("Given SampleRatio constructor", testingTB, func() {
-		calibrator := SampleRatio(pairConfig("sample-ratio-config"))
+		calibrator := SampleRatio()
 
-		Convey("It should return a usable dynamic", func() {
+		Convey("It should return a usable learner", func() {
 			So(calibrator, ShouldNotBeNil)
 		})
 	})
 }
 
-func TestCalibratorRead(testingTB *testing.T) {
-	Convey("Given empty inbound wire", testingTB, func() {
-		calibrator := SampleRatio(pairConfig("sample-ratio-config"))
-		artifact := datura.Acquire("test", datura.APPJSON)
-		err := nomagique.RoundTripArtifact(artifact, calibrator)
+func TestCalibratorMeasure(testingTB *testing.T) {
+	Convey("Given equal predicted and actual values", testingTB, func() {
+		calibrator := SampleRatio()
+		output, err := calibrator.Measure(LearningPair{Predicted: 10, Actual: 10})
+
+		Convey("It should return unit ratio", func() {
+			So(err, ShouldBeNil)
+			So(output.Value, ShouldEqual, 1)
+		})
+	})
+
+	Convey("Given actual above predicted", testingTB, func() {
+		calibrator := SampleRatio()
+		_, _ = calibrator.Measure(LearningPair{Predicted: 10, Actual: 10})
+		output, err := calibrator.Measure(LearningPair{Predicted: 10, Actual: 15})
+
+		Convey("It should return a ratio above one", func() {
+			So(err, ShouldBeNil)
+			So(output.Value, ShouldBeGreaterThan, 1)
+		})
+	})
+
+	Convey("Given zero predicted", testingTB, func() {
+		calibrator := SampleRatio()
+		_, err := calibrator.Measure(LearningPair{Predicted: 0, Actual: 10})
 
 		Convey("It should return a validation error", func() {
 			So(err, ShouldNotBeNil)
 		})
 	})
-
-	Convey("Given a fresh calibrator", testingTB, func() {
-		calibrator := SampleRatio(pairConfig("sample-ratio-config"))
-		artifact := pairWire(datura.Acquire("test", datura.APPJSON), 10, 10)
-		err := nomagique.RoundTripArtifact(artifact, calibrator)
-
-		So(err, ShouldBeNil)
-
-		got := datura.Peek[float64](artifact, "output", "value")
-
-		Convey("It should return unit calibration", func() {
-			So(got, ShouldEqual, 1)
-		})
-	})
-
-	Convey("Given a winning outcome", testingTB, func() {
-		calibrator := SampleRatio(pairConfig("sample-ratio-config"))
-		artifact := datura.Acquire("test", datura.APPJSON)
-
-		artifact = pairWire(artifact, 10, 10)
-		_ = nomagique.RoundTripArtifact(artifact, calibrator)
-
-		artifact = pairWire(artifact, 10, 15)
-		err := nomagique.RoundTripArtifact(artifact, calibrator)
-
-		So(err, ShouldBeNil)
-
-		got := datura.Peek[float64](artifact, "output", "value")
-
-		Convey("It should scale by actual over predicted within the adaptive ceiling", func() {
-			So(got, ShouldBeGreaterThan, 1)
-			So(got, ShouldBeLessThanOrEqualTo, 1.5)
-		})
-	})
-
-	Convey("Given zero predicted", testingTB, func() {
-		calibrator := SampleRatio(pairConfig("sample-ratio-config"))
-		artifact := pairWire(datura.Acquire("test", datura.APPJSON), 0, 10)
-		err := nomagique.RoundTripArtifact(artifact, calibrator)
-
-		Convey("It should return a parse error", func() {
-			So(err, ShouldNotBeNil)
-		})
-	})
 }
 
-func BenchmarkSampleRatioRead(testingTB *testing.B) {
-	calibrator := SampleRatio(pairConfig("sample-ratio-config-bench"))
-	artifact := datura.Acquire("test", datura.APPJSON)
-
-	artifact = pairWire(artifact, 10, 10)
-	_ = nomagique.RoundTripArtifact(artifact, calibrator)
+func BenchmarkSampleRatioMeasure(testingTB *testing.B) {
+	calibrator := SampleRatio()
+	_, _ = calibrator.Measure(LearningPair{Predicted: 10, Actual: 10})
 
 	testingTB.ReportAllocs()
 
 	for testingTB.Loop() {
-		artifact = pairWire(artifact, 10, 11)
-		_ = nomagique.RoundTripArtifact(artifact, calibrator)
+		_, _ = calibrator.Measure(LearningPair{Predicted: 10, Actual: 11})
 	}
 }

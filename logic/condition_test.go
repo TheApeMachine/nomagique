@@ -4,96 +4,31 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/nomagique/logic"
 )
 
-func matchCondition(condition logic.Condition, sample float64) bool {
-	artifact := scalarWire(datura.Acquire("test", datura.APPJSON), sample)
+func TestConditions(testingTB *testing.T) {
+	Convey("Given typed comparisons", testingTB, func() {
+		observation := logic.NewObservation(3)
 
-	return condition.Match(artifact)
-}
-
-func matchConditionWithoutSample(condition logic.Condition) bool {
-	artifact := datura.Acquire("test", datura.APPJSON)
-
-	return condition.Match(artifact)
-}
-
-func TestTrue_Match(testingTB *testing.T) {
-	Convey("Given a literal True condition", testingTB, func() {
-		condition := logic.True{Operand: true}
-
-		Convey("It should always match", func() {
-			So(matchConditionWithoutSample(condition), ShouldBeTrue)
+		Convey("It should compare values against constants", func() {
+			So(logic.GreaterThan{Right: logic.NewConstant(2)}.Match(observation), ShouldBeTrue)
+			So(logic.LessThan{Right: logic.NewConstant(4)}.Match(observation), ShouldBeTrue)
+			So(logic.Equal{Right: logic.NewConstant(3)}.Match(observation), ShouldBeTrue)
 		})
 	})
-}
 
-func TestGreaterThan_Match(testingTB *testing.T) {
-	Convey("Given a carried signal above Right", testingTB, func() {
-		condition := logic.GreaterThan{
-			Right: constantStage(2),
-		}
+	Convey("Given compound conditions", testingTB, func() {
+		observation := logic.NewObservation(3)
+		above := logic.GreaterThan{Right: logic.NewConstant(2)}
+		below := logic.LessThan{Right: logic.NewConstant(4)}
 
-		Convey("It should match when the boundary exceeds Right", func() {
-			So(matchCondition(condition, 3), ShouldBeTrue)
-		})
-	})
-}
-
-func TestAnd_Match(testingTB *testing.T) {
-	Convey("Given an And condition", testingTB, func() {
-		condition := logic.And{
-			logic.True{Operand: true},
-			logic.GreaterThan{
-				Right: constantStage(2),
-			},
-		}
-
-		Convey("It should match when every operand matches", func() {
-			So(matchCondition(condition, 3), ShouldBeTrue)
-		})
-	})
-}
-
-func TestOr_Match(testingTB *testing.T) {
-	Convey("Given an Or condition", testingTB, func() {
-		condition := logic.Or{
-			logic.True{Operand: false},
-			logic.GreaterThan{
-				Right: constantStage(2),
-			},
-		}
-
-		Convey("It should match when any operand matches", func() {
-			So(matchCondition(condition, 3), ShouldBeTrue)
-		})
-	})
-}
-
-func TestNot_Match(testingTB *testing.T) {
-	Convey("Given a Not condition", testingTB, func() {
-		condition := logic.Not{
-			Operand: logic.True{Operand: false},
-		}
-
-		Convey("It should invert the nested condition", func() {
-			So(matchConditionWithoutSample(condition), ShouldBeTrue)
-		})
-	})
-}
-
-func TestXor_Match(testingTB *testing.T) {
-	Convey("Given an Xor condition", testingTB, func() {
-		condition := logic.Xor{
-			logic.True{Operand: true},
-			logic.True{Operand: false},
-			logic.True{Operand: false},
-		}
-
-		Convey("It should match on an odd truthy count", func() {
-			So(matchConditionWithoutSample(condition), ShouldBeTrue)
+		Convey("It should evaluate boolean composition", func() {
+			So(logic.And{above, below}.Match(observation), ShouldBeTrue)
+			So(logic.Or{above}.Match(observation), ShouldBeTrue)
+			So(logic.Not{Operand: above}.Match(observation), ShouldBeFalse)
+			So(logic.Xor{above, below}.Match(observation), ShouldBeFalse)
+			So(logic.True{}.Match(observation), ShouldBeTrue)
 		})
 	})
 }

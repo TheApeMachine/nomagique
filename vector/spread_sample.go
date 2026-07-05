@@ -3,73 +3,79 @@ package vector
 import (
 	"math"
 
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 )
 
 /*
-SpreadSample derives a relative spread sample from two feature slots.
+SpreadSampleConfig describes a relative spread over named inputs.
 */
-type SpreadSample struct {
-	config *datura.Artifact
+type SpreadSampleConfig struct {
+	Inputs    []string
+	OutputKey string
 }
 
 /*
-NewSpreadSample returns a spread sample stage configured on the artifact.
+SpreadSampleOutput reports the spread and updated feature vector.
 */
-func NewSpreadSample(config *datura.Artifact) *SpreadSample {
+type SpreadSampleOutput struct {
+	Value  NamedValue
+	Vector FeatureVector
+}
+
+/*
+SpreadSample derives a relative spread sample from named inputs.
+*/
+type SpreadSample struct {
+	config SpreadSampleConfig
+}
+
+/*
+NewSpreadSample returns a typed spread sample stage.
+*/
+func NewSpreadSample(config SpreadSampleConfig) *SpreadSample {
 	return &SpreadSample{
 		config: config,
 	}
 }
 
-func (spreadSample *SpreadSample) Read(p []byte) (int, error) {
-	state := datura.Acquire("spread-sample-state", datura.APPJSON)
-
-	if _, err := state.Unpack(spreadSample.config.DecryptPayload()); err != nil {
-		state.Release()
-
-		return 0, errnie.Error(errnie.Err(
+/*
+Measure computes a relative spread and attaches it as a named output.
+*/
+func (spreadSample *SpreadSample) Measure(
+	vector FeatureVector,
+) (SpreadSampleOutput, error) {
+	if len(spreadSample.config.Inputs) == 0 {
+		return SpreadSampleOutput{}, errnie.Error(errnie.Err(
 			errnie.Validation,
-			"spread-sample: state write failed",
-			err,
-		))
-	}
-
-	defer state.Release()
-
-	spreadInputs := datura.Peek[[]string](spreadSample.config, "spread", "inputs")
-
-	if len(spreadInputs) == 0 {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"spread-sample: spread.inputs required",
+			"spread-sample: inputs required",
 			nil,
 		))
 	}
 
-	outputKey := datura.Peek[string](spreadSample.config, "spread", "outputKey")
-
-	if outputKey == "" {
-		outputKey = "spread"
+	if spreadSample.config.OutputKey == "" {
+		return SpreadSampleOutput{}, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"spread-sample: output key required",
+			nil,
+		))
 	}
 
 	low := math.Inf(1)
 	high := math.Inf(-1)
 
-	for _, input := range spreadInputs {
-		data, err := spreadInputValue(state, input)
+	for _, inputKey := range spreadSample.config.Inputs {
+		data, exists := vector.Value(inputKey)
 
-		if err != nil {
-			return 0, err
-		}
-
-		if math.IsNaN(data) || math.IsInf(data, 0) {
-			return 0, errnie.Error(errnie.Err(
+		if !exists {
+			return SpreadSampleOutput{}, errnie.Error(errnie.Err(
 				errnie.Validation,
-				"spread-sample: input is non-finite",
+				"spread-sample: input not found: "+inputKey,
 				nil,
 			))
+		}
+
+		if err := finiteVector("spread-sample: "+inputKey, data); err != nil {
+			return SpreadSampleOutput{}, err
 		}
 
 		low = math.Min(low, data)
@@ -79,96 +85,22 @@ func (spreadSample *SpreadSample) Read(p []byte) (int, error) {
 	mid := (low + high) / 2
 
 	if mid <= 0 {
-		return 0, errnie.Error(errnie.Err(
+		return SpreadSampleOutput{}, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"spread-sample: mid price must be positive",
 			nil,
 		))
 	}
 
-	value := (high - low) / mid
-
-	state.MergeOutput(outputKey, value)
-	state.Poke("output", "root")
-
-	inputs := datura.Peek[[]string](state, "inputs")
-
-	if inputs == nil {
-		inputs = []string{}
+	value := NamedValue{
+		Name:  spreadSample.config.OutputKey,
+		Value: (high - low) / mid,
 	}
 
-	found := false
+	vector = vector.WithValue(value)
 
-	for _, input := range inputs {
-		if input == outputKey {
-			found = true
-		}
-	}
-
-	if !found {
-		inputs = append(inputs, outputKey)
-	}
-
-	state.Poke(inputs, "inputs")
-
-	return state.PackInto(p)
-}
-
-func (spreadSample *SpreadSample) Write(p []byte) (int, error) {
-	spreadSample.config.WithPayload(p)
-	return len(p), nil
-}
-
-func (spreadSample *SpreadSample) Close() error {
-	return nil
-}
-
-func spreadInputValue(state *datura.Artifact, inputKey string) (float64, error) {
-	featureSlice := datura.Peek[[]float64](state, "features")
-	featureInputs := datura.Peek[[]string](state, "featureInputs")
-
-	if len(featureInputs) == 0 {
-		featureInputs = datura.Peek[[]string](state, "inputs")
-	}
-
-	for featureIndex, featureInput := range featureInputs {
-		if featureInput != inputKey || featureIndex >= len(featureSlice) {
-			continue
-		}
-
-		return featureSlice[featureIndex], nil
-	}
-
-	rootKey := datura.Peek[string](state, "root")
-	wireInputs := datura.Peek[[]string](state, "inputs")
-
-	if rootKey != "" && len(wireInputs) > 0 {
-		for wireIndex, wireInput := range wireInputs {
-			if wireInput != inputKey {
-				continue
-			}
-
-			if rootKey == "features" {
-				featureSlice := datura.Peek[[]float64](state, rootKey)
-
-				if wireIndex >= len(featureSlice) {
-					return 0, errnie.Error(errnie.Err(
-						errnie.Validation,
-						"spread-sample: feature index out of range",
-						nil,
-					))
-				}
-
-				return featureSlice[wireIndex], nil
-			}
-
-			return datura.Peek[float64](state, rootKey, wireInput), nil
-		}
-	}
-
-	return 0, errnie.Error(errnie.Err(
-		errnie.Validation,
-		"spread-sample: spread input not in inputs",
-		nil,
-	))
+	return SpreadSampleOutput{
+		Value:  value,
+		Vector: vector,
+	}, nil
 }

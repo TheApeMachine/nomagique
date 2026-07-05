@@ -3,88 +3,101 @@ package statistic
 import (
 	"math"
 
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/nomagique"
 	"gonum.org/v1/gonum/stat"
 )
+
+/*
+WindowsConfig provides optional adaptive window hints.
+*/
+type WindowsConfig struct {
+	ShortHint     int
+	LongHint      int
+	ReturnLagHint int
+}
+
+/*
+WindowsOutput reports resolved window counts.
+*/
+type WindowsOutput struct {
+	ShortWindow int
+	LongWindow  int
+	ReturnLag   int
+	TargetLong  int
+}
 
 /*
 Windows resolves short, long, return-lag, and target-long counts from history.
 */
 type Windows struct {
-	artifact *datura.Artifact
+	config WindowsConfig
 }
 
 /*
-NewWindows returns a window-resolution stage wired from config attributes on the artifact.
+NewWindows returns a typed window resolver.
 */
-func NewWindows(artifact *datura.Artifact) *Windows {
+func NewWindows(configs ...WindowsConfig) *Windows {
+	config := WindowsConfig{}
+
+	if len(configs) > 0 {
+		config = configs[0]
+	}
+
 	return &Windows{
-		artifact: artifact,
+		config: config,
 	}
 }
 
-func (windows *Windows) Read(payload []byte) (int, error) {
-	state := datura.Acquire("windows-state", datura.APPJSON)
+/*
+Measure resolves adaptive window counts from history.
+*/
+func (windows *Windows) Measure(history []float64) (WindowsOutput, error) {
+	return ResolveWindowSet(history, windows.config)
+}
 
-	if _, err := state.Unpack(windows.artifact.DecryptPayload()); err != nil {
-		state.Release()
+/*
+ResolveWindows returns short and long windows for imperative call sites.
+*/
+func ResolveWindows(
+	history []float64,
+	shortHint, longHint int,
+) (shortWindow, longWindow int, err error) {
+	output, err := ResolveWindowSet(history, WindowsConfig{
+		ShortHint: shortHint,
+		LongHint:  longHint,
+	})
 
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"windows: state write failed",
-			err,
-		))
+	if err != nil {
+		return 0, 0, err
 	}
 
-	defer state.Release()
+	return output.ShortWindow, output.LongWindow, nil
+}
 
-	history := datura.Peek[[]float64](state, "history")
-	shortHint := int(datura.Peek[float64](windows.artifact, "config", "shortHint"))
-	longHint := int(datura.Peek[float64](windows.artifact, "config", "longHint"))
-	lagHint := int(datura.Peek[float64](windows.artifact, "config", "returnLagHint"))
+/*
+ResolveWindowSet resolves all window counts from history and optional hints.
+*/
+func ResolveWindowSet(history []float64, config WindowsConfig) (WindowsOutput, error) {
 	sampleCount := len(history)
-	shortWindow := 0
-	longWindow := 0
-
-	if shortHint > 0 {
-		shortWindow = shortHint
-	}
-
-	if longHint > 0 {
-		longWindow = longHint
-	}
+	shortWindow := config.ShortHint
+	longWindow := config.LongHint
 
 	if shortWindow > 0 && longWindow > 0 {
-		returnLag := lagHint
-
-		if lagHint <= 0 {
-			returnLag = max(1, int(math.Ceil(math.Sqrt(float64(longWindow)))))
-
-			if longWindow > 1 {
-				returnLag = min(returnLag, longWindow-1)
-			}
-		}
-
-		state.MergeOutput("shortWindow", float64(shortWindow))
-		state.MergeOutput("longWindow", float64(longWindow))
-		state.MergeOutput("returnLag", float64(returnLag))
-		state.MergeOutput("targetLong", float64(longWindow))
-		state.Poke("output", "root")
-		state.Poke([]string{
-			"shortWindow", "longWindow", "returnLag", "targetLong",
-		}, "inputs")
-
-		return state.PackInto(payload)
+		return windowsOutput(shortWindow, longWindow, config.ReturnLagHint), nil
 	}
 
 	if sampleCount <= 0 {
-		return 0, errnie.Error(errnie.Err(
+		return WindowsOutput{}, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"windows: history or explicit hints required",
 			nil,
 		))
+	}
+
+	for _, value := range history {
+		if err := finiteStatistic("windows", value); err != nil {
+			return WindowsOutput{}, err
+		}
 	}
 
 	if shortWindow <= 0 {
@@ -92,76 +105,25 @@ func (windows *Windows) Read(payload []byte) (int, error) {
 	}
 
 	if longWindow <= 0 {
-		spread := 0.0
-
-		if sampleCount >= 2 {
-			mean := stat.Mean(history, nil)
-
-			if mean > 0 && !math.IsNaN(mean) && !math.IsInf(mean, 0) {
-				std := stat.StdDev(history, nil)
-
-				if std > 0 && !math.IsNaN(std) && !math.IsInf(std, 0) {
-					spread = std / math.Abs(mean)
-				}
-			}
-		}
-
-		longWindow = int(math.Ceil(float64(shortWindow) * (1.0 + spread)))
-
-		if longWindow < sampleCount {
-			longWindow = sampleCount
-		}
-
-		if longWindow <= shortWindow {
-			longWindow = shortWindow + 1
-		}
-
-		if longWindow > sampleCount {
-			longWindow = sampleCount
-		}
+		longWindow = adaptiveLongWindow(history, shortWindow)
 	}
 
 	targetLong := longWindow
 
-	if longHint <= 0 {
-		resolvedShort := shortHint
-
-		if resolvedShort <= 0 {
-			resolvedShort = max(1, int(math.Ceil(math.Sqrt(float64(sampleCount)))))
-		}
-
-		spread := 0.0
-
-		if sampleCount >= 2 {
-			mean := stat.Mean(history, nil)
-
-			if mean > 0 && !math.IsNaN(mean) && !math.IsInf(mean, 0) {
-				std := stat.StdDev(history, nil)
-
-				if std > 0 && !math.IsNaN(std) && !math.IsInf(std, 0) {
-					spread = std / math.Abs(mean)
-				}
-			}
-		}
-
-		targetLong = int(math.Ceil(float64(resolvedShort) * (1.0 + spread)))
-
-		if targetLong < sampleCount {
-			targetLong = sampleCount
-		}
-
-		if targetLong <= resolvedShort {
-			targetLong = resolvedShort + 1
-		}
-
-		if targetLong > sampleCount && sampleCount > resolvedShort {
-			targetLong = sampleCount
-		}
+	if config.LongHint <= 0 {
+		targetLong = adaptiveLongWindow(history, shortWindow)
 	}
 
-	returnLag := lagHint
+	output := windowsOutput(shortWindow, longWindow, config.ReturnLagHint)
+	output.TargetLong = targetLong
 
-	if lagHint <= 0 {
+	return output, nil
+}
+
+func windowsOutput(shortWindow, longWindow, returnLagHint int) WindowsOutput {
+	returnLag := returnLagHint
+
+	if returnLag <= 0 {
 		returnLag = max(1, int(math.Ceil(math.Sqrt(float64(longWindow)))))
 
 		if longWindow > 1 {
@@ -169,64 +131,43 @@ func (windows *Windows) Read(payload []byte) (int, error) {
 		}
 	}
 
-	state.MergeOutput("shortWindow", float64(shortWindow))
-	state.MergeOutput("longWindow", float64(longWindow))
-	state.MergeOutput("returnLag", float64(returnLag))
-	state.MergeOutput("targetLong", float64(targetLong))
-	state.Poke("output", "root")
-	state.Poke([]string{
-		"shortWindow", "longWindow", "returnLag", "targetLong",
-	}, "inputs")
-
-	return state.PackInto(payload)
+	return WindowsOutput{
+		ShortWindow: shortWindow,
+		LongWindow:  longWindow,
+		ReturnLag:   returnLag,
+		TargetLong:  longWindow,
+	}
 }
 
-func (windows *Windows) Write(payload []byte) (int, error) {
-	windows.artifact.WithPayload(payload)
-	return len(payload), nil
-}
+func adaptiveLongWindow(history []float64, shortWindow int) int {
+	sampleCount := len(history)
+	spread := 0.0
 
-func (windows *Windows) Close() error {
-	return nil
-}
+	if sampleCount >= 2 {
+		mean := stat.Mean(history, nil)
 
-/*
-ResolveWindows runs the Windows stage via FlipFlop for imperative call sites.
-ponytail: stages that cannot nest pipeline during Read use this instead of duplicating flipFlop wiring.
-*/
-func ResolveWindows(
-	history []float64,
-	shortHint, longHint int,
-) (shortWindow, longWindow int, err error) {
-	config := datura.Acquire("windows-resolve", datura.APPJSON)
+		if mean > 0 && !math.IsNaN(mean) && !math.IsInf(mean, 0) {
+			std := stat.StdDev(history, nil)
 
-	if shortHint > 0 {
-		config.Poke(float64(shortHint), "config", "shortHint")
+			if std > 0 && !math.IsNaN(std) && !math.IsInf(std, 0) {
+				spread = std / math.Abs(mean)
+			}
+		}
 	}
 
-	if longHint > 0 {
-		config.Poke(float64(longHint), "config", "longHint")
+	longWindow := int(math.Ceil(float64(shortWindow) * (1.0 + spread)))
+
+	if longWindow < sampleCount {
+		longWindow = sampleCount
 	}
 
-	stage := NewWindows(config)
-	wire := datura.Acquire("windows-resolve-wire", datura.APPJSON)
-	wire.Poke(history, "history")
-
-	if flipErr := nomagique.RoundTripArtifact(wire, stage); flipErr != nil {
-		wire.Release()
-		stage.Close()
-
-		return 0, 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"windows: flipFlop failed",
-			flipErr,
-		))
+	if longWindow <= shortWindow {
+		longWindow = shortWindow + 1
 	}
 
-	shortWindow = int(datura.Peek[float64](wire, "output", "shortWindow"))
-	longWindow = int(datura.Peek[float64](wire, "output", "longWindow"))
-	wire.Release()
-	stage.Close()
+	if longWindow > sampleCount {
+		longWindow = sampleCount
+	}
 
-	return shortWindow, longWindow, nil
+	return longWindow
 }

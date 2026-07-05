@@ -4,102 +4,109 @@ import (
 	"math"
 	"sort"
 
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 )
 
 /*
-Regime selects normal or inverted DAG roles from contagion and pair condition.
-The constructor artifact holds config; Write buffers inbound table wire on its payload.
+RegimeConfig describes causal regime switching over tabular node rows.
 */
-type Regime struct {
-	artifact *datura.Artifact
+type RegimeConfig struct {
+	Target          int
+	MinHistory      int
+	ContagionBreak  float64
+	ContagionSkip   []int
+	ConditionSwitch float64
+	ConditionLeft   int
+	ConditionRight  int
 }
 
 /*
-NewRegime returns a regime stage wired from config attributes on the artifact.
+RegimeInput carries retained rows plus the latest contagion measurement.
 */
-func NewRegime(artifact *datura.Artifact) *Regime {
+type RegimeInput struct {
+	Rows      [][]float64
+	Contagion float64
+}
+
+/*
+RegimeOutput reports the raw regime gate and condition number.
+*/
+type RegimeOutput struct {
+	Value       float64
+	Condition   float64
+	RawInverted float64
+}
+
+/*
+Regime selects normal or inverted DAG roles from contagion and pair condition.
+*/
+type Regime struct {
+	config RegimeConfig
+}
+
+/*
+NewRegime returns a typed regime selector.
+*/
+func NewRegime(config RegimeConfig) *Regime {
 	return &Regime{
-		artifact: artifact,
+		config: config,
 	}
 }
 
-func (regime *Regime) Read(p []byte) (int, error) {
-	state := datura.Acquire("regime-state", datura.APPJSON)
-
-	if _, err := state.Unpack(regime.artifact.DecryptPayload()); err != nil {
-		return 0, errnie.Error(errnie.Err(
+/*
+Measure evaluates the regime switch against retained node rows.
+*/
+func (regime *Regime) Measure(input RegimeInput) (RegimeOutput, error) {
+	if regime.config.MinHistory <= 0 {
+		return RegimeOutput{}, errnie.Error(errnie.Err(
 			errnie.Validation,
-			"causal: state write failed",
-			err,
-		))
-	}
-
-	rows, err := tableRows(state)
-
-	if err != nil {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"causal regime: missing table rows",
-			err,
-		))
-	}
-
-	target := int(datura.Peek[float64](regime.artifact, "target"))
-	minHistory := int(datura.Peek[float64](regime.artifact, "minHistory"))
-
-	if minHistory <= 0 {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"causal regime: minHistory required",
+			"causal regime: min history required",
 			nil,
 		))
 	}
 
-	table, err := newNodeTable(rows, target, minHistory)
-
+	table, err := newNodeTable(
+		input.Rows,
+		regime.config.Target,
+		regime.config.MinHistory,
+	)
 	if err != nil {
-		return 0, errnie.Error(errnie.Err(
+		return RegimeOutput{}, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"causal regime: table construction failed",
 			err,
 		))
 	}
 
-	contagion := datura.Peek[float64](state, "paired")
-	contagionBreakPoint := datura.Peek[float64](regime.artifact, "contagionBreak")
+	breakPoint := regime.config.ContagionBreak
 
-	if contagionBreakPoint <= 0 {
-		contagionBreakPoint = dynamicContagionBreak(
-			rows,
-			target,
-			intSlice(datura.Peek[[]float64](regime.artifact, "contagionSkip")),
+	if breakPoint <= 0 {
+		breakPoint = dynamicContagionBreak(
+			input.Rows,
+			regime.config.Target,
+			regime.config.ContagionSkip,
 		)
 	}
 
-	contagionBreak := contagionBreakPoint > 0 && contagion > contagionBreakPoint
-
+	contagionBreak := breakPoint > 0 && input.Contagion > breakPoint
 	condition := 0.0
 	conditionBreak := false
-	conditionSwitch := datura.Peek[float64](regime.artifact, "conditionSwitch")
 
-	if conditionSwitch > 0 {
-		pairCondition, err := table.pairConditionNumber(
-			int(datura.Peek[float64](regime.artifact, "conditionLeft")),
-			int(datura.Peek[float64](regime.artifact, "conditionRight")),
+	if regime.config.ConditionSwitch > 0 {
+		condition, err = table.pairConditionNumber(
+			regime.config.ConditionLeft,
+			regime.config.ConditionRight,
 		)
-
 		if err != nil {
-			return 0, errnie.Error(errnie.Err(
+			return RegimeOutput{}, errnie.Error(errnie.Err(
 				errnie.Validation,
 				"causal regime: pair condition failed",
 				err,
 			))
 		}
 
-		condition = pairCondition
-		conditionBreak = math.IsInf(pairCondition, 1) || pairCondition >= conditionSwitch
+		conditionBreak = math.IsInf(condition, 1) ||
+			condition >= regime.config.ConditionSwitch
 	}
 
 	rawInverted := 0.0
@@ -108,21 +115,11 @@ func (regime *Regime) Read(p []byte) (int, error) {
 		rawInverted = 1
 	}
 
-	state.MergeOutput("value", condition)
-	state.MergeOutput("condition", condition)
-	state.MergeOutput("rawInverted", rawInverted)
-	state.Poke("output", "root")
-	state.Poke([]string{"value", "condition", "rawInverted"}, "inputs")
-	return state.PackInto(p)
-}
-
-func (regime *Regime) Write(p []byte) (int, error) {
-	regime.artifact.WithPayload(p)
-	return len(p), nil
-}
-
-func (regime *Regime) Close() error {
-	return nil
+	return RegimeOutput{
+		Value:       condition,
+		Condition:   condition,
+		RawInverted: rawInverted,
+	}, nil
 }
 
 func dynamicContagionBreak(rows [][]float64, target int, skip []int) float64 {

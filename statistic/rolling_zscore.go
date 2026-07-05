@@ -2,244 +2,112 @@ package statistic
 
 import (
 	"math"
-	"time"
 
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"gonum.org/v1/gonum/stat"
 )
 
 /*
-RollingZScore normalizes the current sample against its retained series on the stage instance.
+RollingZScore normalizes the current sample against its retained series.
 */
 type RollingZScore struct {
-	artifact *datura.Artifact
-	samples  map[string][]struct {
-		value float64
-		at    time.Time
+	samples map[string][]TimedSample
+}
+
+/*
+NewRollingZScore returns a typed rolling z-score accumulator.
+*/
+func NewRollingZScore() *RollingZScore {
+	return &RollingZScore{
+		samples: map[string][]TimedSample{},
 	}
 }
 
 /*
-NewRollingZScore returns a rolling z-score stage wired from config attributes on the artifact.
+Measure adds one timed sample and returns its z-score against prior samples.
 */
-func NewRollingZScore(artifact *datura.Artifact) *RollingZScore {
-	return &RollingZScore{
-		artifact: artifact,
-		samples: map[string][]struct {
-			value float64
-			at    time.Time
-		}{},
-	}
-}
-
-func (rollingZScore *RollingZScore) Read(payload []byte) (int, error) {
-	state := datura.Acquire("rolling-zscore-state", datura.APPJSON)
-
-	if _, err := state.Unpack(rollingZScore.artifact.DecryptPayload()); err != nil {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"rolling-zscore: state write failed",
-			err,
-		))
+func (rollingZScore *RollingZScore) Measure(sample TimedSample) (ScalarOutput, error) {
+	if err := finiteStatistic("rolling-zscore", sample.Value); err != nil {
+		return ScalarOutput{}, err
 	}
 
-	rootKey := datura.Peek[string](state, "root")
-
-	if rootKey == "" {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"rolling-zscore: root required",
-			nil,
-		))
-	}
-
-	inputs := datura.Peek[[]string](state, "inputs")
-
-	if len(inputs) == 0 {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"rolling-zscore: inputs required",
-			nil,
-		))
-	}
-
-	stageKey := datura.Peek[string](rollingZScore.artifact, "stage")
-
-	if stageKey == "" {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"rolling-zscore: stage required",
-			nil,
-		))
-	}
-
-	configInput := datura.Peek[string](rollingZScore.artifact, stageKey, "input")
-	outputKey := datura.Peek[string](rollingZScore.artifact, stageKey, "outputKey")
-
-	if configInput == "" {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"rolling-zscore: input required",
-			nil,
-		))
-	}
-
-	if outputKey == "" {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"rolling-zscore: outputKey required",
-			nil,
-		))
-	}
-
-	sampleKey := configInput
-
-	if rootKey == "output" {
-		sampleKey = outputKey
-	}
-
-	var sample float64
-	found := false
-
-	for index, input := range inputs {
-		if input != sampleKey {
-			continue
-		}
-
-		if rootKey == "features" {
-			featureSlice := datura.Peek[[]float64](state, rootKey)
-
-			if index >= len(featureSlice) {
-				return 0, errnie.Error(errnie.Err(
-					errnie.Validation,
-					"rolling-zscore: feature index out of range",
-					nil,
-				))
-			}
-
-			sample = featureSlice[index]
-		}
-
-		if rootKey != "features" {
-			sample = datura.Peek[float64](state, rootKey, input)
-		}
-
-		found = true
-	}
-
-	if !found {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"rolling-zscore: input not in inputs",
-			nil,
-		))
-	}
-
-	if math.IsNaN(sample) || math.IsInf(sample, 0) {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"rolling-zscore: sample is non-finite",
-			nil,
-		))
-	}
-
-	seriesKey := datura.Peek[string](rollingZScore.artifact, stageKey, "seriesKey")
-
-	if seriesKey == "" {
-		seriesKey = outputKey
-	}
-
-	timestamp := state.Timestamp()
-
-	if timestamp <= 0 {
-		return 0, errnie.Error(errnie.Err(
+	if sample.At.IsZero() {
+		return ScalarOutput{}, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"rolling-zscore: event timestamp required",
 			nil,
 		))
 	}
 
-	observed := time.Unix(0, timestamp)
-	history := rollingZScore.samples[seriesKey]
+	series := sample.Series
 
-	if len(history) > 0 && observed.Before(history[len(history)-1].at) {
-		return 0, errnie.Error(errnie.Err(
+	if series == "" {
+		series = "default"
+	}
+
+	history := rollingZScore.samples[series]
+
+	if len(history) > 0 && sample.At.Before(history[len(history)-1].At) {
+		return ScalarOutput{}, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"rolling-zscore: event timestamp must not regress",
 			nil,
 		))
 	}
 
-	history = append(history, struct {
-		value float64
-		at    time.Time
-	}{value: sample, at: observed})
+	prior := make([]float64, len(history))
 
-	prior := make([]float64, len(history)-1)
-
-	for index, point := range history[:len(history)-1] {
-		prior[index] = point.value
+	for index, point := range history {
+		prior[index] = point.Value
 	}
 
-	rollingZScore.samples[seriesKey] = history
-
-	var score float64
+	history = append(history, TimedSample{
+		Series: series,
+		Value:  sample.Value,
+		At:     sample.At,
+	})
+	rollingZScore.samples[series] = history
 
 	if len(prior) == 0 {
-		state.MergeOutput(outputKey, score)
-		state.Poke("output", "root")
-		state.Poke([]string{outputKey}, "inputs")
-
-		return state.PackInto(payload)
+		return ScalarOutput{
+			Ready: true,
+			Count: len(history),
+		}, nil
 	}
 
+	score := rollingScore(sample.Value, prior)
+
+	return ScalarOutput{
+		Value: score,
+		Ready: true,
+		Count: len(history),
+	}, nil
+}
+
+func rollingScore(sample float64, prior []float64) float64 {
 	meanSample := stat.Mean(prior, nil)
 	stdSample := stat.StdDev(prior, nil)
 
-	if math.IsNaN(stdSample) || stdSample <= 0 {
-		meanAbsoluteDeviation := 0.0
-
-		for _, priorSample := range prior {
-			meanAbsoluteDeviation += math.Abs(priorSample - meanSample)
-		}
-
-		meanAbsoluteDeviation /= float64(len(prior))
-
-		delta := sample - meanSample
-		scale := meanAbsoluteDeviation
-
-		if scale <= 0 {
-			if delta == 0 {
-				score = 0
-			}
-
-			if delta != 0 {
-				score = delta / math.Abs(delta)
-			}
-		}
-
-		if scale > 0 {
-			score = delta / scale
-		}
+	if stdSample > 0 && !math.IsNaN(stdSample) && !math.IsInf(stdSample, 0) {
+		return (sample - meanSample) / stdSample
 	}
 
-	if stdSample > 0 {
-		score = (sample - meanSample) / stdSample
+	meanAbsoluteDeviation := 0.0
+
+	for _, priorSample := range prior {
+		meanAbsoluteDeviation += math.Abs(priorSample - meanSample)
 	}
 
-	state.MergeOutput(outputKey, score)
-	state.Poke("output", "root")
-	state.Poke([]string{outputKey}, "inputs")
+	meanAbsoluteDeviation /= float64(len(prior))
+	delta := sample - meanSample
 
-	return state.PackInto(payload)
-}
+	if meanAbsoluteDeviation > 0 {
+		return delta / meanAbsoluteDeviation
+	}
 
-func (rollingZScore *RollingZScore) Write(payload []byte) (int, error) {
-	rollingZScore.artifact.WithPayload(payload)
-	return len(payload), nil
-}
+	if delta == 0 {
+		return 0
+	}
 
-func (rollingZScore *RollingZScore) Close() error {
-	return nil
+	return delta / math.Abs(delta)
 }

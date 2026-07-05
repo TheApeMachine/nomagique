@@ -1,50 +1,37 @@
 package logic
 
-import (
-	"github.com/theapemachine/datura"
-	"github.com/theapemachine/errnie"
-)
-
 /*
-Constant emits a fixed scalar on every Read.
+Constant emits a fixed scalar.
 */
 type Constant struct {
-	artifact *datura.Artifact
+	Value float64
 }
 
 /*
-NewConstant returns a stage that always emits the artifact "value" attribute.
+NewConstant returns a typed constant value source and stage.
 */
-func NewConstant(artifact *datura.Artifact) *Constant {
+func NewConstant(values ...float64) *Constant {
+	value := 0.0
+
+	if len(values) > 0 {
+		value = values[0]
+	}
+
 	return &Constant{
-		artifact: artifact,
+		Value: value,
 	}
 }
 
-func (constant *Constant) Read(payload []byte) (int, error) {
-	state := datura.Acquire("constant-state", datura.APPJSON)
-
-	if _, err := state.Unpack(constant.artifact.DecryptPayload()); err != nil {
-		return 0, errnie.Error(errnie.Err(
-			errnie.IO,
-			"logic: constant state write failed",
-			err,
-		))
-	}
-
-	value := datura.Peek[float64](constant.artifact, "value")
-	state.MergeOutput("value", value)
-	state.Poke("output", "root")
-	state.Poke([]string{"value"}, "inputs")
-
-	return state.PackInto(payload)
+/*
+Measure emits the constant as a typed observation.
+*/
+func (constant *Constant) Measure(observation Observation) (Observation, error) {
+	return NewObservation(constant.Value), nil
 }
 
-func (constant *Constant) Write(payload []byte) (int, error) {
-	constant.artifact.WithPayload(payload)
-	return len(payload), nil
-}
-
-func (constant *Constant) Close() error {
-	return nil
+/*
+Values returns the constant operand value.
+*/
+func (constant *Constant) Values(observation Observation) []float64 {
+	return []float64{constant.Value}
 }

@@ -2,73 +2,84 @@ package vector
 
 import (
 	"fmt"
-	"math"
 
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 )
 
 /*
-FeatureSample copies one feature vector slot onto the sample field.
+FeatureSampleConfig selects one feature vector slot.
 */
-type FeatureSample struct {
-	config *datura.Artifact
+type FeatureSampleConfig struct {
+	FeatureIndex int
+	OutputKey    string
 }
 
 /*
-NewFeatureSample returns a feature-index selector configured on the artifact.
+FeatureSampleOutput reports the selected named feature.
 */
-func NewFeatureSample(config *datura.Artifact) *FeatureSample {
+type FeatureSampleOutput struct {
+	Value  NamedValue
+	Vector FeatureVector
+}
 
+/*
+FeatureSample copies one feature vector slot into a named output.
+*/
+type FeatureSample struct {
+	config FeatureSampleConfig
+}
+
+/*
+NewFeatureSample returns a feature-index selector.
+*/
+func NewFeatureSample(config FeatureSampleConfig) *FeatureSample {
 	return &FeatureSample{
 		config: config,
 	}
 }
 
-func (featureSample *FeatureSample) Read(payload []byte) (int, error) {
-	state := datura.Acquire("feature-sample-state", datura.APPJSON)
-
-	if _, err := state.Unpack(featureSample.config.DecryptPayload()); err != nil {
-		return 0, errnie.Error(errnie.Err(
+/*
+Measure returns the selected feature as a named output.
+*/
+func (featureSample *FeatureSample) Measure(
+	vector FeatureVector,
+) (FeatureSampleOutput, error) {
+	if featureSample.config.OutputKey == "" {
+		return FeatureSampleOutput{}, errnie.Error(errnie.Err(
 			errnie.Validation,
-			"feature-sample: state write failed",
-			err,
-		))
-	}
-
-	features := datura.Peek[[]float64](state, "features")
-	featureIndex := int(datura.Peek[float64](featureSample.config, "featureIndex"))
-
-	if featureIndex < 0 || len(features) <= featureIndex {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			fmt.Sprintf("feature-sample: feature index %d out of range for %d features", featureIndex, len(features)),
+			"feature-sample: output key required",
 			nil,
 		))
 	}
 
-	sample := features[featureIndex]
-
-	if math.IsNaN(sample) || math.IsInf(sample, 0) {
-		return 0, errnie.Error(errnie.Err(
+	if featureSample.config.FeatureIndex < 0 ||
+		len(vector.Features) <= featureSample.config.FeatureIndex {
+		return FeatureSampleOutput{}, errnie.Error(errnie.Err(
 			errnie.Validation,
-			"feature-sample: sample is non-finite",
+			fmt.Sprintf(
+				"feature-sample: feature index %d out of range for %d features",
+				featureSample.config.FeatureIndex,
+				len(vector.Features),
+			),
 			nil,
 		))
 	}
 
-	state.MergeOutput("value", sample)
-	state.Poke("output", "root")
-	state.Poke([]string{"value"}, "inputs")
+	sample := vector.Features[featureSample.config.FeatureIndex]
 
-	return state.PackInto(payload)
-}
+	if err := finiteVector("feature-sample", sample); err != nil {
+		return FeatureSampleOutput{}, err
+	}
 
-func (featureSample *FeatureSample) Write(payload []byte) (int, error) {
-	featureSample.config.WithPayload(payload)
-	return len(payload), nil
-}
+	value := NamedValue{
+		Name:  featureSample.config.OutputKey,
+		Value: sample,
+	}
 
-func (featureSample *FeatureSample) Close() error {
-	return nil
+	vector = vector.WithValue(value)
+
+	return FeatureSampleOutput{
+		Value:  value,
+		Vector: vector,
+	}, nil
 }

@@ -50,6 +50,36 @@ func TestCategoryShareConfidence(t *testing.T) {
 	})
 }
 
+func TestCategoryEvidenceBaselines(t *testing.T) {
+	Convey("Given competing positive category scores", t, func() {
+		confidenceBaseline, entryBaseline, exitBaseline, err := CategoryEvidenceBaselines(
+			[]float64{0.2, 1.4, 0.1},
+			2,
+		)
+
+		Convey("It should derive gates from non-winning evidence", func() {
+			So(err, ShouldBeNil)
+			So(confidenceBaseline, ShouldBeGreaterThan, 0)
+			So(entryBaseline, ShouldBeGreaterThan, exitBaseline)
+			So(confidenceBaseline, ShouldEqual, exitBaseline)
+		})
+	})
+
+	Convey("Given zero evidence", t, func() {
+		confidenceBaseline, entryBaseline, exitBaseline, err := CategoryEvidenceBaselines(
+			[]float64{0, 0, 0, 0},
+			1,
+		)
+
+		Convey("It should keep the no-edge state neutral", func() {
+			So(err, ShouldBeNil)
+			So(confidenceBaseline, ShouldAlmostEqual, 0.25, 1e-12)
+			So(entryBaseline, ShouldAlmostEqual, 0.25, 1e-12)
+			So(exitBaseline, ShouldAlmostEqual, 0.25, 1e-12)
+		})
+	})
+}
+
 func BenchmarkCategoryShareConfidence(testingTB *testing.B) {
 	scores := []float64{0.6, 0.4, 0.7, 0.3}
 

@@ -1,70 +1,23 @@
 package equation
 
 import (
-	"io"
 	"math"
 	"sort"
 
-	"github.com/theapemachine/datura"
+	"github.com/theapemachine/errnie"
 	"gonum.org/v1/gonum/stat"
 )
 
 /*
 Cohort classifies one symbol's pairwise return correlation against peer correlations and energy.
-The constructor artifact holds schema inputs; Write buffers inbound wire on its payload.
 */
-type Cohort struct {
-	artifact *datura.Artifact
-}
+type Cohort struct{}
 
 /*
-NewCohort returns a cross-section correlation stage wired from config attributes.
+NewCohort returns a typed cross-section correlation classifier.
 */
-func NewCohort(artifact *datura.Artifact) io.ReadWriteCloser {
-	return &Cohort{
-		artifact: artifact,
-	}
-}
-
-func (cohort *Cohort) Write(p []byte) (int, error) {
-	cohort.artifact.WithPayload(p)
-	return len(p), nil
-}
-
-func (cohort *Cohort) Read(p []byte) (int, error) {
-	state, err := stageState(cohort.artifact.DecryptPayload())
-
-	if err != nil {
-		return 0, err
-	}
-
-	inputKeys := EnsureFeatureSchema(state, cohort.artifact, CohortInputKeys)
-
-	if !cohortSchemaReady(inputKeys) || len(Features(state)) < len(CohortInputKeys) {
-		return rejectStage(state, "cohort: incomplete feature schema")
-	}
-
-	outcome := evaluateCohort(state, inputKeys)
-
-	if !outcome.eligible || outcome.strength <= 0 {
-		return rejectStage(state, "cohort: insufficient signal eligibility")
-	}
-
-	return emitOutput(state, p, datura.Map[float64]{
-		"value":       outcome.strength,
-		"herdScore":   outcome.herdScore,
-		"alphaScore":  outcome.alphaScore,
-		"noiseScore":  outcome.noiseScore,
-		"stressScore": outcome.stressScore,
-		"peakScore":   outcome.peakScore,
-		"category":    float64(outcome.category),
-		"correlation": outcome.correlation,
-		"energy":      outcome.energy,
-	})
-}
-
-func (cohort *Cohort) Close() error {
-	return nil
+func NewCohort() *Cohort {
+	return &Cohort{}
 }
 
 func cohortSchemaReady(inputKeys []string) bool {
@@ -91,24 +44,52 @@ func cohortSchemaReady(inputKeys []string) bool {
 	return true
 }
 
-type cohortOutcome struct {
-	correlation float64
-	energy      float64
-	category    int
-	strength    float64
-	eligible    bool
-	herdScore   float64
-	alphaScore  float64
-	noiseScore  float64
-	stressScore float64
-	peakScore   float64
+/*
+CohortOutput carries typed classifier evidence.
+*/
+type CohortOutput struct {
+	Correlation float64
+	Energy      float64
+	Category    int
+	Strength    float64
+	Eligible    bool
+	HerdScore   float64
+	AlphaScore  float64
+	NoiseScore  float64
+	StressScore float64
+	PeakScore   float64
 }
 
-func evaluateCohort(state *datura.Artifact, inputKeys []string) cohortOutcome {
-	fields, err := FeatureFields(state, inputKeys)
+/*
+Measure classifies a feature frame using its semantic feature schema.
+*/
+func (cohort *Cohort) Measure(frame FeatureFrame) (CohortOutput, error) {
+	if !cohortSchemaReady(frame.Inputs) || len(frame.Features) < len(CohortInputKeys) {
+		return CohortOutput{}, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"cohort: incomplete feature schema",
+			nil,
+		))
+	}
+
+	outcome := evaluateCohort(frame, frame.Inputs)
+
+	if !outcome.Eligible || outcome.Strength <= 0 {
+		return CohortOutput{}, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"cohort: insufficient signal eligibility",
+			nil,
+		))
+	}
+
+	return outcome, nil
+}
+
+func evaluateCohort(frame FeatureFrame, inputKeys []string) CohortOutput {
+	fields, err := FeatureFields(frame, inputKeys)
 
 	if err != nil || len(fields) < len(CohortInputKeys) {
-		return cohortOutcome{}
+		return CohortOutput{}
 	}
 
 	window := int(fields[0])
@@ -116,22 +97,21 @@ func evaluateCohort(state *datura.Artifact, inputKeys []string) cohortOutcome {
 	energy := fields[5]
 	counts := fields[1:4]
 	offset := len(inputKeys)
-	features := Features(state)
 	series := make([][]float64, len(counts))
 
 	for index, count := range counts {
 		segmentCount := int(count)
 
-		if segmentCount < 0 || offset+segmentCount > len(features) {
-			return cohortOutcome{}
+		if segmentCount < 0 || offset+segmentCount > len(frame.Features) {
+			return CohortOutput{}
 		}
 
-		series[index] = features[offset : offset+segmentCount]
+		series[index] = frame.Features[offset : offset+segmentCount]
 		offset += segmentCount
 	}
 
-	if offset != len(features) {
-		return cohortOutcome{}
+	if offset != len(frame.Features) {
+		return CohortOutput{}
 	}
 
 	pairCorrelations := series[0]
@@ -139,11 +119,11 @@ func evaluateCohort(state *datura.Artifact, inputKeys []string) cohortOutcome {
 	peerEnergies := series[2]
 
 	if window <= 0 || barSpacingSeconds <= 0 || len(pairCorrelations) == 0 {
-		return cohortOutcome{}
+		return CohortOutput{}
 	}
 
 	if len(peerCorrelations) == 0 || len(peerEnergies) == 0 {
-		return cohortOutcome{}
+		return CohortOutput{}
 	}
 
 	correlation := cohortQuantileSorted(cohortCopySorted(pairCorrelations), 0.5)
@@ -158,14 +138,14 @@ func evaluateCohort(state *datura.Artifact, inputKeys []string) cohortOutcome {
 	)
 
 	if category == 0 {
-		return cohortOutcome{}
+		return CohortOutput{}
 	}
 
 	scores := cohortClassifierScores(category, correlation, energy, upperEnergy)
 	strength := cohortMaxScore(scores)
 
 	if strength <= 0 {
-		return cohortOutcome{}
+		return CohortOutput{}
 	}
 
 	peakScore := 0.0
@@ -174,17 +154,17 @@ func evaluateCohort(state *datura.Artifact, inputKeys []string) cohortOutcome {
 		peakScore = math.Abs(correlation) * cohortEnergyShare(energy, upperEnergy)
 	}
 
-	return cohortOutcome{
-		correlation: correlation,
-		energy:      energy,
-		category:    category,
-		strength:    strength,
-		eligible:    true,
-		herdScore:   scores[0],
-		alphaScore:  scores[1],
-		noiseScore:  scores[2],
-		stressScore: scores[3],
-		peakScore:   peakScore,
+	return CohortOutput{
+		Correlation: correlation,
+		Energy:      energy,
+		Category:    category,
+		Strength:    strength,
+		Eligible:    true,
+		HerdScore:   scores[0],
+		AlphaScore:  scores[1],
+		NoiseScore:  scores[2],
+		StressScore: scores[3],
+		PeakScore:   peakScore,
 	}
 }
 

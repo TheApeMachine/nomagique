@@ -5,7 +5,6 @@ import (
 	"math"
 	"math/rand"
 
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"gonum.org/v1/gonum/mat"
 )
@@ -42,10 +41,9 @@ type ResonanceConfig struct {
 /*
 AdaptiveResonanceConfig derives every single hyperparameter dynamically
 from the system-wide learning pace (alpha) and the physical depth of the network.
-Optional config artifact attributes under "resonance" override derived values.
 */
 func AdaptiveResonanceConfig(
-	alpha float64, arch []int, config *datura.Artifact,
+	alpha float64, arch []int,
 ) ResonanceConfig {
 	depth := len(arch)
 	depthFloat := float64(depth)
@@ -55,28 +53,6 @@ func AdaptiveResonanceConfig(
 	earlyStopPatience := int(math.Max(1, math.Ceil(math.Sqrt(depthFloat))))
 	gradClip := alpha * depthFloat
 	stateClip := depthFloat / alpha
-
-	if config != nil {
-		if override := datura.Peek[float64](config, "resonance", "temporalWeight"); override > 0 {
-			temporalWeight = override
-		}
-
-		if override := datura.Peek[float64](config, "resonance", "topDownInitMix"); override > 0 {
-			topDownInitMix = override
-		}
-
-		if override := int(datura.Peek[float64](config, "resonance", "earlyStopPatience")); override > 0 {
-			earlyStopPatience = override
-		}
-
-		if override := datura.Peek[float64](config, "resonance", "gradClip"); override > 0 {
-			gradClip = override
-		}
-
-		if override := datura.Peek[float64](config, "resonance", "stateClip"); override > 0 {
-			stateClip = override
-		}
-	}
 
 	return ResonanceConfig{
 		MaxInferenceSteps:  depth * 8,
@@ -109,7 +85,6 @@ func AdaptiveResonanceConfig(
 }
 
 type ResonanceManifold struct {
-	artifact              *datura.Artifact
 	cfg                   ResonanceConfig
 	arch                  []int
 	targetDim             int
@@ -142,7 +117,7 @@ func NewResonanceManifold(
 		return nil, errors.New("resonance: alpha must be finite and in (0, 1]")
 	}
 
-	cfg := AdaptiveResonanceConfig(alpha, arch, nil)
+	cfg := AdaptiveResonanceConfig(alpha, arch)
 	rng := rand.New(rand.NewSource(42))
 	numLinks := len(arch) - 1
 
@@ -225,7 +200,6 @@ func NewResonanceManifold(
 	}
 
 	return &ResonanceManifold{
-		artifact:              datura.Acquire("resonance", datura.APPJSON),
 		cfg:                   cfg,
 		arch:                  arch,
 		targetDim:             targetDim,
@@ -283,64 +257,6 @@ func (rm *ResonanceManifold) SetStreamLearn(enabled bool) {
 
 func (rm *ResonanceManifold) SetStreamAdvanceTemporal(enabled bool) {
 	rm.streamAdvanceTemporal = enabled
-}
-
-func (rm *ResonanceManifold) Read(payload []byte) (int, error) {
-	state := datura.Acquire("resonance-state", datura.APPJSON)
-
-	if _, err := state.Unpack(rm.artifact.DecryptPayload()); err != nil {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"resonance: state write failed",
-			err,
-		))
-	}
-
-	values := datura.Peek[[]float64](state, "batch")
-
-	if len(values) < rm.arch[0] {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"resonance: batch shorter than input dimension",
-			nil,
-		))
-	}
-
-	input := values[:rm.arch[0]]
-	target := []float64(nil)
-
-	if rm.targetDim > 0 && len(values) >= rm.arch[0]+rm.targetDim {
-		target = values[rm.arch[0] : rm.arch[0]+rm.targetDim]
-	}
-
-	reconstruction, err := rm.SettleFromBatch(input, target)
-
-	if err != nil {
-		return 0, err
-	}
-
-	latent := rm.LatentState()
-
-	state.MergeOutput("value", reconstruction)
-	state.MergeOutput("latent", latent)
-	state.Poke("output", "root")
-	state.Poke([]string{"value", "latent"}, "inputs")
-	return state.PackInto(payload)
-}
-
-func (rm *ResonanceManifold) Write(payload []byte) (int, error) {
-	if payloadHasReset(payload) {
-		rm.ResetState(false)
-
-		return len(payload), nil
-	}
-
-	rm.artifact.WithPayload(payload)
-	return len(payload), nil
-}
-
-func (rm *ResonanceManifold) Close() error {
-	return nil
 }
 
 func (rm *ResonanceManifold) SettleFromBatch(input []float64, target []float64) (float64, error) {

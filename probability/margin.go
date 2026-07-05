@@ -94,3 +94,75 @@ func CategoryShareConfidence(scores []float64, categoryIndex int) (float64, erro
 
 	return (selected + 1) / (evidenceSum + float64(len(scores))), nil
 }
+
+/*
+CategoryEvidenceBaselines derives confidence gates from the current evidence
+competition instead of from category count. The entry gate is the nearest
+competitor's posterior share; the exit gate is the average non-winning evidence
+floor, so protective decisions can react before the strongest competitor wins.
+categoryIndex is 1-based; when zero, the winning category is used.
+*/
+func CategoryEvidenceBaselines(
+	scores []float64,
+	categoryIndex int,
+) (float64, float64, float64, error) {
+	if len(scores) == 0 {
+		return 0, 0, 0, fmt.Errorf("probability: category baselines require scores")
+	}
+
+	index := ArgmaxIndex(scores)
+
+	if categoryIndex > 0 && categoryIndex-1 < len(scores) {
+		index = categoryIndex - 1
+	}
+
+	if index < 0 || index >= len(scores) {
+		return 0, 0, 0, fmt.Errorf("probability: category baseline index out of range")
+	}
+
+	evidenceSum := 0.0
+	runnerUp := 0.0
+	nonWinningSum := 0.0
+	nonWinningCount := 0
+
+	for scoreIndex, score := range scores {
+		if score <= 0 {
+			if scoreIndex != index {
+				nonWinningCount++
+			}
+
+			continue
+		}
+
+		evidenceSum += score
+
+		if scoreIndex == index {
+			continue
+		}
+
+		nonWinningCount++
+		nonWinningSum += score
+
+		if score > runnerUp {
+			runnerUp = score
+		}
+	}
+
+	denominator := evidenceSum + float64(len(scores))
+
+	if denominator <= 0 {
+		return 0, 0, 0, fmt.Errorf("probability: category baseline denominator required")
+	}
+
+	entryBaseline := (runnerUp + 1) / denominator
+	exitEvidence := runnerUp
+
+	if nonWinningCount > 0 {
+		exitEvidence = nonWinningSum / float64(nonWinningCount)
+	}
+
+	exitBaseline := (exitEvidence + 1) / denominator
+	confidenceBaseline := exitBaseline
+
+	return confidenceBaseline, entryBaseline, exitBaseline, nil
+}

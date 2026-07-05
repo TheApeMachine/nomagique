@@ -3,106 +3,86 @@ package learning
 import (
 	"fmt"
 	"math"
-
-	"github.com/theapemachine/datura"
-	"github.com/theapemachine/errnie"
 )
 
 /*
-RLS is an online recursive-least-squares stage composable in nomagique.Number pipelines.
-The constructor artifact holds config; Write buffers inbound wire on its payload.
+RLSConfig configures recursive least squares.
 */
-type RLS struct {
-	artifact   *datura.Artifact
-	stateStore *datura.Artifact
+type RLSConfig struct {
+	Dimension        int
+	InitialVariance  float64
+	ForgettingFactor float64
 }
 
 /*
-NewRLS returns an RLS stage wired from config attributes on the artifact.
+RLSSample carries one feature vector and target.
 */
-func NewRLS(artifact *datura.Artifact) *RLS {
-	return &RLS{
-		artifact:   artifact,
-		stateStore: datura.Acquire("rls-state-store", datura.APPJSON),
-	}
+type RLSSample struct {
+	Features []float64
+	Target   float64
 }
 
-func (rls *RLS) Read(payload []byte) (int, error) {
-	if rls == nil || rls.artifact == nil {
-		return 0, nil
+/*
+RLSOutput reports the latest prediction and retained linear state.
+*/
+type RLSOutput struct {
+	Value              float64
+	Beta               []float64
+	Covariance         []float64
+	CovarianceDiagonal []float64
+}
+
+/*
+RLS is an online recursive-least-squares learner.
+*/
+type RLS struct {
+	config  RLSConfig
+	session *rlsSession
+}
+
+/*
+NewRLS returns a typed RLS learner.
+*/
+func NewRLS(config RLSConfig) (*RLS, error) {
+	learner := &RLS{
+		config: config,
 	}
 
-	state := datura.Acquire("rls-state", datura.APPJSON)
-
-	if _, err := state.Unpack(rls.artifact.DecryptPayload()); err != nil {
-		state.Release()
-
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"rls: state write failed",
-			err,
-		))
-	}
-
-	defer state.Release()
-
-	session, err := rls.loadSession()
+	session, err := learner.loadSession()
 
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 
-	values := datura.Peek[[]float64](state, "batch")
+	learner.session = session
 
-	if len(values) == 0 {
-		values = datura.Peek[[]float64](state, "features")
+	return learner, nil
+}
+
+/*
+Measure observes one sample and returns the current prediction.
+*/
+func (rls *RLS) Measure(sample RLSSample) (RLSOutput, error) {
+	if rls == nil || rls.session == nil {
+		return RLSOutput{}, fmt.Errorf("learning: rls session required")
 	}
 
-	if len(values) < session.dimension+1 {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"rls: batch shorter than feature dimension plus target",
-			nil,
-		))
+	if err := rls.session.observe(sample.Features, sample.Target); err != nil {
+		return RLSOutput{}, fmt.Errorf("learning: rls observe failed: %w", err)
 	}
 
-	features := values[:session.dimension]
-	target := values[len(values)-1]
-
-	if err := session.observe(features, target); err != nil {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"rls: observe failed",
-			err,
-		))
-	}
-
-	prediction, err := session.predict(features)
+	prediction, err := rls.session.predict(sample.Features)
 
 	if err != nil {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"rls: predict failed",
-			err,
-		))
+		return RLSOutput{}, fmt.Errorf("learning: rls predict failed: %w", err)
 	}
 
-	session.persist(rls.stateStore, prediction)
-	state.MergeOutput("value", prediction)
-	state.Poke("output", "root")
-	state.Poke([]string{"value"}, "inputs")
-
-	return state.PackInto(payload)
-}
-
-func (rls *RLS) Write(payload []byte) (int, error) {
-	rls.artifact.WithPayload(payload)
-
-	return len(payload), nil
-}
-
-func (rls *RLS) Close() error {
-	return nil
+	return RLSOutput{
+		Value:              prediction,
+		Beta:               append([]float64(nil), rls.session.beta...),
+		Covariance:         flattenCovariance(rls.session.covariance),
+		CovarianceDiagonal: covarianceDiagonal(rls.session.covariance),
+	}, nil
 }
 
 type rlsSession struct {
@@ -114,66 +94,33 @@ type rlsSession struct {
 }
 
 func (rls *RLS) loadSession() (*rlsSession, error) {
-	dimension := int(datura.Peek[float64](rls.artifact, "dimension"))
-	initialVariance := datura.Peek[float64](rls.artifact, "initialVariance")
-	forgettingFactor := datura.Peek[float64](rls.artifact, "forgettingFactor")
+	config := rls.config
 
-	if forgettingFactor == 0 {
-		forgettingFactor = 1
+	if config.ForgettingFactor == 0 {
+		config.ForgettingFactor = 1
 	}
 
-	if dimension <= 0 {
-		return nil, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"rls: dimension must be positive",
-			nil,
-		))
+	if config.Dimension <= 0 {
+		return nil, fmt.Errorf("learning: rls dimension must be positive")
 	}
 
-	if initialVariance <= 0 {
-		return nil, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"rls: initial variance must be positive",
-			nil,
-		))
+	if config.InitialVariance <= 0 {
+		return nil, fmt.Errorf("learning: rls initial variance must be positive")
 	}
 
-	if forgettingFactor <= 0 || forgettingFactor > 1 {
-		return nil, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"rls: forgetting factor must be in (0,1]",
-			nil,
-		))
+	if config.ForgettingFactor <= 0 || config.ForgettingFactor > 1 {
+		return nil, fmt.Errorf("learning: rls forgetting factor must be in (0,1]")
 	}
 
-	size := dimension + 1
-	session := &rlsSession{
-		dimension:        dimension,
-		initialVariance:  initialVariance,
-		forgettingFactor: forgettingFactor,
-	}
+	size := config.Dimension + 1
 
-	beta := datura.Peek[[]float64](rls.stateStore, "output", "beta")
-	covFlat := datura.Peek[[]float64](rls.stateStore, "output", "covariance")
-
-	if len(beta) == size && len(covFlat) == size*size {
-		session.beta = append([]float64(nil), beta...)
-		session.covariance = unflattenCovariance(covFlat, size)
-
-		return session, nil
-	}
-
-	session.beta = make([]float64, size)
-	session.covariance = newRLSCovariance(size, initialVariance)
-
-	return session, nil
-}
-
-func (session *rlsSession) persist(stateStore *datura.Artifact, prediction float64) {
-	stateStore.MergeOutput("value", prediction)
-	stateStore.MergeOutput("beta", append([]float64(nil), session.beta...))
-	stateStore.MergeOutput("covariance", flattenCovariance(session.covariance))
-	stateStore.MergeOutput("covarianceDiagonal", covarianceDiagonal(session.covariance))
+	return &rlsSession{
+		dimension:        config.Dimension,
+		initialVariance:  config.InitialVariance,
+		forgettingFactor: config.ForgettingFactor,
+		beta:             make([]float64, size),
+		covariance:       newRLSCovariance(size, config.InitialVariance),
+	}, nil
 }
 
 func newRLSCovariance(size int, initialVariance float64) [][]float64 {
@@ -198,20 +145,6 @@ func flattenCovariance(covariance [][]float64) []float64 {
 	}
 
 	return flat
-}
-
-func unflattenCovariance(flat []float64, size int) [][]float64 {
-	covariance := make([][]float64, size)
-
-	for row := 0; row < size; row++ {
-		covariance[row] = make([]float64, size)
-
-		for col := 0; col < size; col++ {
-			covariance[row][col] = flat[row*size+col]
-		}
-	}
-
-	return covariance
 }
 
 func covarianceDiagonal(covariance [][]float64) []float64 {

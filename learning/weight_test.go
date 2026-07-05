@@ -4,133 +4,77 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/datura"
-	"github.com/theapemachine/nomagique"
 )
 
 func TestWeight(testingTB *testing.T) {
 	Convey("Given Weight constructor", testingTB, func() {
-		trustWeight := Weight(pairConfig("trust-weight-config"))
+		trustWeight := Weight()
 
-		Convey("It should return a usable dynamic", func() {
+		Convey("It should return a usable learner", func() {
 			So(trustWeight, ShouldNotBeNil)
 		})
 	})
 }
 
-func TestTrustWeightRead(testingTB *testing.T) {
-	Convey("Given empty Observe inputs", testingTB, func() {
-		trustWeight := Weight(pairConfig("trust-weight-config"))
-		artifact := datura.Acquire("test", datura.APPJSON)
-		err := nomagique.RoundTripArtifact(artifact, trustWeight)
-
-		Convey("It should return a validation error", func() {
-			So(err, ShouldNotBeNil)
-		})
-	})
-
+func TestTrustWeightMeasure(testingTB *testing.T) {
 	Convey("Given a fresh trust weight", testingTB, func() {
-		trustWeight := Weight(pairConfig("trust-weight-config"))
-		artifact := pairWire(datura.Acquire("test", datura.APPJSON), 10, 10)
-		err := nomagique.RoundTripArtifact(artifact, trustWeight)
-
-		So(err, ShouldBeNil)
-
-		got := datura.Peek[float64](artifact, "output", "value")
+		trustWeight := Weight()
+		output, err := trustWeight.Measure(LearningPair{Predicted: 10, Actual: 10})
 
 		Convey("It should return full trust", func() {
-			So(got, ShouldEqual, 1)
+			So(err, ShouldBeNil)
+			So(output.Value, ShouldEqual, 1)
+			So(output.Count, ShouldEqual, 1)
 		})
 	})
 
 	Convey("Given diverging outcomes", testingTB, func() {
-		trustWeight := Weight(pairConfig("trust-weight-config"))
-		artifact := datura.Acquire("test", datura.APPJSON)
-
-		artifact = pairWire(artifact, 10, 10)
-		err := nomagique.RoundTripArtifact(artifact, trustWeight)
-
+		trustWeight := Weight()
+		_, err := trustWeight.Measure(LearningPair{Predicted: 10, Actual: 10})
 		So(err, ShouldBeNil)
 
-		artifact = pairWire(artifact, 20, 30)
-		err = nomagique.RoundTripArtifact(artifact, trustWeight)
-
-		So(err, ShouldBeNil)
-
-		got := datura.Peek[float64](artifact, "output", "value")
+		output, err := trustWeight.Measure(LearningPair{Predicted: 20, Actual: 30})
 
 		Convey("It should reduce trust", func() {
-			So(got, ShouldBeLessThan, 1)
+			So(err, ShouldBeNil)
+			So(output.Value, ShouldBeLessThan, 1)
 		})
 	})
 
 	Convey("Given zero predicted", testingTB, func() {
-		trustWeight := Weight(pairConfig("trust-weight-config"))
-		artifact := pairWire(datura.Acquire("test", datura.APPJSON), 0, 10)
-		err := nomagique.RoundTripArtifact(artifact, trustWeight)
+		trustWeight := Weight()
+		_, err := trustWeight.Measure(LearningPair{Predicted: 0, Actual: 10})
 
 		Convey("It should return a parse error", func() {
 			So(err, ShouldNotBeNil)
 		})
 	})
-
-	Convey("Given a non-scalar first input", testingTB, func() {
-		trustWeight := Weight(pairConfig("trust-weight-config"))
-		artifact := datura.Acquire("test", datura.APPJSON)
-
-		artifact = pairWire(artifact, 10, 10)
-		err := nomagique.RoundTripArtifact(artifact, trustWeight)
-
-		So(err, ShouldBeNil)
-
-		fresh := datura.Acquire("test", datura.APPJSON)
-		err = nomagique.RoundTripArtifact(fresh, trustWeight)
-
-		Convey("It should return a validation error", func() {
-			So(err, ShouldNotBeNil)
-		})
-	})
 }
 
-func TestTrustWeight_Reset(testingTB *testing.T) {
+func TestTrustWeightReset(testingTB *testing.T) {
 	Convey("Given trust weight with state", testingTB, func() {
-		trustWeight := Weight(pairConfig("trust-weight-config"))
-		artifact := pairWire(datura.Acquire("test", datura.APPJSON), 10, 10)
-		err := nomagique.RoundTripArtifact(artifact, trustWeight)
-
+		trustWeight := Weight()
+		_, err := trustWeight.Measure(LearningPair{Predicted: 10, Actual: 10})
 		So(err, ShouldBeNil)
 
-		fields := weightStateFromArtifact(trustWeight.artifact)
-		fields.Count = 0
-		pokeWeightState(trustWeight.artifact, &fields, 0)
-
-		Convey("It should clear derived state", func() {
-			So(datura.Peek[float64](trustWeight.artifact, "output", "count"), ShouldEqual, 0)
-		})
-
-		fresh := pairWire(datura.Acquire("test", datura.APPJSON), 10, 10)
-		err = nomagique.RoundTripArtifact(fresh, trustWeight)
-
-		So(err, ShouldBeNil)
+		trustWeight.Reset()
+		output, err := trustWeight.Measure(LearningPair{Predicted: 10, Actual: 10})
 
 		Convey("It should observe again after reset", func() {
-			So(datura.Peek[float64](trustWeight.artifact, "output", "count"), ShouldEqual, 1)
-			So(datura.Peek[float64](fresh, "output", "value"), ShouldEqual, 1)
+			So(err, ShouldBeNil)
+			So(output.Count, ShouldEqual, 1)
+			So(output.Value, ShouldEqual, 1)
 		})
 	})
 }
 
-func BenchmarkTrustWeightRead(testingTB *testing.B) {
-	trustWeight := Weight(pairConfig("trust-weight-config-bench"))
-	artifact := datura.Acquire("test", datura.APPJSON)
-
-	artifact = pairWire(artifact, 10, 10)
-	_ = nomagique.RoundTripArtifact(artifact, trustWeight)
+func BenchmarkTrustWeightMeasure(testingTB *testing.B) {
+	trustWeight := Weight()
+	_, _ = trustWeight.Measure(LearningPair{Predicted: 10, Actual: 10})
 
 	testingTB.ReportAllocs()
 
 	for testingTB.Loop() {
-		artifact = pairWire(artifact, 10, 11)
-		_ = nomagique.RoundTripArtifact(artifact, trustWeight)
+		_, _ = trustWeight.Measure(LearningPair{Predicted: 10, Actual: 11})
 	}
 }

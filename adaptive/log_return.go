@@ -4,234 +4,151 @@ import (
 	"math"
 	"time"
 
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 )
 
 /*
-LogReturn computes a lagged log return from a retained sample series on the stage instance.
+LogReturnConfig configures lagged log-return history retention.
+*/
+type LogReturnConfig struct {
+	ReturnLag  int
+	LongWindow int
+}
+
+/*
+LogReturnSample carries a positive sample with event time and series key.
+*/
+type LogReturnSample struct {
+	Series string
+	Value  float64
+	At     time.Time
+}
+
+/*
+LogReturn computes a lagged log return from a retained sample series.
 */
 type LogReturn struct {
-	artifact *datura.Artifact
-	samples  map[string][]struct {
-		value float64
-		at    time.Time
+	config  LogReturnConfig
+	samples map[string][]LogReturnSample
+}
+
+/*
+LogReturnOutput reports a lagged log return.
+*/
+type LogReturnOutput struct {
+	Value float64
+	Ready bool
+	Count int
+}
+
+/*
+NewLogReturn returns a typed log-return calculator.
+*/
+func NewLogReturn(configs ...LogReturnConfig) *LogReturn {
+	config := LogReturnConfig{
+		ReturnLag: 1,
+	}
+
+	if len(configs) > 0 {
+		config = configs[0]
+	}
+
+	if config.ReturnLag <= 0 {
+		config.ReturnLag = 1
+	}
+
+	return &LogReturn{
+		config:  config,
+		samples: map[string][]LogReturnSample{},
 	}
 }
 
 /*
-NewLogReturn returns a log-return stage wired from config attributes on the artifact.
+Measure adds one sample and returns the lagged log return.
 */
-func NewLogReturn(artifact *datura.Artifact) *LogReturn {
-	return &LogReturn{
-		artifact: artifact,
-		samples: map[string][]struct {
-			value float64
-			at    time.Time
-		}{},
-	}
-}
-
-func (logReturn *LogReturn) Read(payload []byte) (int, error) {
-	state := datura.Acquire("log-return-state", datura.APPJSON)
-
-	if _, err := state.Unpack(logReturn.artifact.DecryptPayload()); err != nil {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"log-return: state write failed",
-			err,
-		))
+func (logReturn *LogReturn) Measure(sample LogReturnSample) (LogReturnOutput, error) {
+	if err := finiteAdaptive("log-return", sample.Value); err != nil {
+		return LogReturnOutput{}, err
 	}
 
-	rootKey := datura.Peek[string](state, "root")
-
-	if rootKey == "" {
-		return 0, errnie.Error(errnie.Err(
+	if sample.Value <= 0 {
+		return LogReturnOutput{}, errnie.Error(errnie.Err(
 			errnie.Validation,
-			"log-return: root required",
+			"log-return: value must be positive",
 			nil,
 		))
 	}
 
-	inputs := datura.Peek[[]string](state, "inputs")
-
-	if len(inputs) == 0 {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"log-return: inputs required",
-			nil,
-		))
-	}
-
-	stageKey := datura.Peek[string](logReturn.artifact, "stage")
-
-	if stageKey == "" {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"log-return: stage required",
-			nil,
-		))
-	}
-
-	configInput := datura.Peek[string](logReturn.artifact, stageKey, "input")
-
-	if configInput == "" {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"log-return: input required",
-			nil,
-		))
-	}
-
-	outputKey := datura.Peek[string](logReturn.artifact, stageKey, "outputKey")
-
-	if outputKey == "" {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"log-return: outputKey required",
-			nil,
-		))
-	}
-
-	returnLag := int(datura.Peek[float64](logReturn.artifact, stageKey, "returnLag"))
-
-	if returnLag <= 0 {
-		returnLag = int(datura.Peek[float64](state, "output", "returnLag"))
-	}
-
-	if returnLag <= 0 {
-		returnLag = 1
-	}
-
-	var sample float64
-	found := false
-
-	for index, input := range inputs {
-		if input != configInput {
-			continue
-		}
-
-		if rootKey == "features" {
-			featureSlice := datura.Peek[[]float64](state, rootKey)
-
-			if index >= len(featureSlice) {
-				return 0, errnie.Error(errnie.Err(
-					errnie.Validation,
-					"log-return: feature index out of range",
-					nil,
-				))
-			}
-
-			sample = featureSlice[index]
-		}
-
-		if rootKey != "features" {
-			sample = datura.Peek[float64](state, rootKey, input)
-		}
-
-		found = true
-	}
-
-	if !found {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"log-return: input not in inputs",
-			nil,
-		))
-	}
-
-	if sample <= 0 || math.IsNaN(sample) || math.IsInf(sample, 0) {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"log-return: sample is non-positive or non-finite",
-			nil,
-		))
-	}
-
-	seriesKey := datura.Peek[string](logReturn.artifact, stageKey, "seriesKey")
-
-	if seriesKey == "" {
-		seriesKey = outputKey
-	}
-
-	scope, _ := state.Scope()
-
-	if scope != "" {
-		seriesKey = seriesKey + "/" + scope
-	}
-
-	timestamp := state.Timestamp()
-
-	if timestamp <= 0 {
-		return 0, errnie.Error(errnie.Err(
+	if sample.At.IsZero() {
+		return LogReturnOutput{}, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"log-return: event timestamp required",
 			nil,
 		))
 	}
 
-	observed := time.Unix(0, timestamp)
-	history := logReturn.samples[seriesKey]
+	series := sample.Series
 
-	if len(history) > 0 && observed.Before(history[len(history)-1].at) {
-		return 0, errnie.Error(errnie.Err(
+	if series == "" {
+		series = "default"
+	}
+
+	history := logReturn.samples[series]
+
+	if len(history) > 0 && sample.At.Before(history[len(history)-1].At) {
+		return LogReturnOutput{}, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"log-return: event timestamp must not regress",
 			nil,
 		))
 	}
 
-	history = append(history, struct {
-		value float64
-		at    time.Time
-	}{value: sample, at: observed})
+	sample.Series = series
+	history = append(history, sample)
+	history = logReturn.trim(history)
+	logReturn.samples[series] = history
+	anchorIndex := len(history) - logReturn.config.ReturnLag - 1
 
-	longWindow := int(datura.Peek[float64](logReturn.artifact, stageKey, "longWindow"))
-
-	if longWindow <= 0 {
-		longWindow = int(datura.Peek[float64](state, "output", "longWindow"))
+	if anchorIndex < 0 {
+		return LogReturnOutput{
+			Ready: false,
+			Count: len(history),
+		}, nil
 	}
 
-	if longWindow <= 0 {
-		longWindow = len(history)
-	}
+	anchor := history[anchorIndex].Value
 
-	keep := longWindow + returnLag
-
-	if len(history) > keep {
-		history = history[len(history)-keep:]
-	}
-
-	logReturn.samples[seriesKey] = history
-
-	anchorIndex := len(history) - returnLag - 1
-	anchorSample := sample
-
-	if anchorIndex >= 0 {
-		anchorSample = history[anchorIndex].value
-	}
-
-	if anchorSample <= 0 || math.IsNaN(anchorSample) || math.IsInf(anchorSample, 0) {
-		return 0, errnie.Error(errnie.Err(
+	if anchor <= 0 {
+		return LogReturnOutput{}, errnie.Error(errnie.Err(
 			errnie.Validation,
-			"log-return: anchor sample is non-positive or non-finite",
+			"log-return: anchor value must be positive",
 			nil,
 		))
 	}
 
-	logReturnValue := math.Log(sample / anchorSample)
-	state.MergeOutput(outputKey, logReturnValue)
-	state.Poke("output", "root")
-	state.Poke([]string{outputKey}, "inputs")
+	value := math.Log(sample.Value / anchor)
 
-	return state.PackInto(payload)
+	if err := finiteAdaptive("log-return", value); err != nil {
+		return LogReturnOutput{}, err
+	}
+
+	return LogReturnOutput{
+		Value: value,
+		Ready: true,
+		Count: len(history),
+	}, nil
 }
 
-func (logReturn *LogReturn) Write(p []byte) (int, error) {
-	logReturn.artifact.WithPlaintextPayload(p)
-	return len(p), nil
-}
+func (logReturn *LogReturn) trim(history []LogReturnSample) []LogReturnSample {
+	keep := logReturn.config.LongWindow + logReturn.config.ReturnLag
 
-func (logReturn *LogReturn) Close() error {
-	return nil
+	if keep <= logReturn.config.ReturnLag {
+		return history
+	}
+
+	if len(history) <= keep {
+		return history
+	}
+
+	return history[len(history)-keep:]
 }

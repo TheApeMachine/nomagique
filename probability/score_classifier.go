@@ -9,7 +9,7 @@ import (
 
 /*
 ScoreClassifier classifies named float scores without knowing where they came
-from. It is the data-shape agnostic core used by artifact and typed callers.
+from. It is the data-shape agnostic core used by typed callers.
 */
 type ScoreClassifier struct {
 	inputs          []string
@@ -146,15 +146,25 @@ func (classifier *ScoreClassifier) Classify(
 		distribution[fmt.Sprintf("%d", int(wireIndex))] = probability
 	}
 
-	baseline := 1.0 / float64(len(classifier.inputs))
+	confidenceBaseline, entryBaseline, exitBaseline, err := CategoryEvidenceBaselines(
+		values,
+		winnerIndex+1,
+	)
+	if err != nil {
+		return ScoreResult{}, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"classifier: unable to compute adaptive baselines",
+			err,
+		))
+	}
 
 	return ScoreResult{
 		Value:              categoryIndex,
 		Category:           categoryIndex,
 		Confidence:         confidence,
-		ConfidenceBaseline: baseline,
-		EntryBaseline:      baseline,
-		ExitBaseline:       baseline,
+		ConfidenceBaseline: confidenceBaseline,
+		EntryBaseline:      entryBaseline,
+		ExitBaseline:       exitBaseline,
 		Strength:           strength,
 		Probabilities:      probabilities,
 		Distribution:       distribution,

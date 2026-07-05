@@ -129,11 +129,25 @@ func TestFlow_MeasureClassifiedCategories(testingTB *testing.T) {
 					BuyNotional:    100,
 					SellNotional:   100,
 					TradeCount:     2,
+					GrossFloor:     500,
 					MedianNotional: 100,
 					Prices:         []float64{100, 100.01},
 				},
 				wantCategory: 4,
 				wantScore:    func(output equation.FlowOutput) float64 { return output.Starvation },
+			},
+			{
+				name: "balanced two-trade flow",
+				input: equation.FlowInput{
+					BuyNotional:    100,
+					SellNotional:   100,
+					TradeCount:     2,
+					GrossFloor:     200,
+					MedianNotional: 100,
+					Prices:         []float64{100, 100.01},
+				},
+				wantCategory: 3,
+				wantScore:    func(output equation.FlowOutput) float64 { return output.Balance },
 			},
 		}
 

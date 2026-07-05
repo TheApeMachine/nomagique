@@ -1,78 +1,59 @@
 package equation
 
 import (
-	"io"
 	"math"
 
-	"github.com/theapemachine/datura"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/probability"
 )
 
 /*
 Manifoldstate classifies systemic herd, liquidity shock, synchronized drift, and stochastic noise.
-The constructor artifact holds schema inputs; Write buffers inbound wire on its payload.
 */
-type Manifoldstate struct {
-	artifact *datura.Artifact
+type Manifoldstate struct{}
+
+/*
+NewManifoldstate returns a typed manifold-state classifier.
+*/
+func NewManifoldstate() *Manifoldstate {
+	return &Manifoldstate{}
 }
 
 /*
-NewManifoldstate returns a manifold-state stage wired from config attributes.
+ManifoldstateOutput carries typed category evidence.
 */
-func NewManifoldstate(artifact *datura.Artifact) io.ReadWriteCloser {
-	return &Manifoldstate{
-		artifact: artifact,
+type ManifoldstateOutput struct {
+	HerdScore  float64
+	ShockScore float64
+	DriftScore float64
+	NoiseScore float64
+	Strength   float64
+	Category   int
+	Eligible   bool
+}
+
+/*
+Measure classifies manifold features using their semantic feature schema.
+*/
+func (manifoldstate *Manifoldstate) Measure(frame FeatureFrame) (ManifoldstateOutput, error) {
+	outcome := evaluateManifoldstate(frame, frame.Inputs)
+
+	if !outcome.Eligible || outcome.Strength <= 0 {
+		return ManifoldstateOutput{}, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"equation: invalid stage input",
+			nil,
+		))
 	}
+
+	return outcome, nil
 }
 
-func (manifoldstate *Manifoldstate) Write(p []byte) (int, error) {
-	manifoldstate.artifact.WithPayload(p)
-	return len(p), nil
-}
-
-func (manifoldstate *Manifoldstate) Read(p []byte) (int, error) {
-	state, err := stageState(manifoldstate.artifact.DecryptPayload())
-
-	if err != nil {
-		return 0, err
-	}
-
-	inputKeys := EnsureFeatureSchema(state, manifoldstate.artifact, ManifoldInputKeys)
-	outcome := evaluateManifoldstate(state, inputKeys)
-
-	if !outcome.eligible || outcome.strength <= 0 {
-		return rejectStage(state, "equation: invalid stage input")
-	}
-
-	return emitOutput(state, p, datura.Map[float64]{
-		"value":      outcome.strength,
-		"herdScore":  outcome.herdScore,
-		"shockScore": outcome.shockScore,
-		"driftScore": outcome.driftScore,
-		"noiseScore": outcome.noiseScore,
-		"category":   float64(outcome.category),
-	})
-}
-
-func (manifoldstate *Manifoldstate) Close() error {
-	return nil
-}
-
-type manifoldstateOutcome struct {
-	herdScore  float64
-	shockScore float64
-	driftScore float64
-	noiseScore float64
-	strength   float64
-	category   int
-	eligible   bool
-}
-
-func evaluateManifoldstate(state *datura.Artifact, inputKeys []string) manifoldstateOutcome {
-	fields, err := FeatureFields(state, inputKeys)
+func evaluateManifoldstate(frame FeatureFrame, inputKeys []string) ManifoldstateOutput {
+	fields, err := FeatureFields(frame, inputKeys)
 
 	if err != nil || len(fields) < len(ManifoldInputKeys) {
-		return manifoldstateOutcome{}
+		return ManifoldstateOutput{}
 	}
 
 	pressureGradNorm := fields[0]
@@ -82,18 +63,18 @@ func evaluateManifoldstate(state *datura.Artifact, inputKeys []string) manifolds
 	price := fields[4]
 
 	if price <= 0 {
-		return manifoldstateOutcome{}
+		return ManifoldstateOutput{}
 	}
 
 	if coherenceMag2 <= 0 || guidanceSpeed <= 0 || viscosityProxy <= 0 {
-		return manifoldstateOutcome{}
+		return ManifoldstateOutput{}
 	}
 
 	if math.IsNaN(pressureGradNorm) || math.IsInf(pressureGradNorm, 0) ||
 		math.IsNaN(coherenceMag2) || math.IsInf(coherenceMag2, 0) ||
 		math.IsNaN(guidanceSpeed) || math.IsInf(guidanceSpeed, 0) ||
 		math.IsNaN(viscosityProxy) || math.IsInf(viscosityProxy, 0) {
-		return manifoldstateOutcome{}
+		return ManifoldstateOutput{}
 	}
 
 	herdRaw := coherenceMag2 * guidanceSpeed
@@ -110,7 +91,7 @@ func evaluateManifoldstate(state *datura.Artifact, inputKeys []string) manifolds
 		herdScore, err = probability.MagnitudeMargin(herdRaw)
 
 		if err != nil {
-			return manifoldstateOutcome{}
+			return ManifoldstateOutput{}
 		}
 	}
 
@@ -118,7 +99,7 @@ func evaluateManifoldstate(state *datura.Artifact, inputKeys []string) manifolds
 		shockScore, err = probability.MagnitudeMargin(shockRaw)
 
 		if err != nil {
-			return manifoldstateOutcome{}
+			return ManifoldstateOutput{}
 		}
 	}
 
@@ -126,7 +107,7 @@ func evaluateManifoldstate(state *datura.Artifact, inputKeys []string) manifolds
 		driftScore, err = probability.MagnitudeMargin(driftRaw)
 
 		if err != nil {
-			return manifoldstateOutcome{}
+			return ManifoldstateOutput{}
 		}
 	}
 
@@ -134,7 +115,7 @@ func evaluateManifoldstate(state *datura.Artifact, inputKeys []string) manifolds
 		noiseScore, err = probability.MagnitudeMargin(noiseRaw)
 
 		if err != nil {
-			return manifoldstateOutcome{}
+			return ManifoldstateOutput{}
 		}
 	}
 
@@ -152,22 +133,22 @@ func evaluateManifoldstate(state *datura.Artifact, inputKeys []string) manifolds
 	}
 
 	if winners != 1 {
-		return manifoldstateOutcome{}
+		return ManifoldstateOutput{}
 	}
 
 	strength := best
 
 	if strength <= 0 || math.IsNaN(strength) || math.IsInf(strength, 0) {
-		return manifoldstateOutcome{}
+		return ManifoldstateOutput{}
 	}
 
-	return manifoldstateOutcome{
-		herdScore:  herdScore,
-		shockScore: shockScore,
-		driftScore: driftScore,
-		noiseScore: noiseScore,
-		strength:   strength,
-		category:   category,
-		eligible:   true,
+	return ManifoldstateOutput{
+		HerdScore:  herdScore,
+		ShockScore: shockScore,
+		DriftScore: driftScore,
+		NoiseScore: noiseScore,
+		Strength:   strength,
+		Category:   category,
+		Eligible:   true,
 	}
 }

@@ -3,77 +3,64 @@ package algorithm
 import (
 	"testing"
 
-	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/datura"
-	"github.com/theapemachine/nomagique"
+	"github.com/theapemachine/nomagique/statistic"
 )
 
-func shiftWire(artifact *datura.Artifact, observed float64, expected float64) *datura.Artifact {
-	artifact.Poke("features", "root")
-	artifact.Poke([]string{"sample", "paired"}, "inputs")
-	artifact.Merge("features", []float64{observed, expected})
+func TestShiftMeasure(testingTB *testing.T) {
+	shift := NewShift()
+	var output statistic.ScalarOutput
+	var err error
 
-	return artifact
-}
-
-func shiftConfig() *datura.Artifact {
-	return datura.Acquire("shift-config", datura.APPJSON).
-		Poke(0.0, "config", "expectedSum").
-		Poke(0.0, "config", "floor").
-		Poke("sample", "sampleKey").
-		Poke("paired", "pairedKey").
-		Poke("value", "outputKey")
-}
-
-func TestShiftRead(testingTB *testing.T) {
-	Convey("Given matching reference and live distributions", testingTB, func() {
-		shift := NewShift(shiftConfig())
-		artifact := datura.Acquire("shift-test", datura.APPJSON)
-
-		for range 4 {
-			_ = nomagique.RoundTripArtifact(shiftWire(artifact, 1.0, 1.0), shift)
-		}
-
-		Convey("It should return zero drift", func() {
-			So(datura.Peek[float64](artifact, "output", "value"), ShouldAlmostEqual, 0, 1e-9)
+	for range 4 {
+		output, err = shift.Measure(statistic.PairSample{
+			Sample: 1,
+			Paired: 1,
 		})
-	})
-
-	Convey("Given diverging reference and live distributions", testingTB, func() {
-		shift := NewShift(shiftConfig())
-		artifact := datura.Acquire("shift-test", datura.APPJSON)
-		pairs := []struct {
-			observed float64
-			expected float64
-		}{
-			{4, 1}, {1, 1}, {1, 1}, {1, 4},
+		if err != nil {
+			testingTB.Fatal(err)
 		}
+	}
 
-		for _, pair := range pairs {
-			_ = nomagique.RoundTripArtifact(shiftWire(artifact, pair.observed, pair.expected), shift)
+	if output.Value != 0 {
+		testingTB.Fatalf("shift = %f, want 0", output.Value)
+	}
+
+	shift = NewShift()
+	pairs := []statistic.PairSample{
+		{Sample: 4, Paired: 1},
+		{Sample: 1, Paired: 1},
+		{Sample: 1, Paired: 1},
+		{Sample: 1, Paired: 4},
+	}
+
+	for _, pair := range pairs {
+		output, err = shift.Measure(pair)
+		if err != nil {
+			testingTB.Fatal(err)
 		}
+	}
 
-		Convey("It should return positive drift", func() {
-			So(datura.Peek[float64](artifact, "output", "value"), ShouldBeGreaterThan, 0)
-		})
-	})
+	if output.Value <= 0 {
+		testingTB.Fatalf("shift = %f, want positive", output.Value)
+	}
 }
 
-func BenchmarkShiftRead(testingTB *testing.B) {
-	shift := NewShift(shiftConfig())
-	artifact := datura.Acquire("shift-bench", datura.APPJSON)
-	pairs := []struct {
-		observed float64
-		expected float64
-	}{
-		{1, 2}, {1, 1}, {2, 4}, {1, 1},
+func BenchmarkShiftMeasure(testingTB *testing.B) {
+	shift := NewShift()
+	pairs := []statistic.PairSample{
+		{Sample: 1, Paired: 2},
+		{Sample: 1, Paired: 1},
+		{Sample: 2, Paired: 4},
+		{Sample: 1, Paired: 1},
 	}
 
 	testingTB.ReportAllocs()
 
 	for testingTB.Loop() {
 		for _, pair := range pairs {
-			_ = nomagique.RoundTripArtifact(shiftWire(artifact, pair.observed, pair.expected), shift)
+			if _, err := shift.Measure(pair); err != nil {
+				testingTB.Fatal(err)
+			}
 		}
 	}
 }

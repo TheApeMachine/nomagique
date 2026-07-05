@@ -1,249 +1,123 @@
 package vector
 
 import (
-	"bytes"
-	"io"
 	"math"
 	"testing"
-
-	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/datura"
-	"github.com/theapemachine/nomagique"
 )
 
-var featureExtractorPayloadFixture = []byte(
-	`{"channel":"ticker","type":"update","data":[{"symbol":"BTC/USD","volume":2500,"vwap":100,"last":101,"bid":100.9,"ask":101.1,"change_pct":1.0}]}`,
-)
-
-func featureExtractorSchema() *datura.Artifact {
-	return datura.Acquire("feature-extractor-test", datura.APPJSON).
-		Poke(map[string]any{
-			"root":         "data",
-			"elementIndex": 0.0,
-			"inputs": []string{
-				"volume", "vwap", "last", "bid", "ask", "change_pct",
+func tickerExtractorConfig() FeatureExtractorConfig {
+	return FeatureExtractorConfig{
+		Channels: map[string]FeatureScopeConfig{
+			"ticker": {
+				Root:         "data",
+				ElementIndex: 0,
+				Inputs: []string{
+					"volume", "vwap", "last", "bid", "ask", "change_pct",
+				},
 			},
-		}, "ticker")
-}
-
-func featureExtractorEMASchema() *datura.Artifact {
-	return datura.Acquire("feature-extractor-ema-test", datura.APPJSON).
-		Poke(map[string]any{
-			"root":         "data",
-			"elementIndex": 0.0,
-			"inputs":       []string{"volume"},
-			"transforms": map[string]any{
-				"volume": "ema",
-			},
-		}, "ticker")
-}
-
-func TestNewFeatureExtractor(t *testing.T) {
-	Convey("Given a schema artifact", t, func() {
-		schema := datura.Acquire("feature-extractor-schema", datura.APPJSON)
-
-		Convey("When NewFeatureExtractor is called", func() {
-			extractor := NewFeatureExtractor(schema)
-
-			Convey("It should retain the schema and initialize transform cache", func() {
-				So(extractor, ShouldNotBeNil)
-				So(extractor.artifact, ShouldEqual, schema)
-				So(extractor.emas, ShouldNotBeNil)
-			})
-		})
-	})
-}
-
-func TestFeatureExtractor_Write(t *testing.T) {
-	Convey("Given a feature extractor", t, func() {
-		extractor := NewFeatureExtractor(
-			datura.Acquire("test", datura.APPJSON).
-				Poke("data", "root").
-				Poke([]string{"volume"}, "inputs"),
-		)
-
-		Convey("And an inbound artifact with a payload", func() {
-			inbound := datura.Acquire("test", datura.APPJSON).WithPayload([]byte{1, 2, 3})
-
-			Convey("When the inbound artifact is copied into the extractor", func() {
-				_, err := nomagique.WriteArtifact(extractor, inbound)
-
-				Convey("Then the inbound wire should be buffered without mutating schema config", func() {
-					So(err, ShouldBeNil)
-					So(datura.Peek[string](extractor.artifact, "root"), ShouldEqual, "data")
-				})
-			})
-		})
-	})
-}
-
-func TestFeatureExtractor_Close(t *testing.T) {
-	Convey("Given a feature extractor", t, func() {
-		extractor := NewFeatureExtractor(datura.Acquire("test", datura.APPJSON))
-
-		Convey("When Close is called", func() {
-			err := extractor.Close()
-
-			Convey("It should succeed without error", func() {
-				So(err, ShouldBeNil)
-			})
-		})
-	})
-}
-
-func TestFeatureExtractor_Read(t *testing.T) {
-	Convey("Given a feature extractor with ticker payload", t, func() {
-		extractor := NewFeatureExtractor(featureExtractorSchema())
-
-		Convey("When ticker payload is written then read", func() {
-			inbound := datura.Acquire("test", datura.APPJSON).WithPayload(featureExtractorPayloadFixture)
-			_, err := nomagique.WriteArtifact(extractor, inbound)
-			So(err, ShouldBeNil)
-
-			wire := make([]byte, 65536)
-			n, err := extractor.Read(wire)
-			So(err, ShouldEqual, io.EOF)
-
-			buffer := bytes.NewBuffer(wire[:n])
-
-			Convey("Then the payload should carry root, inputs, and features", func() {
-				decoded := datura.Acquire("feature-extractor", datura.APPJSON)
-				_, err = decoded.Unpack(buffer.Bytes())
-				So(err, ShouldBeNil)
-
-				So(datura.Peek[string](decoded, "root"), ShouldEqual, "features")
-				So(
-					datura.Peek[[]string](decoded, "inputs"),
-					ShouldResemble,
-					[]string{"volume", "vwap", "last", "bid", "ask", "change_pct"},
-				)
-				So(
-					datura.Peek[[]string](decoded, "featureInputs"),
-					ShouldResemble,
-					[]string{"volume", "vwap", "last", "bid", "ask", "change_pct"},
-				)
-				So(datura.Peek[string](decoded, "sourceRoot"), ShouldEqual, "data")
-				So(
-					datura.Peek[[]string](decoded, "sourceInputs"),
-					ShouldResemble,
-					[]string{"volume", "vwap", "last", "bid", "ask", "change_pct"},
-				)
-				So(
-					datura.Peek[[]float64](decoded, "features"),
-					ShouldResemble,
-					[]float64{2500, 100, 101, 100.9, 101.1, 1},
-				)
-
-				decoded.Release()
-			})
-		})
-	})
-
-	Convey("Given a feature extractor with a row-level payload", t, func() {
-		extractor := NewFeatureExtractor(
-			datura.Acquire("feature-extractor-row-test", datura.APPJSON).
-				WithAttributes(datura.Map[any]{
-					"root":   ".",
-					"inputs": []string{"bid", "ask", "last"},
-				}),
-		)
-
-		Convey("When the payload has no channel or root object", func() {
-			inbound := datura.Acquire("test", datura.APPJSON).
-				WithPayload([]byte(`{"symbol":"BTC/USD","bid":100.9,"ask":101.1,"last":101}`))
-			_, err := nomagique.WriteArtifact(extractor, inbound)
-			So(err, ShouldBeNil)
-
-			wire := make([]byte, 65536)
-			n, err := extractor.Read(wire)
-			So(err, ShouldEqual, io.EOF)
-
-			buffer := bytes.NewBuffer(wire[:n])
-
-			Convey("Then features should be read directly from the top level", func() {
-				decoded := datura.Acquire("feature-extractor-row", datura.APPJSON)
-				_, err = decoded.Unpack(buffer.Bytes())
-				So(err, ShouldBeNil)
-
-				So(datura.Peek[string](decoded, "root"), ShouldEqual, "features")
-				So(datura.Peek[string](decoded, "sourceRoot"), ShouldEqual, ".")
-				So(
-					datura.Peek[[]string](decoded, "inputs"),
-					ShouldResemble,
-					[]string{"bid", "ask", "last"},
-				)
-				So(
-					datura.Peek[[]float64](decoded, "features"),
-					ShouldResemble,
-					[]float64{100.9, 101.1, 101},
-				)
-
-				decoded.Release()
-			})
-		})
-	})
-
-	Convey("Given a non-finite sample field", t, func() {
-		extractor := NewFeatureExtractor(
-			datura.Acquire("feature-extractor-test", datura.APPJSON).
-				Poke("data", "root").
-				Poke([]string{"volume"}, "inputs"),
-		)
-		inbound := datura.Acquire("test", datura.APPJSON).
-			Poke("ticker", "channel").
-			Poke(math.NaN(), "data", 0, "volume")
-		_, err := nomagique.WriteArtifact(extractor, inbound)
-
-		So(err, ShouldBeNil)
-
-		Convey("When Read is called", func() {
-			_, err := extractor.Read(make([]byte, 65536))
-
-			So(err, ShouldNotBeNil)
-		})
-	})
-}
-
-func BenchmarkFeatureExtractor_Read(b *testing.B) {
-	extractor := NewFeatureExtractor(featureExtractorSchema())
-	buffer := make([]byte, 65536)
-
-	b.ReportAllocs()
-
-	for range b.N {
-		inbound := datura.Acquire("bench-inbound", datura.APPJSON).
-			WithPayload(featureExtractorPayloadFixture)
-
-		if _, err := nomagique.WriteArtifact(extractor, inbound); err != nil {
-			b.Fatal(err)
-		}
-
-		if _, err := extractor.Read(buffer); err != nil && err != io.EOF {
-			b.Fatal(err)
-		}
-
-		inbound.Release()
+		},
 	}
 }
 
-func BenchmarkFeatureExtractor_EMATransform(b *testing.B) {
-	extractor := NewFeatureExtractor(featureExtractorEMASchema())
-	buffer := make([]byte, 65536)
+func tickerInput() FeatureInput {
+	return FeatureInput{
+		Channel: "ticker",
+		Rows: []FeatureRow{
+			NewFeatureRow(
+				NamedValue{Name: "volume", Value: 2500},
+				NamedValue{Name: "vwap", Value: 100},
+				NamedValue{Name: "last", Value: 101},
+				NamedValue{Name: "bid", Value: 100.9},
+				NamedValue{Name: "ask", Value: 101.1},
+				NamedValue{Name: "change_pct", Value: 1},
+			),
+		},
+	}
+}
 
-	b.ReportAllocs()
+func TestFeatureExtractorMeasure(t *testing.T) {
+	extractor := NewFeatureExtractor(tickerExtractorConfig())
 
-	for b.Loop() {
-		inbound := datura.Acquire("bench-inbound", datura.APPJSON).
-			WithPayload(featureExtractorPayloadFixture)
+	output, err := extractor.Measure(tickerInput())
+	if err != nil {
+		t.Fatal(err)
+	}
 
-		if _, err := nomagique.WriteArtifact(extractor, inbound); err != nil {
-			b.Fatal(err)
+	wantInputs := []string{"volume", "vwap", "last", "bid", "ask", "change_pct"}
+	for index, input := range wantInputs {
+		if output.Inputs[index] != input {
+			t.Fatalf("input %d = %s, want %s", index, output.Inputs[index], input)
 		}
+	}
 
-		if _, err := extractor.Read(buffer); err != nil && err != io.EOF {
-			b.Fatal(err)
+	wantFeatures := []float64{2500, 100, 101, 100.9, 101.1, 1}
+	for index, want := range wantFeatures {
+		if output.Features[index] != want {
+			t.Fatalf("feature %d = %f, want %f", index, output.Features[index], want)
 		}
+	}
 
-		inbound.Release()
+	if output.SourceRoot != "data" {
+		t.Fatalf("source root = %s, want data", output.SourceRoot)
+	}
+}
+
+func TestFeatureExtractorMeasureRowRoot(t *testing.T) {
+	extractor := NewFeatureExtractor(FeatureExtractorConfig{
+		FeatureScopeConfig: FeatureScopeConfig{
+			Root:   ".",
+			Inputs: []string{"bid", "ask", "last"},
+		},
+	})
+
+	output, err := extractor.Measure(FeatureInput{
+		Row: NewFeatureRow(
+			NamedValue{Name: "bid", Value: 100.9},
+			NamedValue{Name: "ask", Value: 101.1},
+			NamedValue{Name: "last", Value: 101},
+		),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	wantFeatures := []float64{100.9, 101.1, 101}
+	for index, want := range wantFeatures {
+		if output.Features[index] != want {
+			t.Fatalf("feature %d = %f, want %f", index, output.Features[index], want)
+		}
+	}
+
+	if output.SourceRoot != "." {
+		t.Fatalf("source root = %s, want .", output.SourceRoot)
+	}
+}
+
+func TestFeatureExtractorRejectsNonFinite(t *testing.T) {
+	extractor := NewFeatureExtractor(FeatureExtractorConfig{
+		FeatureScopeConfig: FeatureScopeConfig{
+			Root:   ".",
+			Inputs: []string{"volume"},
+		},
+	})
+
+	_, err := extractor.Measure(FeatureInput{
+		Row: NewFeatureRow(NamedValue{Name: "volume", Value: math.NaN()}),
+	})
+	if err == nil {
+		t.Fatal("expected non-finite sample error")
+	}
+}
+
+func BenchmarkFeatureExtractorMeasure(testingTB *testing.B) {
+	extractor := NewFeatureExtractor(tickerExtractorConfig())
+	input := tickerInput()
+
+	testingTB.ReportAllocs()
+
+	for testingTB.Loop() {
+		if _, err := extractor.Measure(input); err != nil {
+			testingTB.Fatal(err)
+		}
 	}
 }

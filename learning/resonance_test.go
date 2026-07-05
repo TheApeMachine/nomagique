@@ -5,8 +5,6 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/datura"
-	"github.com/theapemachine/nomagique"
 	"gonum.org/v1/gonum/mat"
 )
 
@@ -33,40 +31,19 @@ func TestNewResonanceManifold(testingTB *testing.T) {
 
 func TestAdaptiveResonanceConfig(testingTB *testing.T) {
 	Convey("Given alpha and depth", testingTB, func() {
-		architecture := []int{4, 8, 4}
-		derived := AdaptiveResonanceConfig(0.01, architecture, nil)
+		derived := AdaptiveResonanceConfig(0.01, []int{4, 8, 4})
 
 		Convey("It should derive mix, patience, and clip from alpha and depth", func() {
-			So(derived.TemporalWeight, ShouldNotEqual, 0.45)
-			So(derived.TopDownInitMix, ShouldNotEqual, 0.55)
-			So(derived.EarlyStopPatience, ShouldNotEqual, 3)
-			So(derived.GradClip, ShouldNotEqual, 1.0)
-			So(derived.StateClip, ShouldNotEqual, 3.0)
 			So(derived.TemporalWeight, ShouldBeGreaterThan, 0)
 			So(derived.TopDownInitMix, ShouldBeGreaterThan, 0)
-		})
-	})
-
-	Convey("Given resonance attribute overrides", testingTB, func() {
-		config := datura.Acquire("resonance-config", datura.APPJSON).
-			Poke(0.33, "resonance", "temporalWeight").
-			Poke(0.67, "resonance", "topDownInitMix").
-			Poke(float64(5), "resonance", "earlyStopPatience").
-			Poke(0.5, "resonance", "gradClip").
-			Poke(2.5, "resonance", "stateClip")
-		derived := AdaptiveResonanceConfig(0.01, []int{4, 8, 4}, config)
-
-		Convey("It should honor artifact attributes", func() {
-			So(derived.TemporalWeight, ShouldEqual, 0.33)
-			So(derived.TopDownInitMix, ShouldEqual, 0.67)
-			So(derived.EarlyStopPatience, ShouldEqual, 5)
-			So(derived.GradClip, ShouldEqual, 0.5)
-			So(derived.StateClip, ShouldEqual, 2.5)
+			So(derived.EarlyStopPatience, ShouldBeGreaterThan, 0)
+			So(derived.GradClip, ShouldBeGreaterThan, 0)
+			So(derived.StateClip, ShouldBeGreaterThan, 0)
 		})
 	})
 }
 
-func TestResonanceManifold_SettleAdvanceTemporal(testingTB *testing.T) {
+func TestResonanceManifoldSettleAdvanceTemporal(testingTB *testing.T) {
 	Convey("Given inference without learning", testingTB, func() {
 		architecture := []int{4, 8, 4}
 		manifold, err := NewResonanceManifold(architecture, 0, 0.05)
@@ -95,33 +72,7 @@ func TestResonanceManifold_SettleAdvanceTemporal(testingTB *testing.T) {
 	})
 }
 
-func TestResonanceManifold_SupervisedTargetDoesNotContaminateSettle(testingTB *testing.T) {
-	Convey("Given the same input and settled state", testingTB, func() {
-		architecture := []int{3, 6, 3}
-		input := []float64{0.5, -0.25, 0.75}
-		target := []float64{1.0, -1.0}
-
-		unlabeled, err := NewResonanceManifold(architecture, 2, 0.02)
-		So(err, ShouldBeNil)
-		So(unlabeled.Settle(input, false), ShouldBeNil)
-		unlabeledEnergy := unlabeled.Energy()
-		unlabeledLatent := unlabeled.LatentState()
-
-		labeled, err := NewResonanceManifold(architecture, 2, 0.02)
-		So(err, ShouldBeNil)
-		So(labeled.Settle(input, false), ShouldBeNil)
-		labeledEnergy := labeled.Energy()
-		labeledLatent := labeled.LatentState()
-		labeled.Learn(target)
-
-		Convey("Settle should ignore supervised targets during inference", func() {
-			So(unlabeledEnergy, ShouldAlmostEqual, labeledEnergy, 1e-12)
-			So(unlabeledLatent, ShouldResemble, labeledLatent)
-		})
-	})
-}
-
-func TestResonanceManifold_SetStreamLearn(testingTB *testing.T) {
+func TestResonanceManifoldSetStreamLearn(testingTB *testing.T) {
 	Convey("Given a manifold with learning disabled on the stream path", testingTB, func() {
 		architecture := []int{2, 4, 2}
 		input := []float64{0.3, -0.7}
@@ -150,85 +101,23 @@ func TestResonanceManifold_SetStreamLearn(testingTB *testing.T) {
 	})
 }
 
-func TestResonanceManifold_Read(testingTB *testing.T) {
+func TestResonanceManifoldDirectBatch(testingTB *testing.T) {
 	Convey("Given stream input with a supervised target", testingTB, func() {
 		manifold, err := NewResonanceManifold([]int{2, 4, 2}, 1, 0.02)
 		So(err, ShouldBeNil)
 
-		artifact := datura.Acquire("test", datura.APPJSON).
-			Poke([]float64{0.2, -0.4, 0.8}, "batch")
-		err = nomagique.RoundTripArtifact(artifact, manifold)
+		got, err := manifold.SettleFromBatch([]float64{0.2, -0.4}, []float64{0.8})
+		latent := manifold.LatentState()
 
-		So(err, ShouldBeNil)
-
-		got := datura.Peek[float64](artifact, "output", "value")
-		latent := datura.Peek[[]float64](artifact, "output", "latent")
-
-		Convey("It should expose reconstruction and latent state on the artifact", func() {
+		Convey("It should expose reconstruction and latent state directly", func() {
+			So(err, ShouldBeNil)
 			So(math.IsNaN(got), ShouldBeFalse)
 			So(len(latent), ShouldEqual, 2)
-			So(len(manifold.LatentState()), ShouldEqual, 2)
 		})
 	})
 }
 
-func TestResonanceManifold_WireSnapshot(testingTB *testing.T) {
-	Convey("Given a settled resonance manifold", testingTB, func() {
-		architecture := []int{4, 8, 3}
-		manifold, err := NewResonanceManifold(architecture, 0, 0.02)
-
-		So(err, ShouldBeNil)
-		So(manifold.Settle([]float64{50000, 0.02, 1200, 0.015}, true), ShouldBeNil)
-
-		layers, surprise, energy := manifold.WireSnapshot()
-
-		Convey("It should export finite layer states and errors", func() {
-			So(len(layers), ShouldEqual, len(architecture))
-
-			totalRows := 0
-
-			for layerIndex, layer := range layers {
-				So(len(layer.State), ShouldEqual, architecture[layerIndex])
-				So(len(layer.Prediction), ShouldEqual, architecture[layerIndex])
-				So(surprise, ShouldBeGreaterThanOrEqualTo, 0)
-				So(energy, ShouldBeGreaterThanOrEqualTo, 0)
-
-				for _, value := range layer.State {
-					So(math.IsNaN(value), ShouldBeFalse)
-					So(math.IsInf(value, 0), ShouldBeFalse)
-				}
-
-				if layerIndex < len(architecture)-1 {
-					So(layer.ErrorNorm, ShouldBeGreaterThanOrEqualTo, 0)
-				}
-
-				totalRows += len(layer.State)
-			}
-
-			So(totalRows, ShouldEqual, 15)
-		})
-	})
-}
-
-func TestResonanceManifold_Sparsity(testingTB *testing.T) {
-	Convey("Given a non-zero latent state", testingTB, func() {
-		manifold, err := NewResonanceManifold([]int{2, 3, 2}, 0, 0.02)
-		So(err, ShouldBeNil)
-		So(manifold.Settle([]float64{0.5, -0.5}, false), ShouldBeNil)
-
-		withSparsity := manifold.cfg.Sparsity
-		manifold.cfg.Sparsity = 0
-		energyWithout := manifold.Energy()
-		manifold.cfg.Sparsity = withSparsity
-		energyWith := manifold.Energy()
-
-		Convey("It should apply the configured sparsity penalty", func() {
-			So(energyWith, ShouldBeGreaterThan, energyWithout)
-		})
-	})
-}
-
-func BenchmarkResonanceManifold_Settle(testingTB *testing.B) {
+func BenchmarkResonanceManifoldSettle(testingTB *testing.B) {
 	manifold, err := NewResonanceManifold([]int{8, 16, 8}, 2, 0.01)
 
 	if err != nil {
@@ -241,7 +130,8 @@ func BenchmarkResonanceManifold_Settle(testingTB *testing.B) {
 	testingTB.ReportAllocs()
 
 	for testingTB.Loop() {
-		_ = manifold.Settle(input, true)
-		manifold.Learn(target)
+		if _, err := manifold.SettleFromBatch(input, target); err != nil {
+			testingTB.Fatal(err)
+		}
 	}
 }

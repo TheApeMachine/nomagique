@@ -11,10 +11,10 @@ import (
 )
 
 /*
-NewCalibrate returns an online RLS calibration stage wired from config on the artifact.
+NewCalibrate returns an online typed RLS calibration learner.
 */
-func NewCalibrate(artifact *datura.Artifact) io.ReadWriteCloser {
-	return learning.NewRLS(artifact)
+func NewCalibrate(config learning.RLSConfig) (*learning.RLS, error) {
+	return learning.NewRLS(config)
 }
 
 /*
@@ -25,10 +25,10 @@ func NewCorrelate(artifact *datura.Artifact) io.ReadWriteCloser {
 }
 
 /*
-NewShift returns a distribution-shift KL divergence stage wired from config on the artifact.
+NewShift returns a typed distribution-shift KL divergence stage.
 */
-func NewShift(artifact *datura.Artifact) io.ReadWriteCloser {
-	return statistic.NewKLDivergence(artifact)
+func NewShift() *statistic.KLDivergence {
+	return statistic.NewKLDivergence()
 }
 
 /*

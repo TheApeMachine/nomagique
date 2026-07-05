@@ -1,137 +1,34 @@
 package statistic
 
-import (
-	"math"
-
-	"github.com/theapemachine/datura"
-	"github.com/theapemachine/errnie"
-)
-
 /*
 Mean computes a running arithmetic mean of streamed samples.
 */
 type Mean struct {
-	artifact *datura.Artifact
+	sum   float64
+	count int
 }
 
 /*
-NewMean returns a mean stage wired from config attributes on the artifact.
+NewMean returns a typed running-mean accumulator.
 */
-func NewMean(artifact *datura.Artifact) *Mean {
-	return &Mean{
-		artifact: artifact,
-	}
+func NewMean() *Mean {
+	return &Mean{}
 }
 
-func (mean *Mean) Read(payload []byte) (int, error) {
-	state := datura.Acquire("mean-state", datura.APPJSON)
-
-	if _, err := state.Unpack(mean.artifact.DecryptPayload()); err != nil {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"mean: state write failed",
-			err,
-		))
+/*
+Measure adds one sample and returns the running arithmetic mean.
+*/
+func (mean *Mean) Measure(sample float64) (ScalarOutput, error) {
+	if err := finiteStatistic("mean", sample); err != nil {
+		return ScalarOutput{}, err
 	}
 
-	rootKey := datura.Peek[string](state, "root")
+	mean.sum += sample
+	mean.count++
 
-	if rootKey == "" {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"mean: root required",
-			nil,
-		))
-	}
-
-	inputs := datura.Peek[[]string](state, "inputs")
-
-	if len(inputs) == 0 {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"mean: inputs required",
-			nil,
-		))
-	}
-
-	configInput := datura.Peek[string](mean.artifact, "input")
-
-	if configInput == "" {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"mean: input required",
-			nil,
-		))
-	}
-
-	var sample float64
-	found := false
-
-	for index, input := range inputs {
-		if input != configInput {
-			continue
-		}
-
-		if rootKey == "features" {
-			features := datura.Peek[[]float64](state, rootKey)
-
-			if index >= len(features) {
-				return 0, errnie.Error(errnie.Err(
-					errnie.Validation,
-					"mean: feature index out of range",
-					nil,
-				))
-			}
-
-			sample = features[index]
-		}
-
-		if rootKey != "features" {
-			sample = datura.Peek[float64](state, rootKey, input)
-		}
-
-		found = true
-	}
-
-	if !found {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"mean: input not in inputs",
-			nil,
-		))
-	}
-
-	if math.IsNaN(sample) || math.IsInf(sample, 0) {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"mean: sample is non-finite",
-			nil,
-		))
-	}
-
-	count := datura.Peek[float64](mean.artifact, "output", "count")
-	sum := datura.Peek[float64](mean.artifact, "output", "sum")
-
-	count++
-	sum += sample
-
-	value := sum / count
-
-	mean.artifact.Poke(count, "output", "count")
-	mean.artifact.Poke(sum, "output", "sum")
-	mean.artifact.Poke(value, "output", "value")
-	state.MergeOutput("value", value)
-	state.Poke("output", "root")
-	state.Poke([]string{"value"}, "inputs")
-
-	return state.PackInto(payload)
-}
-
-func (mean *Mean) Write(payload []byte) (int, error) {
-	mean.artifact.WithPayload(payload)
-	return len(payload), nil
-}
-
-func (mean *Mean) Close() error {
-	return nil
+	return ScalarOutput{
+		Value: mean.sum / float64(mean.count),
+		Ready: true,
+		Count: mean.count,
+	}, nil
 }

@@ -25,6 +25,8 @@ func TestScoreClassifier_Classify(t *testing.T) {
 				So(err, ShouldBeNil)
 				So(result.Category, ShouldEqual, 20)
 				So(result.Confidence, ShouldBeGreaterThan, result.ConfidenceBaseline)
+				So(result.Confidence, ShouldBeGreaterThan, result.EntryBaseline)
+				So(result.EntryBaseline, ShouldBeGreaterThanOrEqualTo, result.ExitBaseline)
 				So(result.Distribution, ShouldContainKey, "20")
 			})
 		})

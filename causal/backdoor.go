@@ -1,115 +1,112 @@
 package causal
 
-import (
-	"github.com/theapemachine/datura"
-	"github.com/theapemachine/errnie"
-)
+import "github.com/theapemachine/errnie"
 
 /*
-Backdoor estimates a linear backdoor-adjusted treatment effect from table.* on the artifact.
-The constructor artifact holds config; Write buffers inbound table wire on its payload.
+BackdoorConfig describes a linear backdoor-adjusted treatment estimate.
+*/
+type BackdoorConfig struct {
+	Target     int
+	Treatment  int
+	Controls   []int
+	MinHistory int
+}
+
+/*
+BackdoorInput carries retained causal rows.
+*/
+type BackdoorInput struct {
+	Rows [][]float64
+}
+
+/*
+BackdoorOutput reports association, adjusted effect, and conditioning.
+*/
+type BackdoorOutput struct {
+	Value       float64
+	Association float64
+	Effect      float64
+	Condition   float64
+}
+
+/*
+Backdoor estimates a linear backdoor-adjusted treatment effect from rows.
 */
 type Backdoor struct {
-	artifact *datura.Artifact
+	config BackdoorConfig
 }
 
 /*
-NewBackdoor returns a backdoor stage wired from config attributes on the artifact.
+NewBackdoor returns a typed backdoor estimator.
 */
-func NewBackdoor(artifact *datura.Artifact) *Backdoor {
+func NewBackdoor(config BackdoorConfig) *Backdoor {
 	return &Backdoor{
-		artifact: artifact,
+		config: config,
 	}
 }
 
-func (backdoor *Backdoor) Read(p []byte) (int, error) {
-	state := datura.Acquire("backdoor-state", datura.APPJSON)
-
-	if _, err := state.Unpack(backdoor.artifact.DecryptPayload()); err != nil {
-		return 0, errnie.Error(errnie.Err(
+/*
+Measure computes the adjusted treatment effect from retained rows.
+*/
+func (backdoor *Backdoor) Measure(input BackdoorInput) (BackdoorOutput, error) {
+	if backdoor.config.MinHistory <= 0 {
+		return BackdoorOutput{}, errnie.Error(errnie.Err(
 			errnie.Validation,
-			"causal: state write failed",
-			err,
-		))
-	}
-
-	rows, err := tableRows(state)
-
-	if err != nil {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"causal backdoor: missing table rows",
-			err,
-		))
-	}
-
-	target := int(datura.Peek[float64](backdoor.artifact, "target"))
-	treatment := int(datura.Peek[float64](backdoor.artifact, "treatment"))
-	controls := intSlice(datura.Peek[[]float64](backdoor.artifact, "controls"))
-	minRows := int(datura.Peek[float64](backdoor.artifact, "minHistory"))
-
-	if minRows <= 0 {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"causal backdoor: minHistory required",
+			"causal backdoor: min history required",
 			nil,
 		))
 	}
 
-	table, err := newNodeTable(rows, target, minRows)
-
+	table, err := newNodeTable(
+		input.Rows,
+		backdoor.config.Target,
+		backdoor.config.MinHistory,
+	)
 	if err != nil {
-		return 0, errnie.Error(errnie.Err(
+		return BackdoorOutput{}, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"causal backdoor: table construction failed",
 			err,
 		))
 	}
 
-	association, err := table.association(treatment)
-
+	association, err := table.association(backdoor.config.Treatment)
 	if err != nil {
-		return 0, errnie.Error(errnie.Err(
+		return BackdoorOutput{}, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"causal backdoor: association failed",
 			err,
 		))
 	}
 
-	effect, err := table.backdoorEffect(treatment, controls...)
-
+	effect, err := table.backdoorEffect(
+		backdoor.config.Treatment,
+		backdoor.config.Controls...,
+	)
 	if err != nil {
-		return 0, errnie.Error(errnie.Err(
+		return BackdoorOutput{}, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"causal backdoor: effect estimation failed",
 			err,
 		))
 	}
 
-	condition, err := table.pairConditionNumber(treatment, target)
-
+	condition, err := table.pairConditionNumber(
+		backdoor.config.Treatment,
+		backdoor.config.Target,
+	)
 	if err != nil {
-		return 0, errnie.Error(errnie.Err(
+		return BackdoorOutput{}, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"causal backdoor: pair condition failed",
 			err,
 		))
 	}
 
-	state.MergeOutput("value", effect)
-	state.MergeOutput("association", association)
-	state.MergeOutput("effect", effect)
-	state.MergeOutput("condition", condition)
-	state.Poke("output", "root")
-	state.Poke([]string{"value", "association", "effect", "condition"}, "inputs")
-	return state.PackInto(p)
-}
-
-func (backdoor *Backdoor) Write(p []byte) (int, error) {
-	backdoor.artifact.WithPayload(p)
-	return len(p), nil
-}
-
-func (backdoor *Backdoor) Close() error {
-	return nil
+	return BackdoorOutput{
+		Value:       effect,
+		Association: association,
+		Effect:      effect,
+		Condition:   condition,
+	}, nil
 }

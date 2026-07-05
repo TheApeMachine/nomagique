@@ -4,27 +4,29 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/datura"
 )
 
-func testClassifierConfig() *datura.Artifact {
-	return datura.Acquire("classifier-weights-config", datura.APPJSON).
-		Poke([]string{"ignition", "compression", "trend", "exhaustion"}, "outputs").
-		Poke(map[string]any{
-			"terms": []string{"rvol", "precursor"},
-		}, "ignition").
-		Poke(map[string]any{
-			"terms":   []string{"compression", "precursor"},
-			"inverts": []string{"precursor"},
-		}, "compression").
-		Poke(map[string]any{
-			"terms":   []string{"precursor", "compression", "rvol"},
-			"inverts": []string{"compression"},
-		}, "trend").
-		Poke(map[string]any{
-			"terms":   []string{"rvol", "precursor"},
-			"inverts": []string{"rvol", "precursor"},
-		}, "exhaustion")
+func testClassifierConfig() ClassifierWeightsConfig {
+	return ClassifierWeightsConfig{
+		Outputs: []string{"ignition", "compression", "trend", "exhaustion"},
+		Specs: map[string]LogitSpec{
+			"ignition": {
+				Terms: []string{"rvol", "precursor"},
+			},
+			"compression": {
+				Terms:   []string{"compression", "precursor"},
+				Inverts: map[string]bool{"precursor": true},
+			},
+			"trend": {
+				Terms:   []string{"precursor", "compression", "rvol"},
+				Inverts: map[string]bool{"compression": true},
+			},
+			"exhaustion": {
+				Terms:   []string{"rvol", "precursor"},
+				Inverts: map[string]bool{"rvol": true, "precursor": true},
+			},
+		},
+	}
 }
 
 func testClassifierScales() map[string]float64 {
@@ -36,9 +38,8 @@ func testClassifierScales() map[string]float64 {
 }
 
 func TestClassifierWeightsScores(testingTB *testing.T) {
-	Convey("Given configured output recipes", testingTB, func() {
-		config := testClassifierConfig()
-		weights, err := NewClassifierWeights(config, 2.0, testClassifierScales())
+	Convey("Given typed output recipes", testingTB, func() {
+		weights, err := NewClassifierWeights(testClassifierConfig(), 2.0, testClassifierScales())
 		So(err, ShouldBeNil)
 
 		scores := weights.Scores(map[string]float64{
@@ -56,8 +57,7 @@ func TestClassifierWeightsScores(testingTB *testing.T) {
 
 func TestClassifierWeightsNegativeFeatures(testingTB *testing.T) {
 	Convey("Given negative feature values", testingTB, func() {
-		config := testClassifierConfig()
-		weights, err := NewClassifierWeights(config, 2.0, testClassifierScales())
+		weights, err := NewClassifierWeights(testClassifierConfig(), 2.0, testClassifierScales())
 		So(err, ShouldBeNil)
 
 		negativeScores := weights.Scores(map[string]float64{
@@ -80,8 +80,7 @@ func TestClassifierWeightsNegativeFeatures(testingTB *testing.T) {
 
 func TestNewClassifierWeightsInvalidScale(testingTB *testing.T) {
 	Convey("Given a non-positive feature scale", testingTB, func() {
-		config := testClassifierConfig()
-		_, err := NewClassifierWeights(config, 2.0, map[string]float64{})
+		_, err := NewClassifierWeights(testClassifierConfig(), 2.0, map[string]float64{})
 
 		Convey("It should return an error", func() {
 			So(err, ShouldNotBeNil)

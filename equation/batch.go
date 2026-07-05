@@ -1,73 +1,76 @@
 package equation
 
 import (
-	"io"
 	"sort"
 
-	"github.com/theapemachine/datura"
+	"github.com/bytedance/sonic"
 	"github.com/theapemachine/errnie"
 )
 
 /*
-Features returns the feature vector staged on the merged artifact payload.
+FeatureFrame carries a semantic feature vector with its ordered schema.
 */
-func Features(artifact *datura.Artifact) []float64 {
-	return datura.Peek[[]float64](artifact, "features")
+type FeatureFrame struct {
+	Inputs   []string  `json:"inputs"`
+	Features []float64 `json:"features"`
+	Root     string    `json:"root"`
 }
 
-func stageState(bytes []byte) (*datura.Artifact, error) {
-	state := datura.Acquire("equation-state", datura.APPJSON)
-
-	if len(bytes) == 0 {
-		state.Release()
-
-		return nil, io.EOF
+/*
+NewFeatureFrame copies feature schema and values into a typed frame.
+*/
+func NewFeatureFrame(inputs []string, features []float64) FeatureFrame {
+	return FeatureFrame{
+		Inputs:   append([]string(nil), inputs...),
+		Features: append([]float64(nil), features...),
+		Root:     "features",
 	}
+}
 
-	if _, err := state.Unpack(bytes); err != nil {
-		state.Release()
-
+/*
+FeatureSlice reads a contiguous segment from the feature vector.
+*/
+func (frame FeatureFrame) FeatureSlice(offset, count int) ([]float64, error) {
+	if count < 0 || offset < 0 || offset+count > len(frame.Features) {
 		return nil, errnie.Error(errnie.Err(
 			errnie.Validation,
-			"equation: stage state write failed",
-			err,
+			"equation: feature slice out of range",
+			nil,
 		))
 	}
 
-	return state, nil
+	return append([]float64(nil), frame.Features[offset:offset+count]...), nil
 }
 
-func rejectStage(state *datura.Artifact, message string) (int, error) {
-	state.Release()
+/*
+FeatureFields reads named scalars in order; missing keys return validation errors.
+*/
+func (frame FeatureFrame) FeatureFields(keys []string) ([]float64, error) {
+	values := make([]float64, len(keys))
 
-	return 0, errnie.Error(errnie.Err(errnie.Validation, message, nil))
-}
+	for index, key := range keys {
+		found := false
 
-func emitOutput(state *datura.Artifact, payload []byte, fields datura.Map[float64]) (int, error) {
-	defer state.Release()
+		for column, input := range frame.Inputs {
+			if input != key || column >= len(frame.Features) {
+				continue
+			}
 
-	outputInputs := make([]string, 0, len(fields)+1)
-	output := make(map[string]any, len(fields)+1)
+			values[index] = frame.Features[column]
+			found = true
+			break
+		}
 
-	for key, value := range fields {
-		output[key] = value
-		outputInputs = append(outputInputs, key)
-	}
-
-	sort.Strings(outputInputs)
-
-	if _, hasStrength := fields["strength"]; !hasStrength {
-		if value, ok := fields["value"]; ok {
-			output["strength"] = value
-			outputInputs = append(outputInputs, "strength")
+		if !found {
+			return nil, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"feature-column: key not found",
+				nil,
+			))
 		}
 	}
 
-	state.MergeOutputs(output)
-	state.Poke("output", "root")
-	state.Poke(outputInputs, "inputs")
-
-	return state.PackInto(payload)
+	return values, nil
 }
 
 /*
@@ -76,4 +79,45 @@ Prefer MarshalFeatureSchema with explicit input keys for new tests.
 */
 func MarshalFeaturesPayload(samples []float64) []byte {
 	return MarshalFeatureSchema(nil, samples)
+}
+
+/*
+MarshalFeatureSchema encodes semantic features for typed boundary tests.
+*/
+func MarshalFeatureSchema(inputs []string, values []float64) []byte {
+	frame := NewFeatureFrame(inputs, values)
+
+	if len(frame.Inputs) == 0 {
+		frame.Inputs = nil
+	}
+
+	payload := map[string]any{
+		"features": frame.Features,
+		"inputs":   frame.Inputs,
+		"root":     frame.Root,
+	}
+
+	return errnie.Does(func() ([]byte, error) {
+		return sonic.Marshal(payload)
+	}).Or(func(err error) {
+		errnie.Error(errnie.Err(errnie.IO, "equation: marshal feature schema payload", err))
+	}).Value()
+}
+
+func outputKeys(fields map[string]float64) []string {
+	keys := make([]string, 0, len(fields)+1)
+
+	for key := range fields {
+		keys = append(keys, key)
+	}
+
+	if _, hasStrength := fields["strength"]; !hasStrength {
+		if _, hasValue := fields["value"]; hasValue {
+			keys = append(keys, "strength")
+		}
+	}
+
+	sort.Strings(keys)
+
+	return keys
 }

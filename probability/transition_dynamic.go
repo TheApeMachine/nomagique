@@ -1,262 +1,164 @@
 package probability
 
-import (
-	"github.com/bytedance/sonic"
-	"github.com/theapemachine/datura"
-	"github.com/theapemachine/errnie"
-)
+import "github.com/theapemachine/errnie"
 
 /*
-Transition scores transition surprisal from classifier probabilities and records
-the selected category into retained transition state.
-The constructor artifact holds config; Write buffers inbound wire on its payload.
+TransitionConfig describes a typed transition model.
+*/
+type TransitionConfig struct {
+	NumStates int
+	Alpha     float64
+}
+
+/*
+TransitionInput carries one classifier distribution and selected category.
+*/
+type TransitionInput struct {
+	Probabilities []float64
+	Category      int
+}
+
+/*
+TransitionOutput reports transition surprisal and retained matrix state.
+*/
+type TransitionOutput struct {
+	Value         float64
+	Category      int
+	Probabilities []float64
+	Counts        [][]float64
+	Ready         bool
+}
+
+/*
+Transition scores transition surprisal from classifier probabilities.
 */
 type Transition struct {
-	artifact *datura.Artifact
+	config TransitionConfig
+	matrix *TransitionMatrix
 }
 
 /*
-NewTransitionSurprise returns a transition surprisal stage wired from schema
-attributes numStates and alpha.
+NewTransitionSurprise returns a typed transition surprisal stage.
 */
-func NewTransitionSurprise(artifact *datura.Artifact) *Transition {
-	return &Transition{artifact: artifact}
+func NewTransitionSurprise(configs ...TransitionConfig) *Transition {
+	config := TransitionConfig{}
+
+	if len(configs) > 0 {
+		config = configs[0]
+	}
+
+	return &Transition{
+		config: config,
+	}
 }
 
-func (transition *Transition) Read(payload []byte) (int, error) {
-	state := datura.Acquire("transition-state", datura.APPJSON)
-	wire := transition.artifact.DecryptPayload()
-
-	if len(wire) == 0 {
-		state.Release()
-
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"transition stage missing inbound wire",
-			nil,
-		))
+/*
+Measure scores transition surprise and records the selected category.
+*/
+func (transition *Transition) Measure(input TransitionInput) (TransitionOutput, error) {
+	if err := transition.ready(); err != nil {
+		return TransitionOutput{}, err
 	}
 
-	if _, err := state.Unpack(wire); err != nil {
-		state.Release()
-
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"transition: state write failed",
-			err,
-		))
-	}
-
-	defer state.Release()
-
-	numStates := int(datura.Peek[float64](transition.artifact, "numStates"))
-	alpha := datura.Peek[float64](transition.artifact, "alpha")
-	inboundAlpha := datura.Peek[float64](state, "alpha")
-
-	if inboundAlpha > 0 {
-		alpha = inboundAlpha
-		transition.artifact.Poke(alpha, "alpha")
-	}
-
-	if datura.Peek[float64](state, "reset") != 0 {
-		transition.artifact.WithAttributes(datura.Map[any]{
-			"numStates": float64(numStates),
-			"alpha":     alpha,
-		})
-		state.MergeOutput("value", 0)
-		state.Poke("output", "root")
-		state.Poke([]string{"value"}, "inputs")
-		return state.PackInto(payload)
-	}
-
-	if numStates <= 0 || alpha <= 0 {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"transition: numStates and alpha must be positive",
-			nil,
-		))
-	}
-
-	probabilities := transitionProbabilities(state)
-
-	if len(probabilities) == 0 {
-		return 0, errnie.Error(errnie.Err(
+	if len(input.Probabilities) == 0 {
+		return TransitionOutput{}, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"transition: probabilities required",
 			nil,
 		))
 	}
 
-	matrix, err := transitionMatrixFromPayload(transition.artifact, numStates, alpha)
+	for _, probability := range input.Probabilities {
+		if err := finiteProbability("transition", probability); err != nil {
+			return TransitionOutput{}, err
+		}
+	}
+
+	observed, err := transition.matrix.PadObserved(
+		input.Probabilities,
+		transition.config.Alpha,
+	)
 
 	if err != nil {
-		return 0, err
+		return TransitionOutput{}, err
 	}
 
-	observed, err := matrix.PadObserved(probabilities, alpha)
+	surprise, err := transition.matrix.Surprise(observed)
 
 	if err != nil {
-		return 0, err
-	}
-	surprise, err := matrix.Surprise(observed)
-
-	if err != nil {
-		return 0, err
+		return TransitionOutput{}, err
 	}
 
-	categoryIndex := transitionCategory(state)
-
-	if categoryIndex >= 1 && categoryIndex <= numStates {
-		matrix.Update(categoryIndex - 1)
+	if input.Category >= 1 && input.Category <= transition.config.NumStates {
+		transition.matrix.Update(input.Category - 1)
 	}
 
-	pokeTransitionMatrix(transition.artifact, matrix)
-	state.MergeOutput("value", surprise)
-	state.MergeOutput("category", categoryIndex)
-	state.MergeOutput("probabilities", probabilities)
-	state.Poke("output", "root")
-	state.Poke([]string{"value"}, "inputs")
-	return state.PackInto(payload)
+	return TransitionOutput{
+		Value:         surprise,
+		Category:      input.Category,
+		Probabilities: append([]float64(nil), input.Probabilities...),
+		Counts:        transition.Counts(),
+		Ready:         true,
+	}, nil
 }
 
-func (transition *Transition) Write(payload []byte) (int, error) {
-	transition.artifact.WithPayload(payload)
-	return len(payload), nil
-}
+/*
+Reset clears retained transition counts.
+*/
+func (transition *Transition) Reset() error {
+	if err := transition.ready(); err != nil {
+		return err
+	}
 
-func (transition *Transition) Close() error {
+	transition.matrix.Reset()
+
 	return nil
 }
 
-func transitionMatrixFromPayload(
-	artifact *datura.Artifact,
-	numStates int,
-	alpha float64,
-) (*TransitionMatrix, error) {
-	matrix := NewTransitionMatrix(numStates, alpha)
-	rawAttributes, err := artifact.Attributes()
-
-	if err != nil || len(rawAttributes) == 0 {
-		return matrix, nil
+/*
+Counts returns a copy of the retained transition matrix counts.
+*/
+func (transition *Transition) Counts() [][]float64 {
+	if transition == nil || transition.matrix == nil {
+		return nil
 	}
 
-	countsNode, err := sonic.Get(rawAttributes, "transition", "counts")
+	counts := make([][]float64, len(transition.matrix.counts))
 
-	if err != nil || !countsNode.Exists() {
-		return matrix, nil
+	for row := range transition.matrix.counts {
+		counts[row] = append([]float64(nil), transition.matrix.counts[row]...)
 	}
 
-	rawCounts, err := countsNode.ArrayUseNode()
+	return counts
+}
 
-	if err != nil {
-		return nil, errnie.Error(errnie.Err(
+func (transition *Transition) ready() error {
+	if transition == nil {
+		return errnie.Error(errnie.Err(
 			errnie.Validation,
-			"transition: unable to read counts",
-			err,
-		))
-	}
-
-	if len(rawCounts) != numStates*numStates {
-		return nil, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"transition: counts length mismatch",
+			"transition: config required",
 			nil,
 		))
 	}
 
-	for row := range numStates {
-		for column := range numStates {
-			index := row*numStates + column
-			sample, err := rawCounts[index].Float64()
-
-			if err != nil {
-				return nil, errnie.Error(errnie.Err(
-					errnie.Validation,
-					"transition: counts entry is non-numeric",
-					err,
-				))
-			}
-
-			matrix.counts[row][column] = sample
-		}
-	}
-
-	lastCategoryNode, err := sonic.Get(rawAttributes, "transition", "lastCategory")
-
-	if err != nil || !lastCategoryNode.Exists() {
-		return matrix, nil
-	}
-
-	lastCategory, err := lastCategoryNode.Float64()
-
-	if err != nil {
-		return nil, errnie.Error(errnie.Err(
+	if transition.config.NumStates <= 0 || transition.config.Alpha <= 0 {
+		return errnie.Error(errnie.Err(
 			errnie.Validation,
-			"transition: lastCategory is non-numeric",
-			err,
+			"transition: numStates and alpha must be positive",
+			nil,
 		))
 	}
 
-	matrix.lastCategory = int(lastCategory)
-
-	return matrix, nil
-}
-
-func pokeTransitionMatrix(artifact *datura.Artifact, matrix *TransitionMatrix) {
-	if matrix == nil {
-		return
+	if err := finiteProbability("transition", transition.config.Alpha); err != nil {
+		return err
 	}
 
-	flat := make([]float64, 0, matrix.numStates*matrix.numStates)
-
-	for row := range matrix.counts {
-		flat = append(flat, matrix.counts[row]...)
+	if transition.matrix == nil {
+		transition.matrix = NewTransitionMatrix(
+			transition.config.NumStates,
+			transition.config.Alpha,
+		)
 	}
 
-	artifact.Poke(flat, "transition", "counts")
-	artifact.Poke(float64(matrix.lastCategory), "transition", "lastCategory")
-}
-
-func transitionProbabilities(state *datura.Artifact) []float64 {
-	raw, err := sonic.Get(state.DecryptPayload(), "output", "probabilities")
-
-	if err != nil || !raw.Exists() {
-		return nil
-	}
-
-	values, err := raw.ArrayUseNode()
-
-	if err != nil {
-		return nil
-	}
-
-	probabilities := make([]float64, len(values))
-
-	for index, sample := range values {
-		numeric, err := sample.Float64()
-
-		if err != nil {
-			return nil
-		}
-
-		probabilities[index] = numeric
-	}
-
-	return probabilities
-}
-
-func transitionCategory(state *datura.Artifact) int {
-	category, err := sonic.Get(state.DecryptPayload(), "output", "category")
-
-	if err != nil || !category.Exists() {
-		return 0
-	}
-
-	value, err := category.Float64()
-
-	if err != nil {
-		return 0
-	}
-
-	return int(value)
+	return nil
 }

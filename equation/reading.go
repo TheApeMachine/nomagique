@@ -1,44 +1,38 @@
 package equation
 
 import (
-	"github.com/theapemachine/datura"
+	"github.com/theapemachine/errnie"
 )
 
 /*
 Reading exposes one upstream output field as a classifier score source.
 */
 type Reading struct {
-	field    string
-	artifact *datura.Artifact
+	field string
 }
 
 /*
-NewReading returns a score source for one output field on the carried artifact.
+NewReading returns a score source for one output field on a typed field map.
 */
 func NewReading(field string) *Reading {
 	return &Reading{
-		field:    field,
-		artifact: datura.Acquire("equation-reading", datura.APPJSON),
+		field: field,
 	}
 }
 
-func (reading *Reading) Write(p []byte) (int, error) {
-	reading.artifact.WithPayload(p)
-	return len(p), nil
-}
+/*
+Measure reads the configured field from typed output evidence.
+*/
+func (reading *Reading) Measure(fields map[string]float64) (float64, error) {
+	value, ok := fields[reading.field]
 
-func (reading *Reading) Read(p []byte) (int, error) {
-	state, err := stageState(reading.artifact.DecryptPayload())
-
-	if err != nil {
-		return 0, err
+	if !ok {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"reading: field not found",
+			nil,
+		))
 	}
 
-	value := datura.Peek[float64](state, "output", reading.field)
-
-	return emitOutput(state, p, datura.Map[float64]{"value": value})
-}
-
-func (reading *Reading) Close() error {
-	return nil
+	return value, nil
 }

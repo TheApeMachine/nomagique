@@ -1,155 +1,63 @@
 package statistic
 
-import (
-	"math"
+import "github.com/theapemachine/errnie"
 
-	"github.com/theapemachine/datura"
-	"github.com/theapemachine/errnie"
-)
+/*
+ObservationRingConfig configures a bounded positive-observation ring.
+*/
+type ObservationRingConfig struct {
+	Capacity int
+}
 
 /*
 ObservationRing retains a bounded history of positive observations.
 */
 type ObservationRing struct {
-	artifact *datura.Artifact
+	capacity int
+	history  []float64
 }
 
 /*
-NewObservationRing returns an observation-ring stage wired from config attributes on the artifact.
+NewObservationRing returns a typed observation ring.
 */
-func NewObservationRing(artifact *datura.Artifact) *ObservationRing {
+func NewObservationRing(config ObservationRingConfig) *ObservationRing {
 	return &ObservationRing{
-		artifact: artifact,
+		capacity: config.Capacity,
 	}
 }
 
-func (observationRing *ObservationRing) Read(payload []byte) (int, error) {
-	state := datura.Acquire("observation-ring-state", datura.APPJSON)
-
-	if _, err := state.Unpack(observationRing.artifact.DecryptPayload()); err != nil {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"observation-ring: state write failed",
-			err,
-		))
-	}
-
-	rootKey := datura.Peek[string](state, "root")
-
-	if rootKey == "" {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"observation-ring: root required",
-			nil,
-		))
-	}
-
-	inputs := datura.Peek[[]string](state, "inputs")
-
-	if len(inputs) == 0 {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"observation-ring: inputs required",
-			nil,
-		))
-	}
-
-	configInput := datura.Peek[string](observationRing.artifact, "input")
-
-	if configInput == "" {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"observation-ring: input required",
-			nil,
-		))
-	}
-
-	outputKey := datura.Peek[string](observationRing.artifact, "outputKey")
-
-	if outputKey == "" {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"observation-ring: outputKey required",
-			nil,
-		))
-	}
-
-	var sample float64
-	found := false
-
-	for index, input := range inputs {
-		if input != configInput {
-			continue
-		}
-
-		if rootKey == "features" {
-			features := datura.Peek[[]float64](state, rootKey)
-
-			if index >= len(features) {
-				return 0, errnie.Error(errnie.Err(
-					errnie.Validation,
-					"observation-ring: feature index out of range",
-					nil,
-				))
-			}
-
-			sample = features[index]
-		}
-
-		if rootKey != "features" {
-			sample = datura.Peek[float64](state, rootKey, input)
-		}
-
-		found = true
-	}
-
-	if !found {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"observation-ring: input not in inputs",
-			nil,
-		))
-	}
-
-	if math.IsNaN(sample) || math.IsInf(sample, 0) || sample <= 0 {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"observation-ring: sample must be finite and positive",
-			nil,
-		))
-	}
-
-	history := datura.Peek[[]float64](observationRing.artifact, "history")
-	history = append(history, sample)
-
-	capacity := int(datura.Peek[float64](observationRing.artifact, "config", "capacity"))
-
-	if capacity <= 0 {
-		return 0, errnie.Error(errnie.Err(
+/*
+Measure adds one positive sample and returns the sample when retained.
+*/
+func (observationRing *ObservationRing) Measure(sample float64) (ScalarOutput, error) {
+	if observationRing.capacity <= 0 {
+		return ScalarOutput{}, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"observation-ring: capacity required",
 			nil,
 		))
 	}
 
-	if len(history) > capacity {
-		history = history[len(history)-capacity:]
+	if err := finitePositiveStatistic("observation-ring", sample); err != nil {
+		return ScalarOutput{}, err
 	}
 
-	observationRing.artifact.Poke(history, "history")
+	observationRing.history = append(observationRing.history, sample)
 
-	state.MergeOutput(outputKey, sample)
-	state.Poke("output", "root")
-	state.Poke([]string{outputKey}, "inputs")
+	if len(observationRing.history) > observationRing.capacity {
+		observationRing.history = observationRing.history[len(observationRing.history)-observationRing.capacity:]
+	}
 
-	return state.PackInto(payload)
+	return ScalarOutput{
+		Value: sample,
+		Ready: true,
+		Count: len(observationRing.history),
+	}, nil
 }
 
-func (observationRing *ObservationRing) Write(payload []byte) (int, error) {
-	observationRing.artifact.WithPayload(payload)
-	return len(payload), nil
-}
-
-func (observationRing *ObservationRing) Close() error {
-	return nil
+/*
+History returns the retained observations.
+*/
+func (observationRing *ObservationRing) History() []float64 {
+	return append([]float64(nil), observationRing.history...)
 }

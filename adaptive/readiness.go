@@ -1,10 +1,19 @@
 package adaptive
 
-import "github.com/theapemachine/datura"
+import (
+	"math"
 
-func mergeStageOutput(state *datura.Artifact, value float64, ready bool) {
-	state.MergeOutput("value", value)
-	state.MergeOutput("ready", ready)
-	state.Poke("output", "root")
-	state.Poke([]string{"value"}, "inputs")
+	"github.com/theapemachine/errnie"
+)
+
+func finiteAdaptive(name string, value float64) error {
+	if math.IsNaN(value) || math.IsInf(value, 0) {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			name+": value must be finite",
+			nil,
+		))
+	}
+
+	return nil
 }

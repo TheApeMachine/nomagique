@@ -1,169 +1,83 @@
 package adaptive
 
-import (
-	"math"
+import "github.com/theapemachine/errnie"
 
-	"github.com/theapemachine/datura"
-	"github.com/theapemachine/errnie"
-)
+/*
+HysteresisConfig configures the debounce gate.
+*/
+type HysteresisConfig struct {
+	Window    int
+	Threshold float64
+}
 
 /*
 Hysteresis debounces a binary signal so brief trips do not flip state.
-The constructor artifact holds config; Write buffers inbound payload.
 */
 type Hysteresis struct {
-	artifact    *datura.Artifact
+	config      HysteresisConfig
 	value       float64
-	pendingHigh float64
-	pendingLow  float64
+	pendingHigh int
+	pendingLow  int
+	count       int
 }
 
 /*
-NewHysteresis returns a hysteresis stage wired from config attributes on the artifact.
+HysteresisOutput reports the debounced binary state.
 */
-func NewHysteresis(artifact *datura.Artifact) *Hysteresis {
+type HysteresisOutput struct {
+	Value float64
+	Ready bool
+	Count int
+}
+
+/*
+NewHysteresis returns a typed hysteresis gate.
+*/
+func NewHysteresis(config HysteresisConfig) *Hysteresis {
 	return &Hysteresis{
-		artifact: artifact,
+		config: config,
 	}
 }
 
-func (hysteresis *Hysteresis) Read(payload []byte) (int, error) {
-	state := datura.Acquire("hysteresis-state", datura.APPJSON)
-
-	if _, err := state.Unpack(hysteresis.artifact.DecryptPayload()); err != nil {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"hysteresis: state write failed",
-			err,
-		))
-	}
-
-	rootKey := datura.Peek[string](state, "root")
-
-	if rootKey == "" {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"hysteresis: root required",
-			nil,
-		))
-	}
-
-	inputs := datura.Peek[[]string](state, "inputs")
-
-	if len(inputs) == 0 {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"hysteresis: inputs required",
-			nil,
-		))
-	}
-
-	inputKey := datura.Peek[string](hysteresis.artifact, "input")
-
-	if inputKey == "" {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"hysteresis: input required",
-			nil,
-		))
-	}
-
-	var sample float64
-	found := false
-
-	for index, input := range inputs {
-		if input != inputKey {
-			continue
-		}
-
-		if rootKey == "features" {
-			features := datura.Peek[[]float64](state, rootKey)
-
-			if index >= len(features) {
-				return 0, errnie.Error(errnie.Err(
-					errnie.Validation,
-					"hysteresis: feature index out of range",
-					nil,
-				))
-			}
-
-			sample = features[index]
-		}
-
-		if rootKey != "features" {
-			sample = datura.Peek[float64](state, rootKey, input)
-		}
-
-		found = true
-	}
-
-	if !found {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"hysteresis: input not in inputs",
-			nil,
-		))
-	}
-
-	if math.IsNaN(sample) || math.IsInf(sample, 0) {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"hysteresis: sample is non-finite",
-			nil,
-		))
-	}
-
-	window := int(datura.Peek[float64](hysteresis.artifact, "window"))
-
-	if window <= 0 {
-		return 0, errnie.Error(errnie.Err(
+/*
+Measure adds one sample and returns the debounced binary state.
+*/
+func (hysteresis *Hysteresis) Measure(sample float64) (HysteresisOutput, error) {
+	if hysteresis.config.Window <= 0 {
+		return HysteresisOutput{}, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"hysteresis: window required",
 			nil,
 		))
 	}
 
-	threshold := datura.Peek[float64](hysteresis.artifact, "threshold")
-	isHigh := sample > threshold
+	if err := finiteAdaptive("hysteresis", sample); err != nil {
+		return HysteresisOutput{}, err
+	}
 
-	if isHigh {
+	if sample > hysteresis.config.Threshold {
 		hysteresis.pendingHigh++
 		hysteresis.pendingLow = 0
 
-		if hysteresis.pendingHigh >= float64(window) {
+		if hysteresis.pendingHigh >= hysteresis.config.Window {
 			hysteresis.value = 1
 		}
 	}
 
-	if !isHigh {
+	if sample <= hysteresis.config.Threshold {
 		hysteresis.pendingLow++
 		hysteresis.pendingHigh = 0
 
-		if hysteresis.pendingLow >= float64(window) {
+		if hysteresis.pendingLow >= hysteresis.config.Window {
 			hysteresis.value = 0
 		}
 	}
 
-	if math.IsNaN(hysteresis.value) || math.IsInf(hysteresis.value, 0) {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"hysteresis: output value is non-finite",
-			nil,
-		))
-	}
+	hysteresis.count++
 
-	state.Poke("output", "root")
-	state.Poke([]string{"value"}, "inputs")
-	state.MergeOutput("value", hysteresis.value)
-
-	return state.PackInto(payload)
-}
-
-func (hysteresis *Hysteresis) Write(p []byte) (int, error) {
-	hysteresis.artifact.WithPlaintextPayload(p)
-	return len(p), nil
-}
-
-func (hysteresis *Hysteresis) Close() error {
-	return nil
+	return HysteresisOutput{
+		Value: hysteresis.value,
+		Ready: true,
+		Count: hysteresis.count,
+	}, nil
 }

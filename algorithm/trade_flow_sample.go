@@ -121,18 +121,20 @@ func (tradeFlowSample *TradeFlowSample) features(
 		notionals[index] = tick.notional
 	}
 
-	_, longWindow, err := statistic.ResolveWindows(notionals, 0, 0)
+	shortWindow, longWindow, err := statistic.ResolveWindows(notionals, 0, 0)
 
 	if err != nil || tradeCount < longWindow {
 		return equation.FlowInput{}, false
 	}
 
-	active := window.ticks[len(window.ticks)-longWindow:]
+	active := window.ticks[len(window.ticks)-shortWindow:]
+	baseline := window.ticks[len(window.ticks)-longWindow:]
 
 	buyNotional := 0.0
 	sellNotional := 0.0
 	prices := make([]float64, 0, len(active))
 	activeNotionals := make([]float64, 0, len(active))
+	baselineNotionals := make([]float64, 0, len(baseline))
 
 	for _, tick := range active {
 		if tick.buy {
@@ -147,8 +149,12 @@ func (tradeFlowSample *TradeFlowSample) features(
 		activeNotionals = append(activeNotionals, tick.notional)
 	}
 
-	grossFloor := medianPositive(activeNotionals)
-	medianNotional := grossFloor
+	for _, tick := range baseline {
+		baselineNotionals = append(baselineNotionals, tick.notional)
+	}
+
+	medianNotional := medianPositive(baselineNotionals)
+	grossFloor := medianNotional * float64(len(activeNotionals))
 
 	if medianNotional <= 0 {
 		return equation.FlowInput{}, false

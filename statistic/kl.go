@@ -3,7 +3,6 @@ package statistic
 import (
 	"math"
 
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 )
 
@@ -11,165 +10,66 @@ import (
 KLDivergence computes KL divergence between paired sample streams.
 */
 type KLDivergence struct {
-	artifact *datura.Artifact
+	samples []float64
+	paired  []float64
 }
 
 /*
-NewKLDivergence returns a KL-divergence stage wired from config attributes on the artifact.
+NewKLDivergence returns a typed KL-divergence accumulator.
 */
-func NewKLDivergence(artifact *datura.Artifact) *KLDivergence {
-	return &KLDivergence{
-		artifact: artifact,
-	}
+func NewKLDivergence() *KLDivergence {
+	return &KLDivergence{}
 }
 
-func (klDivergence *KLDivergence) Read(payload []byte) (int, error) {
-	state := datura.Acquire("kl-divergence-state", datura.APPJSON)
-
-	if _, err := state.Unpack(klDivergence.artifact.DecryptPayload()); err != nil {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"kl-divergence: state write failed",
-			err,
-		))
+/*
+Measure adds one paired observation and returns divergence when ready.
+*/
+func (klDivergence *KLDivergence) Measure(sample PairSample) (ScalarOutput, error) {
+	if err := finiteStatistic("kl-divergence", sample.Sample); err != nil {
+		return ScalarOutput{}, err
 	}
 
-	rootKey := datura.Peek[string](state, "root")
+	if err := finiteStatistic("kl-divergence", sample.Paired); err != nil {
+		return ScalarOutput{}, err
+	}
 
-	if rootKey == "" {
-		return 0, errnie.Error(errnie.Err(
+	if sample.Sample < 0 || sample.Paired < 0 {
+		return ScalarOutput{}, errnie.Error(errnie.Err(
 			errnie.Validation,
-			"kl-divergence: root required",
+			"kl-divergence: samples must be non-negative",
 			nil,
 		))
 	}
 
-	inputs := datura.Peek[[]string](state, "inputs")
+	klDivergence.samples = append(klDivergence.samples, sample.Sample)
+	klDivergence.paired = append(klDivergence.paired, sample.Paired)
 
-	if len(inputs) == 0 {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"kl-divergence: inputs required",
-			nil,
-		))
+	if len(klDivergence.samples) < 2 {
+		return ScalarOutput{
+			Ready: false,
+			Count: len(klDivergence.samples),
+		}, nil
 	}
 
-	sampleKey := datura.Peek[string](klDivergence.artifact, "sampleKey")
-
-	if sampleKey == "" {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"kl-divergence: sampleKey required",
-			nil,
-		))
+	value, err := klValue(klDivergence.samples, klDivergence.paired)
+	if err != nil {
+		return ScalarOutput{}, err
 	}
 
-	pairedKey := datura.Peek[string](klDivergence.artifact, "pairedKey")
+	return ScalarOutput{
+		Value: value,
+		Ready: true,
+		Count: len(klDivergence.samples),
+	}, nil
+}
 
-	if pairedKey == "" {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"kl-divergence: pairedKey required",
-			nil,
-		))
-	}
-
-	outputKey := datura.Peek[string](klDivergence.artifact, "outputKey")
-
-	if outputKey == "" {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"kl-divergence: outputKey required",
-			nil,
-		))
-	}
-
-	var sample float64
-	var paired float64
-	sampleFound := false
-	pairedFound := false
-
-	for index, input := range inputs {
-		if rootKey == "features" {
-			features := datura.Peek[[]float64](state, rootKey)
-
-			if index >= len(features) {
-				return 0, errnie.Error(errnie.Err(
-					errnie.Validation,
-					"kl-divergence: feature index out of range",
-					nil,
-				))
-			}
-
-			if input == sampleKey {
-				sample = features[index]
-				sampleFound = true
-			}
-
-			if input == pairedKey {
-				paired = features[index]
-				pairedFound = true
-			}
-		}
-
-		if rootKey != "features" {
-			if input == sampleKey {
-				sample = datura.Peek[float64](state, rootKey, input)
-				sampleFound = true
-			}
-
-			if input == pairedKey {
-				paired = datura.Peek[float64](state, rootKey, input)
-				pairedFound = true
-			}
-		}
-	}
-
-	if !sampleFound || !pairedFound {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"kl-divergence: sampleKey or pairedKey not in inputs",
-			nil,
-		))
-	}
-
-	if math.IsNaN(sample) || math.IsInf(sample, 0) || math.IsNaN(paired) || math.IsInf(paired, 0) {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"kl-divergence: sample and paired must be finite",
-			nil,
-		))
-	}
-
-	if sample < 0 || paired < 0 {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"kl-divergence: sample and paired must be non-negative",
-			nil,
-		))
-	}
-
-	samples := datura.Peek[[]float64](klDivergence.artifact, "samples")
-	pairedSamples := datura.Peek[[]float64](klDivergence.artifact, "paired")
-	samples = append(samples, sample)
-	pairedSamples = append(pairedSamples, paired)
-	klDivergence.artifact.Poke(samples, "samples")
-	klDivergence.artifact.Poke(pairedSamples, "paired")
-
-	if len(samples) < 2 {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"kl-divergence: insufficient paired samples",
-			nil,
-		))
-	}
-
+func klValue(samples, paired []float64) (float64, error) {
 	totalSample := 0.0
 	totalPaired := 0.0
 
 	for index := range samples {
 		totalSample += samples[index]
-		totalPaired += pairedSamples[index]
+		totalPaired += paired[index]
 	}
 
 	if totalSample <= 0 || totalPaired <= 0 {
@@ -194,22 +94,9 @@ func (klDivergence *KLDivergence) Read(payload []byte) (int, error) {
 
 	for index := range samples {
 		probabilitySample := max(samples[index], probabilityFloor) / totalSample
-		probabilityPaired := max(pairedSamples[index], probabilityFloor) / totalPaired
+		probabilityPaired := max(paired[index], probabilityFloor) / totalPaired
 		divergence += probabilitySample * math.Log(probabilitySample/probabilityPaired)
 	}
 
-	state.MergeOutput(outputKey, divergence)
-	state.Poke("output", "root")
-	state.Poke([]string{outputKey}, "inputs")
-
-	return state.PackInto(payload)
-}
-
-func (klDivergence *KLDivergence) Write(payload []byte) (int, error) {
-	klDivergence.artifact.WithPayload(payload)
-	return len(payload), nil
-}
-
-func (klDivergence *KLDivergence) Close() error {
-	return nil
+	return divergence, nil
 }

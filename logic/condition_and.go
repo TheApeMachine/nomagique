@@ -1,20 +1,22 @@
 package logic
 
-import "github.com/theapemachine/datura"
-
 /*
 And matches when every nested condition matches.
 */
 type And []Condition
 
-func (andCondition And) Match(artifact *datura.Artifact) bool {
+func (andCondition And) Match(observation Observation) bool {
+	if len(andCondition) == 0 {
+		return false
+	}
+
 	for _, operand := range andCondition {
-		if !operand.Match(artifact) {
+		if operand == nil || !operand.Match(observation) {
 			return false
 		}
 	}
 
-	return len(andCondition) > 0
+	return true
 }
 
 func (andCondition And) ResetOperands() {

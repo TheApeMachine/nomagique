@@ -1,10 +1,6 @@
 package equation
 
-import (
-	"github.com/bytedance/sonic"
-	"github.com/theapemachine/datura"
-	"github.com/theapemachine/errnie"
-)
+import "github.com/theapemachine/errnie"
 
 var BookQualityInputKeys = []string{
 	"cancelBid",
@@ -120,71 +116,15 @@ var LagInputKeys = []string{
 /*
 FeatureFields reads named scalars in order; missing keys return validation errors.
 */
-func FeatureFields(state *datura.Artifact, keys []string) ([]float64, error) {
-	inputs := datura.Peek[[]string](state, "inputs")
-
-	if len(inputs) == 0 {
-		inputs = datura.Peek[[]string](state, "featureInputs")
-	}
-
-	features := datura.Peek[[]float64](state, "features")
-	values := make([]float64, len(keys))
-
-	for index, key := range keys {
-		found := false
-
-		for column, input := range inputs {
-			if input != key || column >= len(features) {
-				continue
-			}
-
-			values[index] = features[column]
-			found = true
-			break
-		}
-
-		if !found {
-			return nil, errnie.Error(errnie.Err(
-				errnie.Validation,
-				"feature-column: key not found",
-				nil,
-			))
-		}
-	}
-
-	return values, nil
-}
-
-/*
-EnsureFeatureSchema stamps root/inputs from config when the wire payload omitted them.
-*/
-func EnsureFeatureSchema(state, config *datura.Artifact, defaultKeys []string) []string {
-	inputKeys := datura.Peek[[]string](state, "inputs")
-
-	if len(inputKeys) == 0 {
-		inputKeys = datura.Peek[[]string](config, "inputs")
-
-		if len(inputKeys) == 0 {
-			inputKeys = defaultKeys
-		}
-
-		state.Poke(inputKeys, "inputs")
-	}
-
-	if datura.Peek[string](state, "root") == "" {
-		state.Poke("features", "root")
-	}
-
-	return inputKeys
+func FeatureFields(frame FeatureFrame, keys []string) ([]float64, error) {
+	return frame.FeatureFields(keys)
 }
 
 /*
 FeatureSlice reads a contiguous segment from the features vector.
 */
-func FeatureSlice(state *datura.Artifact, offset, count int) ([]float64, error) {
-	features := Features(state)
-
-	if count < 0 || offset+count > len(features) {
+func FeatureSlice(frame FeatureFrame, offset, count int) ([]float64, error) {
+	if count < 0 || offset < 0 || offset+count > len(frame.Features) {
 		return nil, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"equation: feature slice out of range",
@@ -192,22 +132,5 @@ func FeatureSlice(state *datura.Artifact, offset, count int) ([]float64, error) 
 		))
 	}
 
-	return append([]float64(nil), features[offset:offset+count]...), nil
-}
-
-/*
-MarshalFeatureSchema encodes semantic features for pipeline wire tests.
-*/
-func MarshalFeatureSchema(inputs []string, values []float64) []byte {
-	payload := errnie.Does(func() ([]byte, error) {
-		return sonic.Marshal(datura.Map[any]{
-			"features": values,
-			"inputs":   inputs,
-			"root":     "features",
-		})
-	}).Or(func(err error) {
-		errnie.Error(errnie.Err(errnie.IO, "equation: marshal feature schema payload", err))
-	}).Value()
-
-	return payload
+	return frame.FeatureSlice(offset, count)
 }

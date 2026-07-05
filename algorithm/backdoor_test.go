@@ -3,60 +3,62 @@ package algorithm_test
 import (
 	"testing"
 
-	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/datura"
-	"github.com/theapemachine/nomagique"
 	"github.com/theapemachine/nomagique/algorithm"
+	"github.com/theapemachine/nomagique/causal"
 )
 
-func backdoorConfig() *datura.Artifact {
-	return datura.Acquire("backdoor-config", datura.APPJSON).
-		Poke(float64(3), "target").
-		Poke(float64(2), "treatment").
-		Poke([]float64{0, 1}, "controls").
-		Poke(float64(12), "minHistory")
+func backdoorConfig() causal.BackdoorConfig {
+	return causal.BackdoorConfig{
+		Target:     3,
+		Treatment:  2,
+		Controls:   []int{0, 1},
+		MinHistory: 12,
+	}
 }
 
-func backdoorTable(rowCount int) *datura.Artifact {
+func backdoorRows(rowCount int) [][]float64 {
 	nodeCount := 4
-	flat := make([]float64, 0, rowCount*nodeCount)
+	rows := make([][]float64, 0, rowCount)
 
 	for rowIndex := range rowCount {
-		flat = append(flat,
+		row := make([]float64, 0, nodeCount)
+		row = append(row,
 			float64(rowIndex)*0.1,
 			float64(rowIndex)*0.2,
 			float64(rowIndex)*0.5,
 			float64(rowIndex)*0.05,
 		)
+		rows = append(rows, row)
 	}
 
-	return datura.Acquire("backdoor-table", datura.APPJSON).
-		Poke(float64(rowCount), "table", "rowCount").
-		Poke(float64(nodeCount), "table", "nodeCount").
-		Poke(flat, "table", "rows")
+	return rows
 }
 
-func TestBackdoorRead(testingTB *testing.T) {
-	Convey("Given aligned node streams with causal structure", testingTB, func() {
-		backdoor := algorithm.NewBackdoor(backdoorConfig())
-		artifact := backdoorTable(16)
-		err := nomagique.RoundTripArtifact(artifact, backdoor)
-
-		So(err, ShouldBeNil)
-
-		Convey("It should return a finite backdoor effect", func() {
-			So(datura.Peek[float64](artifact, "output", "value"), ShouldNotEqual, 0)
-		})
-	})
-}
-
-func BenchmarkBackdoorRead(testingTB *testing.B) {
+func TestBackdoorMeasure(testingTB *testing.T) {
 	backdoor := algorithm.NewBackdoor(backdoorConfig())
-	artifact := backdoorTable(16)
+	output, err := backdoor.Measure(causal.BackdoorInput{
+		Rows: backdoorRows(16),
+	})
+	if err != nil {
+		testingTB.Fatal(err)
+	}
+
+	if output.Value == 0 {
+		testingTB.Fatal("expected finite non-zero backdoor effect")
+	}
+}
+
+func BenchmarkBackdoorMeasure(testingTB *testing.B) {
+	backdoor := algorithm.NewBackdoor(backdoorConfig())
+	input := causal.BackdoorInput{
+		Rows: backdoorRows(16),
+	}
 
 	testingTB.ReportAllocs()
 
 	for testingTB.Loop() {
-		_ = nomagique.RoundTripArtifact(artifact, backdoor)
+		if _, err := backdoor.Measure(input); err != nil {
+			testingTB.Fatal(err)
+		}
 	}
 }

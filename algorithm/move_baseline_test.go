@@ -1,50 +1,42 @@
 package algorithm
 
-import (
-	"testing"
-	"time"
+import "testing"
 
-	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/datura"
-	"github.com/theapemachine/nomagique"
-)
+func TestMoveBaselineMeasure(testingTB *testing.T) {
+	baseline := NewMoveBaseline(MoveBaselineConfig{
+		MinObs:  anchorMoveMinObs,
+		PathCap: 256,
+	})
 
-func TestMoveBaselineRead(testingTB *testing.T) {
-	Convey("Given a warmed move baseline", testingTB, func() {
-		config := datura.Acquire("move-baseline-config", datura.APPJSON).
-			Poke(float64(anchorMoveMinObs), "minObs").
-			Poke(float64(256), "pathCap").
-			Poke("wire", "root").
-			Poke("sample", "sampleKey")
-		baseline := NewMoveBaseline(config)
-		wire := datura.Acquire("move-baseline-wire", datura.APPJSON).
-			Poke("wire", "root").
-			Poke([]string{"sample"}, "inputs")
-
-		for index := range anchorMoveMinObs {
-			wire.Poke(0.0001+float64(index%2)*0.00005, "wire", "sample")
-			err := nomagique.RoundTripArtifact(wire, baseline)
-
-			So(err, ShouldBeNil)
-			So(datura.Peek[float64](wire, "output", "ready"), ShouldEqual, 0)
+	for index := range anchorMoveMinObs {
+		output, err := baseline.Measure(0.0001 + float64(index%2)*0.00005)
+		if err != nil {
+			testingTB.Fatal(err)
 		}
 
-		Convey("It should classify a flat reading as stall with unit margin", func() {
-			wire.Poke(0.00001, "wire", "sample")
-			err := nomagique.RoundTripArtifact(wire, baseline)
+		if output.Ready != 0 {
+			testingTB.Fatalf("warmup ready = %f, want 0", output.Ready)
+		}
+	}
 
-			So(err, ShouldBeNil)
-			So(datura.Peek[float64](wire, "output", "ready"), ShouldEqual, 1)
-			So(datura.Peek[float64](wire, "output", "moved"), ShouldEqual, 0)
-			margin := datura.Peek[float64](wire, "output", "stallMargin")
-			So(margin, ShouldBeGreaterThan, 0)
-			So(margin, ShouldBeLessThanOrEqualTo, 1)
-		})
-	})
+	output, err := baseline.Measure(0.00001)
+	if err != nil {
+		testingTB.Fatal(err)
+	}
+
+	if output.Ready != 1 {
+		testingTB.Fatalf("ready = %f, want 1", output.Ready)
+	}
+
+	if output.Moved != 0 {
+		testingTB.Fatalf("moved = %f, want 0", output.Moved)
+	}
+
+	if output.StallMargin <= 0 || output.StallMargin > 1 {
+		testingTB.Fatalf("stall margin = %f, want in (0,1]", output.StallMargin)
+	}
 }
 
 const (
 	anchorMoveMinObs = 12
 )
-
-var barInterval = 5 * time.Minute

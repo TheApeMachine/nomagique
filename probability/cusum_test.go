@@ -4,151 +4,111 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/datura"
-	"github.com/theapemachine/nomagique"
 )
 
 func TestNewCUSUM(testingTB *testing.T) {
 	Convey("Given CUSUM constructor", testingTB, func() {
-		changeSum := NewCUSUM(cusumConfig("cusum-config"))
+		changeSum := NewCUSUM()
 
-		Convey("It should return a usable dynamic", func() {
+		Convey("It should return a usable change detector", func() {
 			So(changeSum, ShouldNotBeNil)
 		})
 	})
 }
 
-func TestCUSUMRead(testingTB *testing.T) {
-	Convey("Given empty inbound wire", testingTB, func() {
-		changeSum := NewCUSUM(cusumConfig("cusum-config"))
-		artifact := datura.Acquire("test", datura.APPJSON)
-		err := nomagique.RoundTripArtifact(artifact, changeSum)
-
-		Convey("It should return a validation error", func() {
-			So(err, ShouldNotBeNil)
-		})
-	})
-
+func TestCUSUMMeasure(testingTB *testing.T) {
 	Convey("Given a first sample", testingTB, func() {
-		changeSum := NewCUSUM(cusumConfig("cusum-config"))
-		artifact := datura.Acquire("test", datura.APPJSON)
-
-		scalarWire(artifact, "sample", 10)
-		err := nomagique.RoundTripArtifact(artifact, changeSum)
+		changeSum := NewCUSUM()
+		output, err := changeSum.Measure(10)
 
 		Convey("It should emit zero change evidence", func() {
 			So(err, ShouldBeNil)
-			So(datura.Peek[float64](artifact, "output", "value"), ShouldEqual, 0)
-			So(datura.Peek[float64](changeSum.artifact, "output", "count"), ShouldEqual, 1)
+			So(output.Value, ShouldEqual, 0)
+			So(output.Ready, ShouldBeFalse)
+			So(output.Count, ShouldEqual, 1)
 		})
 	})
 
 	Convey("Given repeated equal samples", testingTB, func() {
-		changeSum := NewCUSUM(cusumConfig("cusum-config"))
-		artifact := datura.Acquire("test", datura.APPJSON)
+		changeSum := NewCUSUM()
+		var output CUSUMOutput
+		var err error
 
 		for _, sample := range []float64{10, 10} {
-			scalarWire(artifact, "sample", sample)
-			err := nomagique.RoundTripArtifact(artifact, changeSum)
+			output, err = changeSum.Measure(sample)
 
 			So(err, ShouldBeNil)
 		}
 
 		Convey("It should advance count without manufacturing change evidence", func() {
-			So(datura.Peek[float64](changeSum.artifact, "output", "count"), ShouldEqual, 2)
-			So(datura.Peek[float64](changeSum.artifact, "output", "positive"), ShouldEqual, 0)
-			So(datura.Peek[float64](changeSum.artifact, "output", "negative"), ShouldEqual, 0)
-			So(datura.Peek[float64](artifact, "output", "value"), ShouldEqual, 0)
+			So(output.Count, ShouldEqual, 2)
+			So(output.Positive, ShouldEqual, 0)
+			So(output.Negative, ShouldEqual, 0)
+			So(output.Value, ShouldEqual, 0)
 		})
 	})
 
-	Convey("Given a warmed change sum", testingTB, func() {
-		changeSum := NewCUSUM(cusumConfig("cusum-config"))
-		artifact := datura.Acquire("test", datura.APPJSON)
+	Convey("Given a warmed positive change sum", testingTB, func() {
+		changeSum := NewCUSUM()
+		_, _ = changeSum.Measure(10)
+		output, err := changeSum.Measure(25)
 
-		scalarWire(artifact, "sample", 10)
-		_ = nomagique.RoundTripArtifact(artifact, changeSum)
-
-		scalarWire(artifact, "sample", 25)
-		err := nomagique.RoundTripArtifact(artifact, changeSum)
-
-		So(err, ShouldBeNil)
-
-		got := datura.Peek[float64](artifact, "output", "value")
-
-		Convey("It should accumulate evidence", func() {
-			So(got, ShouldBeGreaterThan, 0)
+		Convey("It should accumulate positive evidence", func() {
+			So(err, ShouldBeNil)
+			So(output.Value, ShouldBeGreaterThan, 0)
+			So(output.Positive, ShouldBeGreaterThan, 0)
 		})
 	})
 
-	Convey("Given sequential scalar samples", testingTB, func() {
-		changeSum := NewCUSUM(cusumConfig("cusum-config"))
-		artifact := datura.Acquire("test", datura.APPJSON)
+	Convey("Given a warmed negative change sum", testingTB, func() {
+		changeSum := NewCUSUM()
+		_, _ = changeSum.Measure(10)
+		output, err := changeSum.Measure(8)
 
-		scalarWire(artifact, "sample", 10)
-		_ = nomagique.RoundTripArtifact(artifact, changeSum)
-
-		scalarWire(artifact, "sample", 8)
-		err := nomagique.RoundTripArtifact(artifact, changeSum)
-
-		So(err, ShouldBeNil)
-
-		withWork := datura.Peek[float64](artifact, "output", "value")
-
-		combined := NewCUSUM(cusumConfig("cusum-config-combined"))
-		reference := datura.Acquire("test", datura.APPJSON)
-
-		scalarWire(reference, "sample", 10)
-		_ = nomagique.RoundTripArtifact(reference, combined)
-
-		scalarWire(reference, "sample", 8)
-		err = nomagique.RoundTripArtifact(reference, combined)
-
-		So(err, ShouldBeNil)
-
-		direct := datura.Peek[float64](reference, "output", "value")
-
-		Convey("It should match a single combined scalar", func() {
-			So(withWork, ShouldEqual, direct)
-			So(datura.Peek[float64](artifact, "output", "value"), ShouldBeGreaterThan, 0)
-			So(datura.Peek[float64](changeSum.artifact, "output", "negative"), ShouldBeGreaterThan, 0)
+		Convey("It should accumulate negative evidence", func() {
+			So(err, ShouldBeNil)
+			So(output.Value, ShouldBeGreaterThan, 0)
+			So(output.Negative, ShouldBeGreaterThan, 0)
 		})
 	})
 
-	Convey("Given reset after observation", testingTB, func() {
-		changeSum := NewCUSUM(cusumConfig("cusum-config"))
-		artifact := scalarWire(datura.Acquire("test", datura.APPJSON), "sample", 10)
+	Convey("Given invalid reference", testingTB, func() {
+		changeSum := NewCUSUM(CUSUMConfig{Reference: -1})
+		_, err := changeSum.Measure(10)
 
-		_ = nomagique.RoundTripArtifact(artifact, changeSum)
-
-		scalarWire(artifact, "sample", 25)
-		_ = nomagique.RoundTripArtifact(artifact, changeSum)
-
-		resetArtifact := datura.Acquire("test", datura.APPJSON).Poke(1, "reset")
-		err := nomagique.RoundTripArtifact(resetArtifact, changeSum)
-
-		So(err, ShouldBeNil)
-
-		Convey("It should clear derived state", func() {
-			So(datura.Peek[float64](resetArtifact, "output", "count"), ShouldEqual, 0)
-			So(datura.Peek[float64](resetArtifact, "output", "value"), ShouldEqual, 0)
+		Convey("It should return a validation error", func() {
+			So(err, ShouldNotBeNil)
 		})
 	})
 }
 
-func BenchmarkCUSUMRead(testingTB *testing.B) {
-	changeSum := NewCUSUM(cusumConfig("cusum-config-bench"))
-	artifact := datura.Acquire("test", datura.APPJSON)
+func TestCUSUMReset(testingTB *testing.T) {
+	Convey("Given reset after observation", testingTB, func() {
+		changeSum := NewCUSUM()
+		_, _ = changeSum.Measure(10)
+		_, _ = changeSum.Measure(25)
 
-	scalarWire(artifact, "sample", 10)
-	_ = nomagique.RoundTripArtifact(artifact, changeSum)
-	scalarWire(artifact, "sample", 10.5)
-	_ = nomagique.RoundTripArtifact(artifact, changeSum)
+		changeSum.Reset()
+
+		output, err := changeSum.Measure(10)
+
+		Convey("It should clear derived state", func() {
+			So(err, ShouldBeNil)
+			So(output.Count, ShouldEqual, 1)
+			So(output.Value, ShouldEqual, 0)
+			So(output.Ready, ShouldBeFalse)
+		})
+	})
+}
+
+func BenchmarkCUSUMMeasure(testingTB *testing.B) {
+	changeSum := NewCUSUM()
+	_, _ = changeSum.Measure(10)
+	_, _ = changeSum.Measure(10.5)
 
 	testingTB.ReportAllocs()
 
 	for testingTB.Loop() {
-		scalarWire(artifact, "sample", 10.5)
-		_ = nomagique.RoundTripArtifact(artifact, changeSum)
+		_, _ = changeSum.Measure(10.5)
 	}
 }

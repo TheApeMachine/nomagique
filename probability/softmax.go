@@ -2,163 +2,154 @@ package probability
 
 import (
 	"fmt"
-	"io"
 	"math"
 
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 )
 
 /*
-Softmax maps competing scores on the wire to a normalized probability vector.
-Every configured input key receives its probability on output; nothing is
-pre-selected as a winner.
+SoftmaxConfig declares the category order for probability output.
 */
-type Softmax struct {
-	artifact *datura.Artifact
+type SoftmaxConfig struct {
+	Inputs    []string
+	Normalize bool
 }
 
 /*
-NewSoftmax returns a softmax stage wired from schema inputs on the artifact.
-Set normalize to zero on the config artifact to use raw logits; default is
-spread-normalized scores.
+SoftmaxInput carries competing category scores.
 */
-func NewSoftmax(artifact *datura.Artifact) *Softmax {
-	return &Softmax{artifact: artifact}
+type SoftmaxInput struct {
+	Scores []CategoryScore
 }
 
-func (softmax *Softmax) Read(payload []byte) (int, error) {
-	state := datura.Acquire("softmax-state", datura.APPJSON)
+/*
+SoftmaxOutput carries normalized category probabilities.
+*/
+type SoftmaxOutput struct {
+	Probabilities []CategoryScore
+	Values        []float64
+}
 
-	if _, err := state.Unpack(softmax.artifact.DecryptPayload()); err != nil {
-		state.Release()
+/*
+Softmax maps competing scores to a normalized probability vector.
+*/
+type Softmax struct {
+	config SoftmaxConfig
+}
 
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"softmax: state write failed",
-			err,
-		))
+/*
+NewSoftmax returns a typed softmax calculator.
+*/
+func NewSoftmax(config SoftmaxConfig) *Softmax {
+	return &Softmax{
+		config: config,
 	}
+}
 
-	defer state.Release()
-
-	inputs := datura.Peek[[]string](softmax.artifact, "inputs")
-
-	if len(inputs) == 0 {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"softmax: inputs required",
-			nil,
-		))
-	}
-
-	scoreRoot := datura.Peek[string](softmax.artifact, "scoreRoot")
-
-	if scoreRoot == "" {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"softmax: scoreRoot required",
-			nil,
-		))
-	}
-
-	scores := make([]float64, len(inputs))
-
-	for index, input := range inputs {
-		if input == "" {
-			return 0, errnie.Error(errnie.Err(
-				errnie.Validation,
-				"softmax: empty input key",
-				nil,
-			))
-		}
-
-		var score float64
-		scoreFound := false
-
-		for wireIndex, wireInput := range datura.Peek[[]string](state, "inputs") {
-			if wireInput != input {
-				continue
-			}
-
-			if scoreRoot == "features" {
-				features := datura.Peek[[]float64](state, scoreRoot)
-
-				if wireIndex >= len(features) {
-					return 0, errnie.Error(errnie.Err(
-						errnie.Validation,
-						"softmax: feature index out of range",
-						nil,
-					))
-				}
-
-				score = features[wireIndex]
-			}
-
-			if scoreRoot != "features" {
-				score = datura.Peek[float64](state, scoreRoot, wireInput)
-			}
-
-			scoreFound = true
-		}
-
-		if !scoreFound {
-			return 0, errnie.Error(errnie.Err(
-				errnie.Validation,
-				"softmax: input not in inputs",
-				nil,
-			))
-		}
-
-		if math.IsNaN(score) || math.IsInf(score, 0) {
-			return 0, errnie.Error(errnie.Err(
-				errnie.Validation,
-				"softmax: score is non-finite",
-				nil,
-			))
-		}
-
-		scores[index] = score
-	}
-
-	normalize := datura.Peek[float64](softmax.artifact, "normalize") != 0
-
-	if datura.Peek[string](softmax.artifact, "normalize") == "false" {
-		normalize = false
-	}
-
-	probabilities, err := softmax.distribute(scores, normalize)
+/*
+Measure returns configured category probabilities for the input scores.
+*/
+func (softmax *Softmax) Measure(input SoftmaxInput) (SoftmaxOutput, error) {
+	scores, err := softmax.scores(input)
 
 	if err != nil {
-		return 0, errnie.Error(errnie.Err(
+		return SoftmaxOutput{}, err
+	}
+
+	probabilities, err := softmax.distribute(scores, softmax.config.Normalize)
+
+	if err != nil {
+		return SoftmaxOutput{}, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"softmax: unable to compute probabilities",
 			err,
 		))
 	}
 
-	for index, input := range inputs {
-		state.MergeOutput(input, probabilities[index])
+	return softmax.output(probabilities), nil
+}
+
+func (softmax *Softmax) scores(input SoftmaxInput) ([]float64, error) {
+	if softmax == nil || len(softmax.config.Inputs) == 0 {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"softmax: inputs required",
+			nil,
+		))
 	}
 
-	state.MergeOutput("probabilities", probabilities)
-	state.Poke("output", "root")
+	scores := make([]float64, len(softmax.config.Inputs))
 
-	outputInputs := make([]string, 0, len(inputs)+1)
-	outputInputs = append(outputInputs, inputs...)
-	outputInputs = append(outputInputs, "probabilities")
-	state.Poke(outputInputs, "inputs")
+	for index, category := range softmax.config.Inputs {
+		if category == "" {
+			return nil, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"softmax: empty input key",
+				nil,
+			))
+		}
 
-	return state.PackInto(payload)
+		score, err := input.Score(category)
+		if err != nil {
+			return nil, err
+		}
+
+		scores[index] = score
+	}
+
+	return scores, nil
 }
 
-func (softmax *Softmax) Write(payload []byte) (int, error) {
-	softmax.artifact.WithPayload(payload)
-	return len(payload), nil
+func (input SoftmaxInput) Score(category string) (float64, error) {
+	found := false
+	score := 0.0
+
+	for _, candidate := range input.Scores {
+		if candidate.Category != category {
+			continue
+		}
+
+		if found {
+			return 0, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"softmax: duplicate input key",
+				nil,
+			))
+		}
+
+		score = candidate.Score
+		found = true
+	}
+
+	if !found {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"softmax: input score missing",
+			nil,
+		))
+	}
+
+	if err := finiteProbability("softmax", score); err != nil {
+		return 0, err
+	}
+
+	return score, nil
 }
 
-func (softmax *Softmax) Close() error {
-	return nil
+func (softmax *Softmax) output(probabilities []float64) SoftmaxOutput {
+	output := SoftmaxOutput{
+		Probabilities: make([]CategoryScore, len(softmax.config.Inputs)),
+		Values:        append([]float64(nil), probabilities...),
+	}
+
+	for index, category := range softmax.config.Inputs {
+		output.Probabilities[index] = CategoryScore{
+			Category: category,
+			Score:    probabilities[index],
+		}
+	}
+
+	return output
 }
 
 func (softmax *Softmax) distribute(scores []float64, normalize bool) ([]float64, error) {
@@ -221,5 +212,3 @@ func (softmax *Softmax) raw(scores []float64) ([]float64, error) {
 func (softmax *Softmax) normalized(scores []float64) ([]float64, error) {
 	return SoftmaxScoresNormalized(scores)
 }
-
-var _ io.ReadWriteCloser = (*Softmax)(nil)

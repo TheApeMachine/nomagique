@@ -1,76 +1,49 @@
-package probability_test
+package probability
 
 import (
 	"math"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/datura"
-	"github.com/theapemachine/nomagique"
-	"github.com/theapemachine/nomagique/probability"
 )
 
-func softmaxSchema(inputs ...string) *datura.Artifact {
-	return datura.Acquire("schema", datura.APPJSON).
-		Poke("output", "scoreRoot").
-		Poke(inputs, "inputs")
-}
-
 func TestNewSoftmax(testingTB *testing.T) {
-	Convey("Given a schema artifact", testingTB, func() {
-		softmax := probability.NewSoftmax(softmaxSchema("s0", "s1"))
+	Convey("Given typed softmax config", testingTB, func() {
+		softmax := NewSoftmax(SoftmaxConfig{
+			Inputs: []string{"s0", "s1"},
+		})
 
-		Convey("It should return a usable stage", func() {
+		Convey("It should return a usable calculator", func() {
 			So(softmax, ShouldNotBeNil)
 		})
 	})
 }
 
-func TestSoftmax_Read(testingTB *testing.T) {
-	Convey("Given four output scores on the artifact", testingTB, func() {
-		softmax := probability.NewSoftmax(softmaxSchema("s0", "s1", "s2", "s3"))
-
-		artifact := artifactWithScores(map[string]float64{
-			"s0": 0.2,
-			"s1": 0.1,
-			"s2": 0.9,
-			"s3": 0.05,
+func TestSoftmaxMeasure(testingTB *testing.T) {
+	Convey("Given four typed output scores", testingTB, func() {
+		softmax := NewSoftmax(SoftmaxConfig{
+			Inputs:    []string{"s0", "s1", "s2", "s3"},
+			Normalize: true,
 		})
-		err := nomagique.RoundTripArtifact(artifact, softmax)
-
-		So(err, ShouldBeNil)
+		output, err := softmax.Measure(softmaxInput(
+			CategoryScore{Category: "s0", Score: 0.2},
+			CategoryScore{Category: "s1", Score: 0.1},
+			CategoryScore{Category: "s2", Score: 0.9},
+			CategoryScore{Category: "s3", Score: 0.05},
+		))
 
 		Convey("It should expose every class probability", func() {
-			probabilities := datura.Peek[[]float64](artifact, "output", "probabilities")
-
-			So(len(probabilities), ShouldEqual, 4)
-
-			sum := 0.0
-
-			for _, share := range probabilities {
-				sum += share
-			}
-
-			So(sum, ShouldAlmostEqual, 1.0, 1e-9)
-			So(datura.Peek[float64](artifact, "output", "s2"), ShouldBeGreaterThan, 0.2)
-			So(datura.Peek[float64](artifact, "output", "s0"), ShouldBeGreaterThan, 0)
-		})
-
-		Convey("It should propagate score keys on output wire", func() {
-			inputs := datura.Peek[[]string](artifact, "inputs")
-
-			So(inputs, ShouldContain, "s0")
-			So(inputs, ShouldContain, "s1")
-			So(inputs, ShouldContain, "s2")
-			So(inputs, ShouldContain, "s3")
-			So(inputs, ShouldContain, "probabilities")
+			So(err, ShouldBeNil)
+			So(len(output.Probabilities), ShouldEqual, 4)
+			So(sumProbabilities(output.Values), ShouldAlmostEqual, 1.0, 1e-9)
+			So(output.Probabilities[2].Score, ShouldBeGreaterThan, 0.25)
+			So(output.Probabilities[0].Category, ShouldEqual, "s0")
 		})
 	})
 
-	Convey("Given an empty score key in schema inputs", testingTB, func() {
-		softmax := probability.NewSoftmax(softmaxSchema("s0", ""))
-		artifact := artifactWithScores(map[string]float64{"s0": 1})
-		err := nomagique.RoundTripArtifact(artifact, softmax)
+	Convey("Given an empty score key in config inputs", testingTB, func() {
+		softmax := NewSoftmax(SoftmaxConfig{Inputs: []string{"s0", ""}})
+		_, err := softmax.Measure(softmaxInput(CategoryScore{Category: "s0", Score: 1}))
 
 		Convey("It should return a validation error", func() {
 			So(err, ShouldNotBeNil)
@@ -78,96 +51,87 @@ func TestSoftmax_Read(testingTB *testing.T) {
 	})
 
 	Convey("Given uniform scores", testingTB, func() {
-		softmax := probability.NewSoftmax(softmaxSchema("s0", "s1", "s2", "s3"))
-		artifact := artifactWithScores(map[string]float64{
-			"s0": 3,
-			"s1": 3,
-			"s2": 3,
-			"s3": 3,
+		softmax := NewSoftmax(SoftmaxConfig{
+			Inputs: []string{"s0", "s1", "s2", "s3"},
 		})
-		err := nomagique.RoundTripArtifact(artifact, softmax)
-
-		So(err, ShouldBeNil)
+		output, err := softmax.Measure(softmaxInput(
+			CategoryScore{Category: "s0", Score: 3},
+			CategoryScore{Category: "s1", Score: 3},
+			CategoryScore{Category: "s2", Score: 3},
+			CategoryScore{Category: "s3", Score: 3},
+		))
 
 		Convey("It should emit the uniform distribution", func() {
-			So(datura.Peek[float64](artifact, "output", "s0"), ShouldAlmostEqual, 0.25, 1e-9)
-			So(datura.Peek[float64](artifact, "output", "s1"), ShouldAlmostEqual, 0.25, 1e-9)
+			So(err, ShouldBeNil)
+			So(output.Probabilities[0].Score, ShouldAlmostEqual, 0.25, 1e-9)
+			So(output.Probabilities[1].Score, ShouldAlmostEqual, 0.25, 1e-9)
 		})
 	})
 
 	Convey("Given non-finite scores", testingTB, func() {
-		softmax := probability.NewSoftmax(
-			datura.Acquire("schema", datura.APPJSON).
-				Poke("features", "scoreRoot").
-				Poke([]string{"s0", "s1", "s2"}, "inputs"),
-		)
-		artifact := datura.Acquire("test", datura.APPJSON)
-		artifact.Poke("features", "root")
-		artifact.Poke([]string{"s0", "s1", "s2"}, "inputs")
-		artifact.Merge("features", []float64{1, math.NaN(), 3})
-		err := nomagique.RoundTripArtifact(artifact, softmax)
+		softmax := NewSoftmax(SoftmaxConfig{
+			Inputs: []string{"s0", "s1", "s2"},
+		})
+		_, err := softmax.Measure(softmaxInput(
+			CategoryScore{Category: "s0", Score: 1},
+			CategoryScore{Category: "s1", Score: math.NaN()},
+			CategoryScore{Category: "s2", Score: 3},
+		))
 
 		Convey("It should return a validation error", func() {
 			So(err, ShouldNotBeNil)
 		})
 	})
 
-	Convey("Given raw mode on the config artifact", testingTB, func() {
-		schema := datura.Acquire("schema", datura.APPJSON).
-			Poke("output", "scoreRoot").
-			Poke([]string{"s0", "s1", "s2"}, "inputs").
-			Poke(0.0, "normalize")
-		softmax := probability.NewSoftmax(schema)
-		artifact := artifactWithScores(map[string]float64{
-			"s0": 1,
-			"s1": 2,
-			"s2": 3,
+	Convey("Given raw mode in typed config", testingTB, func() {
+		softmax := NewSoftmax(SoftmaxConfig{
+			Inputs: []string{"s0", "s1", "s2"},
 		})
-		err := nomagique.RoundTripArtifact(artifact, softmax)
-
-		So(err, ShouldBeNil)
+		output, err := softmax.Measure(softmaxInput(
+			CategoryScore{Category: "s0", Score: 1},
+			CategoryScore{Category: "s1", Score: 2},
+			CategoryScore{Category: "s2", Score: 3},
+		))
 
 		Convey("It should rank the largest logit highest", func() {
-			probabilities := datura.Peek[[]float64](artifact, "output", "probabilities")
+			So(err, ShouldBeNil)
+			So(ArgmaxIndex(output.Values), ShouldEqual, 2)
+		})
+	})
 
-			So(probability.ArgmaxIndex(probabilities), ShouldEqual, 2)
+	Convey("Given duplicate score keys", testingTB, func() {
+		softmax := NewSoftmax(SoftmaxConfig{Inputs: []string{"s0"}})
+		_, err := softmax.Measure(softmaxInput(
+			CategoryScore{Category: "s0", Score: 1},
+			CategoryScore{Category: "s0", Score: 2},
+		))
+
+		Convey("It should return a validation error", func() {
+			So(err, ShouldNotBeNil)
 		})
 	})
 }
 
-func TestSoftmax_Number(testingTB *testing.T) {
-	Convey("Given Number composed with Softmax", testingTB, func() {
-		softmax := probability.NewSoftmax(softmaxSchema("s0", "s1", "s2"))
-		artifact := artifactWithScores(map[string]float64{
-			"s0": 0.1,
-			"s1": 0.8,
-			"s2": 0.2,
-		})
-		pipeline := nomagique.Number(softmax)
-		err := nomagique.RoundTripArtifact(artifact, pipeline)
-
-		So(err, ShouldBeNil)
-
-		Convey("It should keep all class probabilities on the wire", func() {
-			So(datura.Peek[float64](artifact, "output", "s1"), ShouldBeGreaterThan, 0)
-			So(datura.Peek[float64](artifact, "output", "s0"), ShouldBeGreaterThan, 0)
-			So(datura.Peek[float64](artifact, "output", "s2"), ShouldBeGreaterThan, 0)
-		})
+func BenchmarkSoftmaxMeasure(testingTB *testing.B) {
+	softmax := NewSoftmax(SoftmaxConfig{
+		Inputs: []string{"s0", "s1", "s2", "s3"},
 	})
-}
-
-func BenchmarkSoftmax_Read(testingTB *testing.B) {
-	softmax := probability.NewSoftmax(softmaxSchema("s0", "s1", "s2", "s3"))
-	artifact := artifactWithScores(map[string]float64{
-		"s0": 0.2,
-		"s1": 0.4,
-		"s2": 0.7,
-		"s3": 0.1,
-	})
+	input := softmaxInput(
+		CategoryScore{Category: "s0", Score: 0.2},
+		CategoryScore{Category: "s1", Score: 0.4},
+		CategoryScore{Category: "s2", Score: 0.7},
+		CategoryScore{Category: "s3", Score: 0.1},
+	)
 
 	testingTB.ReportAllocs()
 
 	for testingTB.Loop() {
-		_ = nomagique.RoundTripArtifact(artifact, softmax)
+		_, _ = softmax.Measure(input)
+	}
+}
+
+func softmaxInput(scores ...CategoryScore) SoftmaxInput {
+	return SoftmaxInput{
+		Scores: scores,
 	}
 }

@@ -3,95 +3,85 @@ package learning
 import (
 	"math"
 
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 )
 
 /*
-Forecaster learns a multiplicative scale from settled predicted-vs-actual outcomes.
-The constructor artifact holds config; Write buffers inbound wire on its payload.
+ForecastOutput reports learned multiplicative scale.
 */
-type Forecaster struct {
-	artifact *datura.Artifact
+type ForecastOutput struct {
+	Value       float64
+	Predicted   float64
+	Actual      float64
+	Scale       float64
+	Trust       float64
+	Rate        float64
+	Count       int
+	WeightCount int
 }
 
 /*
-Forecast returns a scale-learning stage wired from config attributes on the artifact.
+Forecaster learns a multiplicative scale from predicted-vs-actual outcomes.
 */
-func Forecast(artifact *datura.Artifact) *Forecaster {
-	return &Forecaster{
-		artifact: artifact,
-	}
+type Forecaster struct {
+	scale       float64
+	trust       float64
+	prev        float64
+	minimum     float64
+	maximum     float64
+	rate        float64
+	weightCount int
+	count       int
 }
 
-func (forecaster *Forecaster) Read(payload []byte) (int, error) {
-	state := datura.Acquire("forecast-state", datura.APPJSON)
+/*
+Forecast returns a typed scale learner.
+*/
+func Forecast() *Forecaster {
+	return &Forecaster{}
+}
 
-	if _, err := state.Unpack(forecaster.artifact.DecryptPayload()); err != nil {
-		state.Release()
-
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"forecast: state write failed",
-			err,
-		))
-	}
-
-	defer state.Release()
-
-	predicted, actual, err := forecaster.resolvePair(state)
+/*
+Measure updates forecast scale from one prediction outcome.
+*/
+func (forecaster *Forecaster) Measure(pair LearningPair) (ForecastOutput, error) {
+	predicted, actual, err := validatePair(pair, "forecast")
 
 	if err != nil {
-		return 0, err
-	}
-
-	if predicted == 0 {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"forecast: predicted must be non-zero",
-			nil,
-		))
+		return ForecastOutput{}, err
 	}
 
 	residual := actual - predicted
-	scale := datura.Peek[float64](forecaster.artifact, "output", "scale")
-	trust := datura.Peek[float64](forecaster.artifact, "output", "trust")
-	prev := datura.Peek[float64](forecaster.artifact, "output", "prev")
-	minimum := datura.Peek[float64](forecaster.artifact, "output", "min")
-	maximum := datura.Peek[float64](forecaster.artifact, "output", "max")
-	rate := datura.Peek[float64](forecaster.artifact, "output", "rate")
-	weightCount := int(datura.Peek[float64](forecaster.artifact, "output", "weightCount"))
-	count := int(datura.Peek[float64](forecaster.artifact, "output", "count"))
-	derived := scale
+	derived := forecaster.scale
 
-	if count == 0 {
-		scale = 1
-		prev = predicted
-		minimum = residual
-		maximum = residual
-		trust = 1
-		weightCount = 1
-		count = 1
-		derived = scale
+	if forecaster.count == 0 {
+		forecaster.scale = 1
+		forecaster.prev = predicted
+		forecaster.minimum = residual
+		forecaster.maximum = residual
+		forecaster.trust = 1
+		forecaster.weightCount = 1
+		forecaster.count = 1
+		derived = forecaster.scale
 	}
 
-	if weightCount > 1 {
-		minimum = math.Min(minimum, residual)
-		maximum = math.Max(maximum, residual)
-		weightCount++
+	if forecaster.weightCount > 1 {
+		forecaster.minimum = math.Min(forecaster.minimum, residual)
+		forecaster.maximum = math.Max(forecaster.maximum, residual)
+		forecaster.weightCount++
 	}
 
-	if weightCount == 1 && residual != minimum {
-		minimum = math.Min(minimum, residual)
-		maximum = math.Max(maximum, residual)
-		weightCount = 2
+	if forecaster.weightCount == 1 && residual != forecaster.minimum {
+		forecaster.minimum = math.Min(forecaster.minimum, residual)
+		forecaster.maximum = math.Max(forecaster.maximum, residual)
+		forecaster.weightCount = 2
 	}
 
-	span := maximum - minimum
+	span := forecaster.maximum - forecaster.minimum
 
-	if count > 1 || weightCount > 1 {
+	if forecaster.count > 1 || forecaster.weightCount > 1 {
 		if span == 0 {
-			return 0, errnie.Error(errnie.Err(
+			return ForecastOutput{}, errnie.Error(errnie.Err(
 				errnie.Validation,
 				"forecast: residual span is zero",
 				nil,
@@ -99,61 +89,32 @@ func (forecaster *Forecaster) Read(payload []byte) (int, error) {
 		}
 
 		surprise := absExact(residual) / span
-		rate = surprise
-		targetTrust := 1 - surprise
-
-		if targetTrust < 0 {
-			targetTrust = 0
-		}
-
-		trust += surprise * (targetTrust - trust)
-		prev = predicted
-		learningRate := surprise * (1 - trust)
+		forecaster.rate = surprise
+		targetTrust := math.Max(0, 1-surprise)
+		forecaster.trust += surprise * (targetTrust - forecaster.trust)
+		forecaster.prev = predicted
+		learningRate := surprise * (1 - forecaster.trust)
 		targetScale := actual / predicted
-		scale += learningRate * (targetScale - scale)
-		count++
-		derived = scale
+		forecaster.scale += learningRate * (targetScale - forecaster.scale)
+		forecaster.count++
+		derived = forecaster.scale
 	}
 
-	forecaster.artifact.Poke(scale, "output", "scale")
-	forecaster.artifact.Poke(trust, "output", "trust")
-	forecaster.artifact.Poke(prev, "output", "prev")
-	forecaster.artifact.Poke(minimum, "output", "min")
-	forecaster.artifact.Poke(maximum, "output", "max")
-	forecaster.artifact.Poke(rate, "output", "rate")
-	forecaster.artifact.Poke(float64(weightCount), "output", "weightCount")
-	forecaster.artifact.Poke(float64(count), "output", "count")
-	forecaster.artifact.Poke(derived, "output", "value")
-	state.MergeOutput("value", derived)
-	state.Poke("output", "root")
-	state.Poke([]string{"value"}, "inputs")
-
-	return state.PackInto(payload)
+	return ForecastOutput{
+		Value:       derived,
+		Predicted:   predicted,
+		Actual:      actual,
+		Scale:       forecaster.scale,
+		Trust:       forecaster.trust,
+		Rate:        forecaster.rate,
+		Count:       forecaster.count,
+		WeightCount: forecaster.weightCount,
+	}, nil
 }
 
-func (forecaster *Forecaster) resolvePair(state *datura.Artifact) (float64, float64, error) {
-	parsedPredicted, parsedActual, err := wirePair(forecaster.artifact, state, "forecast")
-
-	if err != nil {
-		return 0, 0, err
-	}
-
-	if parsedActual == 0 {
-		return 0, 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"forecast: actual must be non-zero",
-			nil,
-		))
-	}
-
-	return parsedPredicted, parsedActual, nil
-}
-
-func (forecaster *Forecaster) Write(payload []byte) (int, error) {
-	forecaster.artifact.WithPayload(payload)
-	return len(payload), nil
-}
-
-func (forecaster *Forecaster) Close() error {
-	return nil
+/*
+Reset clears learned forecast state.
+*/
+func (forecaster *Forecaster) Reset() {
+	*forecaster = Forecaster{}
 }

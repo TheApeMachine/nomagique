@@ -10,6 +10,8 @@ import (
 	"github.com/theapemachine/nomagique/tests"
 )
 
+var barInterval = 5 * time.Minute
+
 func TestLagEvaluateFollowerSync(testingTB *testing.T) {
 	Convey("Given aligned follower correlation before anchor move gate warms", testingTB, func() {
 		lag := NewLag(datura.Acquire("lag-config", datura.APPJSON))

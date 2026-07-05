@@ -3,73 +3,105 @@ package equation_test
 import (
 	"testing"
 
-	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/datura"
-	"github.com/theapemachine/nomagique"
+	"github.com/theapemachine/nomagique/adaptive"
+	"github.com/theapemachine/nomagique/causal"
 	"github.com/theapemachine/nomagique/equation"
 )
 
-func regimeLadderConfig(contagionBreak float64) *datura.Artifact {
-	return datura.Acquire("regime-ladder-config", datura.APPJSON).
-		Poke(float64(3), "target").
-		Poke(float64(12), "minHistory").
-		Poke(float64(12), "history").
-		Poke(float64(2), "treatmentNormal").
-		Poke([]float64{0, 1}, "controlsNormal").
-		Poke([]float64{0, 3}, "contagionSkip").
-		Poke(0.35, "kernelBandwidth").
-		Poke(contagionBreak, "contagionBreak").
-		Poke("rawInverted", "input").
-		Poke(float64(3), "window")
+func regimeLadderConfig(contagionBreak float64) equation.RegimeLadderConfig {
+	return equation.RegimeLadderConfig{
+		Regime: causal.RegimeConfig{
+			Target:         3,
+			MinHistory:     12,
+			ContagionSkip:  []int{0, 3},
+			ContagionBreak: contagionBreak,
+		},
+		Hysteresis: adaptive.HysteresisConfig{
+			Window:    3,
+			Threshold: 0,
+		},
+		Ladder: causal.LadderConfig{
+			Target:          3,
+			MinHistory:      12,
+			TreatmentNormal: 2,
+			ControlsNormal:  []int{0, 1},
+			KernelBandwidth: 0.35,
+		},
+	}
 }
 
-func regimeLadderInbound() *datura.Artifact {
+func regimeLadderRows() [][]float64 {
 	nodeCount := 4
 	rowCount := 16
-	flat := make([]float64, 0, rowCount*nodeCount)
+	rows := make([][]float64, 0, rowCount)
 
 	for rowIndex := range rowCount {
-		flat = append(flat,
+		row := make([]float64, 0, nodeCount)
+		row = append(row,
 			float64(rowIndex)*0.1,
 			float64(rowIndex)*0.2,
 			float64(rowIndex)*0.5,
 			float64(rowIndex)*0.05,
 		)
+		rows = append(rows, row)
 	}
 
-	return datura.Acquire("regime-ladder-inbound", datura.APPJSON).
-		Poke(0.0, "paired").
-		Poke(float64(rowCount), "table", "rowCount").
-		Poke(float64(nodeCount), "table", "nodeCount").
-		Poke(flat, "table", "rows")
+	return rows
 }
 
-func TestRegimeLadder_Read(testingTB *testing.T) {
-	Convey("Given aligned node streams with causal structure", testingTB, func() {
-		regimeLadder := equation.NewRegimeLadder(regimeLadderConfig(0.8))
-		artifact := regimeLadderInbound()
-		err := nomagique.RoundTripArtifact(artifact, regimeLadder)
+func TestRegimeLadderMeasure(testingTB *testing.T) {
+	regimeLadder, err := equation.NewRegimeLadder(regimeLadderConfig(0.8))
+	if err != nil {
+		testingTB.Fatal(err)
+	}
 
-		So(err, ShouldBeNil)
-		So(datura.Peek[float64](artifact, "output", "intervention"), ShouldBeGreaterThan, 0)
+	output, err := regimeLadder.Measure(equation.RegimeLadderSample{
+		Rows:      regimeLadderRows(),
+		Contagion: 0,
 	})
+	if err != nil {
+		testingTB.Fatal(err)
+	}
+
+	if output.Intervention <= 0 {
+		testingTB.Fatalf("intervention = %f, want positive", output.Intervention)
+	}
 }
 
-func TestReading_Read(testingTB *testing.T) {
-	Convey("Given a ladder reading score source", testingTB, func() {
-		reading := equation.NewReading("uplift")
+func TestRegimeLadderRequiresHysteresisWindow(testingTB *testing.T) {
+	config := regimeLadderConfig(0.8)
+	config.Hysteresis.Window = 0
 
-		So(reading, ShouldNotBeNil)
-	})
+	_, err := equation.NewRegimeLadder(config)
+	if err == nil {
+		testingTB.Fatal("expected hysteresis window error")
+	}
 }
 
-func BenchmarkRegimeLadder_Read(testingTB *testing.B) {
-	regimeLadder := equation.NewRegimeLadder(regimeLadderConfig(0.8))
+func TestReadingNew(testingTB *testing.T) {
+	reading := equation.NewReading("uplift")
+
+	if reading == nil {
+		testingTB.Fatal("expected reading")
+	}
+}
+
+func BenchmarkRegimeLadderMeasure(testingTB *testing.B) {
+	regimeLadder, err := equation.NewRegimeLadder(regimeLadderConfig(0.8))
+	if err != nil {
+		testingTB.Fatal(err)
+	}
+
+	sample := equation.RegimeLadderSample{
+		Rows:      regimeLadderRows(),
+		Contagion: 0,
+	}
 
 	testingTB.ReportAllocs()
 
 	for testingTB.Loop() {
-		artifact := regimeLadderInbound()
-		_ = nomagique.RoundTripArtifact(artifact, regimeLadder)
+		if _, err := regimeLadder.Measure(sample); err != nil {
+			testingTB.Fatal(err)
+		}
 	}
 }

@@ -3,279 +3,148 @@ package probability
 import (
 	"math"
 
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"gonum.org/v1/gonum/stat/distuv"
 )
 
 /*
-Bernoulli tracks a Beta posterior mean from Bernoulli outcomes.
-The constructor artifact holds config; Write buffers inbound wire on its payload.
+BernoulliPair carries predicted and actual values for pair-derived outcomes.
 */
-type Bernoulli struct {
-	artifact *datura.Artifact
+type BernoulliPair struct {
+	Predicted float64
+	Actual    float64
 }
 
 /*
-NewBernoulli returns a Beta-Bernoulli stage wired from config attributes on the artifact.
+BernoulliOutput reports the posterior mean and retained beta state.
 */
-func NewBernoulli(artifact *datura.Artifact) *Bernoulli {
+type BernoulliOutput struct {
+	Value float64
+	Alpha float64
+	Beta  float64
+	Count int
+}
+
+/*
+Bernoulli tracks a Beta posterior mean from Bernoulli outcomes.
+*/
+type Bernoulli struct {
+	alpha float64
+	beta  float64
+	prev  float64
+	min   float64
+	max   float64
+	count int
+}
+
+/*
+NewBernoulli returns a typed Beta-Bernoulli posterior tracker.
+*/
+func NewBernoulli() *Bernoulli {
 	return &Bernoulli{
-		artifact: artifact,
+		alpha: 1,
+		beta:  1,
 	}
 }
 
-func (bernoulli *Bernoulli) Read(payload []byte) (int, error) {
-	state := datura.Acquire("bernoulli-state", datura.APPJSON)
+/*
+Measure adds one Bernoulli outcome in [0, 1].
+*/
+func (bernoulli *Bernoulli) Measure(outcome float64) (BernoulliOutput, error) {
+	if err := finiteProbability("bernoulli", outcome); err != nil {
+		return BernoulliOutput{}, err
+	}
 
-	if _, err := state.Unpack(bernoulli.artifact.DecryptPayload()); err != nil {
-		state.Release()
-
-		return 0, errnie.Error(errnie.Err(
+	parsed, err := parseBernoulliOutcome(outcome, nil)
+	if err != nil {
+		return BernoulliOutput{}, errnie.Error(errnie.Err(
 			errnie.Validation,
-			"bernoulli: state write failed",
+			"bernoulli: invalid outcome",
 			err,
 		))
 	}
 
-	defer state.Release()
+	return bernoulli.observe(parsed), nil
+}
 
-	if datura.Peek[float64](state, "reset") != 0 {
-		bernoulli.artifact.Poke(0.0, "output", "alpha")
-		bernoulli.artifact.Poke(0.0, "output", "beta")
-		bernoulli.artifact.Poke(0.0, "output", "prev")
-		bernoulli.artifact.Poke(0.0, "output", "min")
-		bernoulli.artifact.Poke(0.0, "output", "max")
-		bernoulli.artifact.Poke(0.0, "output", "rate")
-		bernoulli.artifact.Poke(0.0, "output", "count")
-		bernoulli.artifact.Poke(0.0, "output", "value")
-		state.MergeOutput("value", 0)
-		state.Poke("output", "root")
-		state.Poke([]string{"value"}, "inputs")
-
-		return state.PackInto(payload)
+/*
+MeasurePair adds one outcome by comparing actual against predicted.
+*/
+func (bernoulli *Bernoulli) MeasurePair(pair BernoulliPair) (BernoulliOutput, error) {
+	if err := finiteProbability("bernoulli", pair.Predicted); err != nil {
+		return BernoulliOutput{}, err
 	}
 
-	sampleKey := datura.Peek[string](bernoulli.artifact, "sampleKey")
+	if err := finiteProbability("bernoulli", pair.Actual); err != nil {
+		return BernoulliOutput{}, err
+	}
 
-	if sampleKey == "" {
-		return 0, errnie.Error(errnie.Err(
+	predicted, actual, err := parsePredictedActual(pair.Predicted, []float64{pair.Actual})
+	if err != nil {
+		return BernoulliOutput{}, errnie.Error(errnie.Err(
 			errnie.Validation,
-			"bernoulli: sampleKey required",
-			nil,
+			"bernoulli: unable to parse predicted and actual pair",
+			err,
 		))
 	}
 
-	rootKey := datura.Peek[string](state, "root")
+	success := 0.0
 
-	if rootKey == "" {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"bernoulli: root required",
-			nil,
-		))
+	if actual >= predicted {
+		success = 1
 	}
 
-	inputs := datura.Peek[[]string](state, "inputs")
+	tracking := actual - predicted
 
-	if len(inputs) == 0 {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"bernoulli: inputs required",
-			nil,
-		))
+	if bernoulli.count == 0 {
+		bernoulli.prev = predicted
+		bernoulli.min = tracking
+		bernoulli.max = tracking
+	} else {
+		bernoulli.min = math.Min(bernoulli.min, tracking)
+		bernoulli.max = math.Max(bernoulli.max, tracking)
 	}
 
-	var sample float64
-	sampleFound := false
+	bernoulli.prev = predicted
 
-	for index, input := range inputs {
-		if input != sampleKey {
-			continue
-		}
+	return bernoulli.observe(success), nil
+}
 
-		if rootKey == "features" {
-			features := datura.Peek[[]float64](state, rootKey)
+/*
+Reset clears posterior state back to its beta(1,1) prior.
+*/
+func (bernoulli *Bernoulli) Reset() {
+	bernoulli.alpha = 1
+	bernoulli.beta = 1
+	bernoulli.prev = 0
+	bernoulli.min = 0
+	bernoulli.max = 0
+	bernoulli.count = 0
+}
 
-			if index >= len(features) {
-				return 0, errnie.Error(errnie.Err(
-					errnie.Validation,
-					"bernoulli: feature index out of range",
-					nil,
-				))
-			}
-
-			sample = features[index]
-		}
-
-		if rootKey != "features" {
-			sample = datura.Peek[float64](state, rootKey, input)
-		}
-
-		sampleFound = true
+func (bernoulli *Bernoulli) observe(outcome float64) BernoulliOutput {
+	if bernoulli.count == 0 {
+		bernoulli.prev = outcome
+		bernoulli.min = outcome
+		bernoulli.max = outcome
+	} else {
+		bernoulli.min = math.Min(bernoulli.min, outcome)
+		bernoulli.max = math.Max(bernoulli.max, outcome)
 	}
 
-	if !sampleFound {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"bernoulli: sampleKey not in inputs",
-			nil,
-		))
-	}
-
-	alpha := datura.Peek[float64](bernoulli.artifact, "output", "alpha")
-	betaParam := datura.Peek[float64](bernoulli.artifact, "output", "beta")
-	prev := datura.Peek[float64](bernoulli.artifact, "output", "prev")
-	minimum := datura.Peek[float64](bernoulli.artifact, "output", "min")
-	maximum := datura.Peek[float64](bernoulli.artifact, "output", "max")
-	rate := 1.0
-	count := int(datura.Peek[float64](bernoulli.artifact, "output", "count"))
-	pairedKey := datura.Peek[string](bernoulli.artifact, "pairedKey")
-
-	if alpha+betaParam == 0 {
-		alpha = 1
-		betaParam = 1
-	}
-
-	if pairedKey != "" {
-		var paired float64
-		pairedFound := false
-
-		for index, input := range inputs {
-			if input != pairedKey {
-				continue
-			}
-
-			if rootKey == "features" {
-				features := datura.Peek[[]float64](state, rootKey)
-
-				if index >= len(features) {
-					return 0, errnie.Error(errnie.Err(
-						errnie.Validation,
-						"bernoulli: feature index out of range",
-						nil,
-					))
-				}
-
-				paired = features[index]
-			}
-
-			if rootKey != "features" {
-				paired = datura.Peek[float64](state, rootKey, input)
-			}
-
-			pairedFound = true
-		}
-
-		if !pairedFound {
-			return 0, errnie.Error(errnie.Err(
-				errnie.Validation,
-				"bernoulli: pairedKey not in inputs",
-				nil,
-			))
-		}
-
-		predicted, actual, err := parsePredictedActual(sample, []float64{paired})
-
-		if err != nil {
-			return 0, errnie.Error(errnie.Err(
-				errnie.Validation,
-				"bernoulli: unable to parse predicted and actual pair",
-				err,
-			))
-		}
-
-		success := 0.0
-
-		if actual >= predicted {
-			success = 1
-		}
-
-		tracking := actual - predicted
-
-		if count == 0 {
-			prev = predicted
-			minimum = tracking
-			maximum = tracking
-		} else {
-			minimum = math.Min(minimum, tracking)
-			maximum = math.Max(maximum, tracking)
-		}
-
-		prev = predicted
-		count++
-		alpha += success
-		betaParam += 1 - success
-	}
-
-	if pairedKey == "" {
-		if math.IsNaN(sample) || math.IsInf(sample, 0) {
-			return 0, errnie.Error(errnie.Err(
-				errnie.Validation,
-				"bernoulli: sample is non-finite",
-				nil,
-			))
-		}
-
-		outcome, err := parseBernoulliOutcome(sample, nil)
-
-		if err != nil {
-			return 0, errnie.Error(errnie.Err(
-				errnie.Validation,
-				"bernoulli: invalid outcome",
-				err,
-			))
-		}
-
-		if count == 0 {
-			prev = outcome
-			minimum = outcome
-			maximum = outcome
-		} else {
-			minimum = math.Min(minimum, outcome)
-			maximum = math.Max(maximum, outcome)
-		}
-
-		prev = outcome
-		count++
-		alpha += outcome
-		betaParam += 1 - outcome
-	}
-
-	if alpha+betaParam == 0 {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"bernoulli: posterior is undefined",
-			nil,
-		))
-	}
-
+	bernoulli.prev = outcome
+	bernoulli.count++
+	bernoulli.alpha += outcome
+	bernoulli.beta += 1 - outcome
 	distribution := distuv.Beta{
-		Alpha: alpha,
-		Beta:  betaParam,
+		Alpha: bernoulli.alpha,
+		Beta:  bernoulli.beta,
 	}
-	value := distribution.Mean()
 
-	bernoulli.artifact.Poke(alpha, "output", "alpha")
-	bernoulli.artifact.Poke(betaParam, "output", "beta")
-	bernoulli.artifact.Poke(prev, "output", "prev")
-	bernoulli.artifact.Poke(minimum, "output", "min")
-	bernoulli.artifact.Poke(maximum, "output", "max")
-	bernoulli.artifact.Poke(rate, "output", "rate")
-	bernoulli.artifact.Poke(float64(count), "output", "count")
-	bernoulli.artifact.Poke(value, "output", "value")
-	state.MergeOutput("value", value)
-	state.Poke("output", "root")
-	state.Poke([]string{"value"}, "inputs")
-
-	return state.PackInto(payload)
-}
-
-func (bernoulli *Bernoulli) Write(payload []byte) (int, error) {
-	bernoulli.artifact.WithPayload(payload)
-	return len(payload), nil
-}
-
-func (bernoulli *Bernoulli) Close() error {
-	return nil
+	return BernoulliOutput{
+		Value: distribution.Mean(),
+		Alpha: bernoulli.alpha,
+		Beta:  bernoulli.beta,
+		Count: bernoulli.count,
+	}
 }

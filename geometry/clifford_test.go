@@ -5,8 +5,6 @@ import (
 	"testing"
 
 	gc "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/datura"
-	"github.com/theapemachine/nomagique"
 )
 
 func TestRotorConstruction(t *testing.T) {
@@ -281,93 +279,6 @@ func TestCompose(t *testing.T) {
 			})
 		})
 	})
-}
-
-func TestRotorRead(testingTB *testing.T) {
-	gc.Convey("Given axis-angle scalars", testingTB, func() {
-		stage := NewRotor(datura.Acquire("rotor-config", datura.APPJSON))
-		artifact := datura.Acquire("test", datura.APPJSON).
-			Poke([]float64{0, 1, 0, 0}, "batch")
-		err := nomagique.RoundTripArtifact(artifact, stage)
-
-		gc.So(err, gc.ShouldBeNil)
-
-		scalar := datura.Peek[float64](artifact, "output", "value")
-		motor := datura.Peek[[]float64](artifact, "output", "motor")
-
-		gc.Convey("It should return cos(θ/2)", func() {
-			gc.So(scalar, gc.ShouldEqual, 1)
-			gc.So(motor[MvScalar], gc.ShouldEqual, 1)
-		})
-	})
-}
-
-func TestTranslatorRead(testingTB *testing.T) {
-	gc.Convey("Given displacement scalars", testingTB, func() {
-		stage := NewTranslator(datura.Acquire("translator-config", datura.APPJSON))
-		artifact := datura.Acquire("test", datura.APPJSON).
-			Poke([]float64{2, 4, 6}, "batch")
-		err := nomagique.RoundTripArtifact(artifact, stage)
-
-		gc.So(err, gc.ShouldBeNil)
-
-		scalar := datura.Peek[float64](artifact, "output", "value")
-		motor := datura.Peek[[]float64](artifact, "output", "motor")
-
-		gc.Convey("It should return unit scalar", func() {
-			gc.So(scalar, gc.ShouldEqual, 1)
-			gc.So(motor[MvScalar], gc.ShouldEqual, 1)
-		})
-	})
-}
-
-func TestSandwichRead(testingTB *testing.T) {
-	gc.Convey("Given a configured motor and target components", testingTB, func() {
-		motor := rotationMV(0, 1, 0, 0)
-		stage := NewSandwich(
-			datura.Acquire("sandwich-config", datura.APPJSON).
-				Poke(multivectorSlice(motor), "motor"),
-		)
-		artifact := datura.Acquire("test", datura.APPJSON).
-			Poke([]float64{1, 0, 0, 0, 0, 0, 0, 0}, "batch")
-		err := nomagique.RoundTripArtifact(artifact, stage)
-
-		gc.So(err, gc.ShouldBeNil)
-
-		scalar := datura.Peek[float64](artifact, "output", "value")
-
-		gc.Convey("It should return the transformed scalar component", func() {
-			gc.So(scalar, gc.ShouldEqual, 1)
-		})
-	})
-}
-
-func BenchmarkRotorRead(testingTB *testing.B) {
-	stage := NewRotor(datura.Acquire("rotor-config-bench", datura.APPJSON))
-	artifact := datura.Acquire("test", datura.APPJSON)
-
-	testingTB.ReportAllocs()
-
-	for testingTB.Loop() {
-		artifact.Poke([]float64{0, 1, 0, 0}, "batch")
-		_ = nomagique.RoundTripArtifact(artifact, stage)
-	}
-}
-
-func BenchmarkSandwichRead(testingTB *testing.B) {
-	motor := rotationMV(0, 1, 0, 0)
-	stage := NewSandwich(
-		datura.Acquire("sandwich-config-bench", datura.APPJSON).
-			Poke(multivectorSlice(motor), "motor"),
-	)
-	artifact := datura.Acquire("test", datura.APPJSON)
-
-	testingTB.ReportAllocs()
-
-	for testingTB.Loop() {
-		artifact.Poke([]float64{1, 0, 0, 0, 0, 0, 0, 0}, "batch")
-		_ = nomagique.RoundTripArtifact(artifact, stage)
-	}
 }
 
 func BenchmarkGeometricProduct(b *testing.B) {

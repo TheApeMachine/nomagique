@@ -1,150 +1,241 @@
 package equation
 
 import (
-	"fmt"
-	"io"
 	"math"
 
-	"github.com/theapemachine/datura"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/probability"
 )
 
 /*
-CausalStory maps Pearl ladder outputs into the four semantic category scores.
+CausalStoryInput carries Pearl ladder evidence into semantic category scoring.
 */
-type CausalStory struct {
-	artifact *datura.Artifact
+type CausalStoryInput struct {
+	Association          float64
+	Intervention         float64
+	InterventionScore    float64
+	HasInterventionScore bool
+	Uplift               float64
+	UpliftScore          float64
+	HasUpliftScore       bool
+	Contagion            float64
+	Condition            float64
+	Inverted             bool
 }
 
 /*
-NewCausalStory returns a causal semantic scoring stage wired from config attributes.
+CausalStoryOutput reports semantic causal category evidence.
 */
-func NewCausalStory(artifact *datura.Artifact) io.ReadWriteCloser {
-	return &CausalStory{
-		artifact: artifact,
-	}
+type CausalStoryOutput struct {
+	Value             float64
+	Ready             bool
+	AlphaScore        float64
+	BetaScore         float64
+	ShockScore        float64
+	NoiseScore        float64
+	Strength          float64
+	Category          int
+	Association       float64
+	Intervention      float64
+	InterventionScore float64
+	Uplift            float64
+	UpliftScore       float64
+	Contagion         float64
+	Condition         float64
 }
 
-func (causalStory *CausalStory) Write(payload []byte) (int, error) {
-	causalStory.artifact.WithPayload(payload)
-	return len(payload), nil
+/*
+CausalStory maps Pearl ladder outputs into semantic category scores.
+*/
+type CausalStory struct{}
+
+/*
+NewCausalStory returns a typed causal semantic scorer.
+*/
+func NewCausalStory() *CausalStory {
+	return &CausalStory{}
 }
 
-func (causalStory *CausalStory) Read(payload []byte) (int, error) {
-	state, err := stageState(causalStory.artifact.DecryptPayload())
+/*
+Measure scores the ladder evidence into alpha, beta, shock, and noise channels.
+*/
+func (causalStory *CausalStory) Measure(
+	input CausalStoryInput,
+) (CausalStoryOutput, error) {
+	interventionScore := input.InterventionScore
+	upliftScore := input.UpliftScore
 
-	if err != nil {
-		return 0, err
+	if !input.HasInterventionScore {
+		interventionScore = input.Intervention
 	}
 
-	association := datura.Peek[float64](state, "output", "association")
-	rawIntervention := datura.Peek[float64](state, "output", "intervention")
-	rawUplift := datura.Peek[float64](state, "output", "uplift")
-	intervention := datura.Peek[float64](state, "output", "interventionScore")
-	uplift := datura.Peek[float64](state, "output", "upliftScore")
-	contagion := datura.Peek[float64](state, "output", "contagion")
-	condition := datura.Peek[float64](state, "output", "condition")
-	inverted := datura.Peek[float64](state, "output", "inverted") > 0
-
-	if intervention == 0 {
-		intervention = rawIntervention
+	if !input.HasUpliftScore {
+		upliftScore = input.Uplift
 	}
 
-	if uplift == 0 {
-		uplift = rawUplift
+	if err := validateCausalStory(input, interventionScore, upliftScore); err != nil {
+		return CausalStoryOutput{}, err
 	}
 
-	for _, value := range []float64{association, intervention, uplift, rawIntervention, rawUplift, contagion, condition} {
-		if math.IsNaN(value) || math.IsInf(value, 0) {
-			return rejectStage(state, "causalstory: ladder output is non-finite")
-		}
-	}
-
-	association = math.Abs(association)
-	intervention = math.Abs(intervention)
-	uplift = math.Abs(uplift)
-	contagion = math.Abs(contagion)
-	condition = math.Abs(condition)
-
+	association := math.Abs(input.Association)
+	intervention := math.Abs(interventionScore)
+	uplift := math.Abs(upliftScore)
+	contagion := math.Abs(input.Contagion)
+	condition := math.Abs(input.Condition)
 	rungTotal := association + intervention + uplift
 
-	if rungTotal <= 0 && !inverted {
-		state.Release()
-
-		return 0, io.EOF
+	if rungTotal <= 0 && !input.Inverted {
+		return CausalStoryOutput{}, nil
 	}
 
-	alphaScore := 0.0
-	betaScore := 0.0
-	shockScore := 0.0
-	noiseScore := 0.0
-
-	if !inverted && uplift > 0 && intervention > 0 {
-		margin, err := probability.CompetitionMargin(uplift, association+intervention)
-
-		if err != nil {
-			return rejectStage(state, fmt.Sprintf("causalstory: alpha margin failed: %v", err))
-		}
-
-		alphaScore = margin * uplift
+	output, err := causalStory.score(input, association, intervention, uplift)
+	if err != nil {
+		return CausalStoryOutput{}, err
 	}
 
-	betaIntervention := math.Abs(rawIntervention)
-
-	if !inverted && association > betaIntervention {
-		margin := association - betaIntervention
-		score, err := probability.CompetitionMargin(margin, association)
-
-		if err != nil {
-			return rejectStage(state, fmt.Sprintf("causalstory: beta margin failed: %v", err))
-		}
-
-		betaScore = score * association
-	}
-
-	if inverted {
-		shockEvidence := contagion
-
-		if condition > 0 && rungTotal > 0 {
-			collinearity := condition / (condition + rungTotal)
-
-			if collinearity > shockEvidence {
-				shockEvidence = collinearity
-			}
-		}
-
-		if shockEvidence > 0 {
-			shockScore = shockEvidence
-		}
+	if input.Inverted {
+		output.ShockScore = shockScore(contagion, condition, rungTotal)
 	}
 
 	if rungTotal > 0 {
-		dominant := math.Max(association, math.Max(intervention, uplift))
-		residual := rungTotal - dominant
+		noise, err := noiseScore(association, intervention, uplift, rungTotal)
+		if err != nil {
+			return CausalStoryOutput{}, err
+		}
 
-		if residual > 0 {
-			score, err := probability.CompetitionMargin(residual, rungTotal)
+		output.NoiseScore = noise
+	}
 
-			if err != nil {
-				return rejectStage(state, fmt.Sprintf("causalstory: noise margin failed: %v", err))
-			}
+	output = chooseCausalCategory(output)
+	if !output.Ready {
+		return output, nil
+	}
 
-			noiseScore = score
+	output.Value = output.Strength
+	output.Association = association
+	output.Intervention = input.Intervention
+	output.InterventionScore = intervention
+	output.Uplift = input.Uplift
+	output.UpliftScore = uplift
+	output.Contagion = contagion
+	output.Condition = condition
+
+	return output, nil
+}
+
+func (causalStory *CausalStory) score(
+	input CausalStoryInput,
+	association float64,
+	intervention float64,
+	uplift float64,
+) (CausalStoryOutput, error) {
+	output := CausalStoryOutput{}
+
+	if !input.Inverted && uplift > 0 && intervention > 0 {
+		margin, err := probability.CompetitionMargin(
+			uplift,
+			association+intervention,
+		)
+		if err != nil {
+			return CausalStoryOutput{}, err
+		}
+
+		output.AlphaScore = margin * uplift
+	}
+
+	betaIntervention := math.Abs(input.Intervention)
+
+	if !input.Inverted && association > betaIntervention {
+		margin := association - betaIntervention
+		score, err := probability.CompetitionMargin(margin, association)
+		if err != nil {
+			return CausalStoryOutput{}, err
+		}
+
+		output.BetaScore = score * association
+	}
+
+	return output, nil
+}
+
+func validateCausalStory(
+	input CausalStoryInput,
+	interventionScore float64,
+	upliftScore float64,
+) error {
+	values := []float64{
+		input.Association,
+		input.Intervention,
+		input.Uplift,
+		interventionScore,
+		upliftScore,
+		input.Contagion,
+		input.Condition,
+	}
+
+	for _, value := range values {
+		if math.IsNaN(value) || math.IsInf(value, 0) {
+			return errnie.Error(errnie.Err(
+				errnie.Validation,
+				"causalstory: ladder output is non-finite",
+				nil,
+			))
 		}
 	}
 
-	best := math.Max(alphaScore, math.Max(betaScore, math.Max(shockScore, noiseScore)))
+	return nil
+}
+
+func shockScore(contagion float64, condition float64, rungTotal float64) float64 {
+	shockEvidence := contagion
+
+	if condition > 0 && rungTotal > 0 {
+		collinearity := condition / (condition + rungTotal)
+
+		if collinearity > shockEvidence {
+			shockEvidence = collinearity
+		}
+	}
+
+	return shockEvidence
+}
+
+func noiseScore(
+	association float64,
+	intervention float64,
+	uplift float64,
+	rungTotal float64,
+) (float64, error) {
+	dominant := math.Max(association, math.Max(intervention, uplift))
+	residual := rungTotal - dominant
+
+	if residual <= 0 {
+		return 0, nil
+	}
+
+	return probability.CompetitionMargin(residual, rungTotal)
+}
+
+func chooseCausalCategory(output CausalStoryOutput) CausalStoryOutput {
+	scores := []float64{
+		output.AlphaScore,
+		output.BetaScore,
+		output.ShockScore,
+		output.NoiseScore,
+	}
+	best := math.Max(
+		output.AlphaScore,
+		math.Max(output.BetaScore, math.Max(output.ShockScore, output.NoiseScore)),
+	)
 
 	if best <= 0 {
-		state.Release()
-
-		return 0, io.EOF
+		return output
 	}
 
 	category := 0
 	winners := 0
 
-	for index, score := range []float64{alphaScore, betaScore, shockScore, noiseScore} {
+	for index, score := range scores {
 		if score != best {
 			continue
 		}
@@ -154,29 +245,12 @@ func (causalStory *CausalStory) Read(payload []byte) (int, error) {
 	}
 
 	if winners != 1 {
-		state.Release()
-
-		return 0, io.EOF
+		return output
 	}
 
-	return emitOutput(state, payload, datura.Map[float64]{
-		"value":             best,
-		"alphaScore":        alphaScore,
-		"betaScore":         betaScore,
-		"shockScore":        shockScore,
-		"noiseScore":        noiseScore,
-		"strength":          best,
-		"category":          float64(category),
-		"association":       association,
-		"intervention":      rawIntervention,
-		"interventionScore": intervention,
-		"uplift":            rawUplift,
-		"upliftScore":       uplift,
-		"contagion":         contagion,
-		"condition":         condition,
-	})
-}
+	output.Category = category
+	output.Strength = best
+	output.Ready = true
 
-func (causalStory *CausalStory) Close() error {
-	return nil
+	return output
 }

@@ -3,137 +3,143 @@ package vector
 import (
 	"math"
 
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/adaptive"
-	"github.com/theapemachine/nomagique/statistic"
 )
 
 /*
-Mapper derives new named values from existing wire values. Each mapping reads one
-or more named inputs, optionally combines them (sum/product/mean/ratio/diff/min/max),
-optionally wraps the result in a transform (e.g. ema), and writes it under outputKey.
-Driven entirely by the "mappings" config attribute, generic across signals.
+Mapping describes one derived named scalar.
 */
-type Mapper struct {
-	artifact *datura.Artifact
-	emas     map[string]*adaptive.EMA
+type Mapping struct {
+	OutputKey string
+	Inputs    []string
+	Inverts   []string
+	Op        string
+	Transform string
 }
 
 /*
-NewMapper builds a mapper wired from the "mappings" config attribute.
+MapperConfig describes all derived scalar mappings.
 */
-func NewMapper(artifact *datura.Artifact) *Mapper {
+type MapperConfig struct {
+	Mappings []Mapping
+}
+
+/*
+Mapper derives new named values from existing vector values.
+*/
+type Mapper struct {
+	config MapperConfig
+	emas   map[string]*adaptive.EMA
+}
+
+/*
+NewMapper builds a mapper from typed mapping config.
+*/
+func NewMapper(config MapperConfig) *Mapper {
 	return &Mapper{
-		artifact: artifact,
-		emas:     map[string]*adaptive.EMA{},
+		config: config,
+		emas:   map[string]*adaptive.EMA{},
 	}
 }
 
-func (mapper *Mapper) Read(payload []byte) (int, error) {
-	state := datura.Acquire("mapper-state", datura.APPJSON)
-	defer state.Release()
-
-	if _, err := state.Unpack(mapper.artifact.DecryptPayload()); err != nil {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation, "mapper: state write failed", err,
+/*
+Measure applies all configured mappings to the feature vector.
+*/
+func (mapper *Mapper) Measure(vector FeatureVector) (FeatureVector, error) {
+	if len(mapper.config.Mappings) == 0 {
+		return FeatureVector{}, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"mapper: mappings required",
+			nil,
 		))
 	}
 
-	snapshot := statistic.SnapshotFeatures(state)
-	mappings := datura.Peek[[]any](mapper.artifact, "mappings")
-
-	if len(mappings) == 0 {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation, "mapper: mappings required", nil,
-		))
-	}
-
-	inputs := datura.Peek[[]string](state, "inputs")
-
-	for index := range mappings {
-		outputKey := datura.Peek[string](mapper.artifact, "mappings", index, "outputKey")
-
-		if outputKey == "" {
-			return 0, errnie.Error(errnie.Err(
-				errnie.Validation, "mapper: mapping outputKey required", nil,
+	for _, mapping := range mapper.config.Mappings {
+		if mapping.OutputKey == "" {
+			return FeatureVector{}, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"mapper: mapping outputKey required",
+				nil,
 			))
 		}
 
-		value, err := mapper.value(state, index)
-
+		value, err := mapper.value(vector, mapping)
 		if err != nil {
-			return 0, err
+			return FeatureVector{}, err
 		}
 
-		state.MergeOutput(outputKey, value)
-		inputs = appendInput(inputs, outputKey)
+		vector = vector.WithValue(NamedValue{
+			Name:  mapping.OutputKey,
+			Value: value,
+		})
 	}
 
-	snapshot.Restore(state)
-	state.Poke("output", "root")
-	state.Poke(inputs, "inputs")
-
-	return state.PackInto(payload)
+	return vector, nil
 }
 
-/*
-value computes one mapping: combine its named inputs, then apply any transform.
-*/
-func (mapper *Mapper) value(state *datura.Artifact, index int) (float64, error) {
-	keys := datura.Peek[[]string](mapper.artifact, "mappings", index, "inputs")
-
-	if len(keys) == 0 {
+func (mapper *Mapper) value(
+	vector FeatureVector,
+	mapping Mapping,
+) (float64, error) {
+	if len(mapping.Inputs) == 0 {
 		return 0, errnie.Error(errnie.Err(
-			errnie.Validation, "mapper: mapping inputs required", nil,
+			errnie.Validation,
+			"mapper: mapping inputs required",
+			nil,
 		))
 	}
 
-	inverts := datura.Peek[[]string](mapper.artifact, "mappings", index, "inverts")
-	op := datura.Peek[string](mapper.artifact, "mappings", index, "op")
-	samples := make([]float64, 0, len(keys))
+	samples := make([]float64, 0, len(mapping.Inputs))
 
-	for _, key := range keys {
-		sample, err := readValue(state, key)
+	for _, key := range mapping.Inputs {
+		sample, exists := vector.Value(key)
 
-		if err != nil {
+		if !exists {
+			return 0, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"mapper: input not found: "+key,
+				nil,
+			))
+		}
+
+		if err := finiteVector("mapper: "+key, sample); err != nil {
 			return 0, err
 		}
 
-		samples = append(samples, invert(sample, contains(inverts, key), op))
+		samples = append(
+			samples,
+			invert(sample, contains(mapping.Inverts, key), mapping.Op),
+		)
 	}
 
-	combined, err := combine(op, samples)
-
+	combined, err := combine(mapping.Op, samples)
 	if err != nil {
 		return 0, err
 	}
 
-	transform := datura.Peek[string](mapper.artifact, "mappings", index, "transform")
-
-	if transform == "" {
+	if mapping.Transform == "" {
 		return combined, nil
 	}
 
-	outputKey := datura.Peek[string](mapper.artifact, "mappings", index, "outputKey")
-
-	return mapper.apply(transform, outputKey, combined)
+	return mapper.apply(mapping.Transform, mapping.OutputKey, combined)
 }
 
-/*
-apply transforms a scalar, reusing one persistent calculator per outputKey so
-transforms like ema accumulate across frames.
-*/
-func (mapper *Mapper) apply(transform, outputKey string, value float64) (float64, error) {
+func (mapper *Mapper) apply(
+	transform string,
+	outputKey string,
+	value float64,
+) (float64, error) {
 	if transform != "ema" {
 		return 0, errnie.Error(errnie.Err(
-			errnie.Validation, "mapper: transform not registered", nil,
+			errnie.Validation,
+			"mapper: transform not registered",
+			nil,
 		))
 	}
 
-	ema, ok := mapper.emas[outputKey]
-
-	if !ok {
+	ema, exists := mapper.emas[outputKey]
+	if !exists {
 		ema = adaptive.NewEMA()
 		mapper.emas[outputKey] = ema
 	}
@@ -143,49 +149,11 @@ func (mapper *Mapper) apply(transform, outputKey string, value float64) (float64
 		return 0, err
 	}
 
-	if math.IsNaN(out) || math.IsInf(out, 0) {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation, "mapper: transform output non-finite", nil,
-		))
+	if err := finiteVector("mapper: transform", out); err != nil {
+		return 0, err
 	}
 
 	return out, nil
-}
-
-func (mapper *Mapper) Write(payload []byte) (int, error) {
-	mapper.artifact.WithPayload(payload)
-	return len(payload), nil
-}
-
-func (mapper *Mapper) Close() error {
-	return nil
-}
-
-/*
-readValue resolves a named value from the wire in either mode: positionally from
-the features slice when root is "features", or by key from the output map.
-*/
-func readValue(state *datura.Artifact, name string) (float64, error) {
-	rootKey := datura.Peek[string](state, "root")
-	inputs := datura.Peek[[]string](state, "inputs")
-
-	if rootKey == "features" {
-		features := datura.Peek[[]float64](state, "features")
-
-		for index, key := range inputs {
-			if key != name || index >= len(features) {
-				continue
-			}
-
-			return finite(name, features[index])
-		}
-
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation, "mapper: input not found in features: "+name, nil,
-		))
-	}
-
-	return finite(name, datura.Peek[float64](state, rootKey, name))
 }
 
 func combine(op string, samples []float64) (float64, error) {
@@ -223,40 +191,40 @@ func combine(op string, samples []float64) (float64, error) {
 	}
 
 	return 0, errnie.Error(errnie.Err(
-		errnie.Validation, "mapper: unknown op: "+op, nil,
+		errnie.Validation,
+		"mapper: unknown op: "+op,
+		nil,
 	))
 }
 
 func ratio(samples []float64) (float64, error) {
-	acc := samples[0]
+	accumulator := samples[0]
 
 	for _, sample := range samples[1:] {
 		if sample == 0 {
 			return 0, errnie.Error(errnie.Err(
-				errnie.Validation, "mapper: ratio divide by zero", nil,
+				errnie.Validation,
+				"mapper: ratio divide by zero",
+				nil,
 			))
 		}
 
-		acc /= sample
+		accumulator /= sample
 	}
 
-	return acc, nil
+	return accumulator, nil
 }
 
 func fold(samples []float64, step func(float64, float64) float64) float64 {
-	acc := samples[0]
+	accumulator := samples[0]
 
 	for _, sample := range samples[1:] {
-		acc = step(acc, sample)
+		accumulator = step(accumulator, sample)
 	}
 
-	return acc
+	return accumulator
 }
 
-/*
-invert flips a value's contribution: additive negation for additive ops,
-reciprocal for multiplicative ops.
-*/
 func invert(value float64, doInvert bool, op string) float64 {
 	if !doInvert {
 		return value
@@ -273,16 +241,6 @@ func invert(value float64, doInvert bool, op string) float64 {
 	return -value
 }
 
-func finite(name string, value float64) (float64, error) {
-	if math.IsNaN(value) || math.IsInf(value, 0) {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation, "mapper: non-finite value: "+name, nil,
-		))
-	}
-
-	return value, nil
-}
-
 func contains(list []string, target string) bool {
 	for _, item := range list {
 		if item == target {
@@ -291,12 +249,4 @@ func contains(list []string, target string) bool {
 	}
 
 	return false
-}
-
-func appendInput(inputs []string, key string) []string {
-	if contains(inputs, key) {
-		return inputs
-	}
-
-	return append(append([]string(nil), inputs...), key)
 }

@@ -1,132 +1,167 @@
 package vector
 
 import (
-	"math"
-
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/adaptive"
 )
 
 /*
-FeatureExtractor is an atomic compute primitive.
-
-The constructor artifact is config (attributes); its payload buses inbound wire
-from Write to Read. Read unpacks the frame, extracts features, and emits output.
+FeatureScopeConfig describes how one channel maps typed rows to features.
 */
-type FeatureExtractor struct {
-	artifact *datura.Artifact
-	emas     map[string]*adaptive.EMA
-	writes   []byte
+type FeatureScopeConfig struct {
+	Root         string
+	Inputs       []string
+	ElementIndex int
+	Transforms   map[string]string
 }
 
 /*
-NewFeatureExtractor builds an extractor wired from schema attributes.
+FeatureExtractorConfig describes global and channel-specific feature scopes.
 */
-func NewFeatureExtractor(artifact *datura.Artifact) *FeatureExtractor {
+type FeatureExtractorConfig struct {
+	FeatureScopeConfig
+	Channels map[string]FeatureScopeConfig
+}
+
+/*
+FeatureExtractor extracts typed feature vectors from market frames.
+*/
+type FeatureExtractor struct {
+	config FeatureExtractorConfig
+	emas   map[string]*adaptive.EMA
+}
+
+/*
+NewFeatureExtractor builds an extractor from a typed schema.
+*/
+func NewFeatureExtractor(config FeatureExtractorConfig) *FeatureExtractor {
 	return &FeatureExtractor{
-		artifact: artifact,
-		emas:     map[string]*adaptive.EMA{},
+		config: config,
+		emas:   map[string]*adaptive.EMA{},
 	}
 }
 
-func (extractor *FeatureExtractor) Read(payload []byte) (int, error) {
-	state := datura.Acquire("feature-extractor", datura.APPJSON)
+/*
+Measure extracts the configured feature vector from the typed frame.
+*/
+func (extractor *FeatureExtractor) Measure(input FeatureInput) (FeatureVector, error) {
+	scope := extractor.scope(input.Channel)
 
-	if _, err := state.Unpack(extractor.artifact.DecryptPayload()); err != nil {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"feature-extractor: state write failed",
-			err,
-		))
-	}
-
-	extractor.writes = nil
-
-	role := datura.Peek[string](state, "channel")
-
-	rootKey := datura.Peek[string](extractor.artifact, "root")
-	inputs := datura.Peek[[]string](extractor.artifact, "inputs")
-	elementIndex := int(datura.Peek[float64](extractor.artifact, "elementIndex"))
-
-	if role != "" {
-		if scopedRoot := datura.Peek[string](extractor.artifact, role, "root"); scopedRoot != "" {
-			rootKey = scopedRoot
-		}
-
-		if scopedInputs := datura.Peek[[]string](extractor.artifact, role, "inputs"); len(scopedInputs) > 0 {
-			inputs = scopedInputs
-		}
-
-		if scopedIndex := int(datura.Peek[float64](extractor.artifact, role, "elementIndex")); scopedIndex != 0 {
-			elementIndex = scopedIndex
-		}
-	}
-
-	if rootKey == "" {
-		return 0, errnie.Error(errnie.Err(
+	if scope.Root == "" {
+		return FeatureVector{}, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"feature-extractor: root required",
 			nil,
 		))
 	}
 
-	if len(inputs) == 0 {
-		return 0, errnie.Error(errnie.Err(
+	if len(scope.Inputs) == 0 {
+		return FeatureVector{}, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"feature-extractor: inputs required",
 			nil,
 		))
 	}
 
-	features := make([]float64, len(inputs))
+	row, err := extractor.row(input, scope)
+	if err != nil {
+		return FeatureVector{}, err
+	}
 
-	for index, input := range inputs {
-		sample := datura.Peek[float64](state, rootKey, elementIndex, input)
+	features := make([]float64, len(scope.Inputs))
 
-		if rootKey == "." {
-			sample = datura.Peek[float64](state, input)
-		}
+	for index, inputKey := range scope.Inputs {
+		sample, exists := row.Value(inputKey)
 
-		if math.IsNaN(sample) || math.IsInf(sample, 0) {
-			return 0, errnie.Error(errnie.Err(
+		if !exists {
+			return FeatureVector{}, errnie.Error(errnie.Err(
 				errnie.Validation,
-				"feature-extractor: sample is non-finite",
+				"feature-extractor: input not found: "+inputKey,
 				nil,
 			))
 		}
 
-		transform := datura.Peek[string](extractor.artifact, "transforms", input)
-
-		if role != "" {
-			if scopedTransform := datura.Peek[string](extractor.artifact, role, "transforms", input); scopedTransform != "" {
-				transform = scopedTransform
-			}
+		if err := finiteVector("feature-extractor: "+inputKey, sample); err != nil {
+			return FeatureVector{}, err
 		}
+
+		transform := scope.Transforms[inputKey]
 
 		if transform == "" {
 			features[index] = sample
-
 			continue
 		}
 
-		var err error
-		sample, err = extractor.transform(transform, role+":"+input, sample)
+		transformKey := inputKey
+
+		if input.Channel != "" {
+			transformKey = input.Channel + ":" + inputKey
+		}
+
+		sample, err = extractor.transform(transform, transformKey, sample)
 		if err != nil {
-			return 0, err
+			return FeatureVector{}, err
 		}
 
 		features[index] = sample
 	}
 
-	state.Merge("features", features)
-	state.Poke("features", "root")
-	state.Poke(inputs, "inputs")
-	state.Poke(inputs, "featureInputs")
-	state.Poke(rootKey, "sourceRoot")
-	state.Poke(inputs, "sourceInputs")
+	return FeatureVector{
+		Features:     features,
+		Inputs:       append([]string(nil), scope.Inputs...),
+		SourceRoot:   scope.Root,
+		SourceInputs: append([]string(nil), scope.Inputs...),
+	}, nil
+}
 
-	return state.PackInto(payload)
+func (extractor *FeatureExtractor) scope(channel string) FeatureScopeConfig {
+	scope := extractor.config.FeatureScopeConfig
+
+	if channel == "" {
+		return scope
+	}
+
+	scoped, exists := extractor.config.Channels[channel]
+	if !exists {
+		return scope
+	}
+
+	if scoped.Root != "" {
+		scope.Root = scoped.Root
+	}
+
+	if len(scoped.Inputs) > 0 {
+		scope.Inputs = scoped.Inputs
+	}
+
+	if scoped.ElementIndex != 0 {
+		scope.ElementIndex = scoped.ElementIndex
+	}
+
+	if len(scoped.Transforms) > 0 {
+		scope.Transforms = scoped.Transforms
+	}
+
+	return scope
+}
+
+func (extractor *FeatureExtractor) row(
+	input FeatureInput,
+	scope FeatureScopeConfig,
+) (FeatureRow, error) {
+	if scope.Root == "." {
+		return input.Row, nil
+	}
+
+	if scope.ElementIndex < 0 || scope.ElementIndex >= len(input.Rows) {
+		return FeatureRow{}, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"feature-extractor: element index out of range",
+			nil,
+		))
+	}
+
+	return input.Rows[scope.ElementIndex], nil
 }
 
 func (extractor *FeatureExtractor) transform(
@@ -142,8 +177,8 @@ func (extractor *FeatureExtractor) transform(
 		))
 	}
 
-	ema, ok := extractor.emas[key]
-	if !ok {
+	ema, exists := extractor.emas[key]
+	if !exists {
 		ema = adaptive.NewEMA()
 		extractor.emas[key] = ema
 	}
@@ -153,41 +188,9 @@ func (extractor *FeatureExtractor) transform(
 		return 0, err
 	}
 
-	if math.IsNaN(out) || math.IsInf(out, 0) {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"feature-extractor: transform output non-finite",
-			nil,
-		))
+	if err := finiteVector("feature-extractor: transform", out); err != nil {
+		return 0, err
 	}
 
 	return out, nil
-}
-
-func (extractor *FeatureExtractor) Write(p []byte) (int, error) {
-	extractor.writes = append(extractor.writes, p...)
-	extractor.artifact.WithPayload(extractor.writes)
-
-	return len(p), nil
-}
-
-func (extractor *FeatureExtractor) Flush() error {
-	if len(extractor.writes) == 0 {
-		return nil
-	}
-
-	probe := datura.Acquire("feature-extractor-flush", datura.APPJSON)
-	defer probe.Release()
-
-	if _, err := probe.Unpack(extractor.writes); err != nil {
-		return err
-	}
-
-	extractor.writes = nil
-
-	return nil
-}
-
-func (extractor *FeatureExtractor) Close() error {
-	return extractor.Flush()
 }

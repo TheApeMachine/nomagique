@@ -27,6 +27,13 @@ typedef struct ManifoldConfig {
     float gate_width_max;
 } ManifoldConfig;
 
+typedef struct ManifoldControls {
+    float dt;
+    float metabolic_rate;
+    float topdown_phase_scale;
+    float topdown_energy_scale;
+} ManifoldControls;
+
 typedef struct ManifoldReading {
     float pressure_grad_x;
     float pressure_grad_y;
@@ -53,6 +60,13 @@ typedef struct ManifoldOscillator {
 
 void *manifold_solver_create(const ManifoldConfig *config, const void *metallib_bytes, size_t metallib_length, char *err_out, int err_cap);
 void manifold_solver_destroy(void *handle);
+
+int manifold_solver_set_controls(
+    void *handle,
+    const ManifoldControls *controls,
+    char *err_out,
+    int err_cap
+);
 
 int manifold_solver_reset_deposits(void *handle, char *err_out, int err_cap);
 int manifold_solver_deposit_cell(

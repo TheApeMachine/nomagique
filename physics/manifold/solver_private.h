@@ -382,6 +382,7 @@ void manifold_velocity_at(
 @property(nonatomic, strong) id<MTLComputePipelineState> coherenceFuseBinning;
 @property(nonatomic, assign) BOOL gravityReady;
 @property(nonatomic, assign) ManifoldConfig config;
+@property(nonatomic, assign) ManifoldControls controls;
 @property(nonatomic, assign) uint32_t numCells;
 @property(nonatomic, assign) uint32_t numOsc;
 @property(nonatomic, assign) uint32_t numBins;
@@ -480,6 +481,7 @@ void manifold_velocity_at(
                  metallibBytes:(const void *)metallibBytes
                 metallibLength:(size_t)metallibLength
                          error:(NSString **)error;
+- (BOOL)setControls:(const ManifoldControls *)controls error:(NSString **)error;
 - (void)resetDepositsInternal;
 - (BOOL)depositCell:(uint32_t)cellX cellY:(uint32_t)cellY cellZ:(uint32_t)cellZ
                 rho:(float)rho momX:(float)momX momY:(float)momY momZ:(float)momZ eInt:(float)eInt error:(NSString **)error;

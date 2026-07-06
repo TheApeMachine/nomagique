@@ -31,6 +31,53 @@ type Config struct {
 	snapshotPublishInterval time.Duration
 }
 
+type RuntimeControls struct {
+	DeltaT             float64
+	MetabolicRate      float64
+	TopdownPhaseScale  float64
+	TopdownEnergyScale float64
+}
+
+func (config Config) RuntimeControls() RuntimeControls {
+	return RuntimeControls{
+		DeltaT:        config.DeltaT,
+		MetabolicRate: config.MetabolicRate(),
+	}
+}
+
+func (controls RuntimeControls) Validate() error {
+	values := map[string]float64{
+		"delta_t":              controls.DeltaT,
+		"metabolic_rate":       controls.MetabolicRate,
+		"topdown_phase_scale":  controls.TopdownPhaseScale,
+		"topdown_energy_scale": controls.TopdownEnergyScale,
+	}
+
+	for name, value := range values {
+		if math.IsNaN(value) || math.IsInf(value, 0) {
+			return fmt.Errorf("physics: runtime control %s must be finite", name)
+		}
+	}
+
+	if controls.DeltaT <= 0 {
+		return fmt.Errorf("physics: runtime control delta_t must be positive")
+	}
+
+	if controls.MetabolicRate < 0 {
+		return fmt.Errorf("physics: runtime control metabolic_rate must be non-negative")
+	}
+
+	if controls.TopdownPhaseScale < 0 {
+		return fmt.Errorf("physics: runtime control topdown_phase_scale must be non-negative")
+	}
+
+	if controls.TopdownEnergyScale < 0 {
+		return fmt.Errorf("physics: runtime control topdown_energy_scale must be non-negative")
+	}
+
+	return nil
+}
+
 /*
 NewConfigFromViper builds manifold physics parameters from signals.manifold and market book depth.
 */

@@ -40,6 +40,31 @@ func TestValidateRejectsUnstableDiffusion(t *testing.T) {
 	})
 }
 
+func TestConfigRuntimeControls(t *testing.T) {
+	convey.Convey("Given a validated manifold config", t, func() {
+		config := productionTestConfig()
+
+		convey.Convey("It should expose the integration controls used by the solver", func() {
+			controls := config.RuntimeControls()
+
+			convey.So(controls.DeltaT, convey.ShouldEqual, config.DeltaT)
+			convey.So(controls.MetabolicRate, convey.ShouldEqual, config.MetabolicRate())
+			convey.So(controls.Validate(), convey.ShouldBeNil)
+		})
+	})
+}
+
+func TestRuntimeControlsValidate(t *testing.T) {
+	convey.Convey("Given invalid runtime controls", t, func() {
+		controls := productionTestConfig().RuntimeControls()
+		controls.TopdownPhaseScale = math.Inf(1)
+
+		convey.Convey("It should reject non-finite prior values", func() {
+			convey.So(controls.Validate(), convey.ShouldNotBeNil)
+		})
+	})
+}
+
 func productionTestConfig() Config {
 	tickSize := 0.01
 	halfWidth := 32

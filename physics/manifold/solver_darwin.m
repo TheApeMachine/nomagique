@@ -24,6 +24,12 @@
 
     self.queue = [self.device newCommandQueue];
     self.config = *config;
+    self.controls = (ManifoldControls){
+        .dt = config->dt,
+        .metabolic_rate = config->metabolic_rate,
+        .topdown_phase_scale = 0.0f,
+        .topdown_energy_scale = 0.0f,
+    };
     self.numCells = config->grid_x * config->grid_y * config->grid_z;
 
     if (metallibBytes == NULL || metallibLength == 0) {
@@ -80,6 +86,52 @@
     }
 
     return self;
+}
+
+- (BOOL)setControls:(const ManifoldControls *)controls error:(NSString **)error {
+    if (controls == NULL) {
+        if (error != nil) {
+            *error = @"runtime controls are required";
+        }
+
+        return NO;
+    }
+
+    if (!isfinite(controls->dt) || controls->dt <= 0.0f) {
+        if (error != nil) {
+            *error = @"runtime control dt must be positive and finite";
+        }
+
+        return NO;
+    }
+
+    if (!isfinite(controls->metabolic_rate) || controls->metabolic_rate < 0.0f) {
+        if (error != nil) {
+            *error = @"runtime control metabolic_rate must be non-negative and finite";
+        }
+
+        return NO;
+    }
+
+    if (!isfinite(controls->topdown_phase_scale) || controls->topdown_phase_scale < 0.0f) {
+        if (error != nil) {
+            *error = @"runtime control topdown_phase_scale must be non-negative and finite";
+        }
+
+        return NO;
+    }
+
+    if (!isfinite(controls->topdown_energy_scale) || controls->topdown_energy_scale < 0.0f) {
+        if (error != nil) {
+            *error = @"runtime control topdown_energy_scale must be non-negative and finite";
+        }
+
+        return NO;
+    }
+
+    self.controls = *controls;
+
+    return YES;
 }
 
 - (void)drainGPUQueue {
@@ -403,7 +455,7 @@
     params->dx = dx;
     params->inv_dx = 1.0f / dx;
     params->inv_dx2 = params->inv_dx * params->inv_dx;
-    params->dt = self.config.dt;
+    params->dt = self.controls.dt;
     params->gamma = self.config.gamma;
     params->c_v = self.config.c_v;
     float envelopeRho = self.config.gas_envelope_rho_min;
@@ -835,6 +887,28 @@ void manifold_solver_destroy(void *handle) {
 
     ManifoldSolver *solver = (__bridge_transfer ManifoldSolver *)handle;
     (void)solver;
+}
+
+int manifold_solver_set_controls(
+    void *handle,
+    const ManifoldControls *controls,
+    char *err_out,
+    int err_cap
+) {
+    if (handle == NULL || controls == NULL) {
+        manifold_write_error(err_out, err_cap, @"solver handle and runtime controls are required");
+        return 1;
+    }
+
+    ManifoldSolver *solver = (__bridge ManifoldSolver *)handle;
+    NSString *error = nil;
+
+    if (![solver setControls:controls error:&error]) {
+        manifold_write_error(err_out, err_cap, error ?: @"set controls failed");
+        return 1;
+    }
+
+    return 0;
 }
 
 int manifold_solver_reset_deposits(void *handle, char *err_out, int err_cap) {

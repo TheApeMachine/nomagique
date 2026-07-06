@@ -3353,7 +3353,8 @@ kernel void coherence_gpe_step(
         float damp = exp(-gp.energy_decay * gp.dt);
         psi = c_scale(psi, damp);
     }
-    psi = c_add(psi, c_scale(drive, gp.dt));
+    float drive_scale = 1.0f + p.topdown_energy_scale;
+    psi = c_add(psi, c_scale(drive, gp.dt * drive_scale));
 
     // --- write back Ψ_k ---
     mode_real[gid] = psi.r;
@@ -3433,7 +3434,7 @@ kernel void coherence_update_oscillator_phases(
         }
     }
 
-    float dphi = omega_i + p.coupling_scale * torque;
+    float dphi = omega_i + (p.coupling_scale + p.topdown_phase_scale) * torque;
     phi += dphi * p.dt;
 
     // Wrap phase to [0, 2π)

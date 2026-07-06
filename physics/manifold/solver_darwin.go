@@ -100,6 +100,32 @@ func (solver *Solver) Close() {
 	solver.handle = nil
 }
 
+func (solver *Solver) SetControls(controls RuntimeControls) error {
+	if solver == nil || solver.handle == nil {
+		return fmt.Errorf("physics: solver is not initialized")
+	}
+
+	if err := controls.Validate(); err != nil {
+		return err
+	}
+
+	cControls := C.ManifoldControls{
+		dt:                   C.float(controls.DeltaT),
+		metabolic_rate:       C.float(controls.MetabolicRate),
+		topdown_phase_scale:  C.float(controls.TopdownPhaseScale),
+		topdown_energy_scale: C.float(controls.TopdownEnergyScale),
+	}
+
+	return solver.call(func(errBuf []byte) C.int {
+		return C.manifold_solver_set_controls(
+			solver.handle,
+			&cControls,
+			(*C.char)(unsafe.Pointer(&errBuf[0])),
+			C.int(len(errBuf)),
+		)
+	})
+}
+
 func (solver *Solver) ResetDeposits() error {
 	return solver.call(func(errBuf []byte) C.int {
 		return C.manifold_solver_reset_deposits(

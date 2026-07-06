@@ -34,7 +34,7 @@
     params->num_osc = self.numOsc;
     params->max_carriers = self.config.max_carriers;
     params->num_carriers = self.numOsc;
-    params->dt = self.config.dt;
+    params->dt = self.controls.dt;
     params->coupling_scale = self.config.coupling_scale;
     params->carrier_reg = 0.0f;
     params->rng_seed = 1;
@@ -54,22 +54,22 @@
     params->volatile_decay_mul = 1.0f;
     params->stable_decay_mul = 1.0f;
     params->crystallized_decay_mul = 1.0f;
-    params->topdown_phase_scale = 0.0f;
-    params->topdown_energy_scale = 0.0f;
+    params->topdown_phase_scale = self.controls.topdown_phase_scale;
+    params->topdown_energy_scale = self.controls.topdown_energy_scale;
     params->topdown_random_energy_eps = 0.0f;
     params->repulsion_scale = 0.0f;
     params->domain_x = self.config.domain_x;
     params->domain_y = self.config.domain_y;
     params->domain_z = self.config.domain_z;
     params->spatial_sigma = self.config.domain_x / (float)self.config.grid_x;
-    params->metabolic_rate = self.config.metabolic_rate;
+    params->metabolic_rate = self.controls.metabolic_rate;
 }
 
 - (void)configureGPEParams {
     GPEParamsHost *params = (GPEParamsHost *)self.gpeParams.contents;
     float dOmega = 2.0f * (float)M_PI / fmaxf((float)self.numOsc, 1.0f);
 
-    params->dt = self.config.dt;
+    params->dt = self.controls.dt;
     params->hbar_eff = self.config.hbar_eff;
     params->mass_eff = 1.0f;
     params->g_interaction = self.config.g_interaction;

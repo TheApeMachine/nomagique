@@ -74,6 +74,31 @@ func TestSolverStep(t *testing.T) {
 	})
 }
 
+func TestSolverSetControls(t *testing.T) {
+	convey.Convey("Given a Metal manifold solver", t, func() {
+		config := smallTestConfig()
+		solver, err := NewSolver(config)
+
+		convey.Convey("It should accept validated runtime controls before stepping", func() {
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(solver, convey.ShouldNotBeNil)
+
+			defer solver.Close()
+
+			controls := config.RuntimeControls()
+			controls.DeltaT = config.DeltaT * 0.5
+			controls.MetabolicRate = 1 / controls.DeltaT
+			controls.TopdownPhaseScale = 0.25
+			controls.TopdownEnergyScale = 0.25
+
+			convey.So(solver.SetControls(controls), convey.ShouldBeNil)
+
+			controls.DeltaT = 0
+			convey.So(solver.SetControls(controls), convey.ShouldNotBeNil)
+		})
+	})
+}
+
 func TestReadProjectionReading(t *testing.T) {
 	convey.Convey("Given a deposited rho lattice", t, func() {
 		config := smallTestConfig()

@@ -28,6 +28,10 @@ func NewSolver(config Config) (*Solver, error) {
 
 func (solver *Solver) Close() {}
 
+func (solver *Solver) SetControls(controls RuntimeControls) error {
+	return fmt.Errorf("physics: Metal manifold solver unavailable on this platform")
+}
+
 func (solver *Solver) ResetDeposits() error {
 	return fmt.Errorf("physics: Metal manifold solver unavailable on this platform")
 }

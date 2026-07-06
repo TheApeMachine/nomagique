@@ -54,7 +54,7 @@
     params->grid_z = self.config.grid_z;
     params->grid_spacing = spacing;
     params->inv_grid_spacing = 1.0f / spacing;
-    params->dt = self.config.dt;
+    params->dt = self.controls.dt;
     params->domain_x = self.config.domain_x;
     params->domain_y = self.config.domain_y;
     params->domain_z = self.config.domain_z;

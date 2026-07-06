@@ -32,12 +32,12 @@ static const uint32_t kDirectInteractionLimit = 64u;
     params->domain_min_x = 0.0f;
     params->domain_min_y = 0.0f;
     params->domain_min_z = 0.0f;
-    params->dt = self.config.dt;
+    params->dt = self.controls.dt;
     params->particle_radius = 0.5f * spacing;
-    params->young_modulus = self.config.rho_min / (self.config.dt * self.config.dt);
+    params->young_modulus = self.config.rho_min / (self.controls.dt * self.controls.dt);
     params->thermal_conductivity = self.config.k_thermal;
     params->specific_heat = self.config.c_v;
-    params->restitution = 1.0f - self.config.energy_decay * self.config.dt;
+    params->restitution = 1.0f - self.config.energy_decay * self.controls.dt;
 }
 
 - (void)configureParticleInteractionParams {
@@ -45,12 +45,12 @@ static const uint32_t kDirectInteractionLimit = 64u;
     float spacing = [self gridSpacing];
 
     params->num_particles = self.numOsc;
-    params->dt = self.config.dt;
+    params->dt = self.controls.dt;
     params->particle_radius = 0.5f * spacing;
-    params->young_modulus = self.config.rho_min / (self.config.dt * self.config.dt);
+    params->young_modulus = self.config.rho_min / (self.controls.dt * self.controls.dt);
     params->thermal_conductivity = self.config.k_thermal;
     params->specific_heat = self.config.c_v;
-    params->restitution = 1.0f - self.config.energy_decay * self.config.dt;
+    params->restitution = 1.0f - self.config.energy_decay * self.controls.dt;
 }
 
 - (BOOL)runDirectParticleInteractions:(NSString **)error {
@@ -147,7 +147,7 @@ static const uint32_t kDirectInteractionLimit = 64u;
     params->grid_z = self.config.grid_z;
     params->grid_spacing = spacing;
     params->inv_grid_spacing = 1.0f / spacing;
-    params->dt = self.config.dt;
+    params->dt = self.controls.dt;
     params->domain_x = self.config.domain_x;
     params->domain_y = self.config.domain_y;
     params->domain_z = self.config.domain_z;

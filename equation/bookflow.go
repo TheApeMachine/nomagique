@@ -109,7 +109,7 @@ func (bookflow *Bookflow) Measure(input BookflowInput) (BookflowOutput, error) {
 	thinScore := 0.0
 
 	if thinning {
-		thinScore = math.Abs(input.Weighted) - math.Abs(input.Flat)
+		thinScore = depthGate*math.Abs(input.Weighted) - math.Abs(input.Flat)
 	}
 
 	neutralScore := 0.0
@@ -125,7 +125,7 @@ func (bookflow *Bookflow) Measure(input BookflowInput) (BookflowOutput, error) {
 	}
 
 	if category == 3 {
-		strength = math.Abs(thinScore)
+		strength = thinScore
 	}
 
 	if category == 4 {

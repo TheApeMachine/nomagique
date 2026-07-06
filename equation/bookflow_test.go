@@ -98,6 +98,31 @@ func TestBookflow_Measure(testingTB *testing.T) {
 		})
 	})
 
+	Convey("Given flat depth below the adaptive thinning gate", testingTB, func() {
+		bookflow := equation.NewBookflow()
+		output, err := bookflow.Measure(equation.BookflowInput{
+			Weighted:        0.2,
+			Level1:          0.2,
+			Flat:            0.5,
+			FlatOK:          true,
+			Mid:             100,
+			Spread:          2,
+			TouchDepth:      12,
+			WeightedHistory: []float64{0.20, 0.20, 0.20, 0.20},
+			Level1History:   []float64{0.20, 0.20, 0.20, 0.20},
+			FlatHistory:     []float64{0.80, 0.80, 0.80, 0.80},
+		})
+
+		So(err, ShouldBeNil)
+
+		Convey("It should emit positive thinning strength", func() {
+			So(int(output.Category), ShouldEqual, 3)
+			So(output.ThinScore, ShouldAlmostEqual, 0.3, 1e-12)
+			So(output.Strength, ShouldAlmostEqual, output.ThinScore, 1e-12)
+			So(output.Value, ShouldAlmostEqual, output.ThinScore, 1e-12)
+		})
+	})
+
 	Convey("Given balanced depth below the loaded threshold", testingTB, func() {
 		bookflow := equation.NewBookflow()
 		output, err := bookflow.Measure(equation.BookflowInput{

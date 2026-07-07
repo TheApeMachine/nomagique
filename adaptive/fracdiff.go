@@ -6,12 +6,17 @@ import (
 	"github.com/theapemachine/errnie"
 )
 
+const (
+	defaultFracDiffMaxLag = 2048
+)
+
 /*
 FracDiff applies a fractional differencing filter to recent samples.
 */
 type FracDiff struct {
 	history []float64
 	weights []float64
+	maxLag  int
 	min     float64
 	max     float64
 	prev    float64
@@ -20,6 +25,13 @@ type FracDiff struct {
 	head    int
 	count   int
 	ready   bool
+}
+
+/*
+FracDiffConfig controls bounded fractional-difference memory.
+*/
+type FracDiffConfig struct {
+	MaxLag int
 }
 
 /*
@@ -34,8 +46,20 @@ type FracDiffOutput struct {
 /*
 NewFracDiff returns a typed fractional-difference tracker.
 */
-func NewFracDiff() *FracDiff {
-	return &FracDiff{}
+func NewFracDiff(configs ...FracDiffConfig) *FracDiff {
+	config := FracDiffConfig{MaxLag: defaultFracDiffMaxLag}
+
+	if len(configs) > 0 {
+		config = configs[0]
+	}
+
+	if config.MaxLag <= 0 {
+		config.MaxLag = defaultFracDiffMaxLag
+	}
+
+	return &FracDiff{
+		maxLag: config.MaxLag,
+	}
 }
 
 /*
@@ -47,7 +71,7 @@ func (fractional *FracDiff) Measure(sample float64) (FracDiffOutput, error) {
 	}
 
 	if !fractional.ready {
-		capacity := fracDiffMaxLag(0) + 1
+		capacity := fractional.capacity()
 		fractional.history = make([]float64, capacity)
 		fractional.history[0] = sample
 		fractional.min = sample
@@ -57,7 +81,9 @@ func (fractional *FracDiff) Measure(sample float64) (FracDiffOutput, error) {
 		fractional.width = 1
 		fractional.head = 0
 		fractional.count = 1
-		fractional.weights = []float64{1}
+		fractional.weights = make([]float64, capacity)
+		fractional.weights[0] = 1
+		fractional.weights = fractional.weights[:1]
 		fractional.ready = true
 
 		return FracDiffOutput{
@@ -112,28 +138,39 @@ func (fractional *FracDiff) rebuildWeights(order float64, span float64) {
 	}
 
 	fractional.order = order
-	capacity := fracDiffMaxLag(span) + 1
-	weights := make([]float64, 0, capacity)
-	weights, width := buildFracDiffWeights(order, span, fractional.prev, weights)
+	weights := fractional.weights[:0]
+	weights, width := buildFracDiffWeights(
+		order,
+		span,
+		fractional.prev,
+		weights,
+		fractional.maxLagForSpan(span),
+	)
 	fractional.width = width
+	fractional.weights = weights[:width]
+}
 
-	if len(fractional.history) < capacity {
-		next := make([]float64, capacity)
-		copy(next, fractional.history)
+func (fractional *FracDiff) capacity() int {
+	return fractional.configuredMaxLag() + 1
+}
 
-		if fractional.count > 0 {
-			for index := 0; index < fractional.count; index++ {
-				source := (fractional.head - index + len(fractional.history)) % len(fractional.history)
-				next[index] = fractional.history[source]
-			}
+func (fractional *FracDiff) maxLagForSpan(span float64) int {
+	maxLag := fractional.configuredMaxLag()
+	lag := fracDiffMaxLag(span)
 
-			fractional.head = fractional.count - 1
-		}
-
-		fractional.history = next
+	if lag > maxLag {
+		return maxLag
 	}
 
-	fractional.weights = weights[:width]
+	return lag
+}
+
+func (fractional *FracDiff) configuredMaxLag() int {
+	if fractional.maxLag <= 0 {
+		return defaultFracDiffMaxLag
+	}
+
+	return fractional.maxLag
 }
 
 func (fractional *FracDiff) pushHistory(sample float64) {
@@ -205,7 +242,13 @@ func FractionalDifferenceValue(samples []float64) (float64, bool, error) {
 	prev := samples[len(samples)-2]
 	rate := math.Abs(tail-prev) / span
 	order := fracDiffOrder(rate, span)
-	weights, width := buildFracDiffWeights(order, span, prev, nil)
+	weights, width := buildFracDiffWeights(
+		order,
+		span,
+		prev,
+		nil,
+		fracDiffLagLimit(span, defaultFracDiffMaxLag),
+	)
 	value := 0.0
 
 	for lag := 0; lag < width && lag < len(samples); lag++ {
@@ -248,10 +291,13 @@ func fracDiffOrder(rate float64, span float64) float64 {
 }
 
 func buildFracDiffWeights(
-	order float64, span float64, reference float64, scratch []float64,
+	order float64,
+	span float64,
+	reference float64,
+	scratch []float64,
+	maxLag int,
 ) ([]float64, int) {
 	threshold := fracDiffWeightThreshold(span, reference)
-	maxLag := fracDiffMaxLag(span)
 	weights := scratch
 
 	if cap(weights) < 1 {
@@ -275,6 +321,20 @@ func buildFracDiffWeights(
 	}
 
 	return weights, width
+}
+
+func fracDiffLagLimit(span float64, maxLag int) int {
+	lag := fracDiffMaxLag(span)
+
+	if maxLag <= 0 {
+		maxLag = defaultFracDiffMaxLag
+	}
+
+	if lag > maxLag {
+		return maxLag
+	}
+
+	return lag
 }
 
 func fracDiffMaxLag(span float64) int {

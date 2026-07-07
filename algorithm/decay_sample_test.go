@@ -97,9 +97,16 @@ func BenchmarkDecaySampleMeasureBook(benchmark *testing.B) {
 }
 
 func decayBookInput(bidQuantity float64, askQuantity float64) BookflowBookInput {
+	tickSize := 1.0
+
 	return BookflowBookInput{
-		Symbol: "BTC/USD",
-		Bids:  []BookLevel{{Price: 100, Quantity: bidQuantity}},
-		Asks:  []BookLevel{{Price: 101, Quantity: askQuantity}},
+		Symbol:   "BTC/USD",
+		TickSize: tickSize,
+		Bids: []BookLevel{
+			{Price: 100, Ticks: 100, Quantity: bidQuantity},
+		},
+		Asks: []BookLevel{
+			{Price: 101, Ticks: 101, Quantity: askQuantity},
+		},
 	}
 }

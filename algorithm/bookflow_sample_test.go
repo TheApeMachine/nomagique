@@ -61,6 +61,40 @@ func TestBookflowSample_MeasureBook(testingTB *testing.T) {
 		})
 	})
 
+	Convey("Given repeated prices that resolve to the same exchange tick", testingTB, func() {
+		sample := NewBookflowSample()
+		price := 100.1
+		tickSize := 0.1
+
+		_, _, err := sample.MeasureBook(BookflowBookInput{
+			Symbol:   "BTC/USD",
+			TickSize: tickSize,
+			Bids: []BookLevel{
+				{Price: price, Ticks: 1001, Quantity: 20},
+			},
+			Asks: []BookLevel{
+				{Price: 100.3, Ticks: 1003, Quantity: 8},
+			},
+		})
+		So(err, ShouldBeNil)
+
+		_, _, err = sample.MeasureBook(BookflowBookInput{
+			Symbol:   "BTC/USD",
+			TickSize: tickSize,
+			Bids: []BookLevel{
+				{Price: 100.100000000002, Ticks: 1001, Quantity: 18},
+			},
+		})
+		So(err, ShouldBeNil)
+
+		window := sample.windows["BTC/USD"]
+
+		Convey("It should update the existing integer price tick", func() {
+			So(window.book.bids.Len(), ShouldEqual, 1)
+			So(window.book.bids.levels[1001], ShouldEqual, 18)
+		})
+	})
+
 	Convey("Given a book frame without symbol", testingTB, func() {
 		sample := NewBookflowSample()
 		_, _, err := sample.MeasureBook(BookflowBookInput{
@@ -107,15 +141,26 @@ func BenchmarkBookflowSampleMeasureBook(benchmark *testing.B) {
 }
 
 func bookflowBookInput() BookflowBookInput {
+	tickSize := 1.0
+
 	return BookflowBookInput{
-		Symbol: "BTC/USD",
+		Symbol:   "BTC/USD",
+		TickSize: tickSize,
 		Bids: []BookLevel{
-			{Price: 100, Quantity: 20},
-			{Price: 99, Quantity: 18},
+			bookflowTestLevel(100, tickSize, 20),
+			bookflowTestLevel(99, tickSize, 18),
 		},
 		Asks: []BookLevel{
-			{Price: 101, Quantity: 8},
-			{Price: 102, Quantity: 6},
+			bookflowTestLevel(101, tickSize, 8),
+			bookflowTestLevel(102, tickSize, 6),
 		},
+	}
+}
+
+func bookflowTestLevel(price float64, tickSize float64, quantity float64) BookLevel {
+	return BookLevel{
+		Price:    price,
+		Ticks:    int64(price),
+		Quantity: quantity,
 	}
 }

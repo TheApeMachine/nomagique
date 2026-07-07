@@ -22,8 +22,7 @@ type DecaySample struct {
 }
 
 type decayWindow struct {
-	bids          map[float64]float64
-	asks          map[float64]float64
+	book          *bookflowBook
 	bidDepthHist  []float64
 	askDepthHist  []float64
 	densityHist   []float64
@@ -59,7 +58,9 @@ func (decaySample *DecaySample) MeasureBook(
 	}
 
 	window := decaySample.window(input.Symbol)
-	decaySample.ingestBook(input, window)
+	if err := decaySample.ingestBook(input, window); err != nil {
+		return equation.DecayInput{}, false, err
+	}
 
 	return decaySample.features(window)
 }
@@ -100,8 +101,7 @@ func (decaySample *DecaySample) window(symbol string) *decayWindow {
 	}
 
 	window := &decayWindow{
-		bids: map[float64]float64{},
-		asks: map[float64]float64{},
+		book: newBookflowBook(),
 	}
 
 	decaySample.windows[symbol] = window
@@ -109,23 +109,35 @@ func (decaySample *DecaySample) window(symbol string) *decayWindow {
 	return window
 }
 
-func (decaySample *DecaySample) ingestBook(input BookflowBookInput, window *decayWindow) {
-	decaySample.applyLevels(input.Bids, window.bids)
-	decaySample.applyLevels(input.Asks, window.asks)
+func (decaySample *DecaySample) ingestBook(
+	input BookflowBookInput,
+	window *decayWindow,
+) error {
+	if err := window.book.Configure(input); err != nil {
+		return err
+	}
 
-	mid := bookflowMidPrice(window.bids, window.asks)
-	spread := bookflowSpread(window.bids, window.asks)
+	if _, err := window.book.ApplyLevels(input.Bids, SideBid); err != nil {
+		return err
+	}
+
+	if _, err := window.book.ApplyLevels(input.Asks, SideAsk); err != nil {
+		return err
+	}
+
+	mid := window.book.Mid()
+	spread := window.book.Spread()
 
 	if mid <= 0 || spread <= 0 {
-		return
+		return nil
 	}
 
 	window.lastPrice = mid
-	bidDepth := decaySideDepth(window.bids)
-	askDepth := decaySideDepth(window.asks)
+	bidDepth := window.book.SideDepth(SideBid)
+	askDepth := window.book.SideDepth(SideAsk)
 	density := bidDepth + askDepth
 	decayRate := bookflowDecayRate(mid, spread)
-	imbalance := bookflowImbalance(window.bids, window.asks, mid, decayRate, false, 0, 0, 0)
+	imbalance := window.book.Imbalance(mid, decayRate, false, 0, 0, 0)
 
 	window.bidDepthHist = appendRingFloat(window.bidDepthHist, bidDepth, decaySampleHistoryCap)
 	window.askDepthHist = appendRingFloat(window.askDepthHist, askDepth, decaySampleHistoryCap)
@@ -133,6 +145,8 @@ func (decaySample *DecaySample) ingestBook(input BookflowBookInput, window *deca
 	window.spreadHist = appendRingFloat(window.spreadHist, spread, decaySampleHistoryCap)
 	window.pressureHist = appendRingFloat(window.pressureHist, window.tradePressure, decaySampleHistoryCap)
 	window.imbalanceHist = appendRingFloat(window.imbalanceHist, imbalance, decaySampleHistoryCap)
+
+	return nil
 }
 
 func (decaySample *DecaySample) ingestTrade(input BookflowTradeInput, window *decayWindow) {
@@ -154,25 +168,6 @@ func (decaySample *DecaySample) ingestTrade(input BookflowTradeInput, window *de
 
 	if window.lastPrice <= 0 {
 		window.lastPrice = input.Price
-	}
-}
-
-func (decaySample *DecaySample) applyLevels(
-	levels []BookLevel,
-	book map[float64]float64,
-) {
-	for _, level := range levels {
-		if level.Price <= 0 {
-			return
-		}
-
-		if level.Quantity <= 0 {
-			delete(book, level.Price)
-
-			continue
-		}
-
-		book[level.Price] = level.Quantity
 	}
 }
 
@@ -219,14 +214,4 @@ func (decaySample *DecaySample) features(
 		Pressures:  append([]float64(nil), window.pressureHist...),
 		Imbalances: append([]float64(nil), window.imbalanceHist...),
 	}, true, nil
-}
-
-func decaySideDepth(book map[float64]float64) float64 {
-	depth := 0.0
-
-	for _, quantity := range book {
-		depth += quantity
-	}
-
-	return depth
 }

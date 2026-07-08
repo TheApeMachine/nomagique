@@ -35,6 +35,10 @@ func (s *BatchSolver) OutcomeSlot(slot int) ([]float64, float64, float64, error)
 	return nil, 0, 0, errUnavailable()
 }
 func (s *BatchSolver) TopDimension() int { return 0 }
+func (s *BatchSolver) TargetDim() int    { return 0 }
+func (s *BatchSolver) TaskPrediction(slot int, latent []float64) ([]float64, error) {
+	return nil, errUnavailable()
+}
 
 func (s *BatchSolver) LatentState(slot int) ([]float64, error)       { return nil, errUnavailable() }
 func (s *BatchSolver) Energy(slot int) (float64, error)              { return 0, errUnavailable() }

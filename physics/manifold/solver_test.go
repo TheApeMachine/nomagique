@@ -165,6 +165,120 @@ func TestReadOscillators(t *testing.T) {
 			convey.So(err, convey.ShouldBeNil)
 			convey.So(len(oscillators), convey.ShouldEqual, 1)
 			convey.So(oscillators[0].Heat, convey.ShouldBeGreaterThan, 0)
+			convey.So(math.IsNaN(oscillators[0].PosX), convey.ShouldBeFalse)
+			convey.So(math.IsNaN(oscillators[0].PosY), convey.ShouldBeFalse)
+			convey.So(math.IsNaN(oscillators[0].PosZ), convey.ShouldBeFalse)
+			convey.So(math.IsNaN(oscillators[0].VelX), convey.ShouldBeFalse)
+			convey.So(math.IsNaN(oscillators[0].VelY), convey.ShouldBeFalse)
+			convey.So(math.IsNaN(oscillators[0].VelZ), convey.ShouldBeFalse)
+		})
+	})
+}
+
+func TestReadOscillatorsDecisionLattice(t *testing.T) {
+	convey.Convey("Given the decision manifold lattice", t, func() {
+		config := Config{
+			GridX:    8,
+			GridY:    11,
+			GridZ:    8,
+			DomainX:  8,
+			DomainY:  11,
+			DomainZ:  8,
+			DeltaT:   0.1,
+			Gamma:    5.0 / 3.0,
+			MaxModes: 11,
+		}
+		ApplyDerivedGasParams(&config)
+
+		solver, err := NewSolver(config)
+
+		convey.Convey("It should return finite post-step particle readback", func() {
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(solver, convey.ShouldNotBeNil)
+
+			defer solver.Close()
+
+			convey.So(solver.ResetDeposits(), convey.ShouldBeNil)
+
+			clamps := []struct {
+				cellY uint32
+				rho   float64
+				momX  float64
+				momY  float64
+				momZ  float64
+			}{
+				{cellY: 0, rho: 0.52, momX: 0.36, momZ: 0.36},
+				{
+					cellY: 1,
+					rho:   0.5956521739130435,
+					momX:  0.5956521739130435,
+					momZ:  0.5956521739130435,
+				},
+				{
+					cellY: 2,
+					rho:   0.3883116883116883,
+					momX:  0.325974025974026,
+					momY:  0.03116883116883117,
+					momZ:  0.35714285714285715,
+				},
+				{
+					cellY: 4,
+					rho:   0.42142857142857143,
+					momX:  0.3,
+					momZ:  0.3,
+				},
+			}
+			oscillators := make([]Oscillator, 0, len(clamps))
+
+			for _, clamp := range clamps {
+				pressure := math.Abs(clamp.momX) + clamp.momY + clamp.momZ
+				internalEnergy := pressure / (config.Gamma - 1)
+				oscillators = append(oscillators, Oscillator{
+					Phase:     math.Atan2(clamp.momX, pressure),
+					Omega:     pressure,
+					Amplitude: math.Sqrt(clamp.rho),
+					PosX:      7,
+					PosY:      float64(clamp.cellY),
+					PosZ:      0,
+					Heat:      internalEnergy,
+					VelX:      clamp.momX,
+					VelY:      clamp.momY,
+					VelZ:      clamp.momZ,
+				})
+			}
+
+			convey.So(solver.SetOscillators(oscillators), convey.ShouldBeNil)
+
+			_, stepErr := solver.Step()
+
+			convey.So(stepErr, convey.ShouldBeNil)
+
+			readback, readErr := solver.ReadOscillators(len(oscillators))
+
+			convey.So(readErr, convey.ShouldBeNil)
+
+			for index, oscillator := range readback {
+				values := map[string]float64{
+					"phase": oscillator.Phase,
+					"pos_x": oscillator.PosX,
+					"pos_y": oscillator.PosY,
+					"pos_z": oscillator.PosZ,
+					"vel_x": oscillator.VelX,
+					"vel_y": oscillator.VelY,
+					"vel_z": oscillator.VelZ,
+				}
+
+				for name, value := range values {
+					if math.IsNaN(value) || math.IsInf(value, 0) {
+						t.Fatalf(
+							"oscillator %d %s non-finite: %+v",
+							index,
+							name,
+							readback,
+						)
+					}
+				}
+			}
 		})
 	})
 }

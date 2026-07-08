@@ -201,7 +201,7 @@ kernel void reduce_float_stats_finalize(
         // [CHOICE] non-negative variance
         // [FORMULA] var = max(E[x^2] - E[x]^2, 0)
         // [REASON] rounding can produce tiny negative; project back to ℝ_{\ge 0}
-        float var = (sum_sq / count) - mean * mean;
+        float var = max((sum_sq / count) - mean * mean, 0.0f);
         float std = sqrt(var);
 
         out_stats[0] = mean_abs;
@@ -2377,14 +2377,27 @@ kernel void pic_gather_update_particles(
     // FAIL-FAST: gathered conserved fields must be finite and physically admissible.
     if (!isfinite(rho) || !(rho >= 0.0f) || !isfinite(e_int_density) || !(e_int_density >= 0.0f) ||
         !isfinite(mom.x) || !isfinite(mom.y) || !isfinite(mom.z)) {
-        float qn = qnan_f();
-        particle_pos_out[gid * 3 + 0] = qn;
-        particle_pos_out[gid * 3 + 1] = qn;
-        particle_pos_out[gid * 3 + 2] = qn;
-        particle_vel_out[gid * 3 + 0] = qn;
-        particle_vel_out[gid * 3 + 1] = qn;
-        particle_vel_out[gid * 3 + 2] = qn;
-        particle_heat_out[gid] = qn;
+        float heat_in = particle_heat_in[gid];
+
+        if (!isfinite(pos.x) || !isfinite(pos.y) || !isfinite(pos.z) || !isfinite(heat_in)) {
+            float qn = qnan_f();
+            particle_pos_out[gid * 3 + 0] = qn;
+            particle_pos_out[gid * 3 + 1] = qn;
+            particle_pos_out[gid * 3 + 2] = qn;
+            particle_vel_out[gid * 3 + 0] = qn;
+            particle_vel_out[gid * 3 + 1] = qn;
+            particle_vel_out[gid * 3 + 2] = qn;
+            particle_heat_out[gid] = qn;
+            return;
+        }
+
+        particle_pos_out[gid * 3 + 0] = pos.x;
+        particle_pos_out[gid * 3 + 1] = pos.y;
+        particle_pos_out[gid * 3 + 2] = pos.z;
+        particle_vel_out[gid * 3 + 0] = 0.0f;
+        particle_vel_out[gid * 3 + 1] = 0.0f;
+        particle_vel_out[gid * 3 + 2] = 0.0f;
+        particle_heat_out[gid] = heat_in;
         return;
     }
     // TAG 0x02: vacuum gather (exact vacuum only: rho==0 & E==0 & mom==0)
@@ -2433,6 +2446,18 @@ kernel void pic_gather_update_particles(
     if (!isfinite(heat) || !isfinite(T)) {
         // TAG 0x05: non-finite temperature/heat result
         dbg_log(dbg_head, dbg_words, dbg_cap, 0x05u, gid, mass, T, heat, rho);
+        heat = particle_heat_in[gid];
+
+        if (!isfinite(heat)) {
+            particle_heat_out[gid] = qnan_f();
+            particle_pos_out[gid * 3 + 0] = qnan_f();
+            particle_pos_out[gid * 3 + 1] = qnan_f();
+            particle_pos_out[gid * 3 + 2] = qnan_f();
+            particle_vel_out[gid * 3 + 0] = qnan_f();
+            particle_vel_out[gid * 3 + 1] = qnan_f();
+            particle_vel_out[gid * 3 + 2] = qnan_f();
+            return;
+        }
     }
 
     // Sample gravity gradient smoothly at particle position.
@@ -2700,6 +2725,11 @@ kernel void project_modes_to_spatial_psi(
         particle_pos[anchor * 3 + 2]
     );
 
+    if (!isfinite(re) || !isfinite(im) ||
+        !isfinite(pos.x) || !isfinite(pos.y) || !isfinite(pos.z)) {
+        return;
+    }
+
     // CIC splat onto the spatial grid (periodic).
     float3 g = pos * p.inv_grid_spacing;
 
@@ -2731,17 +2761,17 @@ kernel void project_modes_to_spatial_psi(
     float wy1 = fy;
     float wz1 = fz;
 
-    uint gx = p.grid_x;
-    uint gy = p.grid_y;
+    uint stride_x = p.grid_y * p.grid_z;
+    uint stride_y = p.grid_z;
 
-    uint i000 = (uint)ix0 + gx * ((uint)iy0 + gy * (uint)iz0);
-    uint i100 = (uint)ix1 + gx * ((uint)iy0 + gy * (uint)iz0);
-    uint i010 = (uint)ix0 + gx * ((uint)iy1 + gy * (uint)iz0);
-    uint i110 = (uint)ix1 + gx * ((uint)iy1 + gy * (uint)iz0);
-    uint i001 = (uint)ix0 + gx * ((uint)iy0 + gy * (uint)iz1);
-    uint i101 = (uint)ix1 + gx * ((uint)iy0 + gy * (uint)iz1);
-    uint i011 = (uint)ix0 + gx * ((uint)iy1 + gy * (uint)iz1);
-    uint i111 = (uint)ix1 + gx * ((uint)iy1 + gy * (uint)iz1);
+    uint i000 = (uint)ix0 * stride_x + (uint)iy0 * stride_y + (uint)iz0;
+    uint i100 = (uint)ix1 * stride_x + (uint)iy0 * stride_y + (uint)iz0;
+    uint i010 = (uint)ix0 * stride_x + (uint)iy1 * stride_y + (uint)iz0;
+    uint i110 = (uint)ix1 * stride_x + (uint)iy1 * stride_y + (uint)iz0;
+    uint i001 = (uint)ix0 * stride_x + (uint)iy0 * stride_y + (uint)iz1;
+    uint i101 = (uint)ix1 * stride_x + (uint)iy0 * stride_y + (uint)iz1;
+    uint i011 = (uint)ix0 * stride_x + (uint)iy1 * stride_y + (uint)iz1;
+    uint i111 = (uint)ix1 * stride_x + (uint)iy1 * stride_y + (uint)iz1;
 
     float w000 = wx0 * wy0 * wz0;
     float w100 = wx1 * wy0 * wz0;
@@ -2819,6 +2849,20 @@ kernel void pic_gather_update_particles_pilot_wave(
 
     float denom = psi_re * psi_re + psi_im * psi_im + p.eps_denom;
 
+    if (!isfinite(psi_re) || !isfinite(psi_im) ||
+        !isfinite(grad_re.x) || !isfinite(grad_re.y) || !isfinite(grad_re.z) ||
+        !isfinite(grad_im.x) || !isfinite(grad_im.y) || !isfinite(grad_im.z) ||
+        !isfinite(denom) || !(denom > 0.0f) ||
+        !isfinite(p.hbar_eff) || !isfinite(p.mass_min) || !(p.mass_min > 0.0f)) {
+        particle_pos_out[gid * 3 + 0] = pos.x;
+        particle_pos_out[gid * 3 + 1] = pos.y;
+        particle_pos_out[gid * 3 + 2] = pos.z;
+        particle_vel_out[gid * 3 + 0] = 0.0f;
+        particle_vel_out[gid * 3 + 1] = 0.0f;
+        particle_vel_out[gid * 3 + 2] = 0.0f;
+        return;
+    }
+
     // Im(conj(Ψ) ∇Ψ) = Ψ_re ∇Ψ_im - Ψ_im ∇Ψ_re
     float3 current = (psi_re * grad_im - psi_im * grad_re) / denom;
 
@@ -2830,6 +2874,17 @@ kernel void pic_gather_update_particles_pilot_wave(
     float3 pos_new = pos + v * p.dt;
     float3 domain = float3(p.domain_x, p.domain_y, p.domain_z);
     pos_new = pos_new - floor(pos_new / domain) * domain;
+
+    if (!isfinite(pos_new.x) || !isfinite(pos_new.y) || !isfinite(pos_new.z) ||
+        !isfinite(v.x) || !isfinite(v.y) || !isfinite(v.z)) {
+        particle_pos_out[gid * 3 + 0] = pos.x;
+        particle_pos_out[gid * 3 + 1] = pos.y;
+        particle_pos_out[gid * 3 + 2] = pos.z;
+        particle_vel_out[gid * 3 + 0] = 0.0f;
+        particle_vel_out[gid * 3 + 1] = 0.0f;
+        particle_vel_out[gid * 3 + 2] = 0.0f;
+        return;
+    }
 
     particle_pos_out[gid * 3 + 0] = pos_new.x;
     particle_pos_out[gid * 3 + 1] = pos_new.y;
@@ -2895,6 +2950,8 @@ inline float spatial_overlap_from_anchor_pos(
 ) {
     float sigma = spatial_sigma;
     if (!(sigma > 0.0f)) return 0.0f;
+    if (!isfinite(pos_i.x) || !isfinite(pos_i.y) || !isfinite(pos_i.z)) return 0.0f;
+
     float inv_4s2 = 1.0f / (4.0f * sigma * sigma);
     float sum_w = 0.0f;
     float sum_ov = 0.0f;
@@ -2908,8 +2965,12 @@ inline float spatial_overlap_from_anchor_pos(
             anchor_pos[pos_base + a * 3u + 1u],
             anchor_pos[pos_base + a * 3u + 2u]
         );
+        if (!isfinite(pos_a.x) || !isfinite(pos_a.y) || !isfinite(pos_a.z)) continue;
+
         float3 d = min_image_delta(pos_i - pos_a, domain);
         float r2 = dot(d, d);
+        if (!isfinite(r2)) continue;
+
         float r2_cutoff = 4.0f * sigma * sigma * kFp32ExpUnderflowX0;
 
         if (r2 >= r2_cutoff) {
@@ -2976,6 +3037,15 @@ kernel void coherence_prep_oscillator_coupling(
     float phi_i = osc_phase[gid];
     float omega_i = osc_omega[gid];
     float Q = particle_heat[gid];
+    if (!isfinite(Q) || Q < 0.0f) {
+        particle_heat[gid] = 0.0f;
+        osc_coupling_prep[prep_base + 0u] = 0.0f;
+        osc_coupling_prep[prep_base + 1u] = 0.0f;
+        osc_coupling_prep[prep_base + 2u] = 0.0f;
+        osc_coupling_prep[prep_base + 3u] = -1.0e9f;
+        return;
+    }
+
     float energy_i = amp_i * amp_i;
     float work_required = p.metabolic_rate * energy_i * p.dt;
     float coupling_factor = 1.0f;
@@ -3161,7 +3231,7 @@ kernel void coherence_accumulate_forces(
                         pos_i, carrier_anchor_pos, carrier_anchor_w, k, domain, p.spatial_sigma);
                     float w = (r * s) * eff_amp;
 
-                    if (w <= p.offender_weight_floor) continue;
+                    if (!isfinite(w) || w <= p.offender_weight_floor) continue;
 
                     uint local_k = k - tile_base;
                     threadgroup TGCarrierAccum& tg_acc = tg_accums[local_k];
@@ -3421,6 +3491,7 @@ kernel void coherence_update_oscillator_phases(
                 float cr = mode_real[k];
                 float ci = mode_imag[k];
 
+                if (!isfinite(cr) || !isfinite(ci)) continue;
                 if (cr == 0.0f && ci == 0.0f) continue;
 
                 float omega_k = mode_omega[k];
@@ -3428,17 +3499,35 @@ kernel void coherence_update_oscillator_phases(
                 float r = resonance_from_freq(omega_i, omega_k, gate_w);
                 float s = spatial_overlap_from_anchor_pos(
                     pos_i, mode_anchor_pos, mode_anchor_weight, k, domain, p.spatial_sigma);
+                if (!isfinite(r) || !isfinite(s)) continue;
+
                 float t = r * s;
+                if (!isfinite(t)) continue;
+
                 torque += t * amp_i * (ci * cphi - cr * sphi);
             }
         }
     }
 
     float dphi = omega_i + (p.coupling_scale + p.topdown_phase_scale) * torque;
+    if (!isfinite(dphi)) {
+        particle_phase[gid] = phi;
+        return;
+    }
+
+    float previous_phi = phi;
     phi += dphi * p.dt;
+    if (!isfinite(phi)) {
+        particle_phase[gid] = previous_phi;
+        return;
+    }
 
     // Wrap phase to [0, 2π)
     phi = phi - 2.0f * M_PI_F * floor(phi / (2.0f * M_PI_F));
+    if (!isfinite(phi)) {
+        return;
+    }
+
     particle_phase[gid] = phi;
 }
 
@@ -3564,9 +3653,7 @@ kernel void initialize_particle_properties(
     
     float3 center = float3(center_x, center_y, center_z);
     
-    // Velocity: toward center with small random component
-    float3 vel = (center - pos) * 0.01f;
-    vel += (float3(random_vals[gid * 4 + 0], random_vals[gid * 4 + 1], random_vals[gid * 4 + 2]) - 0.5f) * 0.1f;
+    float3 vel = float3(0.0f);
     
     // Energy: distance-based for cluster/sphere, random otherwise
     float energy;

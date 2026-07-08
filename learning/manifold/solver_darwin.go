@@ -472,6 +472,64 @@ func (s *BatchSolver) TopDimension() int {
 	return s.arch[len(s.arch)-1]
 }
 
+// TargetDim reports the supervised task-head dimension (0 when the V head is
+// disabled).
+func (s *BatchSolver) TargetDim() int {
+	if s == nil {
+		return 0
+	}
+
+	return s.targetDim
+}
+
+/*
+TaskPrediction computes the supervised task head's forward inference V·z for one
+slot: the linear read-out of the top latent through the trained V weights, matched
+to the tanh activation the learn pass applies. latent is the slot's top latent
+(as returned by OutcomeSlot/LatentState); passing it in avoids a redundant GPU
+read. Returns a targetDim-length prediction, or nil when the task head is disabled.
+*/
+func (s *BatchSolver) TaskPrediction(slot int, latent []float64) ([]float64, error) {
+	if err := s.validateSlot(slot); err != nil {
+		return nil, err
+	}
+
+	if s.targetDim <= 0 {
+		return nil, nil
+	}
+
+	top := s.arch[len(s.arch)-1]
+
+	if len(latent) != top {
+		return nil, fmt.Errorf("resonance: latent length %d does not match top dimension %d", len(latent), top)
+	}
+
+	_, _, _, v, err := s.Weights(slot)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(v) != s.targetDim*top {
+		return nil, fmt.Errorf("resonance: task weight length %d does not match targetDim*top %d", len(v), s.targetDim*top)
+	}
+
+	prediction := make([]float64, s.targetDim)
+
+	for row := 0; row < s.targetDim; row++ {
+		sum := 0.0
+
+		for col := 0; col < top; col++ {
+			sum += float64(v[row*top+col]) * latent[col]
+		}
+
+		// The task head is trained through a tanh activation (encGemv act:YES),
+		// so the forward read-out applies the same squashing.
+		prediction[row] = math.Tanh(sum)
+	}
+
+	return prediction, nil
+}
+
 func (s *BatchSolver) LatentState(slot int) ([]float64, error) {
 	topDim := s.arch[len(s.arch)-1]
 	buf := make([]float32, topDim)

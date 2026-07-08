@@ -149,9 +149,11 @@ static const uint32_t kReduceThreads = 256u;
                                  threadgroupCount:numGroups
                          threadgroupMemoryLength:kReduceThreads * 4u * sizeof(float)];
 
-    [self dispatchGridKernelSynchronized:self.reduceFloatStatsFinalize
-                                 buffers:@[self.reduceGroupStats, self.reduceStatsOut, numGroupsBuf]
-                             threadCount:1];
+    [self dispatchThreadgroupKernelSynchronized:self.reduceFloatStatsFinalize
+                                        buffers:@[self.reduceGroupStats, self.reduceStatsOut, numGroupsBuf]
+                                  threadgroupSize:kReduceThreads
+                                 threadgroupCount:1
+                         threadgroupMemoryLength:0];
 
     float *statsData = (float *)self.reduceStatsOut.contents;
     statsOut[0] = statsData[0];

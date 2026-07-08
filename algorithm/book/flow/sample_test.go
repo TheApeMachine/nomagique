@@ -1,4 +1,4 @@
-package algorithm
+package flow
 
 import (
 	"testing"
@@ -10,7 +10,7 @@ import (
 
 func TestBookflowSample_MeasureBook(testingTB *testing.T) {
 	Convey("Given repeated bid-heavy book frames", testingTB, func() {
-		sample := NewBookflowSample()
+		sample := NewSample()
 		bookflow := equation.NewBookflow()
 		classifier := probability.NewScoreClassifier(
 			[]string{"loadedScore", "spoofScore", "thinScore", "neutralScore"},
@@ -50,7 +50,7 @@ func TestBookflowSample_MeasureBook(testingTB *testing.T) {
 	})
 
 	Convey("Given a valid first book frame before feature history is ready", testingTB, func() {
-		sample := NewBookflowSample()
+		sample := NewSample()
 		input, ok, err := sample.MeasureBook(bookflowBookInput())
 
 		Convey("It should publish a feature sample from the first valid book frame", func() {
@@ -62,11 +62,11 @@ func TestBookflowSample_MeasureBook(testingTB *testing.T) {
 	})
 
 	Convey("Given repeated prices that resolve to the same exchange tick", testingTB, func() {
-		sample := NewBookflowSample()
+		sample := NewSample()
 		price := 100.1
 		tickSize := 0.1
 
-		_, _, err := sample.MeasureBook(BookflowBookInput{
+		_, _, err := sample.MeasureBook(BookInput{
 			Symbol:   "BTC/USD",
 			TickSize: tickSize,
 			Bids: []BookLevel{
@@ -78,7 +78,7 @@ func TestBookflowSample_MeasureBook(testingTB *testing.T) {
 		})
 		So(err, ShouldBeNil)
 
-		_, _, err = sample.MeasureBook(BookflowBookInput{
+		_, _, err = sample.MeasureBook(BookInput{
 			Symbol:   "BTC/USD",
 			TickSize: tickSize,
 			Bids: []BookLevel{
@@ -96,8 +96,8 @@ func TestBookflowSample_MeasureBook(testingTB *testing.T) {
 	})
 
 	Convey("Given a book frame without symbol", testingTB, func() {
-		sample := NewBookflowSample()
-		_, _, err := sample.MeasureBook(BookflowBookInput{
+		sample := NewSample()
+		_, _, err := sample.MeasureBook(BookInput{
 			Bids: []BookLevel{{Price: 100, Quantity: 10}},
 			Asks: []BookLevel{{Price: 101, Quantity: 10}},
 		})
@@ -110,11 +110,11 @@ func TestBookflowSample_MeasureBook(testingTB *testing.T) {
 
 func TestBookflowSample_MeasureTrade(testingTB *testing.T) {
 	Convey("Given trade pressure after book state", testingTB, func() {
-		sample := NewBookflowSample()
+		sample := NewSample()
 		_, _, err := sample.MeasureBook(bookflowBookInput())
 		So(err, ShouldBeNil)
 
-		input, ok, err := sample.MeasureTrade(BookflowTradeInput{
+		input, ok, err := sample.MeasureTrade(TradeInput{
 			Symbol:   "BTC/USD",
 			Side:     "buy",
 			Price:    100,
@@ -130,7 +130,7 @@ func TestBookflowSample_MeasureTrade(testingTB *testing.T) {
 }
 
 func BenchmarkBookflowSampleMeasureBook(benchmark *testing.B) {
-	sample := NewBookflowSample()
+	sample := NewSample()
 	input := bookflowBookInput()
 
 	benchmark.ReportAllocs()
@@ -140,10 +140,10 @@ func BenchmarkBookflowSampleMeasureBook(benchmark *testing.B) {
 	}
 }
 
-func bookflowBookInput() BookflowBookInput {
+func bookflowBookInput() BookInput {
 	tickSize := 1.0
 
-	return BookflowBookInput{
+	return BookInput{
 		Symbol:   "BTC/USD",
 		TickSize: tickSize,
 		Bids: []BookLevel{

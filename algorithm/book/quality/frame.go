@@ -1,11 +1,13 @@
-package algorithm
+package quality
 
 import (
 	"math"
 	"sort"
+
+	"github.com/theapemachine/nomagique/algorithm/book/flow"
 )
 
-type bookQualityFrame struct {
+type Frame struct {
 	cancelBid      float64
 	fillBid        float64
 	cancelAsk      float64
@@ -16,8 +18,8 @@ type bookQualityFrame struct {
 	touchCancelAsk float64
 }
 
-func bookQualityFrameAdd(frame *bookQualityFrame, side byte, quantity float64) {
-	if side == SideBid {
+func FrameAdd(frame *Frame, side byte, quantity float64) {
+	if side == flow.SideBid {
 		frame.addBid += quantity
 
 		return
@@ -26,8 +28,8 @@ func bookQualityFrameAdd(frame *bookQualityFrame, side byte, quantity float64) {
 	frame.addAsk += quantity
 }
 
-func bookQualityFrameFill(frame *bookQualityFrame, side byte, quantity float64) {
-	if side == SideBid {
+func FrameFill(frame *Frame, side byte, quantity float64) {
+	if side == flow.SideBid {
 		frame.fillBid += quantity
 
 		return
@@ -36,13 +38,13 @@ func bookQualityFrameFill(frame *bookQualityFrame, side byte, quantity float64) 
 	frame.fillAsk += quantity
 }
 
-func bookQualityFrameCancel(
-	frame *bookQualityFrame,
+func FrameCancel(
+	frame *Frame,
 	side byte,
 	quantity float64,
 	touch bool,
 ) {
-	if side == SideBid {
+	if side == flow.SideBid {
 		frame.cancelBid += quantity
 
 		if touch {
@@ -59,7 +61,7 @@ func bookQualityFrameCancel(
 	}
 }
 
-func bookQualityCancelFillRatio(cancel, fill float64) float64 {
+func CancelFillRatio(cancel, fill float64) float64 {
 	if cancel <= 0 || fill <= 0 {
 		return 0
 	}
@@ -67,12 +69,12 @@ func bookQualityCancelFillRatio(cancel, fill float64) float64 {
 	return cancel / fill
 }
 
-func bookQualityTradedAt(price float64, trades []float64) bool {
+func TradedAt(price float64, trades []float64) bool {
 	if price <= 0 || len(trades) == 0 {
 		return false
 	}
 
-	tolerance := bookQualityMedianAbsoluteDeviation(trades)
+	tolerance := MedianAbsoluteDeviation(trades)
 
 	for _, traded := range trades {
 		if math.Abs(traded-price) <= tolerance {
@@ -83,22 +85,22 @@ func bookQualityTradedAt(price float64, trades []float64) bool {
 	return false
 }
 
-func bookQualityMedianAbsoluteDeviation(values []float64) float64 {
+func MedianAbsoluteDeviation(values []float64) float64 {
 	if len(values) < 2 {
 		return 0
 	}
 
-	center := bookQualityMedian(values)
+	center := Median(values)
 	deviations := make([]float64, 0, len(values))
 
 	for _, value := range values {
 		deviations = append(deviations, math.Abs(value-center))
 	}
 
-	return bookQualityMedian(deviations)
+	return Median(deviations)
 }
 
-func bookQualityMedian(values []float64) float64 {
+func Median(values []float64) float64 {
 	if len(values) == 0 {
 		return 0
 	}

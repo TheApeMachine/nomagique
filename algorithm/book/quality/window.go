@@ -1,49 +1,50 @@
-package algorithm
+package quality
 
 import (
 	"math"
 
+	"github.com/theapemachine/nomagique/algorithm/book/flow"
 	"github.com/theapemachine/nomagique/equation"
 )
 
-type bookQualityWindow struct {
-	ledger          SideFlowLedger
-	vacuumGate      *GateQuantile
-	churnGate       *GateQuantile
-	cancelQtyGate   *GateQuantile
-	levelSizeGate   *GateQuantile
+type Window struct {
+	ledger          flow.SideFlowLedger
+	vacuumGate      *flow.GateQuantile
+	churnGate       *flow.GateQuantile
+	cancelQtyGate   *flow.GateQuantile
+	levelSizeGate   *flow.GateQuantile
 	vacuumLowPct    float64
 	prevTouchAddBid float64
 	prevTouchAddAsk float64
 	bids            map[float64]float64
 	asks            map[float64]float64
-	bidOrders       map[string]bookQualityOrder
-	askOrders       map[string]bookQualityOrder
+	bidOrders       map[string]Order
+	askOrders       map[string]Order
 	tradePrices     []float64
 	frameCount      int
 }
 
-type bookQualityOrder struct {
+type Order struct {
 	price float64
 	qty   float64
 }
 
-func newBookQualityWindow(config BookQualitySampleConfig) *bookQualityWindow {
-	return &bookQualityWindow{
-		vacuumGate:    NewGateQuantile(config.VacuumGate),
-		churnGate:     NewGateQuantile(config.ChurnGate),
-		cancelQtyGate: NewGateQuantile(config.CancelQtyGate),
-		levelSizeGate: NewGateQuantile(config.LevelSizeGate),
+func newWindow(config SampleConfig) *Window {
+	return &Window{
+		vacuumGate:    flow.NewGateQuantile(config.VacuumGate),
+		churnGate:     flow.NewGateQuantile(config.ChurnGate),
+		cancelQtyGate: flow.NewGateQuantile(config.CancelQtyGate),
+		levelSizeGate: flow.NewGateQuantile(config.LevelSizeGate),
 		vacuumLowPct:  config.VacuumLowPercentile,
 		bids:          map[float64]float64{},
 		asks:          map[float64]float64{},
-		bidOrders:     map[string]bookQualityOrder{},
-		askOrders:     map[string]bookQualityOrder{},
+		bidOrders:     map[string]Order{},
+		askOrders:     map[string]Order{},
 	}
 }
 
-func (window *bookQualityWindow) finish(
-	frame bookQualityFrame,
+func (window *Window) finish(
+	frame Frame,
 	level3 bool,
 ) equation.BookQualityInput {
 	window.frameCount++
@@ -53,12 +54,12 @@ func (window *bookQualityWindow) finish(
 		smoothing = 1
 	}
 
-	window.ledger.ApplyFlow(SideBid, frame.fillBid, frame.cancelBid, smoothing)
-	window.ledger.ApplyFlow(SideAsk, frame.fillAsk, frame.cancelAsk, smoothing)
+	window.ledger.ApplyFlow(flow.SideBid, frame.fillBid, frame.cancelBid, smoothing)
+	window.ledger.ApplyFlow(flow.SideAsk, frame.fillAsk, frame.cancelAsk, smoothing)
 
 	cancelBid, fillBid, cancelAsk, fillAsk, bidDepth, askDepth := window.ledger.Snapshot()
-	bidRatio := bookQualityCancelFillRatio(cancelBid, fillBid)
-	askRatio := bookQualityCancelFillRatio(cancelAsk, fillAsk)
+	bidRatio := CancelFillRatio(cancelBid, fillBid)
+	askRatio := CancelFillRatio(cancelAsk, fillAsk)
 	maxRatio := math.Max(bidRatio, askRatio)
 	churnRatio := window.churnRatio(frame)
 	lastPrice := window.midPrice()
@@ -81,16 +82,16 @@ func (window *bookQualityWindow) finish(
 		ToxicBluffStrength: toxicBluffStrength,
 		Threshold:          threshold,
 		ChurnGate:          churnGate,
-		SupportGate:        supportRatioGate(threshold, window.vacuumLow(), window.vacuumGate.Ready()),
-		VacuumStrengthCap:  vacuumStrengthLimit(threshold, maxRatio, window.vacuumPeak(), window.vacuumGate.Ready()),
+		SupportGate:        flow.SupportRatioGate(threshold, window.vacuumLow(), window.vacuumGate.Ready()),
+		VacuumStrengthCap:  flow.VacuumStrengthLimit(threshold, maxRatio, window.vacuumPeak(), window.vacuumGate.Ready()),
 		LastPrice:          lastPrice,
 	}
 }
 
-func (window *bookQualityWindow) observeLevels(
-	levels []BookLevel,
+func (window *Window) observeLevels(
+	levels []flow.BookLevel,
 	side byte,
-	frame *bookQualityFrame,
+	frame *Frame,
 ) {
 	book := window.sideBook(side)
 
@@ -106,7 +107,7 @@ func (window *bookQualityWindow) observeLevels(
 		if level.Quantity <= 0 {
 			delete(book, level.Price)
 			window.ledger.AddDepth(side, -previousQty)
-			bookQualityFrameCancel(frame, side, previousQty, touch)
+			FrameCancel(frame, side, previousQty, touch)
 
 			continue
 		}
@@ -115,25 +116,25 @@ func (window *bookQualityWindow) observeLevels(
 		window.ledger.AddDepth(side, delta)
 
 		if delta > 0 {
-			bookQualityFrameAdd(frame, side, delta)
+			FrameAdd(frame, side, delta)
 
 			if previousQty > 0 && touch {
-				bookQualityFrameFill(frame, side, delta)
+				FrameFill(frame, side, delta)
 			}
 
 			continue
 		}
 
 		if delta < 0 {
-			bookQualityFrameCancel(frame, side, -delta, touch)
+			FrameCancel(frame, side, -delta, touch)
 		}
 	}
 }
 
-func (window *bookQualityWindow) observeOrderEvents(
-	events []BookQualityOrderEvent,
+func (window *Window) observeOrderEvents(
+	events []OrderEvent,
 	side byte,
-	frame *bookQualityFrame,
+	frame *Frame,
 ) {
 	for _, event := range events {
 		if event.Price <= 0 {
@@ -160,22 +161,22 @@ func (window *bookQualityWindow) observeOrderEvents(
 			continue
 		}
 
-		if bookQualityTradedAt(event.Price, window.tradePrices) {
-			bookQualityFrameFill(frame, side, removed)
+		if TradedAt(event.Price, window.tradePrices) {
+			FrameFill(frame, side, removed)
 
 			continue
 		}
 
-		bookQualityFrameCancel(frame, side, removed, touch)
+		FrameCancel(frame, side, removed, touch)
 	}
 }
 
-func (window *bookQualityWindow) upsertOrder(
+func (window *Window) upsertOrder(
 	side byte,
 	orderID string,
 	price float64,
 	quantity float64,
-	frame *bookQualityFrame,
+	frame *Frame,
 ) {
 	orders := window.sideOrders(side)
 	book := window.sideBook(side)
@@ -191,16 +192,16 @@ func (window *bookQualityWindow) upsertOrder(
 		window.ledger.AddDepth(side, -previous.qty)
 	}
 
-	orders[orderID] = bookQualityOrder{price: price, qty: quantity}
+	orders[orderID] = Order{price: price, qty: quantity}
 	book[price] += quantity
 	window.ledger.AddDepth(side, quantity)
 
 	if quantity > previous.qty {
-		bookQualityFrameAdd(frame, side, quantity-previous.qty)
+		FrameAdd(frame, side, quantity-previous.qty)
 	}
 }
 
-func (window *bookQualityWindow) deleteOrder(
+func (window *Window) deleteOrder(
 	side byte,
 	orderID string,
 	price float64,

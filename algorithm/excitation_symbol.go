@@ -9,6 +9,7 @@ import (
 	"github.com/theapemachine/nomagique/hawkes"
 	"github.com/theapemachine/nomagique/probability"
 	"github.com/theapemachine/nomagique/statistic"
+	"github.com/theapemachine/nomagique/utils"
 )
 
 const bivariateParamCount = 7
@@ -281,7 +282,7 @@ func (symbol *excitationSymbol) recordFitGates(spectralRadius, asymmetry float64
 		return
 	}
 
-	symbol.spectralRadii = appendRingFloat(symbol.spectralRadii, spectralRadius, capacity)
+	symbol.spectralRadii = utils.AppendRingFloat(symbol.spectralRadii, spectralRadius, capacity)
 
 	capacity, err = fitGateHistoryCapacity(symbol.asymmetries)
 
@@ -295,7 +296,7 @@ func (symbol *excitationSymbol) recordFitGates(spectralRadius, asymmetry float64
 		return
 	}
 
-	symbol.asymmetries = appendRingFloat(symbol.asymmetries, asymmetry, capacity)
+	symbol.asymmetries = utils.AppendRingFloat(symbol.asymmetries, asymmetry, capacity)
 }
 
 func fitGateHistoryCapacity(history []float64) (int, error) {

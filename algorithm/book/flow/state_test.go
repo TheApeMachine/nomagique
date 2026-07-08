@@ -1,4 +1,4 @@
-package algorithm
+package flow
 
 import (
 	"math"
@@ -201,19 +201,19 @@ func TestGateQuantile(testingTB *testing.T) {
 		Convey("It should derive quantile gates", func() {
 			So(runGateSample(churnGate, 0, 0), ShouldBeGreaterThan, 0)
 			So(runGateSample(fillMatchGate, 0, 0), ShouldBeGreaterThan, 0)
-			So(largeBlockQtyThreshold(
+			So(LargeBlockQtyThreshold(
 				100, 0,
 				runGateSample(cancelQtyGate, 0, 0),
 				runGateSample(levelSizeGate, 0, 0),
 				cancelQtyGate.Ready(),
 				levelSizeGate.Ready(),
 			), ShouldBeGreaterThan, 0)
-			So(vacuumStrengthLimit(
+			So(VacuumStrengthLimit(
 				0.5, 0,
 				runGateSample(vacuumGate, 0, 0),
 				vacuumGate.Ready(),
 			), ShouldBeGreaterThan, 0)
-			So(supportRatioGate(
+			So(SupportRatioGate(
 				0.5,
 				runGateSample(vacuumGate, 0, 0.25),
 				vacuumGate.Ready(),
@@ -223,14 +223,14 @@ func TestGateQuantile(testingTB *testing.T) {
 
 	Convey("Given zero side depth", testingTB, func() {
 		Convey("It should return infinite block threshold", func() {
-			threshold := largeBlockQtyThreshold(0, 5, 0, 0, false, false)
+			threshold := LargeBlockQtyThreshold(0, 5, 0, 0, false, false)
 			So(math.IsInf(threshold, 1), ShouldBeTrue)
 		})
 	})
 
 	Convey("Given median level fallback", testingTB, func() {
 		Convey("It should use median level quantity", func() {
-			So(largeBlockQtyThreshold(100, 7, 0, 0, false, false), ShouldEqual, 7)
+			So(LargeBlockQtyThreshold(100, 7, 0, 0, false, false), ShouldEqual, 7)
 		})
 	})
 }
@@ -255,6 +255,16 @@ func TestGateQuantile_Observe(testingTB *testing.T) {
 			So(gate.Ready(), ShouldBeTrue)
 			So(gate.Value(0), ShouldBeGreaterThan, 0)
 			So(gate.Value(0.25), ShouldBeGreaterThan, 0)
+		})
+	})
+}
+
+func TestGateQuantile_ConfiguredPercentile(testingTB *testing.T) {
+	Convey("Given a direct gate stage with configured percentile", testingTB, func() {
+		gate := NewGateQuantile(GateQuantileConfig{Percentile: 0.75, MinSamples: 3})
+
+		Convey("It should expose the configured percentile", func() {
+			So(gate.ConfiguredPercentile(), ShouldEqual, 0.75)
 		})
 	})
 }

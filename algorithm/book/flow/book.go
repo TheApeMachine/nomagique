@@ -1,4 +1,4 @@
-package algorithm
+package flow
 
 import (
 	"math"
@@ -7,44 +7,44 @@ import (
 	"github.com/theapemachine/nomagique/statistic"
 )
 
-type bookflowBook struct {
+type Book struct {
 	tickSize float64
-	bids     *bookflowSideBook
-	asks     *bookflowSideBook
+	bids     *SideBook
+	asks     *SideBook
 }
 
-type bookflowSideBook struct {
+type SideBook struct {
 	side   byte
 	levels map[int64]float64
 	ticks  []int64
 }
 
-type bookflowFrame struct {
+type Frame struct {
 	touchCancel float64
 	frameAdd    float64
 }
 
-func newBookflowBook() *bookflowBook {
-	return &bookflowBook{
-		bids: newBookflowSideBook(SideBid),
-		asks: newBookflowSideBook(SideAsk),
+func NewBook() *Book {
+	return &Book{
+		bids: NewSideBook(SideBid),
+		asks: NewSideBook(SideAsk),
 	}
 }
 
-func newBookflowSideBook(side byte) *bookflowSideBook {
-	return &bookflowSideBook{
+func NewSideBook(side byte) *SideBook {
+	return &SideBook{
 		side:   side,
 		levels: map[int64]float64{},
 	}
 }
 
-func (book *bookflowBook) Configure(input BookflowBookInput) error {
+func (book *Book) Configure(input BookInput) error {
 	tickSize := input.TickSize
 
 	if tickSize <= 0 || math.IsNaN(tickSize) || math.IsInf(tickSize, 0) {
 		return errnie.Error(errnie.Err(
 			errnie.Validation,
-			"bookflow-sample: positive finite tick size required",
+			"-sample: positive finite tick size required",
 			nil,
 		))
 	}
@@ -56,7 +56,7 @@ func (book *bookflowBook) Configure(input BookflowBookInput) error {
 	if book.tickSize > 0 {
 		return errnie.Error(errnie.Err(
 			errnie.Validation,
-			"bookflow-sample: tick size changed for active book",
+			"-sample: tick size changed for active book",
 			nil,
 		))
 	}
@@ -66,14 +66,14 @@ func (book *bookflowBook) Configure(input BookflowBookInput) error {
 	return nil
 }
 
-func (book *bookflowBook) ApplyLevels(
+func (book *Book) ApplyLevels(
 	levels []BookLevel,
 	side byte,
-) (bookflowFrame, error) {
+) (Frame, error) {
 	return book.side(side).Apply(levels, book.tickSize)
 }
 
-func (book *bookflowBook) Mid() float64 {
+func (book *Book) Mid() float64 {
 	bestBid := book.bids.Best(book.tickSize)
 	bestAsk := book.asks.Best(book.tickSize)
 
@@ -84,7 +84,7 @@ func (book *bookflowBook) Mid() float64 {
 	return (bestBid + bestAsk) / 2
 }
 
-func (book *bookflowBook) Spread() float64 {
+func (book *Book) Spread() float64 {
 	bestBid := book.bids.Best(book.tickSize)
 	bestAsk := book.asks.Best(book.tickSize)
 
@@ -95,21 +95,21 @@ func (book *bookflowBook) Spread() float64 {
 	return bestAsk - bestBid
 }
 
-func (book *bookflowBook) TouchDepth() float64 {
+func (book *Book) TouchDepth() float64 {
 	return book.bids.TouchQty() + book.asks.TouchQty()
 }
 
-func (book *bookflowBook) SideDepth(side byte) float64 {
+func (book *Book) SideDepth(side byte) float64 {
 	return book.side(side).Depth()
 }
 
-func (book *bookflowBook) FlatDepth() (int, error) {
+func (book *Book) FlatDepth() (int, error) {
 	levelCount := book.bids.Len() + book.asks.Len()
 
 	if levelCount < 2 {
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
-			"bookflow-sample: flat depth needs at least two levels",
+			"-sample: flat depth needs at least two levels",
 			nil,
 		))
 	}
@@ -119,7 +119,7 @@ func (book *bookflowBook) FlatDepth() (int, error) {
 	if err != nil {
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
-			"bookflow-sample: flat depth window resolution failed",
+			"-sample: flat depth window resolution failed",
 			err,
 		))
 	}
@@ -137,7 +137,7 @@ func (book *bookflowBook) FlatDepth() (int, error) {
 	return flatDepth, nil
 }
 
-func (book *bookflowBook) Imbalance(
+func (book *Book) Imbalance(
 	mid float64,
 	decayRate float64,
 	touchOnly bool,
@@ -165,7 +165,7 @@ func (book *bookflowBook) Imbalance(
 	return (bidWeight - askWeight) / total
 }
 
-func (book *bookflowBook) side(side byte) *bookflowSideBook {
+func (book *Book) side(side byte) *SideBook {
 	if side == SideBid {
 		return book.bids
 	}
@@ -173,23 +173,23 @@ func (book *bookflowBook) side(side byte) *bookflowSideBook {
 	return book.asks
 }
 
-func (sideBook *bookflowSideBook) Apply(
+func (sideBook *SideBook) Apply(
 	levels []BookLevel,
 	tickSize float64,
-) (bookflowFrame, error) {
-	frame := bookflowFrame{}
+) (Frame, error) {
+	frame := Frame{}
 
 	for _, level := range levels {
-		tick, err := bookflowLevelTick(level)
+		tick, err := LevelTick(level)
 
 		if err != nil {
-			return bookflowFrame{}, err
+			return Frame{}, err
 		}
 
 		if math.IsNaN(level.Quantity) || math.IsInf(level.Quantity, 0) || level.Quantity < 0 {
-			return bookflowFrame{}, errnie.Error(errnie.Err(
+			return Frame{}, errnie.Error(errnie.Err(
 				errnie.Validation,
-				"bookflow-sample: level quantity must be finite and non-negative",
+				"-sample: level quantity must be finite and non-negative",
 				nil,
 			))
 		}
@@ -224,17 +224,17 @@ func (sideBook *bookflowSideBook) Apply(
 	return frame, nil
 }
 
-func (sideBook *bookflowSideBook) Best(tickSize float64) float64 {
+func (sideBook *SideBook) Best(tickSize float64) float64 {
 	tick, ok := sideBook.bestTick()
 
 	if !ok {
 		return 0
 	}
 
-	return bookflowTickPrice(tick, tickSize)
+	return TickPrice(tick, tickSize)
 }
 
-func (sideBook *bookflowSideBook) TouchQty() float64 {
+func (sideBook *SideBook) TouchQty() float64 {
 	tick, ok := sideBook.bestTick()
 
 	if !ok {
@@ -244,7 +244,7 @@ func (sideBook *bookflowSideBook) TouchQty() float64 {
 	return sideBook.levels[tick]
 }
 
-func (sideBook *bookflowSideBook) Depth() float64 {
+func (sideBook *SideBook) Depth() float64 {
 	depth := 0.0
 
 	for _, quantity := range sideBook.levels {
@@ -254,7 +254,7 @@ func (sideBook *bookflowSideBook) Depth() float64 {
 	return depth
 }
 
-func (sideBook *bookflowSideBook) SideWeight(
+func (sideBook *SideBook) SideWeight(
 	mid float64,
 	decayRate float64,
 	touchOnly bool,
@@ -278,7 +278,7 @@ func (sideBook *bookflowSideBook) SideWeight(
 			remaining--
 		}
 
-		price := bookflowTickPrice(tick, tickSize)
+		price := TickPrice(tick, tickSize)
 		distance := math.Abs(price-mid) / mid
 		kernel := math.Exp(-decayRate * distance)
 		weight += sideBook.levels[tick] * kernel
@@ -287,11 +287,11 @@ func (sideBook *bookflowSideBook) SideWeight(
 	return weight
 }
 
-func (sideBook *bookflowSideBook) Len() int {
+func (sideBook *SideBook) Len() int {
 	return len(sideBook.levels)
 }
 
-func (sideBook *bookflowSideBook) bestTick() (int64, bool) {
+func (sideBook *SideBook) bestTick() (int64, bool) {
 	var bestTick int64
 	ok := false
 
@@ -315,7 +315,7 @@ func (sideBook *bookflowSideBook) bestTick() (int64, bool) {
 	return bestTick, ok
 }
 
-func (sideBook *bookflowSideBook) sortedTicks(mid float64, tickSize float64) []int64 {
+func (sideBook *SideBook) sortedTicks(mid float64, tickSize float64) []int64 {
 	sideBook.ticks = sideBook.ticks[:0]
 
 	for tick := range sideBook.levels {
@@ -326,8 +326,8 @@ func (sideBook *bookflowSideBook) sortedTicks(mid float64, tickSize float64) []i
 		cursor := sideBook.ticks[left]
 
 		for index := left - 1; index >= 0; index-- {
-			leftPrice := bookflowTickPrice(sideBook.ticks[index], tickSize)
-			cursorPrice := bookflowTickPrice(cursor, tickSize)
+			leftPrice := TickPrice(sideBook.ticks[index], tickSize)
+			cursorPrice := TickPrice(cursor, tickSize)
 			leftDistance := math.Abs(leftPrice - mid)
 			cursorDistance := math.Abs(cursorPrice - mid)
 
@@ -343,7 +343,7 @@ func (sideBook *bookflowSideBook) sortedTicks(mid float64, tickSize float64) []i
 	return sideBook.ticks
 }
 
-func (sideBook *bookflowSideBook) isTouchTick(tick int64) bool {
+func (sideBook *SideBook) isTouchTick(tick int64) bool {
 	bestTick, ok := sideBook.bestTick()
 
 	return ok && bestTick == tick

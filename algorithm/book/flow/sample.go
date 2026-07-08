@@ -1,21 +1,22 @@
-package algorithm
+package flow
 
 import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/equation"
 	"github.com/theapemachine/nomagique/statistic"
+	"github.com/theapemachine/nomagique/utils"
 )
 
 const (
-	bookflowSampleHistoryCap = 64
+	SampleHistoryCap = 64
 )
 
 /*
-BookflowSample accumulates book and trade frames into the feature batch Bookflow expects.
+Sample accumulates book and trade frames into the feature batch  expects.
 Decay rate and history windows are derived from observed spread and imbalance history.
 */
-type BookflowSample struct {
-	windows map[string]*bookflowWindow
+type Sample struct {
+	windows map[string]*Window
 }
 
 /*
@@ -28,9 +29,9 @@ type BookLevel struct {
 }
 
 /*
-BookflowBookInput is one book update for a symbol.
+BookInput is one book update for a symbol.
 */
-type BookflowBookInput struct {
+type BookInput struct {
 	Symbol   string
 	TickSize float64
 	Bids     []BookLevel
@@ -38,17 +39,17 @@ type BookflowBookInput struct {
 }
 
 /*
-BookflowTradeInput is one trade update for a symbol.
+TradeInput is one trade update for a symbol.
 */
-type BookflowTradeInput struct {
+type TradeInput struct {
 	Symbol   string
 	Price    float64
 	Quantity float64
 	Side     string
 }
 
-type bookflowWindow struct {
-	book            *bookflowBook
+type Window struct {
+	book            *Book
 	weightedHist    []float64
 	level1Hist      []float64
 	flatHist        []float64
@@ -65,46 +66,46 @@ type bookflowWindow struct {
 }
 
 /*
-NewBookflowSample returns a book/trade sampler for depth-flow classification.
+NewSample returns a book/trade sampler for depth-flow classification.
 */
-func NewBookflowSample() *BookflowSample {
-	return &BookflowSample{
-		windows: map[string]*bookflowWindow{},
+func NewSample() *Sample {
+	return &Sample{
+		windows: map[string]*Window{},
 	}
 }
 
 /*
 MeasureBook observes one book update and returns book-flow input when ready.
 */
-func (bookflowSample *BookflowSample) MeasureBook(
-	input BookflowBookInput,
+func (Sample *Sample) MeasureBook(
+	input BookInput,
 ) (equation.BookflowInput, bool, error) {
 	if input.Symbol == "" {
 		return equation.BookflowInput{}, false, errnie.Error(errnie.Err(
 			errnie.Validation,
-			"bookflow-sample: symbol required",
+			"-sample: symbol required",
 			nil,
 		))
 	}
 
-	window := bookflowSample.window(input.Symbol)
-	if err := bookflowSample.ingestBook(input, window); err != nil {
+	window := Sample.window(input.Symbol)
+	if err := Sample.ingestBook(input, window); err != nil {
 		return equation.BookflowInput{}, false, err
 	}
 
-	return bookflowSample.features(window)
+	return Sample.features(window)
 }
 
 /*
 MeasureTrade observes one trade update and returns book-flow input when ready.
 */
-func (bookflowSample *BookflowSample) MeasureTrade(
-	input BookflowTradeInput,
+func (Sample *Sample) MeasureTrade(
+	input TradeInput,
 ) (equation.BookflowInput, bool, error) {
 	if input.Symbol == "" {
 		return equation.BookflowInput{}, false, errnie.Error(errnie.Err(
 			errnie.Validation,
-			"bookflow-sample: symbol required",
+			"-sample: symbol required",
 			nil,
 		))
 	}
@@ -112,36 +113,36 @@ func (bookflowSample *BookflowSample) MeasureTrade(
 	if input.Price <= 0 || input.Quantity <= 0 {
 		return equation.BookflowInput{}, false, errnie.Error(errnie.Err(
 			errnie.Validation,
-			"bookflow-sample: trade price and quantity required",
+			"-sample: trade price and quantity required",
 			nil,
 		))
 	}
 
-	window := bookflowSample.window(input.Symbol)
-	bookflowSample.ingestTrade(input, window)
+	window := Sample.window(input.Symbol)
+	Sample.ingestTrade(input, window)
 
-	return bookflowSample.features(window)
+	return Sample.features(window)
 }
 
-func (bookflowSample *BookflowSample) window(symbol string) *bookflowWindow {
-	existing, ok := bookflowSample.windows[symbol]
+func (Sample *Sample) window(symbol string) *Window {
+	existing, ok := Sample.windows[symbol]
 
 	if ok {
 		return existing
 	}
 
-	window := &bookflowWindow{
-		book: newBookflowBook(),
+	window := &Window{
+		book: NewBook(),
 	}
 
-	bookflowSample.windows[symbol] = window
+	Sample.windows[symbol] = window
 
 	return window
 }
 
-func (bookflowSample *BookflowSample) ingestBook(
-	input BookflowBookInput,
-	window *bookflowWindow,
+func (Sample *Sample) ingestBook(
+	input BookInput,
+	window *Window,
 ) error {
 	window.touchCancelBid = 0
 	window.touchCancelAsk = 0
@@ -175,10 +176,10 @@ func (bookflowSample *BookflowSample) ingestBook(
 		return nil
 	}
 
-	decayRate := bookflowDecayRate(mid, spread)
+	decayRate := DecayRate(mid, spread)
 	touchDepth := window.book.TouchDepth()
-	toxicBid := bookflowToxicPenalty(window.touchCancelBid, window.frameAddBid, touchDepth)
-	toxicAsk := bookflowToxicPenalty(window.touchCancelAsk, window.frameAddAsk, touchDepth)
+	toxicBid := ToxicPenalty(window.touchCancelBid, window.frameAddBid, touchDepth)
+	toxicAsk := ToxicPenalty(window.touchCancelAsk, window.frameAddAsk, touchDepth)
 	weighted := window.book.Imbalance(mid, decayRate, false, 0, toxicBid, toxicAsk)
 	level1 := window.book.Imbalance(mid, decayRate, true, 0, toxicBid, toxicAsk)
 	flatDepth, err := window.book.FlatDepth()
@@ -187,13 +188,13 @@ func (bookflowSample *BookflowSample) ingestBook(
 	window.lastSpread = spread
 	window.touchDepth = touchDepth
 	window.flatOK = 1
-	window.weightedHist = appendRingFloat(window.weightedHist, weighted, bookflowSampleHistoryCap)
-	window.level1Hist = appendRingFloat(window.level1Hist, level1, bookflowSampleHistoryCap)
+	window.weightedHist = utils.AppendRingFloat(window.weightedHist, weighted, SampleHistoryCap)
+	window.level1Hist = utils.AppendRingFloat(window.level1Hist, level1, SampleHistoryCap)
 
 	if err != nil {
 		return errnie.Error(errnie.Err(
 			errnie.Validation,
-			"bookflow-sample: flat depth resolution failed",
+			"-sample: flat depth resolution failed",
 			err,
 		))
 	}
@@ -203,14 +204,14 @@ func (bookflowSample *BookflowSample) ingestBook(
 	}
 
 	flat := window.book.Imbalance(mid, decayRate, false, flatDepth, toxicBid, toxicAsk)
-	window.flatHist = appendRingFloat(window.flatHist, flat, bookflowSampleHistoryCap)
+	window.flatHist = utils.AppendRingFloat(window.flatHist, flat, SampleHistoryCap)
 
 	return nil
 }
 
-func (bookflowSample *BookflowSample) ingestTrade(
-	input BookflowTradeInput,
-	window *bookflowWindow,
+func (Sample *Sample) ingestTrade(
+	input TradeInput,
+	window *Window,
 ) {
 	notional := input.Price * input.Quantity
 	signedNotional := notional
@@ -229,8 +230,8 @@ func (bookflowSample *BookflowSample) ingestTrade(
 	window.tradePressure += smoothing * (signedNotional - window.tradePressure)
 }
 
-func (bookflowSample *BookflowSample) features(
-	window *bookflowWindow,
+func (Sample *Sample) features(
+	window *Window,
 ) (equation.BookflowInput, bool, error) {
 	historyCount := len(window.weightedHist)
 

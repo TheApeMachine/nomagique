@@ -5,6 +5,7 @@ import (
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/nomagique/algorithm/book/flow"
 )
 
 func TestTradeExcitationSample_MeasureTrade(testingTB *testing.T) {
@@ -109,13 +110,13 @@ func tradeExcitationInput(symbol string, side string, at time.Time) TradeExcitat
 	}
 }
 
-func bookTouchInput(symbol string, bidQty, askQty float64) BookflowBookInput {
-	return BookflowBookInput{
+func bookTouchInput(symbol string, bidQty, askQty float64) flow.BookInput {
+	return flow.BookInput{
 		Symbol: symbol,
-		Bids: []BookLevel{
+		Bids: []flow.BookLevel{
 			{Price: 1, Quantity: bidQty},
 		},
-		Asks: []BookLevel{
+		Asks: []flow.BookLevel{
 			{Price: 1.01, Quantity: askQty},
 		},
 	}

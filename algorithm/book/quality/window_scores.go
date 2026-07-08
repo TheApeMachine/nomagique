@@ -1,32 +1,36 @@
-package algorithm
+package quality
 
-import "math"
+import (
+	"math"
 
-func (window *bookQualityWindow) sideBook(side byte) map[float64]float64 {
-	if side == SideBid {
+	"github.com/theapemachine/nomagique/algorithm/book/flow"
+)
+
+func (window *Window) sideBook(side byte) map[float64]float64 {
+	if side == flow.SideBid {
 		return window.bids
 	}
 
 	return window.asks
 }
 
-func (window *bookQualityWindow) sideOrders(side byte) map[string]bookQualityOrder {
-	if side == SideBid {
+func (window *Window) sideOrders(side byte) map[string]Order {
+	if side == flow.SideBid {
 		return window.bidOrders
 	}
 
 	return window.askOrders
 }
 
-func (window *bookQualityWindow) isTouchPrice(side byte, price float64) bool {
-	if side == SideBid {
+func (window *Window) isTouchPrice(side byte, price float64) bool {
+	if side == flow.SideBid {
 		return price == window.bestBid()
 	}
 
 	return price == window.bestAsk()
 }
 
-func (window *bookQualityWindow) bestBid() float64 {
+func (window *Window) bestBid() float64 {
 	best := 0.0
 
 	for price := range window.bids {
@@ -38,7 +42,7 @@ func (window *bookQualityWindow) bestBid() float64 {
 	return best
 }
 
-func (window *bookQualityWindow) bestAsk() float64 {
+func (window *Window) bestAsk() float64 {
 	best := 0.0
 
 	for price := range window.asks {
@@ -50,7 +54,7 @@ func (window *bookQualityWindow) bestAsk() float64 {
 	return best
 }
 
-func (window *bookQualityWindow) midPrice() float64 {
+func (window *Window) midPrice() float64 {
 	bestBid := window.bestBid()
 	bestAsk := window.bestAsk()
 
@@ -65,7 +69,7 @@ func (window *bookQualityWindow) midPrice() float64 {
 	return bestAsk
 }
 
-func (window *bookQualityWindow) threshold(maxRatio float64) float64 {
+func (window *Window) threshold(maxRatio float64) float64 {
 	threshold := window.vacuumGate.Value(0)
 	vacuumLow := window.vacuumLow()
 
@@ -76,15 +80,15 @@ func (window *bookQualityWindow) threshold(maxRatio float64) float64 {
 	return threshold
 }
 
-func (window *bookQualityWindow) vacuumLow() float64 {
+func (window *Window) vacuumLow() float64 {
 	return window.vacuumGate.Value(window.resolvedVacuumLowPercentile())
 }
 
-func (window *bookQualityWindow) vacuumPeak() float64 {
+func (window *Window) vacuumPeak() float64 {
 	return window.vacuumGate.Value(0)
 }
 
-func (window *bookQualityWindow) churnRatio(frame bookQualityFrame) float64 {
+func (window *Window) churnRatio(frame Frame) float64 {
 	churnRatio := 0.0
 
 	if frame.addBid > 0 && frame.touchCancelBid > 0 {
@@ -110,7 +114,7 @@ func (window *bookQualityWindow) churnRatio(frame bookQualityFrame) float64 {
 	return churnRatio
 }
 
-func (window *bookQualityWindow) previousChurn(frame bookQualityFrame) float64 {
+func (window *Window) previousChurn(frame Frame) float64 {
 	churnRatio := 0.0
 
 	if frame.addBid <= 0 && frame.touchCancelBid > 0 && window.prevTouchAddBid > 0 {
@@ -124,8 +128,8 @@ func (window *bookQualityWindow) previousChurn(frame bookQualityFrame) float64 {
 	return churnRatio
 }
 
-func (window *bookQualityWindow) toxicity(
-	frame bookQualityFrame,
+func (window *Window) toxicity(
+	frame Frame,
 	churnRatio float64,
 	churnGate float64,
 	lastPrice float64,
@@ -135,8 +139,8 @@ func (window *bookQualityWindow) toxicity(
 	}
 
 	proximity := window.touchProximity(lastPrice)
-	sizeThreshold := largeBlockQtyThreshold(
-		window.ledger.SideDepth(SideBid),
+	sizeThreshold := flow.LargeBlockQtyThreshold(
+		window.ledger.SideDepth(flow.SideBid),
 		window.medianLevelQty(),
 		window.cancelQtyGate.Value(0),
 		window.levelSizeGate.Value(0),
@@ -159,7 +163,7 @@ func (window *bookQualityWindow) toxicity(
 	)
 }
 
-func (window *bookQualityWindow) toxicSide(
+func (window *Window) toxicSide(
 	touchCancel float64,
 	addVolume float64,
 	previousAddVolume float64,
@@ -181,7 +185,7 @@ func (window *bookQualityWindow) toxicSide(
 	}
 
 	distance := math.Abs(price-lastPrice) / lastPrice
-	evidence, err := ToxicChurnEvidence(
+	evidence, err := flow.ToxicChurnEvidence(
 		churnRatio, churnGate, addVolume, sizeThreshold, distance, proximity,
 	)
 
@@ -192,7 +196,7 @@ func (window *bookQualityWindow) toxicSide(
 	return true, math.Max(toxicBluffStrength, churnRatio)
 }
 
-func (window *bookQualityWindow) touchProximity(mid float64) float64 {
+func (window *Window) touchProximity(mid float64) float64 {
 	bestBid := window.bestBid()
 	bestAsk := window.bestAsk()
 
@@ -209,7 +213,7 @@ func (window *bookQualityWindow) touchProximity(mid float64) float64 {
 	return spread
 }
 
-func (window *bookQualityWindow) medianLevelQty() float64 {
+func (window *Window) medianLevelQty() float64 {
 	quantities := make([]float64, 0, len(window.bids)+len(window.asks))
 
 	for _, qty := range window.bids {
@@ -224,10 +228,10 @@ func (window *bookQualityWindow) medianLevelQty() float64 {
 		}
 	}
 
-	return bookQualityMedian(quantities)
+	return Median(quantities)
 }
 
-func (window *bookQualityWindow) resolvedGatePercentile(configured float64, highSelectivity bool) float64 {
+func (window *Window) resolvedGatePercentile(configured float64, highSelectivity bool) float64 {
 	if configured > 0 {
 		return configured
 	}
@@ -249,7 +253,7 @@ func (window *bookQualityWindow) resolvedGatePercentile(configured float64, high
 	return floor + (ceiling-floor)*ramp
 }
 
-func (window *bookQualityWindow) resolvedVacuumLowPercentile() float64 {
+func (window *Window) resolvedVacuumLowPercentile() float64 {
 	if window.vacuumLowPct > 0 {
 		return window.vacuumLowPct
 	}
@@ -259,12 +263,12 @@ func (window *bookQualityWindow) resolvedVacuumLowPercentile() float64 {
 	return math.Max(0.1, highBand*0.25)
 }
 
-func (window *bookQualityWindow) runGate(
-	gate *GateQuantile,
+func (window *Window) runGate(
+	gate *flow.GateQuantile,
 	sample float64,
 	percentile float64,
 ) float64 {
-	if percentile <= 0 && gate.percentile <= 0 {
+	if percentile <= 0 && gate.ConfiguredPercentile() <= 0 {
 		highSelectivity := gate == window.vacuumGate || gate == window.churnGate ||
 			gate == window.levelSizeGate
 		percentile = window.resolvedGatePercentile(0, highSelectivity)

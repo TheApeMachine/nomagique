@@ -4,8 +4,10 @@ import (
 	"math"
 
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/nomagique/algorithm/book/flow"
 	"github.com/theapemachine/nomagique/equation"
 	"github.com/theapemachine/nomagique/statistic"
+	"github.com/theapemachine/nomagique/utils"
 )
 
 const (
@@ -22,7 +24,7 @@ type DecaySample struct {
 }
 
 type decayWindow struct {
-	book          *bookflowBook
+	book          *flow.Book
 	bidDepthHist  []float64
 	askDepthHist  []float64
 	densityHist   []float64
@@ -47,7 +49,7 @@ func NewDecaySample() *DecaySample {
 MeasureBook observes one book update and returns decay input when ready.
 */
 func (decaySample *DecaySample) MeasureBook(
-	input BookflowBookInput,
+	input flow.BookInput,
 ) (equation.DecayInput, bool, error) {
 	if input.Symbol == "" {
 		return equation.DecayInput{}, false, errnie.Error(errnie.Err(
@@ -69,7 +71,7 @@ func (decaySample *DecaySample) MeasureBook(
 MeasureTrade observes one trade update and returns decay input when ready.
 */
 func (decaySample *DecaySample) MeasureTrade(
-	input BookflowTradeInput,
+	input flow.TradeInput,
 ) (equation.DecayInput, bool, error) {
 	if input.Symbol == "" {
 		return equation.DecayInput{}, false, errnie.Error(errnie.Err(
@@ -101,7 +103,7 @@ func (decaySample *DecaySample) window(symbol string) *decayWindow {
 	}
 
 	window := &decayWindow{
-		book: newBookflowBook(),
+		book: flow.NewBook(),
 	}
 
 	decaySample.windows[symbol] = window
@@ -110,18 +112,18 @@ func (decaySample *DecaySample) window(symbol string) *decayWindow {
 }
 
 func (decaySample *DecaySample) ingestBook(
-	input BookflowBookInput,
+	input flow.BookInput,
 	window *decayWindow,
 ) error {
 	if err := window.book.Configure(input); err != nil {
 		return err
 	}
 
-	if _, err := window.book.ApplyLevels(input.Bids, SideBid); err != nil {
+	if _, err := window.book.ApplyLevels(input.Bids, flow.SideBid); err != nil {
 		return err
 	}
 
-	if _, err := window.book.ApplyLevels(input.Asks, SideAsk); err != nil {
+	if _, err := window.book.ApplyLevels(input.Asks, flow.SideAsk); err != nil {
 		return err
 	}
 
@@ -133,23 +135,23 @@ func (decaySample *DecaySample) ingestBook(
 	}
 
 	window.lastPrice = mid
-	bidDepth := window.book.SideDepth(SideBid)
-	askDepth := window.book.SideDepth(SideAsk)
+	bidDepth := window.book.SideDepth(flow.SideBid)
+	askDepth := window.book.SideDepth(flow.SideAsk)
 	density := bidDepth + askDepth
-	decayRate := bookflowDecayRate(mid, spread)
+	decayRate := flow.DecayRate(mid, spread)
 	imbalance := window.book.Imbalance(mid, decayRate, false, 0, 0, 0)
 
-	window.bidDepthHist = appendRingFloat(window.bidDepthHist, bidDepth, decaySampleHistoryCap)
-	window.askDepthHist = appendRingFloat(window.askDepthHist, askDepth, decaySampleHistoryCap)
-	window.densityHist = appendRingFloat(window.densityHist, density, decaySampleHistoryCap)
-	window.spreadHist = appendRingFloat(window.spreadHist, spread, decaySampleHistoryCap)
-	window.pressureHist = appendRingFloat(window.pressureHist, window.tradePressure, decaySampleHistoryCap)
-	window.imbalanceHist = appendRingFloat(window.imbalanceHist, imbalance, decaySampleHistoryCap)
+	window.bidDepthHist = utils.AppendRingFloat(window.bidDepthHist, bidDepth, decaySampleHistoryCap)
+	window.askDepthHist = utils.AppendRingFloat(window.askDepthHist, askDepth, decaySampleHistoryCap)
+	window.densityHist = utils.AppendRingFloat(window.densityHist, density, decaySampleHistoryCap)
+	window.spreadHist = utils.AppendRingFloat(window.spreadHist, spread, decaySampleHistoryCap)
+	window.pressureHist = utils.AppendRingFloat(window.pressureHist, window.tradePressure, decaySampleHistoryCap)
+	window.imbalanceHist = utils.AppendRingFloat(window.imbalanceHist, imbalance, decaySampleHistoryCap)
 
 	return nil
 }
 
-func (decaySample *DecaySample) ingestTrade(input BookflowTradeInput, window *decayWindow) {
+func (decaySample *DecaySample) ingestTrade(input flow.TradeInput, window *decayWindow) {
 	notional := input.Price * input.Quantity
 	signedNotional := notional
 

@@ -1,4 +1,4 @@
-package algorithm
+package quality
 
 import (
 	"testing"
@@ -6,10 +6,10 @@ import (
 	"github.com/theapemachine/nomagique/equation"
 )
 
-func TestBookQualityBluffProbe(t *testing.T) {
-	sample := NewBookQualitySample(bookQualitySampleConfig())
-	bookQuality := equation.NewBookQuality()
-	frames := []BookQualityLevel3Input{
+func TestBluffProbe(t *testing.T) {
+	sample := NewSample(SampleConfig{})
+	eq := equation.NewBookQuality()
+	frames := []Level3Input{
 		level3TouchAddFrame("B1", "B2", 100),
 		level3TouchDeleteFrame("B1", 100),
 	}
@@ -27,7 +27,7 @@ func TestBookQualityBluffProbe(t *testing.T) {
 			continue
 		}
 
-		output, measureErr := bookQuality.Measure(input)
+		output, measureErr := eq.Measure(input)
 
 		if measureErr != nil {
 			t.Fatal(measureErr)

@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/nomagique/algorithm/book/flow"
 	"github.com/theapemachine/nomagique/equation"
 	"github.com/theapemachine/nomagique/probability"
 )
@@ -75,9 +76,9 @@ func TestDecaySample_MeasureBook(testingTB *testing.T) {
 
 	Convey("Given a book frame without symbol", testingTB, func() {
 		sample := NewDecaySample()
-		_, _, err := sample.MeasureBook(BookflowBookInput{
-			Bids: []BookLevel{{Price: 100, Quantity: 10}},
-			Asks: []BookLevel{{Price: 101, Quantity: 10}},
+		_, _, err := sample.MeasureBook(flow.BookInput{
+			Bids: []flow.BookLevel{{Price: 100, Quantity: 10}},
+			Asks: []flow.BookLevel{{Price: 101, Quantity: 10}},
 		})
 
 		Convey("It should return a validation error", func() {
@@ -96,16 +97,16 @@ func BenchmarkDecaySampleMeasureBook(benchmark *testing.B) {
 	}
 }
 
-func decayBookInput(bidQuantity float64, askQuantity float64) BookflowBookInput {
+func decayBookInput(bidQuantity float64, askQuantity float64) flow.BookInput {
 	tickSize := 1.0
 
-	return BookflowBookInput{
+	return flow.BookInput{
 		Symbol:   "BTC/USD",
 		TickSize: tickSize,
-		Bids: []BookLevel{
+		Bids: []flow.BookLevel{
 			{Price: 100, Ticks: 100, Quantity: bidQuantity},
 		},
-		Asks: []BookLevel{
+		Asks: []flow.BookLevel{
 			{Price: 101, Ticks: 101, Quantity: askQuantity},
 		},
 	}

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/nomagique/utils"
 )
 
 func TestPayloadSamples(testingTB *testing.T) {
@@ -174,8 +175,8 @@ func TestAppendRingFloat(testingTB *testing.T) {
 	for _, testCase := range cases {
 		testCase := testCase
 
-		Convey("Given appendRingFloat "+testCase.name, testingTB, func() {
-			result := appendRingFloat(testCase.values, testCase.value, testCase.capacity)
+		Convey("Given AppendRingFloat "+testCase.name, testingTB, func() {
+			result := utils.AppendRingFloat(testCase.values, testCase.value, testCase.capacity)
 
 			Convey("It should retain trailing window", func() {
 				So(len(result), ShouldEqual, len(testCase.want))

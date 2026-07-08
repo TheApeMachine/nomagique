@@ -8,6 +8,7 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/equation"
 	"github.com/theapemachine/nomagique/statistic"
+	"github.com/theapemachine/nomagique/utils"
 	"gonum.org/v1/gonum/stat"
 )
 
@@ -157,11 +158,11 @@ func (cohortSample *CohortSample) observe(tick cohortTick) {
 		return
 	}
 
-	symbolState.prices = appendRingFloat(symbolState.prices, tick.price, historyCap)
+	symbolState.prices = utils.AppendRingFloat(symbolState.prices, tick.price, historyCap)
 	symbolState.times = appendRingInt64(symbolState.times, tick.at, historyCap)
 
 	if symbolState.lastPrice > 0 {
-		symbolState.returns = appendRingFloat(
+		symbolState.returns = utils.AppendRingFloat(
 			symbolState.returns,
 			math.Log(tick.price/symbolState.lastPrice),
 			historyCap,

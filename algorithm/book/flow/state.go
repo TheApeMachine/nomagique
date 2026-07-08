@@ -1,4 +1,4 @@
-package algorithm
+package flow
 
 import (
 	"fmt"
@@ -270,6 +270,13 @@ func (gate *GateQuantile) Value(percentileOverride float64) float64 {
 }
 
 /*
+ConfiguredPercentile returns the gate's configured quantile percentile.
+*/
+func (gate *GateQuantile) ConfiguredPercentile() float64 {
+	return gate.percentile
+}
+
+/*
 Ready reports whether the gate has enough observations to emit.
 */
 func (gate *GateQuantile) Ready() bool {
@@ -314,7 +321,10 @@ func gateHistoryCapacity(values []float64, minSamples int) int {
 	return capacity
 }
 
-func largeBlockQtyThreshold(
+/*
+LargeBlockQtyThreshold resolves the active toxic-size gate from observed depth and retained gate state.
+*/
+func LargeBlockQtyThreshold(
 	sideDepth float64,
 	medianLevelQty float64,
 	cancelQtyGate float64,
@@ -341,7 +351,10 @@ func largeBlockQtyThreshold(
 	return sideDepth / maxFloat(1, math.Sqrt(sideDepth))
 }
 
-func vacuumStrengthLimit(
+/*
+VacuumStrengthLimit resolves the liquidity-vacuum strength cap from retained vacuum-ratio state.
+*/
+func VacuumStrengthLimit(
 	threshold float64,
 	peakVacuumRatio float64,
 	vacuumPeak float64,
@@ -362,7 +375,10 @@ func vacuumStrengthLimit(
 	return 1
 }
 
-func supportRatioGate(threshold float64, vacuumLow float64, vacuumReady bool) float64 {
+/*
+SupportRatioGate resolves the hard-support ratio gate from retained low-vacuum state.
+*/
+func SupportRatioGate(threshold float64, vacuumLow float64, vacuumReady bool) float64 {
 	if threshold <= 0 || !vacuumReady {
 		return 0
 	}

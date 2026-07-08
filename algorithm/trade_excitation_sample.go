@@ -1,10 +1,10 @@
 package algorithm
 
 import (
-	"math"
 	"time"
 
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/nomagique/algorithm/book/flow"
 )
 
 const excitationSampleHistoryCap = 128
@@ -59,7 +59,7 @@ func NewTradeExcitationSample() *TradeExcitationSample {
 MeasureBook observes touch imbalance for later trade excitation batches.
 */
 func (tradeExcitationSample *TradeExcitationSample) MeasureBook(
-	input BookflowBookInput,
+	input flow.BookInput,
 ) error {
 	if input.Symbol == "" {
 		return errnie.Error(errnie.Err(
@@ -129,7 +129,9 @@ func (input TradeExcitationInput) ArrivalSecond() float64 {
 	return 0
 }
 
-func (tradeExcitationSample *TradeExcitationSample) window(symbol string) *tradeExcitationWindow {
+func (tradeExcitationSample *TradeExcitationSample) window(
+	symbol string,
+) *tradeExcitationWindow {
 	existing, ok := tradeExcitationSample.windows[symbol]
 
 	if ok {
@@ -144,11 +146,15 @@ func (tradeExcitationSample *TradeExcitationSample) window(symbol string) *trade
 
 func (window *tradeExcitationWindow) trim() {
 	if len(window.buySeconds) > excitationSampleSideCap {
-		window.buySeconds = window.buySeconds[len(window.buySeconds)-excitationSampleSideCap:]
+		window.buySeconds = window.buySeconds[len(
+			window.buySeconds,
+		)-excitationSampleSideCap:]
 	}
 
 	if len(window.sellSeconds) > excitationSampleSideCap {
-		window.sellSeconds = window.sellSeconds[len(window.sellSeconds)-excitationSampleSideCap:]
+		window.sellSeconds = window.sellSeconds[len(
+			window.sellSeconds,
+		)-excitationSampleSideCap:]
 	}
 
 	total := len(window.buySeconds) + len(window.sellSeconds)
@@ -175,7 +181,14 @@ func (window *tradeExcitationWindow) features(
 ) (ExcitationInput, bool, error) {
 	eventCount := len(window.buySeconds) + len(window.sellSeconds)
 
-	if eventCount < excitationSampleMinEvents(eventCount) {
+	// Emit a measurement from whatever the window holds — a signal must produce
+	// a reading on every tick, never sit silent behind a warmup gate. With a
+	// single event the "mean" is that event's own value; sample sufficiency is
+	// communicated downstream as low confidence, not as an absent measurement.
+	// The only hard floor is one event, which bounds() requires to index [0];
+	// this is always satisfied because features() runs after the current trade
+	// has been appended.
+	if eventCount == 0 {
 		return ExcitationInput{}, false, nil
 	}
 
@@ -215,17 +228,7 @@ func (window *tradeExcitationWindow) bounds() (float64, float64) {
 	return first, last
 }
 
-func excitationSampleMinEvents(eventCount int) int {
-	required := int(math.Ceil(math.Sqrt(float64(eventCount))))
-
-	if required < 8 {
-		return 8
-	}
-
-	return required
-}
-
-func bookTouchImbalance(input BookflowBookInput) float64 {
+func bookTouchImbalance(input flow.BookInput) float64 {
 	if len(input.Bids) == 0 || len(input.Asks) == 0 {
 		return 0
 	}

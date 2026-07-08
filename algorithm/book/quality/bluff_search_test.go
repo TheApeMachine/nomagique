@@ -1,4 +1,4 @@
-package algorithm
+package quality
 
 import (
 	"testing"
@@ -10,32 +10,32 @@ func level3TouchAddFrame(
 	orderID string,
 	reserveID string,
 	quantity float64,
-) BookQualityLevel3Input {
-	return BookQualityLevel3Input{
+) Level3Input {
+	return Level3Input{
 		Symbol: "BTC/USD",
-		Bids: []BookQualityOrderEvent{
+		Bids: []OrderEvent{
 			{Event: "add", OrderID: orderID, Price: 100, Quantity: quantity},
 			{Event: "add", OrderID: reserveID, Price: 100, Quantity: quantity / 5},
 		},
-		Asks: []BookQualityOrderEvent{
+		Asks: []OrderEvent{
 			{Event: "add", OrderID: "A1", Price: 101, Quantity: quantity},
 		},
 	}
 }
 
-func level3TouchDeleteFrame(orderID string, quantity float64) BookQualityLevel3Input {
-	return BookQualityLevel3Input{
+func level3TouchDeleteFrame(orderID string, quantity float64) Level3Input {
+	return Level3Input{
 		Symbol: "BTC/USD",
-		Bids: []BookQualityOrderEvent{
+		Bids: []OrderEvent{
 			{Event: "delete", OrderID: orderID, Price: 100, Quantity: quantity},
 		},
 	}
 }
 
-func replayBookQuality(
-	frames []BookQualityLevel3Input,
+func replay(
+	frames []Level3Input,
 ) (equation.BookQualityOutput, bool, error) {
-	sample := NewBookQualitySample(bookQualitySampleConfig())
+	sample := NewSample(SampleConfig{})
 	bookQuality := equation.NewBookQuality()
 	bestOutput := equation.BookQualityOutput{}
 	seen := false
@@ -68,15 +68,15 @@ func replayBookQuality(
 	return bestOutput, seen, nil
 }
 
-func bookQualityBluffReplayFrames() []BookQualityLevel3Input {
-	return []BookQualityLevel3Input{
+func BluffReplayFrames() []Level3Input {
+	return []Level3Input{
 		level3TouchAddFrame("B1", "B2", 100),
 		level3TouchDeleteFrame("B1", 100),
 	}
 }
 
-func TestBookQualityBluffReplay(t *testing.T) {
-	output, seen, err := replayBookQuality(bookQualityBluffReplayFrames())
+func TestBluffReplay(t *testing.T) {
+	output, seen, err := replay(BluffReplayFrames())
 
 	if err != nil {
 		t.Fatal(err)

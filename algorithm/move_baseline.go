@@ -5,6 +5,7 @@ import (
 	"sort"
 
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/nomagique/utils"
 	"gonum.org/v1/gonum/stat"
 )
 
@@ -70,7 +71,7 @@ func (baseline *MoveBaseline) Measure(recentMove float64) (MoveBaselineOutput, e
 		))
 	}
 
-	baseline.pathMoves = appendRingFloat(
+	baseline.pathMoves = utils.AppendRingFloat(
 		baseline.pathMoves,
 		recentMove,
 		baseline.config.PathCap,

@@ -1,18 +1,19 @@
-package algorithm
+package quality
 
 import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/nomagique/algorithm/book/flow"
 )
 
-func bookQualitySampleConfig() BookQualitySampleConfig {
-	return DefaultBookQualitySampleConfig()
+func sampleConfig() SampleConfig {
+	return DefaultSampleConfig()
 }
 
-func TestNewBookQualitySample(t *testing.T) {
+func TestNewSample(t *testing.T) {
 	Convey("Given a book quality sample stage", t, func() {
-		stage := NewBookQualitySample(bookQualitySampleConfig())
+		stage := NewSample(sampleConfig())
 
 		Convey("It should be constructible", func() {
 			So(stage, ShouldNotBeNil)
@@ -20,15 +21,15 @@ func TestNewBookQualitySample(t *testing.T) {
 	})
 }
 
-func TestBookQualitySample_MeasureBook(t *testing.T) {
+func TestSample_MeasureBook(t *testing.T) {
 	Convey("Given an aggregate L2 book frame", t, func() {
-		sample := NewBookQualitySample(bookQualitySampleConfig())
-		input, ready, err := sample.MeasureBook(BookflowBookInput{
+		sample := NewSample(sampleConfig())
+		input, ready, err := sample.MeasureBook(flow.BookInput{
 			Symbol: "BTC/USD",
-			Bids: []BookLevel{
+			Bids: []flow.BookLevel{
 				{Price: 100, Quantity: 10},
 			},
-			Asks: []BookLevel{
+			Asks: []flow.BookLevel{
 				{Price: 101, Quantity: 10},
 			},
 		})
@@ -44,16 +45,16 @@ func TestBookQualitySample_MeasureBook(t *testing.T) {
 	})
 }
 
-func TestBookQualitySample_MeasureLevel3(t *testing.T) {
+func TestSample_MeasureLevel3(t *testing.T) {
 	Convey("Given level3 frames for multiple symbols", t, func() {
-		sample := NewBookQualitySample(bookQualitySampleConfig())
+		sample := NewSample(sampleConfig())
 
-		btc, btcReady, btcErr := sample.MeasureLevel3(BookQualityLevel3Input{
+		btc, btcReady, btcErr := sample.MeasureLevel3(Level3Input{
 			Symbol: "BTC/USD",
-			Bids: []BookQualityOrderEvent{
+			Bids: []OrderEvent{
 				{Event: "add", OrderID: "B1", Price: 100, Quantity: 20},
 			},
-			Asks: []BookQualityOrderEvent{
+			Asks: []OrderEvent{
 				{Event: "add", OrderID: "A1", Price: 101, Quantity: 20},
 			},
 		})
@@ -64,12 +65,12 @@ func TestBookQualitySample_MeasureLevel3(t *testing.T) {
 			So(btc.LastPrice, ShouldEqual, 100.5)
 		})
 
-		eth, ethReady, ethErr := sample.MeasureLevel3(BookQualityLevel3Input{
+		eth, ethReady, ethErr := sample.MeasureLevel3(Level3Input{
 			Symbol: "ETH/USD",
-			Bids: []BookQualityOrderEvent{
+			Bids: []OrderEvent{
 				{Event: "add", OrderID: "B1", Price: 200, Quantity: 20},
 			},
-			Asks: []BookQualityOrderEvent{
+			Asks: []OrderEvent{
 				{Event: "add", OrderID: "A1", Price: 201, Quantity: 20},
 			},
 		})
@@ -82,14 +83,14 @@ func TestBookQualitySample_MeasureLevel3(t *testing.T) {
 	})
 }
 
-func BenchmarkBookQualitySample_MeasureLevel3(b *testing.B) {
-	sample := NewBookQualitySample(bookQualitySampleConfig())
-	input := BookQualityLevel3Input{
+func BenchmarkSample_MeasureLevel3(b *testing.B) {
+	sample := NewSample(sampleConfig())
+	input := Level3Input{
 		Symbol: "BTC/USD",
-		Bids: []BookQualityOrderEvent{
+		Bids: []OrderEvent{
 			{Event: "add", OrderID: "B1", Price: 100, Quantity: 10},
 		},
-		Asks: []BookQualityOrderEvent{
+		Asks: []OrderEvent{
 			{Event: "add", OrderID: "A1", Price: 101, Quantity: 10},
 		},
 	}

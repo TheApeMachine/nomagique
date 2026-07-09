@@ -1,6 +1,8 @@
 package flow
 
 import (
+	"sync"
+
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/equation"
 	"github.com/theapemachine/nomagique/statistic"
@@ -12,11 +14,12 @@ const (
 )
 
 /*
-Sample accumulates book and trade frames into the feature batch  expects.
+Sample accumulates book and trade frames into the feature batch expects.
 Decay rate and history windows are derived from observed spread and imbalance history.
 */
 type Sample struct {
 	windows map[string]*Window
+	mu      sync.RWMutex
 }
 
 /*
@@ -49,6 +52,8 @@ type TradeInput struct {
 }
 
 type Window struct {
+	mu sync.Mutex
+
 	book            *Book
 	weightedHist    []float64
 	level1Hist      []float64
@@ -77,7 +82,7 @@ func NewSample() *Sample {
 /*
 MeasureBook observes one book update and returns book-flow input when ready.
 */
-func (Sample *Sample) MeasureBook(
+func (s *Sample) MeasureBook(
 	input BookInput,
 ) (equation.BookflowInput, bool, error) {
 	if input.Symbol == "" {
@@ -88,18 +93,30 @@ func (Sample *Sample) MeasureBook(
 		))
 	}
 
-	window := Sample.window(input.Symbol)
-	if err := Sample.ingestBook(input, window); err != nil {
+	s.mu.Lock()
+	window := s.windows[input.Symbol]
+	if window == nil {
+		window = &Window{
+			book: NewBook(),
+		}
+		s.windows[input.Symbol] = window
+	}
+	s.mu.Unlock()
+
+	window.mu.Lock()
+	defer window.mu.Unlock()
+
+	if err := s.ingestBook(input, window); err != nil {
 		return equation.BookflowInput{}, false, err
 	}
 
-	return Sample.features(window)
+	return s.features(window)
 }
 
 /*
 MeasureTrade observes one trade update and returns book-flow input when ready.
 */
-func (Sample *Sample) MeasureTrade(
+func (s *Sample) MeasureTrade(
 	input TradeInput,
 ) (equation.BookflowInput, bool, error) {
 	if input.Symbol == "" {
@@ -118,29 +135,25 @@ func (Sample *Sample) MeasureTrade(
 		))
 	}
 
-	window := Sample.window(input.Symbol)
-	Sample.ingestTrade(input, window)
+	s.mu.Lock()
+	window := s.windows[input.Symbol]
+	if window == nil {
+		window = &Window{
+			book: NewBook(),
+		}
+		s.windows[input.Symbol] = window
+	}
+	s.mu.Unlock()
 
-	return Sample.features(window)
+	window.mu.Lock()
+	defer window.mu.Unlock()
+
+	s.ingestTrade(input, window)
+
+	return s.features(window)
 }
 
-func (Sample *Sample) window(symbol string) *Window {
-	existing, ok := Sample.windows[symbol]
-
-	if ok {
-		return existing
-	}
-
-	window := &Window{
-		book: NewBook(),
-	}
-
-	Sample.windows[symbol] = window
-
-	return window
-}
-
-func (Sample *Sample) ingestBook(
+func (s *Sample) ingestBook(
 	input BookInput,
 	window *Window,
 ) error {
@@ -209,7 +222,7 @@ func (Sample *Sample) ingestBook(
 	return nil
 }
 
-func (Sample *Sample) ingestTrade(
+func (s *Sample) ingestTrade(
 	input TradeInput,
 	window *Window,
 ) {
@@ -230,7 +243,7 @@ func (Sample *Sample) ingestTrade(
 	window.tradePressure += smoothing * (signedNotional - window.tradePressure)
 }
 
-func (Sample *Sample) features(
+func (s *Sample) features(
 	window *Window,
 ) (equation.BookflowInput, bool, error) {
 	historyCount := len(window.weightedHist)

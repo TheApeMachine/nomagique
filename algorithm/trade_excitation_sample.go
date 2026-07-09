@@ -1,6 +1,7 @@
 package algorithm
 
 import (
+	"sync"
 	"time"
 
 	"github.com/theapemachine/errnie"
@@ -37,7 +38,7 @@ TradeExcitationSample accumulates trade arrival times into the batch Excitation 
 Horizon and fit cooldown are derived from the observed arrival span.
 */
 type TradeExcitationSample struct {
-	windows map[string]*tradeExcitationWindow
+	windows *sync.Map
 }
 
 type tradeExcitationWindow struct {
@@ -51,7 +52,7 @@ NewTradeExcitationSample returns a trade arrival sampler for Hawkes excitation.
 */
 func NewTradeExcitationSample() *TradeExcitationSample {
 	return &TradeExcitationSample{
-		windows: map[string]*tradeExcitationWindow{},
+		windows: &sync.Map{},
 	}
 }
 
@@ -132,14 +133,14 @@ func (input TradeExcitationInput) ArrivalSecond() float64 {
 func (tradeExcitationSample *TradeExcitationSample) window(
 	symbol string,
 ) *tradeExcitationWindow {
-	existing, ok := tradeExcitationSample.windows[symbol]
+	existing, ok := tradeExcitationSample.windows.Load(symbol)
 
 	if ok {
-		return existing
+		return existing.(*tradeExcitationWindow)
 	}
 
 	window := &tradeExcitationWindow{}
-	tradeExcitationSample.windows[symbol] = window
+	tradeExcitationSample.windows.Store(symbol, window)
 
 	return window
 }

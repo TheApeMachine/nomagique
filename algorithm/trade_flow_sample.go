@@ -3,6 +3,7 @@ package algorithm
 import (
 	"fmt"
 	"math"
+	"sync"
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/equation"
@@ -18,7 +19,7 @@ TradeFlowSample accumulates signed trade notionals into the feature batch Flow e
 Window sizing and gross floors are derived from observed notionals, not fixed constants.
 */
 type TradeFlowSample struct {
-	windows map[string]*tradeFlowWindow
+	windows *sync.Map
 }
 
 /*
@@ -46,7 +47,7 @@ NewTradeFlowSample returns a trade sampler for CVD flow classification.
 */
 func NewTradeFlowSample() *TradeFlowSample {
 	return &TradeFlowSample{
-		windows: map[string]*tradeFlowWindow{},
+		windows: &sync.Map{},
 	}
 }
 
@@ -94,14 +95,14 @@ func (tradeFlowSample *TradeFlowSample) Measure(
 }
 
 func (tradeFlowSample *TradeFlowSample) window(symbol string) *tradeFlowWindow {
-	existing, ok := tradeFlowSample.windows[symbol]
+	existing, ok := tradeFlowSample.windows.Load(symbol)
 
 	if ok {
-		return existing
+		return existing.(*tradeFlowWindow)
 	}
 
 	window := &tradeFlowWindow{}
-	tradeFlowSample.windows[symbol] = window
+	tradeFlowSample.windows.Store(symbol, window)
 
 	return window
 }

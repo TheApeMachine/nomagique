@@ -2,12 +2,15 @@ package quality
 
 import (
 	"math"
+	"sync"
 
 	"github.com/theapemachine/nomagique/algorithm/book/flow"
 	"github.com/theapemachine/nomagique/equation"
 )
 
 type Window struct {
+	mu sync.Mutex
+
 	ledger          flow.SideFlowLedger
 	vacuumGate      *flow.GateQuantile
 	churnGate       *flow.GateQuantile
@@ -31,6 +34,7 @@ type Order struct {
 
 func newWindow(config SampleConfig) *Window {
 	return &Window{
+		mu:            sync.Mutex{},
 		vacuumGate:    flow.NewGateQuantile(config.VacuumGate),
 		churnGate:     flow.NewGateQuantile(config.ChurnGate),
 		cancelQtyGate: flow.NewGateQuantile(config.CancelQtyGate),
@@ -47,6 +51,9 @@ func (window *Window) finish(
 	frame Frame,
 	level3 bool,
 ) equation.BookQualityInput {
+	window.mu.Lock()
+	defer window.mu.Unlock()
+
 	window.frameCount++
 	smoothing := 2.0 / float64(window.frameCount+1)
 
@@ -93,6 +100,9 @@ func (window *Window) observeLevels(
 	side byte,
 	frame *Frame,
 ) {
+	window.mu.Lock()
+	defer window.mu.Unlock()
+
 	book := window.sideBook(side)
 
 	for _, level := range levels {
@@ -136,6 +146,9 @@ func (window *Window) observeOrderEvents(
 	side byte,
 	frame *Frame,
 ) {
+	window.mu.Lock()
+	defer window.mu.Unlock()
+
 	for _, event := range events {
 		if event.Price <= 0 {
 			return

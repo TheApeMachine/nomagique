@@ -2,6 +2,7 @@ package algorithm
 
 import (
 	"math"
+	"sync"
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/algorithm/book/flow"
@@ -21,6 +22,7 @@ Series lengths are derived from observed update cadence, not fixed constants.
 */
 type DecaySample struct {
 	windows map[string]*decayWindow
+	mu      sync.RWMutex
 }
 
 type decayWindow struct {
@@ -34,6 +36,7 @@ type decayWindow struct {
 	tradePressure float64
 	tradeFrames   int
 	lastPrice     float64
+	mu            sync.Mutex
 }
 
 /*
@@ -60,6 +63,9 @@ func (decaySample *DecaySample) MeasureBook(
 	}
 
 	window := decaySample.window(input.Symbol)
+	window.mu.Lock()
+	defer window.mu.Unlock()
+
 	if err := decaySample.ingestBook(input, window); err != nil {
 		return equation.DecayInput{}, false, err
 	}
@@ -90,22 +96,34 @@ func (decaySample *DecaySample) MeasureTrade(
 	}
 
 	window := decaySample.window(input.Symbol)
+	window.mu.Lock()
+	defer window.mu.Unlock()
+
 	decaySample.ingestTrade(input, window)
 
 	return decaySample.features(window)
 }
 
 func (decaySample *DecaySample) window(symbol string) *decayWindow {
+	decaySample.mu.RLock()
 	existing, ok := decaySample.windows[symbol]
+	decaySample.mu.RUnlock()
 
 	if ok {
+		return existing
+	}
+
+	// Create new window under write lock
+	decaySample.mu.Lock()
+	defer decaySample.mu.Unlock()
+	existing = decaySample.windows[symbol]
+	if existing != nil {
 		return existing
 	}
 
 	window := &decayWindow{
 		book: flow.NewBook(),
 	}
-
 	decaySample.windows[symbol] = window
 
 	return window

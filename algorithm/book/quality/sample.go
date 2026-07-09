@@ -1,6 +1,8 @@
 package quality
 
 import (
+	"sync"
+
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/algorithm/book/flow"
 	"github.com/theapemachine/nomagique/equation"
@@ -13,6 +15,7 @@ State is retained per symbol so concurrent symbols do not share book or gate his
 type Sample struct {
 	config  SampleConfig
 	windows map[string]*Window
+	mu      sync.RWMutex
 }
 
 /*
@@ -101,6 +104,9 @@ func (sample *Sample) MeasureBook(
 	}
 
 	window := sample.window(input.Symbol)
+	window.mu.Lock()
+	defer window.mu.Unlock()
+
 	frame := Frame{}
 	window.observeLevels(input.Bids, flow.SideBid, &frame)
 	window.observeLevels(input.Asks, flow.SideAsk, &frame)
@@ -123,6 +129,9 @@ func (sample *Sample) MeasureLevel3(
 	}
 
 	window := sample.window(input.Symbol)
+	window.mu.Lock()
+	defer window.mu.Unlock()
+
 	frame := Frame{}
 	window.observeOrderEvents(input.Bids, flow.SideBid, &frame)
 	window.observeOrderEvents(input.Asks, flow.SideAsk, &frame)
@@ -155,18 +164,25 @@ func (sample *Sample) MeasureTrade(
 	}
 
 	window := sample.window(input.Symbol)
+	window.mu.Lock()
+	defer window.mu.Unlock()
+
 	window.tradePrices = append(window.tradePrices, input.Price)
 
 	return equation.BookQualityInput{}, false, nil
 }
 
 func (sample *Sample) window(symbol string) *Window {
+	sample.mu.RLock()
 	existing, ok := sample.windows[symbol]
+	sample.mu.RUnlock()
 
 	if ok {
 		return existing
 	}
 
+	sample.mu.Lock()
+	defer sample.mu.Unlock()
 	window := newWindow(sample.config)
 	sample.windows[symbol] = window
 

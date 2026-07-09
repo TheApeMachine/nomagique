@@ -31,10 +31,9 @@ func TestSolverStep(t *testing.T) {
 	convey.Convey("Given a Metal manifold solver", t, func() {
 		config := smallTestConfig()
 
-		solver, err := NewSolver(config)
+		solver := NewSolver(config)
 
 		convey.Convey("It should accept deposits, oscillators, and return finite readings", func() {
-			convey.So(err, convey.ShouldBeNil)
 			convey.So(solver, convey.ShouldNotBeNil)
 
 			defer solver.Close()
@@ -77,10 +76,9 @@ func TestSolverStep(t *testing.T) {
 func TestSolverSetControls(t *testing.T) {
 	convey.Convey("Given a Metal manifold solver", t, func() {
 		config := smallTestConfig()
-		solver, err := NewSolver(config)
+		solver := NewSolver(config)
 
 		convey.Convey("It should accept validated runtime controls before stepping", func() {
-			convey.So(err, convey.ShouldBeNil)
 			convey.So(solver, convey.ShouldNotBeNil)
 
 			defer solver.Close()
@@ -103,10 +101,9 @@ func TestReadProjectionReading(t *testing.T) {
 	convey.Convey("Given a deposited rho lattice", t, func() {
 		config := smallTestConfig()
 
-		solver, err := NewSolver(config)
+		solver := NewSolver(config)
 
 		convey.Convey("It should derive bulk observables from the rho projection", func() {
-			convey.So(err, convey.ShouldBeNil)
 			convey.So(solver, convey.ShouldNotBeNil)
 
 			defer solver.Close()
@@ -135,10 +132,9 @@ func TestReadOscillators(t *testing.T) {
 	convey.Convey("Given a stepped solver with oscillators", t, func() {
 		config := smallTestConfig()
 
-		solver, err := NewSolver(config)
+		solver := NewSolver(config)
 
 		convey.Convey("It should read post-step particle state from Metal", func() {
-			convey.So(err, convey.ShouldBeNil)
 			convey.So(solver, convey.ShouldNotBeNil)
 
 			defer solver.Close()
@@ -190,10 +186,9 @@ func TestReadOscillatorsDecisionLattice(t *testing.T) {
 		}
 		ApplyDerivedGasParams(&config)
 
-		solver, err := NewSolver(config)
+		solver := NewSolver(config)
 
 		convey.Convey("It should return finite post-step particle readback", func() {
-			convey.So(err, convey.ShouldBeNil)
 			convey.So(solver, convey.ShouldNotBeNil)
 
 			defer solver.Close()
@@ -287,10 +282,9 @@ func TestSolverWhaleParticleVelocity(t *testing.T) {
 	convey.Convey("Given a Metal manifold solver", t, func() {
 		config := smallTestConfig()
 
-		solver, err := NewSolver(config)
+		solver := NewSolver(config)
 
 		convey.Convey("It should step with whale particles carrying directional velocity", func() {
-			convey.So(err, convey.ShouldBeNil)
 			defer solver.Close()
 
 			convey.So(solver.ResetDeposits(), convey.ShouldBeNil)
@@ -337,10 +331,9 @@ func TestSolverProductionConfig(t *testing.T) {
 		}
 		ApplyDerivedGasParams(&config)
 
-		solver, err := NewSolver(config)
+		solver := NewSolver(config)
 
 		convey.Convey("It should step with 32 oscillators on a 32x3x16 grid", func() {
-			convey.So(err, convey.ShouldBeNil)
 			defer solver.Close()
 
 			convey.So(solver.ResetDeposits(), convey.ShouldBeNil)
@@ -390,11 +383,7 @@ func TestSolverCarrierThreshold(t *testing.T) {
 
 	for _, count := range []int{128} {
 		t.Run(fmt.Sprintf("count=%d", count), func(t *testing.T) {
-			solver, err := NewSolver(config)
-
-			if err != nil {
-				t.Fatal(err)
-			}
+			solver := NewSolver(config)
 
 			defer solver.Close()
 
@@ -448,10 +437,9 @@ func TestSolverProduction128Oscillators(t *testing.T) {
 		config := productionTestConfig()
 		carrierCount := 128
 
-		solver, err := NewSolver(config)
+		solver := NewSolver(config)
 
 		convey.Convey("It should return finite oscillator readback after step", func() {
-			convey.So(err, convey.ShouldBeNil)
 			defer solver.Close()
 
 			convey.So(solver.ResetDeposits(), convey.ShouldBeNil)
@@ -497,11 +485,7 @@ func TestSolverMultiSymbolDeposits(t *testing.T) {
 	config := productionTestConfig()
 	carrierCount := 128
 
-	solver, err := NewSolver(config)
-
-	if err != nil {
-		t.Fatal(err)
-	}
+	solver := NewSolver(config)
 
 	defer solver.Close()
 
@@ -565,11 +549,7 @@ func TestSpreadDepositOscCount(t *testing.T) {
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			config := productionTestConfig()
-			solver, err := NewSolver(config)
-
-			if err != nil {
-				t.Fatal(err)
-			}
+			solver := NewSolver(config)
 
 			defer solver.Close()
 
@@ -623,11 +603,7 @@ func TestSpreadDepositOscCount(t *testing.T) {
 
 func TestSingleCarrierDepositMagnitude(t *testing.T) {
 	config := productionTestConfig()
-	solver, err := NewSolver(config)
-
-	if err != nil {
-		t.Fatal(err)
-	}
+	solver := NewSolver(config)
 
 	defer solver.Close()
 
@@ -668,11 +644,7 @@ func BenchmarkSolverStep(b *testing.B) {
 	}
 	ApplyDerivedGasParams(&config)
 
-	solver, err := NewSolver(config)
-
-	if err != nil {
-		b.Fatal(err)
-	}
+	solver := NewSolver(config)
 
 	defer solver.Close()
 
@@ -728,11 +700,7 @@ func TestMaxModesVsOscCount(t *testing.T) {
 			config := productionTestConfig()
 			config.MaxModes = uint32(testCase.maxModes)
 
-			solver, err := NewSolver(config)
-
-			if err != nil {
-				t.Fatal(err)
-			}
+			solver := NewSolver(config)
 
 			defer solver.Close()
 

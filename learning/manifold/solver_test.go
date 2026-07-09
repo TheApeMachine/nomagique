@@ -40,8 +40,7 @@ func slotTarget(slot, dim int) []float64 {
 
 func TestBatchSolver_Construct(t *testing.T) {
 	convey.Convey("Given a valid batched architecture", t, func() {
-		s, err := NewBatchSolver([]int{4, 8, 4}, 2, 16, 0.01)
-		convey.So(err, convey.ShouldBeNil)
+		s := NewBatchSolver([]int{4, 8, 4}, 2, 16, 0.01)
 		convey.So(s, convey.ShouldNotBeNil)
 		defer s.Close()
 		convey.So(s.Batch(), convey.ShouldEqual, 16)
@@ -56,8 +55,7 @@ func TestBatchSolver_SettleParityPerSlot(t *testing.T) {
 		alpha := 0.05
 		N := 32
 
-		s, err := NewBatchSolver(arch, 0, N, alpha)
-		convey.So(err, convey.ShouldBeNil)
+		s := NewBatchSolver(arch, 0, N, alpha)
 		defer s.Close()
 
 		refs := make([]*learning.ResonanceManifold, N)
@@ -96,8 +94,7 @@ func TestBatchSolver_SettleLearnParityPerSlot(t *testing.T) {
 		alpha := 0.05
 		N := 16
 
-		s, err := NewBatchSolver(arch, 2, N, alpha)
-		convey.So(err, convey.ShouldBeNil)
+		s := NewBatchSolver(arch, 2, N, alpha)
 		defer s.Close()
 
 		refs := make([]*learning.ResonanceManifold, N)
@@ -137,8 +134,7 @@ func TestBatchSolver_ReadOutcomesParity(t *testing.T) {
 		alpha := 0.05
 		batchSize := 8
 
-		solver, err := NewBatchSolver(arch, 0, batchSize, alpha)
-		convey.So(err, convey.ShouldBeNil)
+		solver := NewBatchSolver(arch, 0, batchSize, alpha)
 		defer solver.Close()
 
 		references := make([]*learning.ResonanceManifold, batchSize)
@@ -218,10 +214,7 @@ func BenchmarkBatchSolver_Settle(testingTB *testing.B) {
 	alpha := 0.05
 	batchSize := 32
 
-	solver, err := NewBatchSolver(arch, 0, batchSize, alpha)
-	if err != nil {
-		testingTB.Fatal(err)
-	}
+	solver := NewBatchSolver(arch, 0, batchSize, alpha)
 	defer solver.Close()
 
 	inputs := make([][]float64, batchSize)

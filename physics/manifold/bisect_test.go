@@ -7,10 +7,7 @@ import "testing"
 func tryStep(t *testing.T, config Config, numOsc uint32) {
 	t.Helper()
 	ApplyDerivedGasParams(&config)
-	solver, err := NewSolver(config)
-	if err != nil {
-		t.Fatalf("create: %v", err)
-	}
+	solver := NewSolver(config)
 	defer solver.Close()
 	if err := solver.ResetDeposits(); err != nil {
 		t.Fatalf("reset: %v", err)

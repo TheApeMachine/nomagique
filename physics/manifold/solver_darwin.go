@@ -45,7 +45,7 @@ type Oscillator struct {
 	VelZ      float64
 }
 
-func NewSolver(config Config) (*Solver, error) {
+func NewSolver(config Config) *Solver {
 	cConfig := C.ManifoldConfig{
 		grid_x:               C.uint32_t(config.GridX),
 		grid_y:               C.uint32_t(config.GridY),
@@ -82,13 +82,13 @@ func NewSolver(config Config) (*Solver, error) {
 	)
 
 	if handle == nil {
-		return nil, fmt.Errorf("physics: %s", cString(errBuf))
+		return nil
 	}
 
 	return &Solver{
 		handle: handle,
 		config: config,
-	}, nil
+	}
 }
 
 func (solver *Solver) Close() {

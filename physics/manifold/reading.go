@@ -11,14 +11,14 @@ GuidanceSpeed is the mean pilot-wave velocity magnitude from the coherence field
 ViscosityProxy is |∇·u|⁻¹ when divergence is non-zero — large when flow is laminar.
 */
 type Reading struct {
-	PressureGradX    float64
-	PressureGradY    float64
-	PressureGradZ    float64
-	PressureGradNorm float64
-	Divergence       float64
-	CoherenceMag2    float64
-	GuidanceSpeed    float64
-	ViscosityProxy   float64
+	PressureGradX    float64 `json:"pressureGradX"`
+	PressureGradY    float64 `json:"pressureGradY"`
+	PressureGradZ    float64 `json:"pressureGradZ"`
+	PressureGradNorm float64 `json:"pressureGradNorm"`
+	Divergence       float64 `json:"divergence"`
+	CoherenceMag2    float64 `json:"coherenceMag2"`
+	GuidanceSpeed    float64 `json:"guidanceSpeed"`
+	ViscosityProxy   float64 `json:"viscosityProxy"`
 }
 
 /*

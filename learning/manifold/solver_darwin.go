@@ -66,26 +66,30 @@ architecture and supervised target dimension (0 disables the task head). alpha i
 the shared learning pace. Every slot is seeded with the reference seeded-RNG
 initialization; call SeedSlot to override a slot with specific weights.
 */
-func NewBatchSolver(arch []int, targetDim, batch int, alpha float64) (*BatchSolver, error) {
+func NewBatchSolver(
+	arch []int, targetDim, batch int, alpha float64,
+) *BatchSolver {
 	if len(arch) < 2 {
-		return nil, fmt.Errorf("resonance: architecture must contain at least input and one latent layer")
+		return nil
 	}
+
 	if batch <= 0 {
-		return nil, fmt.Errorf("resonance: batch size must be positive")
+		return nil
 	}
 
 	cfg := AdaptiveConfig(alpha, arch)
-
 	cArch := make([]C.uint32_t, len(arch))
+
 	for i, dim := range arch {
 		if dim <= 0 {
-			return nil, fmt.Errorf("resonance: layer %d has non-positive dimension %d", i, dim)
+			return nil
 		}
+
 		cArch[i] = C.uint32_t(dim)
 	}
 
 	if len(resonanceMetallib) == 0 {
-		return nil, fmt.Errorf("resonance: embedded kernels.metallib is empty")
+		return nil
 	}
 
 	cConfig := cConfigFrom(cfg)
@@ -104,7 +108,7 @@ func NewBatchSolver(arch []int, targetDim, batch int, alpha float64) (*BatchSolv
 	)
 
 	if handle == nil {
-		return nil, fmt.Errorf("resonance: %s", cString(errBuf[:]))
+		return nil
 	}
 
 	solver := &BatchSolver{
@@ -119,12 +123,13 @@ func NewBatchSolver(arch []int, targetDim, batch int, alpha float64) (*BatchSolv
 	}
 
 	w, r, a, v := InitialWeights(arch, targetDim)
+
 	if err := solver.seedAllSlots(w, r, a, v); err != nil {
 		solver.Close()
-		return nil, err
+		return nil
 	}
 
-	return solver, nil
+	return solver
 }
 
 func cConfigFrom(cfg Config) C.ResonanceConfig {

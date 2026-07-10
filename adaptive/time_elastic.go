@@ -65,7 +65,11 @@ func (timeElastic *TimeElastic) Measure(sample TimedValue) (TimeElasticOutput, e
 	}
 
 	if err := finiteAdaptive("time-elastic", sample.Value); err != nil {
-		return TimeElasticOutput{}, err
+		return TimeElasticOutput{}, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"time-elastic: value must be finite",
+			err,
+		))
 	}
 
 	if sample.Value < 0 {
@@ -90,9 +94,13 @@ func (timeElastic *TimeElastic) Measure(sample TimedValue) (TimeElasticOutput, e
 		timeElastic.ready = true
 		timeElastic.count = 1
 
+		// The first reading seeds the baseline with itself, so the
+		// sample-to-baseline ratio is the reflexive identity: no
+		// deviation observed yet, which is a defined value, not a
+		// missing one.
 		return TimeElasticOutput{
 			Value: 1,
-			Ready: false,
+			Ready: true,
 			Count: timeElastic.count,
 		}, nil
 	}
@@ -120,7 +128,11 @@ func (timeElastic *TimeElastic) Measure(sample TimedValue) (TimeElasticOutput, e
 	timeElastic.count++
 
 	if err := finiteAdaptive("time-elastic", value); err != nil {
-		return TimeElasticOutput{}, err
+		return TimeElasticOutput{}, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"time-elastic: value must be finite",
+			err,
+		))
 	}
 
 	return TimeElasticOutput{

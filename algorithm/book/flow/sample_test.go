@@ -87,11 +87,16 @@ func TestBookflowSample_MeasureBook(testingTB *testing.T) {
 		})
 		So(err, ShouldBeNil)
 
-		window := sample.windows["BTC/USD"]
+		windowValue, found := sample.windows.Load("BTC/USD")
+		So(found, ShouldBeTrue)
+		window := windowValue.(*Window)
 
 		Convey("It should update the existing integer price tick", func() {
 			So(window.book.bids.Len(), ShouldEqual, 1)
-			So(window.book.bids.levels[1001], ShouldEqual, 18)
+
+			qtyValue, qtyFound := window.book.bids.levels.Load(int64(1001))
+			So(qtyFound, ShouldBeTrue)
+			So(qtyValue.(float64), ShouldEqual, 18)
 		})
 	})
 

@@ -2,6 +2,7 @@ package flow
 
 import (
 	"math"
+	"sync"
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/statistic"
@@ -15,7 +16,7 @@ type Book struct {
 
 type SideBook struct {
 	side   byte
-	levels map[int64]float64
+	levels *sync.Map
 	ticks  []int64
 }
 
@@ -34,7 +35,7 @@ func NewBook() *Book {
 func NewSideBook(side byte) *SideBook {
 	return &SideBook{
 		side:   side,
-		levels: map[int64]float64{},
+		levels: &sync.Map{},
 	}
 }
 
@@ -194,11 +195,16 @@ func (sideBook *SideBook) Apply(
 			))
 		}
 
-		previousQty := sideBook.levels[tick]
+		previousQty := 0.0
+
+		if previous, ok := sideBook.levels.Load(tick); ok {
+			previousQty = previous.(float64)
+		}
+
 		touch := sideBook.isTouchTick(tick)
 
 		if level.Quantity == 0 {
-			delete(sideBook.levels, tick)
+			sideBook.levels.Delete(tick)
 
 			if previousQty > 0 && touch {
 				frame.touchCancel += previousQty
@@ -208,7 +214,7 @@ func (sideBook *SideBook) Apply(
 		}
 
 		delta := level.Quantity - previousQty
-		sideBook.levels[tick] = level.Quantity
+		sideBook.levels.Store(tick, level.Quantity)
 
 		if delta <= 0 {
 			if touch {
@@ -241,15 +247,23 @@ func (sideBook *SideBook) TouchQty() float64 {
 		return 0
 	}
 
-	return sideBook.levels[tick]
+	qty, ok := sideBook.levels.Load(tick)
+
+	if !ok {
+		return 0
+	}
+
+	return qty.(float64)
 }
 
 func (sideBook *SideBook) Depth() float64 {
 	depth := 0.0
 
-	for _, quantity := range sideBook.levels {
-		depth += quantity
-	}
+	sideBook.levels.Range(func(key, value any) bool {
+		depth += value.(float64)
+
+		return true
+	})
 
 	return depth
 }
@@ -281,26 +295,42 @@ func (sideBook *SideBook) SideWeight(
 		price := TickPrice(tick, tickSize)
 		distance := math.Abs(price-mid) / mid
 		kernel := math.Exp(-decayRate * distance)
-		weight += sideBook.levels[tick] * kernel
+		qty, ok := sideBook.levels.Load(tick)
+
+		if !ok {
+			continue
+		}
+
+		weight += qty.(float64) * kernel
 	}
 
 	return weight
 }
 
 func (sideBook *SideBook) Len() int {
-	return len(sideBook.levels)
+	count := 0
+
+	sideBook.levels.Range(func(key, value any) bool {
+		count++
+
+		return true
+	})
+
+	return count
 }
 
 func (sideBook *SideBook) bestTick() (int64, bool) {
 	var bestTick int64
 	ok := false
 
-	for tick := range sideBook.levels {
+	sideBook.levels.Range(func(key, value any) bool {
+		tick := key.(int64)
+
 		if !ok {
 			bestTick = tick
 			ok = true
 
-			continue
+			return true
 		}
 
 		if sideBook.side == SideBid && tick > bestTick {
@@ -310,7 +340,9 @@ func (sideBook *SideBook) bestTick() (int64, bool) {
 		if sideBook.side == SideAsk && tick < bestTick {
 			bestTick = tick
 		}
-	}
+
+		return true
+	})
 
 	return bestTick, ok
 }
@@ -318,9 +350,11 @@ func (sideBook *SideBook) bestTick() (int64, bool) {
 func (sideBook *SideBook) sortedTicks(mid float64, tickSize float64) []int64 {
 	sideBook.ticks = sideBook.ticks[:0]
 
-	for tick := range sideBook.levels {
-		sideBook.ticks = append(sideBook.ticks, tick)
-	}
+	sideBook.levels.Range(func(key, value any) bool {
+		sideBook.ticks = append(sideBook.ticks, key.(int64))
+
+		return true
+	})
 
 	for left := 1; left < len(sideBook.ticks); left++ {
 		cursor := sideBook.ticks[left]

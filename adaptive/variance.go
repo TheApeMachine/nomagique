@@ -46,8 +46,11 @@ func (variance *Variance) Measure(sample float64) (VarianceOutput, error) {
 		variance.max = sample
 		variance.count = 1
 
+		// A single observation has exactly zero variance around itself.
+		// That is a defined answer, not a missing one.
 		return VarianceOutput{
-			Ready: false,
+			Value: 0,
+			Ready: true,
 			Count: variance.count,
 		}, nil
 	}
@@ -72,9 +75,12 @@ func (variance *Variance) Measure(sample float64) (VarianceOutput, error) {
 	variance.variance += rate * (deviation*deviation - variance.variance)
 	variance.prev = sample
 
+	// rate and deviation are both well-defined once span > 0, so the
+	// resulting variance is a defined value even when it lands exactly
+	// on zero (e.g. the sample landed back on the running mean).
 	return VarianceOutput{
 		Value: variance.variance,
-		Ready: variance.variance > 0,
+		Ready: true,
 		Count: variance.count,
 	}, nil
 }

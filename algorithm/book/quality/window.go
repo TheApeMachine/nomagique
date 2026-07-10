@@ -9,8 +9,6 @@ import (
 )
 
 type Window struct {
-	mu sync.Mutex
-
 	ledger          flow.SideFlowLedger
 	vacuumGate      *flow.GateQuantile
 	churnGate       *flow.GateQuantile
@@ -19,10 +17,10 @@ type Window struct {
 	vacuumLowPct    float64
 	prevTouchAddBid float64
 	prevTouchAddAsk float64
-	bids            map[float64]float64
-	asks            map[float64]float64
-	bidOrders       map[string]Order
-	askOrders       map[string]Order
+	bids            *sync.Map
+	asks            *sync.Map
+	bidOrders       *sync.Map
+	askOrders       *sync.Map
 	tradePrices     []float64
 	frameCount      int
 }
@@ -34,16 +32,15 @@ type Order struct {
 
 func newWindow(config SampleConfig) *Window {
 	return &Window{
-		mu:            sync.Mutex{},
 		vacuumGate:    flow.NewGateQuantile(config.VacuumGate),
 		churnGate:     flow.NewGateQuantile(config.ChurnGate),
 		cancelQtyGate: flow.NewGateQuantile(config.CancelQtyGate),
 		levelSizeGate: flow.NewGateQuantile(config.LevelSizeGate),
 		vacuumLowPct:  config.VacuumLowPercentile,
-		bids:          map[float64]float64{},
-		asks:          map[float64]float64{},
-		bidOrders:     map[string]Order{},
-		askOrders:     map[string]Order{},
+		bids:          &sync.Map{},
+		asks:          &sync.Map{},
+		bidOrders:     &sync.Map{},
+		askOrders:     &sync.Map{},
 	}
 }
 
@@ -51,9 +48,6 @@ func (window *Window) finish(
 	frame Frame,
 	level3 bool,
 ) equation.BookQualityInput {
-	window.mu.Lock()
-	defer window.mu.Unlock()
-
 	window.frameCount++
 	smoothing := 2.0 / float64(window.frameCount+1)
 
@@ -100,9 +94,6 @@ func (window *Window) observeLevels(
 	side byte,
 	frame *Frame,
 ) {
-	window.mu.Lock()
-	defer window.mu.Unlock()
-
 	book := window.sideBook(side)
 
 	for _, level := range levels {
@@ -110,19 +101,24 @@ func (window *Window) observeLevels(
 			return
 		}
 
-		previousQty := book[level.Price]
+		previousQty := 0.0
+
+		if previous, ok := book.Load(level.Price); ok {
+			previousQty = previous.(float64)
+		}
+
 		delta := level.Quantity - previousQty
 		touch := window.isTouchPrice(side, level.Price)
 
 		if level.Quantity <= 0 {
-			delete(book, level.Price)
+			book.Delete(level.Price)
 			window.ledger.AddDepth(side, -previousQty)
 			FrameCancel(frame, side, previousQty, touch)
 
 			continue
 		}
 
-		book[level.Price] = level.Quantity
+		book.Store(level.Price, level.Quantity)
 		window.ledger.AddDepth(side, delta)
 
 		if delta > 0 {
@@ -146,9 +142,6 @@ func (window *Window) observeOrderEvents(
 	side byte,
 	frame *Frame,
 ) {
-	window.mu.Lock()
-	defer window.mu.Unlock()
-
 	for _, event := range events {
 		if event.Price <= 0 {
 			return
@@ -193,20 +186,39 @@ func (window *Window) upsertOrder(
 ) {
 	orders := window.sideOrders(side)
 	book := window.sideBook(side)
-	previous := orders[orderID]
+	previous := Order{}
+
+	if existing, ok := orders.Load(orderID); ok {
+		previous = existing.(Order)
+	}
 
 	if previous.qty > 0 {
-		book[previous.price] -= previous.qty
+		previousQty := 0.0
 
-		if book[previous.price] <= 0 {
-			delete(book, previous.price)
+		if existing, ok := book.Load(previous.price); ok {
+			previousQty = existing.(float64)
+		}
+
+		newQty := previousQty - previous.qty
+
+		if newQty <= 0 {
+			book.Delete(previous.price)
+		} else {
+			book.Store(previous.price, newQty)
 		}
 
 		window.ledger.AddDepth(side, -previous.qty)
 	}
 
-	orders[orderID] = Order{price: price, qty: quantity}
-	book[price] += quantity
+	orders.Store(orderID, Order{price: price, qty: quantity})
+
+	currentQty := 0.0
+
+	if existing, ok := book.Load(price); ok {
+		currentQty = existing.(float64)
+	}
+
+	book.Store(price, currentQty+quantity)
 	window.ledger.AddDepth(side, quantity)
 
 	if quantity > previous.qty {
@@ -222,7 +234,12 @@ func (window *Window) deleteOrder(
 ) (float64, bool) {
 	orders := window.sideOrders(side)
 	book := window.sideBook(side)
-	previous := orders[orderID]
+	previous := Order{}
+
+	if existing, ok := orders.Load(orderID); ok {
+		previous = existing.(Order)
+	}
+
 	removed := quantity
 	orderPrice := price
 
@@ -232,14 +249,22 @@ func (window *Window) deleteOrder(
 	}
 
 	touch := window.isTouchPrice(side, orderPrice)
-	book[orderPrice] -= removed
+	currentQty := 0.0
 
-	if book[orderPrice] <= 0 {
-		delete(book, orderPrice)
+	if existing, ok := book.Load(orderPrice); ok {
+		currentQty = existing.(float64)
+	}
+
+	newQty := currentQty - removed
+
+	if newQty <= 0 {
+		book.Delete(orderPrice)
+	} else {
+		book.Store(orderPrice, newQty)
 	}
 
 	window.ledger.AddDepth(side, -removed)
-	delete(orders, orderID)
+	orders.Delete(orderID)
 
 	return removed, touch
 }

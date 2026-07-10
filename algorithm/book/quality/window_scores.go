@@ -2,11 +2,12 @@ package quality
 
 import (
 	"math"
+	"sync"
 
 	"github.com/theapemachine/nomagique/algorithm/book/flow"
 )
 
-func (window *Window) sideBook(side byte) map[float64]float64 {
+func (window *Window) sideBook(side byte) *sync.Map {
 	if side == flow.SideBid {
 		return window.bids
 	}
@@ -14,7 +15,7 @@ func (window *Window) sideBook(side byte) map[float64]float64 {
 	return window.asks
 }
 
-func (window *Window) sideOrders(side byte) map[string]Order {
+func (window *Window) sideOrders(side byte) *sync.Map {
 	if side == flow.SideBid {
 		return window.bidOrders
 	}
@@ -33,11 +34,15 @@ func (window *Window) isTouchPrice(side byte, price float64) bool {
 func (window *Window) bestBid() float64 {
 	best := 0.0
 
-	for price := range window.bids {
+	window.bids.Range(func(key, value any) bool {
+		price := key.(float64)
+
 		if price > best {
 			best = price
 		}
-	}
+
+		return true
+	})
 
 	return best
 }
@@ -45,11 +50,15 @@ func (window *Window) bestBid() float64 {
 func (window *Window) bestAsk() float64 {
 	best := 0.0
 
-	for price := range window.asks {
+	window.asks.Range(func(key, value any) bool {
+		price := key.(float64)
+
 		if best == 0 || price < best {
 			best = price
 		}
-	}
+
+		return true
+	})
 
 	return best
 }
@@ -214,19 +223,27 @@ func (window *Window) touchProximity(mid float64) float64 {
 }
 
 func (window *Window) medianLevelQty() float64 {
-	quantities := make([]float64, 0, len(window.bids)+len(window.asks))
+	quantities := make([]float64, 0)
 
-	for _, qty := range window.bids {
+	window.bids.Range(func(key, value any) bool {
+		qty := value.(float64)
+
 		if qty > 0 {
 			quantities = append(quantities, qty)
 		}
-	}
 
-	for _, qty := range window.asks {
+		return true
+	})
+
+	window.asks.Range(func(key, value any) bool {
+		qty := value.(float64)
+
 		if qty > 0 {
 			quantities = append(quantities, qty)
 		}
-	}
+
+		return true
+	})
 
 	return Median(quantities)
 }

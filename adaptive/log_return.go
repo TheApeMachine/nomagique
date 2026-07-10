@@ -110,8 +110,12 @@ func (logReturn *LogReturn) Measure(sample LogReturnSample) (LogReturnOutput, er
 	anchorIndex := len(history) - logReturn.config.ReturnLag - 1
 
 	if anchorIndex < 0 {
+		// No anchor lagged far enough back yet. The reflexive boundary
+		// (comparing the sample to itself) is a defined "no return
+		// observed yet" value, not a missing one.
 		return LogReturnOutput{
-			Ready: false,
+			Value: 0,
+			Ready: true,
 			Count: len(history),
 		}, nil
 	}

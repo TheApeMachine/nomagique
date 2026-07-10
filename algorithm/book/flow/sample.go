@@ -18,8 +18,7 @@ Sample accumulates book and trade frames into the feature batch expects.
 Decay rate and history windows are derived from observed spread and imbalance history.
 */
 type Sample struct {
-	windows map[string]*Window
-	mu      sync.RWMutex
+	windows *sync.Map
 }
 
 /*
@@ -52,8 +51,6 @@ type TradeInput struct {
 }
 
 type Window struct {
-	mu sync.Mutex
-
 	book            *Book
 	weightedHist    []float64
 	level1Hist      []float64
@@ -75,7 +72,7 @@ NewSample returns a book/trade sampler for depth-flow classification.
 */
 func NewSample() *Sample {
 	return &Sample{
-		windows: map[string]*Window{},
+		windows: &sync.Map{},
 	}
 }
 
@@ -93,18 +90,7 @@ func (s *Sample) MeasureBook(
 		))
 	}
 
-	s.mu.Lock()
-	window := s.windows[input.Symbol]
-	if window == nil {
-		window = &Window{
-			book: NewBook(),
-		}
-		s.windows[input.Symbol] = window
-	}
-	s.mu.Unlock()
-
-	window.mu.Lock()
-	defer window.mu.Unlock()
+	window := s.window(input.Symbol)
 
 	if err := s.ingestBook(input, window); err != nil {
 		return equation.BookflowInput{}, false, err
@@ -135,22 +121,25 @@ func (s *Sample) MeasureTrade(
 		))
 	}
 
-	s.mu.Lock()
-	window := s.windows[input.Symbol]
-	if window == nil {
-		window = &Window{
-			book: NewBook(),
-		}
-		s.windows[input.Symbol] = window
-	}
-	s.mu.Unlock()
-
-	window.mu.Lock()
-	defer window.mu.Unlock()
-
+	window := s.window(input.Symbol)
 	s.ingestTrade(input, window)
 
 	return s.features(window)
+}
+
+func (s *Sample) window(symbol string) *Window {
+	existing, ok := s.windows.Load(symbol)
+
+	if ok {
+		return existing.(*Window)
+	}
+
+	window := &Window{
+		book: NewBook(),
+	}
+	s.windows.Store(symbol, window)
+
+	return window
 }
 
 func (s *Sample) ingestBook(

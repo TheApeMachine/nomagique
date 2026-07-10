@@ -118,8 +118,8 @@ func TestTypedAdaptiveTemporalStages(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if first.Ready {
-		t.Fatalf("first log return is ready")
+	if !first.Ready || first.Value != 0 {
+		t.Fatalf("first log return = %+v, want ready zero return", first)
 	}
 
 	second, err := logReturn.Measure(LogReturnSample{Value: 110, At: time.Unix(2, 0)})

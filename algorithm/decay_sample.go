@@ -1,7 +1,6 @@
 package algorithm
 
 import (
-	"math"
 	"sync"
 
 	"github.com/theapemachine/errnie"
@@ -11,10 +10,7 @@ import (
 	"github.com/theapemachine/nomagique/utils"
 )
 
-const (
-	decaySampleHistoryCap = 64
-	decaySampleMinHistory = 4
-)
+const decaySampleHistoryCap = 64
 
 /*
 DecaySample accumulates book and trade frames into the feature batch Decay expects.
@@ -49,13 +45,15 @@ func NewDecaySample() *DecaySample {
 }
 
 /*
-MeasureBook observes one book update and returns decay input when ready.
+MeasureBook observes one book update and returns decay input plus a maturity
+fraction (0..1) of the adaptive window that has accumulated so far. It is
+ready as soon as a valid book snapshot exists, from the very first frame.
 */
 func (decaySample *DecaySample) MeasureBook(
 	input flow.BookInput,
-) (equation.DecayInput, bool, error) {
+) (equation.DecayInput, bool, float64, error) {
 	if input.Symbol == "" {
-		return equation.DecayInput{}, false, errnie.Error(errnie.Err(
+		return equation.DecayInput{}, false, 0, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"decay-sample: symbol required",
 			nil,
@@ -67,20 +65,21 @@ func (decaySample *DecaySample) MeasureBook(
 	defer window.mu.Unlock()
 
 	if err := decaySample.ingestBook(input, window); err != nil {
-		return equation.DecayInput{}, false, err
+		return equation.DecayInput{}, false, 0, err
 	}
 
 	return decaySample.features(window)
 }
 
 /*
-MeasureTrade observes one trade update and returns decay input when ready.
+MeasureTrade observes one trade update and returns decay input plus a
+maturity fraction (0..1) of the adaptive window that has accumulated so far.
 */
 func (decaySample *DecaySample) MeasureTrade(
 	input flow.TradeInput,
-) (equation.DecayInput, bool, error) {
+) (equation.DecayInput, bool, float64, error) {
 	if input.Symbol == "" {
-		return equation.DecayInput{}, false, errnie.Error(errnie.Err(
+		return equation.DecayInput{}, false, 0, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"decay-sample: symbol required",
 			nil,
@@ -88,7 +87,7 @@ func (decaySample *DecaySample) MeasureTrade(
 	}
 
 	if input.Price <= 0 || input.Quantity <= 0 {
-		return equation.DecayInput{}, false, errnie.Error(errnie.Err(
+		return equation.DecayInput{}, false, 0, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"decay-sample: trade price and quantity required",
 			nil,
@@ -193,36 +192,15 @@ func (decaySample *DecaySample) ingestTrade(input flow.TradeInput, window *decay
 
 func (decaySample *DecaySample) features(
 	window *decayWindow,
-) (equation.DecayInput, bool, error) {
-	series := [][]float64{
-		window.bidDepthHist,
-		window.askDepthHist,
-		window.densityHist,
-		window.spreadHist,
-		window.pressureHist,
-		window.imbalanceHist,
-	}
-
-	minLength := math.MaxInt
-
-	for _, segment := range series {
-		if len(segment) < minLength {
-			minLength = len(segment)
-		}
-	}
-
-	if minLength < decaySampleMinHistory {
-		return equation.DecayInput{}, false, nil
-	}
-
-	_, longWindow, err := statistic.ResolveWindows(window.densityHist, 0, 0)
-
-	if err != nil || minLength < longWindow {
-		return equation.DecayInput{}, false, nil
-	}
-
+) (equation.DecayInput, bool, float64, error) {
 	if window.lastPrice <= 0 {
-		return equation.DecayInput{}, false, nil
+		return equation.DecayInput{}, false, 0, nil
+	}
+
+	maturity, err := decaySample.maturity(window)
+
+	if err != nil {
+		return equation.DecayInput{}, false, 0, err
 	}
 
 	return equation.DecayInput{
@@ -233,5 +211,42 @@ func (decaySample *DecaySample) features(
 		Spreads:    append([]float64(nil), window.spreadHist...),
 		Pressures:  append([]float64(nil), window.pressureHist...),
 		Imbalances: append([]float64(nil), window.imbalanceHist...),
-	}, true, nil
+	}, true, maturity, nil
+}
+
+/*
+maturity reports how much of the adaptive window (derived from observed
+update cadence, not a fixed constant) has accumulated so far, as a 0..1
+fraction. equation.Decay itself degrades individual components to zero
+below its own per-metric minimums, so this is purely an informational
+confidence signal, never a suppression gate.
+*/
+func (decaySample *DecaySample) maturity(window *decayWindow) (float64, error) {
+	observed := len(window.densityHist)
+
+	if observed == 0 {
+		return 0, nil
+	}
+
+	_, longWindow, err := statistic.ResolveWindows(window.densityHist, 0, 0)
+
+	if err != nil {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"decay-sample: window resolution failed",
+			err,
+		))
+	}
+
+	if longWindow <= 0 {
+		return 1, nil
+	}
+
+	fraction := float64(observed) / float64(longWindow)
+
+	if fraction > 1 {
+		fraction = 1
+	}
+
+	return fraction, nil
 }

@@ -42,8 +42,12 @@ func (delta *Delta) Measure(sample float64) (DeltaOutput, error) {
 		delta.prev = sample
 		delta.count = 1
 
+		// No prior observation exists, so the observed range before this
+		// sample was empty. This single reading defines the entirety of
+		// that range, making the normalized change maximal by definition.
 		return DeltaOutput{
-			Ready: false,
+			Value: 1,
+			Ready: true,
 			Count: delta.count,
 		}, nil
 	}

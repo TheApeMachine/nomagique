@@ -43,13 +43,14 @@ type IgnitionOutput struct {
 }
 
 type ignitionWindow struct {
-	lastVolume  float64
-	lastPrice   float64
-	lastRVOL    float64
-	volumeLift  []float64
-	precursors  []float64
-	spreads     []float64
-	initialized bool
+	lastVolume   float64
+	lastPrice    float64
+	lastRVOL     float64
+	volumeLift   []float64
+	precursors   []float64
+	spreads      []float64
+	initialized  bool
+	observations int
 }
 
 /*
@@ -62,11 +63,14 @@ func NewIgnition() *Ignition {
 }
 
 /*
-Measure scores one ticker observation.
+Measure scores one ticker observation and reports a confidence maturity
+alongside it.
 */
-func (ignition *Ignition) Measure(input IgnitionInput) (IgnitionOutput, bool, error) {
+func (ignition *Ignition) Measure(
+	input IgnitionInput,
+) (IgnitionOutput, bool, float64, error) {
 	if input.Symbol == "" || input.Volume <= 0 || input.Last <= 0 || input.Bid <= 0 || input.Ask <= 0 {
-		return IgnitionOutput{}, false, errnie.Error(errnie.Err(
+		return IgnitionOutput{}, false, 0, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"ignition: symbol, volume, last, bid, and ask required",
 			nil,
@@ -74,7 +78,7 @@ func (ignition *Ignition) Measure(input IgnitionInput) (IgnitionOutput, bool, er
 	}
 
 	if input.Ask <= input.Bid {
-		return IgnitionOutput{}, false, errnie.Error(errnie.Err(
+		return IgnitionOutput{}, false, 0, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"ignition: ask must be above bid",
 			nil,
@@ -83,6 +87,8 @@ func (ignition *Ignition) Measure(input IgnitionInput) (IgnitionOutput, bool, er
 
 	window := ignition.window(input.Symbol)
 	spread := input.Ask - input.Bid
+	window.observations++
+	maturity := float64(window.observations) / float64(window.observations+1)
 
 	if !window.initialized {
 		window.lastVolume = input.Volume
@@ -90,7 +96,7 @@ func (ignition *Ignition) Measure(input IgnitionInput) (IgnitionOutput, bool, er
 		window.spreads = append(window.spreads, spread)
 		window.initialized = true
 
-		return IgnitionOutput{Spread: spread}, true, nil
+		return IgnitionOutput{Spread: spread}, true, maturity, nil
 	}
 
 	volumeLift := math.Max(0, input.Volume-window.lastVolume)
@@ -103,7 +109,7 @@ func (ignition *Ignition) Measure(input IgnitionInput) (IgnitionOutput, bool, er
 	window.lastVolume = input.Volume
 	window.lastPrice = input.Last
 
-	return output, ready, err
+	return output, ready, maturity, err
 }
 
 func (ignition *Ignition) window(symbol string) *ignitionWindow {

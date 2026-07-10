@@ -3,9 +3,17 @@ package statistic
 import (
 	"math"
 	"sort"
+	"sync"
 
 	"github.com/theapemachine/errnie"
 )
+
+var scratchPool = sync.Pool{
+	New: func() any {
+		s := make([]float64, 0, 1024)
+		return &s
+	},
+}
 
 /*
 Median computes the sample median over retained history or panel peers.
@@ -124,20 +132,31 @@ func MedianOf(values []float64) (float64, bool) {
 		return 0, false
 	}
 
-	sorted := append([]float64(nil), values...)
-
-	for _, value := range sorted {
+	for _, value := range values {
 		if math.IsNaN(value) || math.IsInf(value, 0) {
 			return 0, false
 		}
 	}
 
+	ptr := scratchPool.Get().(*[]float64)
+	sorted := (*ptr)[:0]
+	if cap(sorted) < len(values) {
+		sorted = make([]float64, 0, len(values))
+	}
+	sorted = append(sorted, values...)
+
 	sort.Float64s(sorted)
 	middle := len(sorted) / 2
 
+	var result float64
 	if len(sorted)%2 == 0 {
-		return (sorted[middle-1] + sorted[middle]) / 2, true
+		result = (sorted[middle-1] + sorted[middle]) / 2
+	} else {
+		result = sorted[middle]
 	}
 
-	return sorted[middle], true
+	*ptr = sorted[:0]
+	scratchPool.Put(ptr)
+
+	return result, true
 }

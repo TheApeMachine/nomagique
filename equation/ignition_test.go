@@ -24,7 +24,7 @@ func TestIgnition_Measure(testingTB *testing.T) {
 		var err error
 
 		for index := range 8 {
-			output, ready, err = ignition.Measure(ignitionInput(index))
+			output, ready, _, err = ignition.Measure(ignitionInput(index))
 		}
 
 		Convey("It measures ignition without artifact transport", func() {
@@ -41,11 +41,11 @@ func TestIgnition_Measure(testingTB *testing.T) {
 		ignition := NewIgnition()
 
 		for index := range 8 {
-			_, _, err := ignition.Measure(ignitionInput(index))
+			_, _, _, err := ignition.Measure(ignitionInput(index))
 			So(err, ShouldBeNil)
 		}
 
-		output, ready, err := ignition.Measure(IgnitionInput{
+		output, ready, _, err := ignition.Measure(IgnitionInput{
 			Symbol: "BTC/USD",
 			Volume: 1140,
 			Last:   107,
@@ -68,7 +68,7 @@ func BenchmarkIgnition_Measure(benchmark *testing.B) {
 
 	for benchmark.Loop() {
 		for index := range 8 {
-			_, _, _ = ignition.Measure(ignitionInput(index))
+			_, _, _, _ = ignition.Measure(ignitionInput(index))
 		}
 	}
 }

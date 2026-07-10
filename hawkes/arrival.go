@@ -66,22 +66,34 @@ func (stream ArrivalStream) Marked() []MarkedEvent {
 
 	for buyIndex < len(buyTimes) && sellIndex < len(sellTimes) {
 		if !buyTimes[buyIndex].After(sellTimes[sellIndex]) {
-			marked = append(marked, MarkedEvent{At: buyTimes[buyIndex], Side: sideBuy})
+			marked = append(marked, MarkedEvent{
+				At: buyTimes[buyIndex], Side: sideBuy,
+			})
+			
 			buyIndex++
 			continue
 		}
 
-		marked = append(marked, MarkedEvent{At: sellTimes[sellIndex], Side: sideSell})
+		marked = append(marked, MarkedEvent{
+			At: sellTimes[sellIndex], Side: sideSell,
+		})
+
 		sellIndex++
 	}
 
 	for buyIndex < len(buyTimes) {
-		marked = append(marked, MarkedEvent{At: buyTimes[buyIndex], Side: sideBuy})
+		marked = append(marked, MarkedEvent{
+			At: buyTimes[buyIndex], Side: sideBuy,
+		})
+		
 		buyIndex++
 	}
 
 	for sellIndex < len(sellTimes) {
-		marked = append(marked, MarkedEvent{At: sellTimes[sellIndex], Side: sideSell})
+		marked = append(marked, MarkedEvent{
+			At: sellTimes[sellIndex], Side: sideSell,
+		})
+		
 		sellIndex++
 	}
 
@@ -117,17 +129,38 @@ func (stream ArrivalStream) buyIntensityAt(
 	horizon time.Time,
 	muBuy, alphaBB, alphaBS, beta float64,
 ) float64 {
-	return decay.IntensityAt(stream.buy, stream.sell, horizon, muBuy, alphaBB, alphaBS, beta)
+	return decay.IntensityAt(
+		stream.buy,
+		stream.sell,
+		horizon,
+		muBuy,
+		alphaBB,
+		alphaBS,
+		beta,
+	)
 }
 
 func (stream ArrivalStream) sellIntensityAt(
 	horizon time.Time,
 	muSell, alphaSB, alphaSS, beta float64,
 ) float64 {
-	return decay.IntensityAt(stream.buy, stream.sell, horizon, muSell, alphaSB, alphaSS, beta)
+	return decay.IntensityAt(
+		stream.buy,
+		stream.sell,
+		horizon,
+		muSell,
+		alphaSB,
+		alphaSS,
+		beta,
+	)
 }
 
-func (stream ArrivalStream) kernelIntegralSupport(horizon time.Time, beta float64) (buy, sell float64) {
-	return decay.KernelIntegralSupport(stream.buy, horizon, beta),
-		decay.KernelIntegralSupport(stream.sell, horizon, beta)
+func (stream ArrivalStream) kernelIntegralSupport(
+	horizon time.Time, beta float64,
+) (buy, sell float64) {
+	return decay.KernelIntegralSupport(
+			stream.buy, horizon, beta,
+		), decay.KernelIntegralSupport(
+			stream.sell, horizon, beta,
+		)
 }

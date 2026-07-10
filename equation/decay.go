@@ -2,11 +2,9 @@ package equation
 
 import (
 	"math"
-	"sort"
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/probability"
-	"gonum.org/v1/gonum/stat"
 )
 
 /*
@@ -15,16 +13,39 @@ Decay classifies book thinning, spread widening, pressure fade, and imbalance fl
 type Decay struct{}
 
 /*
-DecayInput contains the float-only microstructure decay inputs.
+DecayInput carries pre-computed, per-tick microstructure decay ingredients.
+Every field is produced by an adaptive nomagique/statistic primitive that is
+already well-defined from its first observation, so there are no raw
+histories and no per-metric sample-count floors here.
 */
 type DecayInput struct {
-	LastPrice  float64
-	BidDepths  []float64
-	AskDepths  []float64
-	Densities  []float64
-	Spreads    []float64
-	Pressures  []float64
-	Imbalances []float64
+	LastPrice float64
+
+	// BidDepthRatio, AskDepthRatio, and DensityRatio are short-window mean
+	// over long-window median depth ratios (statistic.MeanMedianRatio). A
+	// ratio below 1 means recent depth sits below its own baseline.
+	BidDepthRatio float64
+	AskDepthRatio float64
+	DensityRatio  float64
+
+	// SpreadDeviation is the current spread's rolling z-score against its
+	// own history (statistic.RollingZScore). Positive means wider than typical.
+	SpreadDeviation float64
+
+	// Pressure is the current smoothed trade pressure. PressurePeak and
+	// PressureTrough are the running max/min of pressure including this
+	// tick (statistic.Max/Min), so a tick that sets a new extreme reports
+	// zero fade by construction — there is nothing to fade from yet.
+	Pressure       float64
+	PressurePeak   float64
+	PressureTrough float64
+
+	// Imbalance is the current book imbalance. PriorImbalanceMean is the
+	// mean of every imbalance observed strictly before this tick
+	// (statistic.Mean); it is zero on the first tick, since nothing
+	// precedes it to compare against.
+	Imbalance          float64
+	PriorImbalanceMean float64
 }
 
 /*
@@ -49,7 +70,7 @@ func NewDecay() *Decay {
 }
 
 /*
-Measure calculates decay scores from floats without artifact transport.
+Measure calculates decay scores from pre-computed microstructure scalars.
 */
 func (decay *Decay) Measure(input DecayInput) (DecayOutput, error) {
 	if input.LastPrice <= 0 {
@@ -60,22 +81,13 @@ func (decay *Decay) Measure(input DecayInput) (DecayOutput, error) {
 		))
 	}
 
-	series := [][]float64{
-		input.BidDepths,
-		input.AskDepths,
-		input.Densities,
-		input.Spreads,
-		input.Pressures,
-		input.Imbalances,
-	}
-
-	longOutcome, err := decay.exitSide(series, 1)
+	longOutcome, err := decay.exitSide(input, 1)
 
 	if err != nil {
 		return DecayOutput{}, err
 	}
 
-	shortOutcome, err := decay.exitSide(series, -1)
+	shortOutcome, err := decay.exitSide(input, -1)
 
 	if err != nil {
 		return DecayOutput{}, err
@@ -118,32 +130,25 @@ type decaySideOutcome struct {
 	category   int
 }
 
-func (decay *Decay) exitSide(series [][]float64, side int) (decaySideOutcome, error) {
-	bidDepths := series[0]
-	askDepths := series[1]
-	densities := series[2]
-	spreads := series[3]
-	pressures := series[4]
-	imbalances := series[5]
-
+func (decay *Decay) exitSide(input DecayInput, side int) (decaySideOutcome, error) {
 	thinning := 0.0
 	fade := 0.0
 	flip := 0.0
 
 	if side > 0 {
-		thinning = depthTrend(bidDepths)
-		fade = pressureFade(pressures, 1)
-		flip = imbalanceFlip(imbalances, 1)
+		thinning = ratioDecline(input.BidDepthRatio)
+		fade = pressureFade(input.Pressure, input.PressurePeak, 1)
+		flip = imbalanceFlip(input.Imbalance, input.PriorImbalanceMean, 1)
 	}
 
 	if side < 0 {
-		thinning = depthTrend(askDepths)
-		fade = pressureFade(pressures, -1)
-		flip = imbalanceFlip(imbalances, -1)
+		thinning = ratioDecline(input.AskDepthRatio)
+		fade = pressureFade(input.Pressure, input.PressureTrough, -1)
+		flip = imbalanceFlip(input.Imbalance, input.PriorImbalanceMean, -1)
 	}
 
-	widen := spreadWiden(spreads)
-	collapse := depthTrend(densities)
+	widen := math.Max(0, input.SpreadDeviation)
+	collapse := ratioDecline(input.DensityRatio)
 	thinningScore := 0.0
 	collapseScore := 0.0
 	fragileScore := 0.0
@@ -248,92 +253,52 @@ func (decay *Decay) exitSide(series [][]float64, side int) (decaySideOutcome, er
 	}, nil
 }
 
-func depthTrend(depths []float64) float64 {
-	if len(depths) < 4 {
+/*
+ratioDecline turns a short-over-long ratio into a decline fraction. A ratio
+at or above 1 means recent activity is not below its own baseline, so there
+is nothing to report.
+*/
+func ratioDecline(ratio float64) float64 {
+	if ratio <= 0 || ratio >= 1 {
 		return 0
 	}
 
-	splitIndex := len(depths) / 2
-
-	if splitIndex < 1 {
-		return 0
-	}
-
-	recent := stat.Mean(depths[splitIndex:], nil)
-	prior := stat.Mean(depths[:splitIndex], nil)
-
-	if prior <= 0 {
-		return 0
-	}
-
-	return (prior - recent) / prior
+	return 1 - ratio
 }
 
-func spreadWiden(spreads []float64) float64 {
-	if len(spreads) < 4 {
-		return 0
-	}
-
-	sorted := append([]float64(nil), spreads...)
-	sort.Float64s(sorted)
-
-	median := stat.Quantile(0.5, stat.LinInterp, sorted, nil)
-	current := spreads[len(spreads)-1]
-
-	if median <= 0 || current <= median {
-		return 0
-	}
-
-	return (current - median) / median
-}
-
-func pressureFade(pressures []float64, side int) float64 {
-	if len(pressures) < 3 {
-		return 0
-	}
-
-	recent := pressures[len(pressures)-1]
-	prior := pressures[0]
-
-	for _, value := range pressures[:len(pressures)-1] {
-		if side > 0 && value > prior {
-			prior = value
-		}
-
-		if side < 0 && value < prior {
-			prior = value
-		}
-	}
-
+/*
+pressureFade compares the current pressure reading to the running extremum
+(peak for the long side, trough for the short side) computed including this
+tick. A tick that sets a new extreme is, by construction, not faded from it.
+*/
+func pressureFade(pressure, extremum float64, side int) float64 {
 	if side > 0 {
-		if prior <= 0 || recent >= prior {
+		if extremum <= 0 || pressure >= extremum {
 			return 0
 		}
 
-		return (prior - recent) / math.Abs(prior)
+		return (extremum - pressure) / math.Abs(extremum)
 	}
 
-	if prior >= 0 || recent <= prior {
+	if extremum >= 0 || pressure <= extremum {
 		return 0
 	}
 
-	return (recent - prior) / math.Abs(prior)
+	return (pressure - extremum) / math.Abs(extremum)
 }
 
-func imbalanceFlip(imbalances []float64, side int) float64 {
-	if len(imbalances) < 2 {
-		return 0
+/*
+imbalanceFlip reports how far the current imbalance has crossed against a
+prior mean that supported the opposite side. It is zero unless the prior
+mean actually favored this side and the current reading has flipped sign.
+*/
+func imbalanceFlip(current, priorMean float64, side int) float64 {
+	if side > 0 && priorMean > 0 && current < 0 {
+		return math.Abs(current) / priorMean
 	}
 
-	recent := imbalances[len(imbalances)-1]
-	prior := stat.Mean(imbalances[:len(imbalances)-1], nil)
-
-	if side > 0 && prior > 0 && recent < 0 {
-		return math.Abs(recent) / prior
-	}
-
-	if side < 0 && prior < 0 && recent > 0 {
-		return recent / math.Abs(prior)
+	if side < 0 && priorMean < 0 && current > 0 {
+		return current / math.Abs(priorMean)
 	}
 
 	return 0

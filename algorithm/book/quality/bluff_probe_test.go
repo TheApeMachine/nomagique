@@ -17,7 +17,7 @@ func TestBluffProbe(t *testing.T) {
 	bestBluff := 0.0
 
 	for _, frame := range frames {
-		input, ready, err := sample.MeasureLevel3(frame)
+		input, ready, _, err := sample.MeasureLevel3(frame)
 
 		if err != nil {
 			t.Fatal(err)

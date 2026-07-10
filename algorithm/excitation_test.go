@@ -32,12 +32,28 @@ func TestExcitation_Measure(testingTB *testing.T) {
 		})
 	})
 
-	Convey("Given a scoped feature batch before fit history is ready", testingTB, func() {
+	Convey("Given a scoped feature batch below the bivariate identifiability floor", testingTB, func() {
 		excitation := NewExcitation()
 		base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
-		_, ready, err := excitation.Measure(excitationBurstInput("ALT/EUR", base, 2))
+		outcome, ready, err := excitation.Measure(excitationBurstInput("ALT/EUR", base, 2))
 
-		Convey("It should stage quietly as not ready", func() {
+		Convey("It should emit the no-excitation baseline immediately, with low maturity", func() {
+			So(err, ShouldBeNil)
+			So(ready, ShouldBeTrue)
+			So(outcome.BranchingRatio, ShouldEqual, 0)
+			So(outcome.SpectralRadius, ShouldEqual, 0)
+			So(outcome.EventCount, ShouldEqual, 2)
+			So(outcome.Maturity, ShouldBeGreaterThan, 0)
+			So(outcome.Maturity, ShouldBeLessThan, 1)
+		})
+	})
+
+	Convey("Given a single one-sided event", testingTB, func() {
+		excitation := NewExcitation()
+		base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
+		_, ready, err := excitation.Measure(excitationBurstInput("ALT/EUR", base, 1))
+
+		Convey("It should stay not-ready, since a gap between two events is the irreducible floor", func() {
 			So(err, ShouldBeNil)
 			So(ready, ShouldBeFalse)
 		})

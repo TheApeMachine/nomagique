@@ -56,7 +56,7 @@ func (solver *RidgeSolver) Solve(normal [][]float64, vector []float64) ([]float6
 
 	symmetric := mat.NewSymDense(size, nil)
 
-	for row := 0; row < size; row++ {
+	for row := range size {
 		for col := row; col < size; col++ {
 			value := normal[row][col]
 
@@ -139,7 +139,7 @@ func (solver *RidgeSolver) ridgeLambda(normal [][]float64) float64 {
 	trace := 0.0
 	size := float64(len(normal))
 
-	for row := 0; row < len(normal); row++ {
+	for row := range normal {
 		trace += normal[row][row]
 	}
 
@@ -186,7 +186,7 @@ func (solver *RidgeSolver) conditionEstimate(normal [][]float64) float64 {
 
 	diagonals := make([]float64, size)
 
-	for row := 0; row < size; row++ {
+	for row := range size {
 		if len(normal[row]) != size {
 			return math.Inf(1)
 		}
@@ -202,10 +202,10 @@ func (solver *RidgeSolver) conditionEstimate(normal [][]float64) float64 {
 	minEigenBound := math.Inf(1)
 	pivotFloor := machineSqrtEpsilon()
 
-	for row := 0; row < size; row++ {
+	for row := range size {
 		radius := 0.0
 
-		for col := 0; col < size; col++ {
+		for col := range size {
 			if col == row {
 				continue
 			}

@@ -33,7 +33,8 @@ type TradeFlowInput struct {
 }
 
 type tradeFlowWindow struct {
-	ticks []tradeFlowTick
+	ticks        []tradeFlowTick
+	observations int
 }
 
 type tradeFlowTick struct {
@@ -52,13 +53,14 @@ func NewTradeFlowSample() *TradeFlowSample {
 }
 
 /*
-Measure observes one trade and returns flow input when the window is ready.
+Measure observes one trade and returns flow input, whether the window is
+ready to score, and a confidence maturity for that reading.
 */
 func (tradeFlowSample *TradeFlowSample) Measure(
 	input TradeFlowInput,
-) (equation.FlowInput, bool, error) {
+) (equation.FlowInput, bool, float64, error) {
 	if input.Symbol == "" || input.Price <= 0 || input.Quantity <= 0 {
-		return equation.FlowInput{}, false, errnie.Error(errnie.Err(
+		return equation.FlowInput{}, false, 0, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"trade-flow-sample: trade frame requires symbol, price, and qty",
 			nil,
@@ -66,7 +68,7 @@ func (tradeFlowSample *TradeFlowSample) Measure(
 	}
 
 	if input.Side != "buy" && input.Side != "sell" {
-		return equation.FlowInput{}, false, errnie.Error(errnie.Err(
+		return equation.FlowInput{}, false, 0, errnie.Error(errnie.Err(
 			errnie.Validation,
 			fmt.Sprintf("trade-flow-sample: unknown side %q", input.Side),
 			nil,
@@ -80,18 +82,20 @@ func (tradeFlowSample *TradeFlowSample) Measure(
 		notional: notional,
 		price:    input.Price,
 	})
+	window.observations++
 
 	if len(window.ticks) > flowSampleHistoryCap {
 		window.ticks = window.ticks[len(window.ticks)-flowSampleHistoryCap:]
 	}
 
 	features, ok := tradeFlowSample.features(window)
+	maturity := float64(window.observations) / float64(window.observations+1)
 
 	if !ok {
-		return equation.FlowInput{}, false, nil
+		return equation.FlowInput{}, false, maturity, nil
 	}
 
-	return features, true, nil
+	return features, true, maturity, nil
 }
 
 func (tradeFlowSample *TradeFlowSample) window(symbol string) *tradeFlowWindow {
@@ -122,9 +126,13 @@ func (tradeFlowSample *TradeFlowSample) features(
 		notionals[index] = tick.notional
 	}
 
+	// ResolveWindowSet always clamps LongWindow to at most tradeCount (the
+	// adaptive window can never exceed observed history), so a count
+	// shortfall here is structurally impossible — only a resolution error
+	// (e.g. non-finite notionals) is a real reason to withhold a reading.
 	windows, err := statistic.ResolveWindowSet(notionals, statistic.WindowsConfig{})
 
-	if err != nil || tradeCount < windows.LongWindow {
+	if err != nil {
 		return equation.FlowInput{}, false
 	}
 
@@ -165,12 +173,12 @@ func (tradeFlowSample *TradeFlowSample) features(
 		baselineNotionals = append(baselineNotionals, tick.notional)
 	}
 
+	// medianPositive(baselineNotionals) is structurally guaranteed positive:
+	// Measure only ever appends strictly positive notionals (Price and
+	// Quantity are validated > 0), and baseline always includes at least
+	// the tick just appended.
 	medianNotional := medianPositive(baselineNotionals)
 	grossFloor := medianNotional * float64(len(activeNotionals))
-
-	if medianNotional <= 0 {
-		return equation.FlowInput{}, false
-	}
 
 	return equation.FlowInput{
 		BuyNotional:    buyNotional,

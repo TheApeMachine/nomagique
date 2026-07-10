@@ -76,9 +76,13 @@ func (fluidflow *Fluidflow) Measure(
 		))
 	}
 
-	if input.Viscosity <= 0 ||
-		math.IsNaN(input.Reynolds) ||
-		math.IsInf(input.Reynolds, 0) {
+	// Viscosity (touch-band replenishment rate) can be legitimately zero — no
+	// add/cancel flux was observed in the touch band this step. That is a
+	// defined "undamped" reading, not missing data, so it is not rejected
+	// here; laminarScore and viscousScore already guard their own divisions
+	// by it below.
+	if math.IsNaN(input.Viscosity) || math.IsInf(input.Viscosity, 0) ||
+		math.IsNaN(input.Reynolds) || math.IsInf(input.Reynolds, 0) {
 		return FluidflowOutput{}, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"fluidflow: invalid mechanics input",
@@ -202,12 +206,18 @@ func (fluidflow *Fluidflow) Measure(
 		)
 	}
 
+	// Every score being exactly zero means the touch showed no measurable
+	// flow, divergence, or replenishment this tick — a defined "idle book"
+	// reading, not a missing one. category is already 1 (laminar) by
+	// construction when nothing else scored higher.
 	if strength <= 0 || math.IsNaN(strength) || math.IsInf(strength, 0) {
-		return FluidflowOutput{}, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"fluidflow: invalid strength",
-			nil,
-		))
+		return FluidflowOutput{
+			Category:  float64(category),
+			Price:     input.Price,
+			SpreadBPS: input.SpreadBPS,
+			ChangePct: input.ChangePct,
+			Volume:    input.Volume,
+		}, nil
 	}
 
 	return FluidflowOutput{

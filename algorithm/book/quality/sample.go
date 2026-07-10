@@ -89,13 +89,14 @@ func NewSample(configs ...SampleConfig) *Sample {
 }
 
 /*
-MeasureBook observes one L2 book update.
+MeasureBook observes one L2 book update and reports a confidence maturity
+alongside the resulting book-quality input.
 */
 func (sample *Sample) MeasureBook(
 	input flow.BookInput,
-) (equation.BookQualityInput, bool, error) {
+) (equation.BookQualityInput, bool, float64, error) {
 	if input.Symbol == "" {
-		return equation.BookQualityInput{}, false, errnie.Error(errnie.Err(
+		return equation.BookQualityInput{}, false, 0, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"book-quality-sample: symbol required",
 			nil,
@@ -106,18 +107,20 @@ func (sample *Sample) MeasureBook(
 	frame := Frame{}
 	window.observeLevels(input.Bids, flow.SideBid, &frame)
 	window.observeLevels(input.Asks, flow.SideAsk, &frame)
+	output := window.finish(frame, false)
 
-	return window.finish(frame, false), true, nil
+	return output, true, window.maturity(), nil
 }
 
 /*
-MeasureLevel3 observes one L3 book update.
+MeasureLevel3 observes one L3 book update and reports a confidence maturity
+alongside the resulting book-quality input.
 */
 func (sample *Sample) MeasureLevel3(
 	input Level3Input,
-) (equation.BookQualityInput, bool, error) {
+) (equation.BookQualityInput, bool, float64, error) {
 	if input.Symbol == "" {
-		return equation.BookQualityInput{}, false, errnie.Error(errnie.Err(
+		return equation.BookQualityInput{}, false, 0, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"book-quality-sample: symbol required",
 			nil,
@@ -131,17 +134,20 @@ func (sample *Sample) MeasureLevel3(
 	output := window.finish(frame, true)
 	window.tradePrices = nil
 
-	return output, true, nil
+	return output, true, window.maturity(), nil
 }
 
 /*
-MeasureTrade observes one trade update for later L3 fill/cancel classification.
+MeasureTrade observes one trade update, staging it for later L3 fill/cancel
+corroboration, and reports the currently held book-quality snapshot. A trade
+print carries no book delta of its own, so it is ready as soon as some book
+state already exists (LastPrice > 0) — never suppressed to a dead end.
 */
 func (sample *Sample) MeasureTrade(
 	input flow.TradeInput,
-) (equation.BookQualityInput, bool, error) {
+) (equation.BookQualityInput, bool, float64, error) {
 	if input.Symbol == "" {
-		return equation.BookQualityInput{}, false, errnie.Error(errnie.Err(
+		return equation.BookQualityInput{}, false, 0, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"book-quality-sample: symbol required",
 			nil,
@@ -149,7 +155,7 @@ func (sample *Sample) MeasureTrade(
 	}
 
 	if input.Price <= 0 || input.Quantity <= 0 {
-		return equation.BookQualityInput{}, false, errnie.Error(errnie.Err(
+		return equation.BookQualityInput{}, false, 0, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"book-quality-sample: trade price and quantity required",
 			nil,
@@ -158,8 +164,9 @@ func (sample *Sample) MeasureTrade(
 
 	window := sample.window(input.Symbol)
 	window.tradePrices = append(window.tradePrices, input.Price)
+	output := window.snapshot()
 
-	return equation.BookQualityInput{}, false, nil
+	return output, output.LastPrice > 0, window.maturity(), nil
 }
 
 func (sample *Sample) window(symbol string) *Window {

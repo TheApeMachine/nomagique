@@ -37,6 +37,37 @@ func TestOrganicHeadroomScores(t *testing.T) {
 	})
 }
 
+func TestExcitationSymbolMeasureBaseline(t *testing.T) {
+	Convey("Given an arrival stream below the bivariate identifiability floor", t, func() {
+		symbolState := newExcitationSymbol()
+		start := time.Unix(1_700_000_000, 0)
+		stream := hawkes.NewArrivalStream(
+			[]time.Time{start},
+			[]time.Time{start.Add(time.Second)},
+		)
+		horizon := start.Add(2 * time.Second)
+		context, ok := hawkes.NewFitContext(stream, horizon)
+
+		So(ok, ShouldBeTrue)
+		So(context.EnoughEvents(stream), ShouldBeFalse)
+
+		reading, readingOk := symbolState.measureBaseline(context, stream, horizon)
+
+		Convey("It should score the no-excitation Poisson baseline, not nothing", func() {
+			So(readingOk, ShouldBeTrue)
+			So(reading.branchingRatio, ShouldEqual, 0)
+			So(reading.spectralRadius, ShouldEqual, 0)
+			So(reading.eventCount, ShouldEqual, 2)
+			So(reading.maturity, ShouldBeGreaterThan, 0)
+			So(reading.maturity, ShouldBeLessThan, 1)
+		})
+
+		Convey("It should never populate the cached bivariate fit", func() {
+			So(symbolState.hasFit, ShouldBeFalse)
+		})
+	})
+}
+
 func TestExcitationReadingSeparatesBranchingRatioAndSpectralRadius(t *testing.T) {
 	Convey("Given an asymmetric bivariate Hawkes fit", t, func() {
 		symbolState := newExcitationSymbol()

@@ -15,10 +15,11 @@ type Variance struct {
 }
 
 /*
-VarianceOutput reports adaptive variance.
+VarianceOutput reports the adaptive mean and variance.
 */
 type VarianceOutput struct {
 	Value float64
+	Mean  float64
 	Ready bool
 	Count int
 }
@@ -50,6 +51,7 @@ func (variance *Variance) Measure(sample float64) (VarianceOutput, error) {
 		// That is a defined answer, not a missing one.
 		return VarianceOutput{
 			Value: 0,
+			Mean:  variance.mean,
 			Ready: true,
 			Count: variance.count,
 		}, nil
@@ -63,7 +65,11 @@ func (variance *Variance) Measure(sample float64) (VarianceOutput, error) {
 	if span == 0 {
 		variance.prev = sample
 
+		// Every sample observed so far is identical, so the mean is
+		// exactly that value even though the variance rate is
+		// indeterminate without any observed spread.
 		return VarianceOutput{
+			Mean:  variance.mean,
 			Ready: false,
 			Count: variance.count,
 		}, nil
@@ -80,6 +86,7 @@ func (variance *Variance) Measure(sample float64) (VarianceOutput, error) {
 	// on zero (e.g. the sample landed back on the running mean).
 	return VarianceOutput{
 		Value: variance.variance,
+		Mean:  variance.mean,
 		Ready: true,
 		Count: variance.count,
 	}, nil

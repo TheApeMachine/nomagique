@@ -9,7 +9,7 @@ import (
 )
 
 func TestTradeExcitationSample_MeasureTrade(testingTB *testing.T) {
-	Convey("Given one trade before excitation history is warm", testingTB, func() {
+	Convey("Given a single trade", testingTB, func() {
 		sample := NewTradeExcitationSample()
 		input, ready, err := sample.MeasureTrade(tradeExcitationInput(
 			"ALT/EUR",
@@ -17,10 +17,12 @@ func TestTradeExcitationSample_MeasureTrade(testingTB *testing.T) {
 			time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC),
 		))
 
-		Convey("It should stage without publishing features", func() {
+		Convey("It should publish a one-sided feature batch immediately", func() {
 			So(err, ShouldBeNil)
-			So(ready, ShouldBeFalse)
-			So(input.Symbol, ShouldEqual, "")
+			So(ready, ShouldBeTrue)
+			So(input.Symbol, ShouldEqual, "ALT/EUR")
+			So(len(input.BuySeconds), ShouldEqual, 1)
+			So(len(input.SellSeconds), ShouldEqual, 0)
 		})
 	})
 

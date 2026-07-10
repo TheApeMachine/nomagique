@@ -155,11 +155,7 @@ func adaptiveLongWindow(history []float64, shortWindow int) int {
 		}
 	}
 
-	longWindow := int(math.Ceil(float64(shortWindow) * (1.0 + spread)))
-
-	if longWindow < sampleCount {
-		longWindow = sampleCount
-	}
+	longWindow := max(int(math.Ceil(float64(shortWindow) * (1.0 + spread))), sampleCount)
 
 	if longWindow <= shortWindow {
 		longWindow = shortWindow + 1

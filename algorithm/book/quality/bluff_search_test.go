@@ -41,7 +41,7 @@ func replay(
 	seen := false
 
 	for _, frame := range frames {
-		input, ready, err := sample.MeasureLevel3(frame)
+		input, ready, _, err := sample.MeasureLevel3(frame)
 
 		if err != nil {
 			return equation.BookQualityOutput{}, false, err

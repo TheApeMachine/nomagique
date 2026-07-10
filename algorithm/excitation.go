@@ -27,6 +27,7 @@ type ExcitationOutcome struct {
 	EventCount         int
 	HighRisk           bool
 	Eligible           bool
+	Maturity           float64
 }
 
 /*
@@ -94,6 +95,7 @@ func excitationOutcomeFromReading(reading excitationReading) ExcitationOutcome {
 		PoissonImprovement: reading.poissonImprovement,
 		EventCount:         reading.eventCount,
 		HighRisk:           reading.highRisk,
+		Maturity:           reading.maturity,
 	}
 
 	outcome.Eligible = excitationEligible(outcome)

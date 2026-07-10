@@ -62,8 +62,16 @@ func (flow *Flow) Measure(input FlowInput) (FlowOutput, error) {
 	net := input.BuyNotional - input.SellNotional
 	netFraction := math.Abs(net) / gross
 
+	// A single price gives no move to compare against yet, so price-response
+	// categories (drive, absorption, starvation) are undefined. The buy/sell
+	// balance of the trade itself is still a defined reading — this is the
+	// reflexive boundary: the first observation's balance against nothing.
 	if len(input.Prices) < 2 {
+		balance := math.Max(0, 1-netFraction)
+
 		return FlowOutput{
+			Value:       balance,
+			Balance:     balance,
 			Net:         net,
 			NetFraction: netFraction,
 		}, nil

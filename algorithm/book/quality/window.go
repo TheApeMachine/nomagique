@@ -89,6 +89,49 @@ func (window *Window) finish(
 	}
 }
 
+/*
+snapshot reports the currently held book-quality state without recording a
+new frame. A bare trade print carries no book delta of its own, so it
+corroborates against — via tradePrices, consumed by the L3 fill/cancel
+classification — rather than mutates the ledger's cancel/fill history.
+*/
+func (window *Window) snapshot() equation.BookQualityInput {
+	cancelBid, fillBid, cancelAsk, fillAsk, bidDepth, askDepth := window.ledger.Snapshot()
+	bidRatio := CancelFillRatio(cancelBid, fillBid)
+	askRatio := CancelFillRatio(cancelAsk, fillAsk)
+	maxRatio := math.Max(bidRatio, askRatio)
+	lastPrice := window.midPrice()
+	threshold := window.threshold(maxRatio)
+	churnGate := window.runGate(window.churnGate, 0, 0)
+
+	return equation.BookQualityInput{
+		CancelBid:         cancelBid,
+		FillBid:           fillBid,
+		CancelAsk:         cancelAsk,
+		FillAsk:           fillAsk,
+		BidDepth:          bidDepth,
+		AskDepth:          askDepth,
+		Threshold:         threshold,
+		ChurnGate:         churnGate,
+		SupportGate:       flow.SupportRatioGate(threshold, window.vacuumLow(), window.vacuumGate.Ready()),
+		VacuumStrengthCap: flow.VacuumStrengthLimit(threshold, maxRatio, window.vacuumPeak(), window.vacuumGate.Ready()),
+		LastPrice:         lastPrice,
+	}
+}
+
+/*
+maturity reports a monotonically increasing, asymptotic confidence in the
+window's cancel/fill ledger and gate thresholds as more book frames
+accumulate. It never gates emission — finish() and snapshot() already emit a
+defined value from the first frame — it only communicates how much evidence
+backs it so far.
+*/
+func (window *Window) maturity() float64 {
+	frameCount := float64(window.frameCount)
+
+	return frameCount / (frameCount + 1)
+}
+
 func (window *Window) observeLevels(
 	levels []flow.BookLevel,
 	side byte,

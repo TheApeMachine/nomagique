@@ -24,7 +24,7 @@ func TestBookflowSample_MeasureBook(testingTB *testing.T) {
 		)
 
 		for range 6 {
-			input, ok, err = sample.MeasureBook(bookflowBookInput())
+			input, ok, _, err = sample.MeasureBook(bookflowBookInput())
 		}
 
 		So(err, ShouldBeNil)
@@ -51,7 +51,7 @@ func TestBookflowSample_MeasureBook(testingTB *testing.T) {
 
 	Convey("Given a valid first book frame before feature history is ready", testingTB, func() {
 		sample := NewSample()
-		input, ok, err := sample.MeasureBook(bookflowBookInput())
+		input, ok, _, err := sample.MeasureBook(bookflowBookInput())
 
 		Convey("It should publish a feature sample from the first valid book frame", func() {
 			So(err, ShouldBeNil)
@@ -66,7 +66,7 @@ func TestBookflowSample_MeasureBook(testingTB *testing.T) {
 		price := 100.1
 		tickSize := 0.1
 
-		_, _, err := sample.MeasureBook(BookInput{
+		_, _, _, err := sample.MeasureBook(BookInput{
 			Symbol:   "BTC/USD",
 			TickSize: tickSize,
 			Bids: []BookLevel{
@@ -78,7 +78,7 @@ func TestBookflowSample_MeasureBook(testingTB *testing.T) {
 		})
 		So(err, ShouldBeNil)
 
-		_, _, err = sample.MeasureBook(BookInput{
+		_, _, _, err = sample.MeasureBook(BookInput{
 			Symbol:   "BTC/USD",
 			TickSize: tickSize,
 			Bids: []BookLevel{
@@ -102,7 +102,7 @@ func TestBookflowSample_MeasureBook(testingTB *testing.T) {
 
 	Convey("Given a book frame without symbol", testingTB, func() {
 		sample := NewSample()
-		_, _, err := sample.MeasureBook(BookInput{
+		_, _, _, err := sample.MeasureBook(BookInput{
 			Bids: []BookLevel{{Price: 100, Quantity: 10}},
 			Asks: []BookLevel{{Price: 101, Quantity: 10}},
 		})
@@ -116,10 +116,10 @@ func TestBookflowSample_MeasureBook(testingTB *testing.T) {
 func TestBookflowSample_MeasureTrade(testingTB *testing.T) {
 	Convey("Given trade pressure after book state", testingTB, func() {
 		sample := NewSample()
-		_, _, err := sample.MeasureBook(bookflowBookInput())
+		_, _, _, err := sample.MeasureBook(bookflowBookInput())
 		So(err, ShouldBeNil)
 
-		input, ok, err := sample.MeasureTrade(TradeInput{
+		input, ok, _, err := sample.MeasureTrade(TradeInput{
 			Symbol:   "BTC/USD",
 			Side:     "buy",
 			Price:    100,
@@ -141,7 +141,7 @@ func BenchmarkBookflowSampleMeasureBook(benchmark *testing.B) {
 	benchmark.ReportAllocs()
 
 	for benchmark.Loop() {
-		_, _, _ = sample.MeasureBook(input)
+		_, _, _, _ = sample.MeasureBook(input)
 	}
 }
 

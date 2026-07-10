@@ -5,7 +5,6 @@ import (
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/equation"
-	"github.com/theapemachine/nomagique/statistic"
 	"github.com/theapemachine/nomagique/utils"
 )
 
@@ -65,6 +64,7 @@ type Window struct {
 	touchCancelAsk  float64
 	frameAddBid     float64
 	frameAddAsk     float64
+	observations    int
 }
 
 /*
@@ -77,13 +77,14 @@ func NewSample() *Sample {
 }
 
 /*
-MeasureBook observes one book update and returns book-flow input when ready.
+MeasureBook observes one book update and returns book-flow input, whether the
+book is valid enough to score, and a confidence maturity for that reading.
 */
 func (s *Sample) MeasureBook(
 	input BookInput,
-) (equation.BookflowInput, bool, error) {
+) (equation.BookflowInput, bool, float64, error) {
 	if input.Symbol == "" {
-		return equation.BookflowInput{}, false, errnie.Error(errnie.Err(
+		return equation.BookflowInput{}, false, 0, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"-sample: symbol required",
 			nil,
@@ -93,20 +94,23 @@ func (s *Sample) MeasureBook(
 	window := s.window(input.Symbol)
 
 	if err := s.ingestBook(input, window); err != nil {
-		return equation.BookflowInput{}, false, err
+		return equation.BookflowInput{}, false, 0, err
 	}
 
-	return s.features(window)
+	input2, ready, err := s.features(window)
+
+	return input2, ready, s.maturity(window), err
 }
 
 /*
-MeasureTrade observes one trade update and returns book-flow input when ready.
+MeasureTrade observes one trade update and returns book-flow input, whether
+the book is valid enough to score, and a confidence maturity for that reading.
 */
 func (s *Sample) MeasureTrade(
 	input TradeInput,
-) (equation.BookflowInput, bool, error) {
+) (equation.BookflowInput, bool, float64, error) {
 	if input.Symbol == "" {
-		return equation.BookflowInput{}, false, errnie.Error(errnie.Err(
+		return equation.BookflowInput{}, false, 0, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"-sample: symbol required",
 			nil,
@@ -114,7 +118,7 @@ func (s *Sample) MeasureTrade(
 	}
 
 	if input.Price <= 0 || input.Quantity <= 0 {
-		return equation.BookflowInput{}, false, errnie.Error(errnie.Err(
+		return equation.BookflowInput{}, false, 0, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"-sample: trade price and quantity required",
 			nil,
@@ -124,7 +128,21 @@ func (s *Sample) MeasureTrade(
 	window := s.window(input.Symbol)
 	s.ingestTrade(input, window)
 
-	return s.features(window)
+	output, ready, err := s.features(window)
+
+	return output, ready, s.maturity(window), err
+}
+
+/*
+maturity reports a monotonically increasing, asymptotic confidence in the
+window's history-derived thresholds as more book observations accumulate. It
+never gates emission — features() already emits a defined value from the
+first observation — it only communicates how much evidence backs it so far.
+*/
+func (s *Sample) maturity(window *Window) float64 {
+	observations := float64(window.observations)
+
+	return observations / (observations + 1)
 }
 
 func (s *Sample) window(symbol string) *Window {
@@ -190,6 +208,7 @@ func (s *Sample) ingestBook(
 	window.lastSpread = spread
 	window.touchDepth = touchDepth
 	window.flatOK = 1
+	window.observations++
 	window.weightedHist = utils.AppendRingFloat(window.weightedHist, weighted, SampleHistoryCap)
 	window.level1Hist = utils.AppendRingFloat(window.level1Hist, level1, SampleHistoryCap)
 
@@ -244,12 +263,6 @@ func (s *Sample) features(
 			TouchDepth:    window.touchDepth,
 			TradePressure: window.tradePressure,
 		}, true, nil
-	}
-
-	_, longWindow, err := statistic.ResolveWindows(window.weightedHist, 0, 0)
-
-	if err != nil || historyCount < longWindow {
-		return equation.BookflowInput{}, false, nil
 	}
 
 	weighted := window.weightedHist[len(window.weightedHist)-1]

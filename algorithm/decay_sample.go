@@ -6,33 +6,15 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/algorithm/book/flow"
 	"github.com/theapemachine/nomagique/equation"
-	"github.com/theapemachine/nomagique/statistic"
-	"github.com/theapemachine/nomagique/utils"
 )
 
-const decaySampleHistoryCap = 64
-
 /*
-DecaySample accumulates book and trade frames into the feature batch Decay expects.
-Series lengths are derived from observed update cadence, not fixed constants.
+DecaySample accumulates book and trade frames into the feature batch Decay
+expects, routing each symbol to its own decayWindow.
 */
 type DecaySample struct {
 	windows map[string]*decayWindow
 	mu      sync.RWMutex
-}
-
-type decayWindow struct {
-	book          *flow.Book
-	bidDepthHist  []float64
-	askDepthHist  []float64
-	densityHist   []float64
-	spreadHist    []float64
-	pressureHist  []float64
-	imbalanceHist []float64
-	tradePressure float64
-	tradeFrames   int
-	lastPrice     float64
-	mu            sync.Mutex
 }
 
 /*
@@ -45,9 +27,10 @@ func NewDecaySample() *DecaySample {
 }
 
 /*
-MeasureBook observes one book update and returns decay input plus a maturity
-fraction (0..1) of the adaptive window that has accumulated so far. It is
-ready as soon as a valid book snapshot exists, from the very first frame.
+MeasureBook observes one book update and returns decay input plus a
+maturity fraction (0..1) reflecting how many observations have accumulated
+so far. It is ready as soon as a valid book snapshot exists, from the very
+first frame.
 */
 func (decaySample *DecaySample) MeasureBook(
 	input flow.BookInput,
@@ -64,16 +47,17 @@ func (decaySample *DecaySample) MeasureBook(
 	window.mu.Lock()
 	defer window.mu.Unlock()
 
-	if err := decaySample.ingestBook(input, window); err != nil {
+	if err := window.ingestBook(input); err != nil {
 		return equation.DecayInput{}, false, 0, err
 	}
 
-	return decaySample.features(window)
+	return window.features()
 }
 
 /*
 MeasureTrade observes one trade update and returns decay input plus a
-maturity fraction (0..1) of the adaptive window that has accumulated so far.
+maturity fraction (0..1) reflecting how many observations have accumulated
+so far.
 */
 func (decaySample *DecaySample) MeasureTrade(
 	input flow.TradeInput,
@@ -98,9 +82,9 @@ func (decaySample *DecaySample) MeasureTrade(
 	window.mu.Lock()
 	defer window.mu.Unlock()
 
-	decaySample.ingestTrade(input, window)
+	window.ingestTrade(input)
 
-	return decaySample.features(window)
+	return window.features()
 }
 
 func (decaySample *DecaySample) window(symbol string) *decayWindow {
@@ -112,141 +96,17 @@ func (decaySample *DecaySample) window(symbol string) *decayWindow {
 		return existing
 	}
 
-	// Create new window under write lock
 	decaySample.mu.Lock()
 	defer decaySample.mu.Unlock()
+
 	existing = decaySample.windows[symbol]
+
 	if existing != nil {
 		return existing
 	}
 
-	window := &decayWindow{
-		book: flow.NewBook(),
-	}
+	window := newDecayWindow()
 	decaySample.windows[symbol] = window
 
 	return window
-}
-
-func (decaySample *DecaySample) ingestBook(
-	input flow.BookInput,
-	window *decayWindow,
-) error {
-	if err := window.book.Configure(input); err != nil {
-		return err
-	}
-
-	if _, err := window.book.ApplyLevels(input.Bids, flow.SideBid); err != nil {
-		return err
-	}
-
-	if _, err := window.book.ApplyLevels(input.Asks, flow.SideAsk); err != nil {
-		return err
-	}
-
-	mid := window.book.Mid()
-	spread := window.book.Spread()
-
-	if mid <= 0 || spread <= 0 {
-		return nil
-	}
-
-	window.lastPrice = mid
-	bidDepth := window.book.SideDepth(flow.SideBid)
-	askDepth := window.book.SideDepth(flow.SideAsk)
-	density := bidDepth + askDepth
-	decayRate := flow.DecayRate(mid, spread)
-	imbalance := window.book.Imbalance(mid, decayRate, false, 0, 0, 0)
-
-	window.bidDepthHist = utils.AppendRingFloat(window.bidDepthHist, bidDepth, decaySampleHistoryCap)
-	window.askDepthHist = utils.AppendRingFloat(window.askDepthHist, askDepth, decaySampleHistoryCap)
-	window.densityHist = utils.AppendRingFloat(window.densityHist, density, decaySampleHistoryCap)
-	window.spreadHist = utils.AppendRingFloat(window.spreadHist, spread, decaySampleHistoryCap)
-	window.pressureHist = utils.AppendRingFloat(window.pressureHist, window.tradePressure, decaySampleHistoryCap)
-	window.imbalanceHist = utils.AppendRingFloat(window.imbalanceHist, imbalance, decaySampleHistoryCap)
-
-	return nil
-}
-
-func (decaySample *DecaySample) ingestTrade(input flow.TradeInput, window *decayWindow) {
-	notional := input.Price * input.Quantity
-	signedNotional := notional
-
-	if input.Side == "sell" {
-		signedNotional = -notional
-	}
-
-	window.tradeFrames++
-	smoothing := 2.0 / float64(window.tradeFrames+1)
-
-	if smoothing > 1 {
-		smoothing = 1
-	}
-
-	window.tradePressure += smoothing * (signedNotional - window.tradePressure)
-
-	if window.lastPrice <= 0 {
-		window.lastPrice = input.Price
-	}
-}
-
-func (decaySample *DecaySample) features(
-	window *decayWindow,
-) (equation.DecayInput, bool, float64, error) {
-	if window.lastPrice <= 0 {
-		return equation.DecayInput{}, false, 0, nil
-	}
-
-	maturity, err := decaySample.maturity(window)
-
-	if err != nil {
-		return equation.DecayInput{}, false, 0, err
-	}
-
-	return equation.DecayInput{
-		LastPrice:  window.lastPrice,
-		BidDepths:  append([]float64(nil), window.bidDepthHist...),
-		AskDepths:  append([]float64(nil), window.askDepthHist...),
-		Densities:  append([]float64(nil), window.densityHist...),
-		Spreads:    append([]float64(nil), window.spreadHist...),
-		Pressures:  append([]float64(nil), window.pressureHist...),
-		Imbalances: append([]float64(nil), window.imbalanceHist...),
-	}, true, maturity, nil
-}
-
-/*
-maturity reports how much of the adaptive window (derived from observed
-update cadence, not a fixed constant) has accumulated so far, as a 0..1
-fraction. equation.Decay itself degrades individual components to zero
-below its own per-metric minimums, so this is purely an informational
-confidence signal, never a suppression gate.
-*/
-func (decaySample *DecaySample) maturity(window *decayWindow) (float64, error) {
-	observed := len(window.densityHist)
-
-	if observed == 0 {
-		return 0, nil
-	}
-
-	_, longWindow, err := statistic.ResolveWindows(window.densityHist, 0, 0)
-
-	if err != nil {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"decay-sample: window resolution failed",
-			err,
-		))
-	}
-
-	if longWindow <= 0 {
-		return 1, nil
-	}
-
-	fraction := float64(observed) / float64(longWindow)
-
-	if fraction > 1 {
-		fraction = 1
-	}
-
-	return fraction, nil
 }

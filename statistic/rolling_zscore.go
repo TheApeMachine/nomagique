@@ -8,17 +8,40 @@ import (
 )
 
 /*
+RollingZScoreConfig provides optional window hints for the retained
+per-series history. LongHint bounds retained history directly. Without it,
+history is passed through ResolveWindowSet the same way MeanMedianRatio
+does — which resolves a window sized to whatever history already exists,
+so it only trims once a caller supplies an explicit LongHint. A caller
+feeding an indefinitely long, single-series stream (e.g. one book tick per
+update over a live trading session) should set LongHint to keep retained
+history and the per-sample mean/stddev recompute bounded.
+*/
+type RollingZScoreConfig struct {
+	ShortHint int
+	LongHint  int
+}
+
+/*
 RollingZScore normalizes the current sample against its retained series.
 */
 type RollingZScore struct {
+	config  RollingZScoreConfig
 	samples map[string][]TimedSample
 }
 
 /*
 NewRollingZScore returns a typed rolling z-score accumulator.
 */
-func NewRollingZScore() *RollingZScore {
+func NewRollingZScore(configs ...RollingZScoreConfig) *RollingZScore {
+	config := RollingZScoreConfig{}
+
+	if len(configs) > 0 {
+		config = configs[0]
+	}
+
 	return &RollingZScore{
+		config:  config,
 		samples: map[string][]TimedSample{},
 	}
 }
@@ -66,6 +89,7 @@ func (rollingZScore *RollingZScore) Measure(sample TimedSample) (ScalarOutput, e
 		Value:  sample.Value,
 		At:     sample.At,
 	})
+	history = rollingZScore.trim(history)
 	rollingZScore.samples[series] = history
 
 	if len(prior) == 0 {
@@ -82,6 +106,26 @@ func (rollingZScore *RollingZScore) Measure(sample TimedSample) (ScalarOutput, e
 		Ready: true,
 		Count: len(history),
 	}, nil
+}
+
+func (rollingZScore *RollingZScore) trim(history []TimedSample) []TimedSample {
+	longWindow := rollingZScore.config.LongHint
+
+	if longWindow <= 0 {
+		resolved, err := ResolveWindowSet(timedValues(history), WindowsConfig{
+			ShortHint: rollingZScore.config.ShortHint,
+		})
+
+		if err == nil {
+			longWindow = resolved.LongWindow
+		}
+	}
+
+	if longWindow <= 0 || len(history) <= longWindow {
+		return history
+	}
+
+	return history[len(history)-longWindow:]
 }
 
 func rollingScore(sample float64, prior []float64) float64 {

@@ -24,7 +24,7 @@ func TestTradeFlowSample_Measure(testingTB *testing.T) {
 		)
 
 		for index := range 30 {
-			input, ok, err = sample.Measure(TradeFlowInput{
+			input, ok, _, err = sample.Measure(TradeFlowInput{
 				Symbol:   "BTC/USD",
 				Side:     "buy",
 				Price:    100 + float64(index)*0.01,
@@ -56,7 +56,7 @@ func TestTradeFlowSample_Measure(testingTB *testing.T) {
 
 	Convey("Given a trade without a symbol", testingTB, func() {
 		sample := NewTradeFlowSample()
-		_, _, err := sample.Measure(TradeFlowInput{
+		_, _, _, err := sample.Measure(TradeFlowInput{
 			Side:     "buy",
 			Price:    100,
 			Quantity: 1,
@@ -69,7 +69,7 @@ func TestTradeFlowSample_Measure(testingTB *testing.T) {
 
 	Convey("Given a single valid trade", testingTB, func() {
 		sample := NewTradeFlowSample()
-		input, ok, err := sample.Measure(TradeFlowInput{
+		input, ok, _, err := sample.Measure(TradeFlowInput{
 			Symbol:   "BTC/USD",
 			Side:     "buy",
 			Price:    100,
@@ -90,7 +90,7 @@ func TestTradeFlowSample_Measure(testingTB *testing.T) {
 		var err error
 
 		for index := range 4 {
-			input, ok, err = sample.Measure(TradeFlowInput{
+			input, ok, _, err = sample.Measure(TradeFlowInput{
 				Symbol:   "BTC/USD",
 				Side:     "buy",
 				Price:    100 + float64(index),
@@ -117,7 +117,7 @@ func BenchmarkTradeFlowSampleMeasure(benchmark *testing.B) {
 	benchmark.ReportAllocs()
 
 	for benchmark.Loop() {
-		_, _, _ = sample.Measure(TradeFlowInput{
+		_, _, _, _ = sample.Measure(TradeFlowInput{
 			Symbol:   "BTC/USD",
 			Side:     "buy",
 			Price:    100,

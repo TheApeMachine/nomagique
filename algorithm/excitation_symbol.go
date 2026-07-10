@@ -28,6 +28,7 @@ type excitationReading struct {
 	poissonImprovement float64
 	eventCount         int
 	highRisk           bool
+	maturity           float64
 }
 
 type excitationSymbol struct {
@@ -69,8 +70,12 @@ func (symbol *excitationSymbol) measure(
 	stream := hawkes.NewArrivalStream(buyTimes, sellTimes)
 	context, adaptiveStream, ok := fitContextFromStream(stream, horizon)
 
-	if !ok || !context.EnoughEvents(adaptiveStream) {
+	if !ok {
 		return excitationReading{}, false
+	}
+
+	if !context.EnoughEvents(adaptiveStream) {
+		return symbol.measureBaseline(context, adaptiveStream, horizon)
 	}
 
 	fit, fitOk := symbol.fitForEvents(adaptiveStream, horizon)
@@ -80,8 +85,50 @@ func (symbol *excitationSymbol) measure(
 	}
 
 	reading, readingOk := symbol.measureFit(fit)
+	reading, ok = symbol.enrichReading(reading, readingOk, fit, adaptiveStream, horizon)
 
-	return symbol.enrichReading(reading, readingOk, fit, adaptiveStream, horizon)
+	if !ok {
+		return excitationReading{}, false
+	}
+
+	reading.maturity = 1
+
+	return reading, true
+}
+
+/*
+measureBaseline scores the no-excitation Poisson baseline below the
+bivariate identifiability floor (MinFitEvents parameters cannot be fit from
+fewer events than that, the same category of structural minimum as a
+two-point correlation). Below that floor there is still a well-defined
+"no self-excitation observed yet" reading — it is never suppressed to
+nothing. Maturity scales with how close the observed event count is to the
+floor that unlocks the full self-exciting fit.
+*/
+func (symbol *excitationSymbol) measureBaseline(
+	context hawkes.FitContext,
+	stream hawkes.ArrivalStream,
+	horizon time.Time,
+) (excitationReading, bool) {
+	fit := context.PoissonFit()
+	reading, readingOk := symbol.measureFit(fit)
+	reading, ok := symbol.enrichReading(reading, readingOk, fit, stream, horizon)
+
+	if !ok {
+		return excitationReading{}, false
+	}
+
+	if context.MinFitEvents <= 0 {
+		return reading, true
+	}
+
+	reading.maturity = float64(reading.eventCount) / float64(context.MinFitEvents)
+
+	if reading.maturity > 1 {
+		reading.maturity = 1
+	}
+
+	return reading, true
 }
 
 func (symbol *excitationSymbol) fitForEvents(

@@ -20,13 +20,14 @@ func TestDecaySample_MeasureBook(testingTB *testing.T) {
 		quantities := []float64{20, 18, 16, 14, 12, 10, 8, 6, 4}
 
 		var (
-			input equation.DecayInput
-			ok    bool
-			err   error
+			input    equation.DecayInput
+			ok       bool
+			maturity float64
+			err      error
 		)
 
 		for _, bidQuantity := range quantities {
-			input, ok, err = sample.MeasureBook(decayBookInput(bidQuantity, 10))
+			input, ok, maturity, err = sample.MeasureBook(decayBookInput(bidQuantity, 10))
 		}
 
 		So(err, ShouldBeNil)
@@ -43,10 +44,12 @@ func TestDecaySample_MeasureBook(testingTB *testing.T) {
 		})
 		So(err, ShouldBeNil)
 
-		Convey("It should emit calibrated decay output", func() {
+		Convey("It should emit calibrated decay output with high maturity", func() {
 			So(ok, ShouldBeTrue)
 			So(output.Value, ShouldBeGreaterThan, 0)
 			So(result.Confidence, ShouldBeGreaterThan, 0.25)
+			So(maturity, ShouldBeGreaterThan, 0.85)
+			So(maturity, ShouldBeLessThan, 1)
 		})
 	})
 
@@ -55,7 +58,7 @@ func TestDecaySample_MeasureBook(testingTB *testing.T) {
 
 		var err error
 		for range 12 {
-			_, _, err = sample.MeasureBook(decayBookInput(10, 10))
+			_, _, _, err = sample.MeasureBook(decayBookInput(10, 10))
 		}
 
 		Convey("It should complete sampling after history accumulates", func() {
@@ -63,20 +66,22 @@ func TestDecaySample_MeasureBook(testingTB *testing.T) {
 		})
 	})
 
-	Convey("Given a valid first book frame before feature history is ready", testingTB, func() {
+	Convey("Given a valid first book frame", testingTB, func() {
 		sample := NewDecaySample()
-		input, ok, err := sample.MeasureBook(decayBookInput(10, 10))
+		input, ok, maturity, err := sample.MeasureBook(decayBookInput(10, 10))
 
-		Convey("It should be a nonfatal not-ready sample", func() {
+		Convey("It should emit immediately with low maturity, not suppress", func() {
 			So(err, ShouldBeNil)
-			So(ok, ShouldBeFalse)
-			So(input.LastPrice, ShouldEqual, 0)
+			So(ok, ShouldBeTrue)
+			So(input.LastPrice, ShouldBeGreaterThan, 0)
+			So(maturity, ShouldBeGreaterThan, 0)
+			So(maturity, ShouldBeLessThan, 1)
 		})
 	})
 
 	Convey("Given a book frame without symbol", testingTB, func() {
 		sample := NewDecaySample()
-		_, _, err := sample.MeasureBook(flow.BookInput{
+		_, _, _, err := sample.MeasureBook(flow.BookInput{
 			Bids: []flow.BookLevel{{Price: 100, Quantity: 10}},
 			Asks: []flow.BookLevel{{Price: 101, Quantity: 10}},
 		})
@@ -93,7 +98,7 @@ func BenchmarkDecaySampleMeasureBook(benchmark *testing.B) {
 	benchmark.ReportAllocs()
 
 	for benchmark.Loop() {
-		_, _, _ = sample.MeasureBook(decayBookInput(10, 10))
+		_, _, _, _ = sample.MeasureBook(decayBookInput(10, 10))
 	}
 }
 

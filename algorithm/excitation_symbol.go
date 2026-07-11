@@ -480,53 +480,50 @@ func organicHeadroomScores(
 		intensity, baseline = fit.IntensityY, fit.MuY
 	}
 
-	headroom := -1.0
 	saturationRadius := gates.SaturationRadius
 	frenzyAsymmetry := gates.FrenzyAsymmetry
+	radiusStable := 0.0
+	asymmetryStable := 0.0
 
 	if fit.SpectralRadius < saturationRadius {
-		margin := saturationRadius - fit.SpectralRadius
-		saturationHeadroom, err := competitionMargin(margin, saturationRadius)
+		stability, err := competitionMargin(
+			saturationRadius-fit.SpectralRadius,
+			saturationRadius,
+		)
 
 		if err == nil {
-			saturation = saturationHeadroom
-
-			if saturation > headroom {
-				headroom = saturation
-			}
+			radiusStable = stability
 		}
-	}
-
-	if baseline > 0 && intensity >= baseline && asymmetry < frenzyAsymmetry {
-		margin := intensity - baseline
-		organic = margin / (margin + baseline)
-
-		if organic > headroom {
-			headroom = organic
-		}
+	} else {
+		saturation, _ = competitionMargin(
+			fit.SpectralRadius-saturationRadius,
+			1-saturationRadius,
+		)
 	}
 
 	if asymmetry < frenzyAsymmetry {
-		margin := frenzyAsymmetry - asymmetry
-		frenzyHeadroom, err := competitionMargin(margin, frenzyAsymmetry)
+		stability, err := competitionMargin(
+			frenzyAsymmetry-asymmetry,
+			frenzyAsymmetry,
+		)
 
 		if err == nil {
-			frenzy = frenzyHeadroom
-
-			if frenzy > headroom {
-				headroom = frenzy
-			}
+			asymmetryStable = stability
 		}
+	} else {
+		frenzy, _ = competitionMargin(
+			asymmetry-frenzyAsymmetry,
+			1-frenzyAsymmetry,
+		)
 	}
 
-	if headroom < 0 {
-		if baseline > 0 && intensity >= baseline {
-			headroom = (intensity - baseline) / (intensity + baseline)
-		}
+	if radiusStable > 0 && asymmetryStable > 0 {
+		organic = math.Min(radiusStable, asymmetryStable)
+	}
 
-		if headroom < 0 {
-			return 0, 0, 0, 0
-		}
+	if baseline > 0 && intensity > baseline {
+		excess := (intensity - baseline) / intensity
+		organic *= 1 - excess
 	}
 
 	return frenzy, saturation, organic, exhaustion

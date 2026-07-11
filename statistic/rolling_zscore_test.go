@@ -48,14 +48,9 @@ func TestRollingZScore_Measure(testingTB *testing.T) {
 			So(err, ShouldBeNil)
 		}
 
-		// ResolveWindowSet resolves a window sized to whatever history
-		// already exists, so without an explicit LongHint retained
-		// history tracks input length one-for-one — the same
-		// characteristic MeanMedianRatio has when unconfigured. Callers
-		// feeding an indefinitely long single series must set LongHint
-		// to bound retained history and per-sample recompute cost.
-		Convey("It should retain the full series, matching MeanMedianRatio's unconfigured behavior", func() {
-			So(len(rollingZScore.samples["default"]), ShouldEqual, 200)
+		Convey("It should retain an adaptive bounded window", func() {
+			So(len(rollingZScore.samples["default"]), ShouldBeGreaterThan, 1)
+			So(len(rollingZScore.samples["default"]), ShouldBeLessThan, 200)
 		})
 	})
 

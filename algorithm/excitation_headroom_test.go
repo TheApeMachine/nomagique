@@ -29,10 +29,33 @@ func TestOrganicHeadroomScores(t *testing.T) {
 		)
 
 		Convey("It should return the computed headroom scores", func() {
-			So(frenzy, ShouldBeGreaterThan, 0)
-			So(saturation, ShouldBeGreaterThan, 0)
+			So(frenzy, ShouldEqual, 0)
+			So(saturation, ShouldEqual, 0)
 			So(organic, ShouldBeGreaterThan, 0)
 			So(exhaustion, ShouldEqual, 0)
+		})
+	})
+
+	Convey("Given a fit beyond the excitation gates", t, func() {
+		gates := hawkes.FitGates{
+			SaturationRadius: 0.8,
+			FrenzyAsymmetry:  0.5,
+		}
+		fit := hawkes.BivariateFit{
+			MuX: 1, IntensityX: 2, SpectralRadius: 0.9,
+		}
+
+		frenzy, saturation, organic, _ := organicHeadroomScores(
+			fit,
+			0.75,
+			false,
+			gates,
+		)
+
+		Convey("It should score frenzy and saturation rather than organicity", func() {
+			So(frenzy, ShouldBeGreaterThan, 0)
+			So(saturation, ShouldBeGreaterThan, 0)
+			So(organic, ShouldEqual, 0)
 		})
 	})
 }

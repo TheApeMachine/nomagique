@@ -155,7 +155,9 @@ func adaptiveLongWindow(history []float64, shortWindow int) int {
 		}
 	}
 
-	longWindow := max(int(math.Ceil(float64(shortWindow) * (1.0 + spread))), sampleCount)
+	// A long estimator needs at least two short-scale spans so the current
+	// regime can be compared with an independent preceding span.
+	longWindow := int(math.Ceil(float64(shortWindow) * (2.0 + spread)))
 
 	if longWindow <= shortWindow {
 		longWindow = shortWindow + 1

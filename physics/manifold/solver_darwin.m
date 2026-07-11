@@ -69,6 +69,11 @@
 
     self.maxThreadsPerThreadgroup = manifold_pipeline_max_threads(self.accumulateForces);
     self.maxCarriersForTG = manifold_max_carriers_for_pipeline(self.device, self.accumulateForces);
+    uint32_t gpeThreadLimit = (uint32_t)manifold_pipeline_max_threads(self.gpeStep);
+
+    if (self.maxCarriersForTG > gpeThreadLimit) {
+        self.maxCarriersForTG = gpeThreadLimit;
+    }
 
     if (self.config.max_carriers > self.maxCarriersForTG) {
         if (error != nil) {

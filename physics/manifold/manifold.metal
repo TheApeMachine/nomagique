@@ -3310,6 +3310,7 @@ kernel void coherence_gpe_step(
     constant CoherenceModeParams& p         [[buffer(12)]],
     // GPE parameters
     constant GPEParams& gp                  [[buffer(13)]],
+    threadgroup float2* kinetic_scratch     [[threadgroup(0)]],
     uint gid [[thread_position_in_grid]]
 ) {
     uint current = (num_modes_in != nullptr) ? num_modes_in[0] : 0u;
@@ -3354,7 +3355,7 @@ kernel void coherence_gpe_step(
     // The symmetric split reduces phase drift versus a single forward-Euler blend.
     //
     // 1) half-step potential/nonlinear rotation at k
-    // 2) full-step kinetic/tunneling using half-rotated neighbors
+    // 2) full-step kinetic/tunneling in the Laplacian eigenbasis
     // 3) half-step potential/nonlinear rotation at k (recompute density after kinetic)
     float hbar = gp.hbar_eff;
     if (!(hbar > 0.0f)) {
@@ -3373,38 +3374,57 @@ kernel void coherence_gpe_step(
         psi = c_mul(psi, c_exp_i(theta));
     }
 
-    // kinetic/tunneling (1D Laplacian on ω lattice index space)
+    // Kinetic/tunneling is propagated exactly in the eigenbasis of the
+    // Neumann finite-difference Laplacian. A forward-Euler update of iL is
+    // unconditionally norm-increasing; the orthonormal DCT-II rotation below
+    // is unitary for every dt and preserves the endpoint behavior of the
+    // previous self-neighbor stencil.
     if (gp.mass_eff > 0.0f && gp.inv_domega2 > 0.0f) {
-        uint left = (gid > 0u) ? (gid - 1u) : 0u;
-        uint right = (gid + 1u < current) ? (gid + 1u) : (current - 1u);
+        kinetic_scratch[gid] = float2(psi.r, psi.i);
+        threadgroup_barrier(mem_flags::mem_threadgroup);
 
-        // Load neighbors and apply the same half-step potential rotation locally
-        // so the Laplacian is consistent with the split-step ordering.
-        Complex psi_l = {mode_real[left], mode_imag[left]};
-        Complex psi_r = {mode_real[right], mode_imag[right]};
+        float inverse_count = 1.0f / (float)current;
+        float normalization = (gid == 0u)
+            ? sqrt(inverse_count)
+            : sqrt(2.0f * inverse_count);
+        float2 coefficient = float2(0.0f);
 
-        device CarrierAccumulators& acc_l = accums[left];
-        float w_sum_l = atomic_load_explicit(&acc_l.w_sum, memory_order_relaxed);
-        float V_ext_l = -w_sum_l;
-        float dens_l = c_mag2(psi_l);
-        float H_l = V_ext_l + (gp.g_interaction * dens_l) - gp.chemical_potential;
-        float theta_l = -(H_l * half_dt) / hbar;
-        theta_l = clamp(theta_l, -M_PI_F, M_PI_F);
-        psi_l = c_mul(psi_l, c_exp_i(theta_l));
+        for (uint sample = 0u; sample < current; sample++) {
+            float angle = M_PI_F * (float)gid *
+                ((float)sample + 0.5f) * inverse_count;
+            coefficient += kinetic_scratch[sample] * cos(angle);
+        }
 
-        device CarrierAccumulators& acc_r = accums[right];
-        float w_sum_r = atomic_load_explicit(&acc_r.w_sum, memory_order_relaxed);
-        float V_ext_r = -w_sum_r;
-        float dens_r = c_mag2(psi_r);
-        float H_r = V_ext_r + (gp.g_interaction * dens_r) - gp.chemical_potential;
-        float theta_r = -(H_r * half_dt) / hbar;
-        theta_r = clamp(theta_r, -M_PI_F, M_PI_F);
-        psi_r = c_mul(psi_r, c_exp_i(theta_r));
+        coefficient *= normalization;
 
-        Complex lap = c_add(c_sub(psi_l, c_scale(psi, 2.0f)), psi_r); // ψ_{k-1} - 2ψ_k + ψ_{k+1}
-        // i * (ħ / 2m) ∇²ψ
-        float kin = (hbar * gp.dt) / (2.0f * gp.mass_eff);
-        psi = c_add(psi, c_scale(c_i_mul(lap), kin * gp.inv_domega2));
+        float eigen_angle = M_PI_F * (float)gid /
+            (2.0f * (float)current);
+        float eigen_sine = sin(eigen_angle);
+        float eigenvalue = -4.0f * eigen_sine * eigen_sine;
+        float kinetic_phase = (hbar * gp.dt * gp.inv_domega2 * eigenvalue) /
+            (2.0f * gp.mass_eff);
+        float phase_cosine = cos(kinetic_phase);
+        float phase_sine = sin(kinetic_phase);
+
+        kinetic_scratch[current + gid] = float2(
+            coefficient.x * phase_cosine - coefficient.y * phase_sine,
+            coefficient.x * phase_sine + coefficient.y * phase_cosine
+        );
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+
+        float2 propagated = float2(0.0f);
+
+        for (uint mode = 0u; mode < current; mode++) {
+            float mode_normalization = (mode == 0u)
+                ? sqrt(inverse_count)
+                : sqrt(2.0f * inverse_count);
+            float angle = M_PI_F * (float)mode *
+                ((float)gid + 0.5f) * inverse_count;
+            propagated += kinetic_scratch[current + mode] *
+                (mode_normalization * cos(angle));
+        }
+
+        psi = (Complex){propagated.x, propagated.y};
     }
 
     // second half-step at k (recompute density after kinetic)

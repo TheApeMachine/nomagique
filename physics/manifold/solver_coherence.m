@@ -245,16 +245,21 @@ static const float kFp32ExpUnderflowX0 = 103.27893f;
                  threadgroupMemoryLength:tgAccumBytes];
     }
 
-    [self dispatchGridKernel:self.gpeStep
-                     buffers:@[
-                         self.oscPhase, self.oscOmega, self.oscAmp,
-                         self.modeReal, self.modeImag,
-                         self.modeOmega, self.modeGate,
-                         self.modeAnchorIdx, self.modeAnchorWeight,
-                         self.accums, self.numCarriers, self.particlePos,
-                         self.coherenceParams, self.gpeParams
-                     ]
-                 threadCount:self.numOsc];
+    NSUInteger kineticScratchBytes =
+        (NSUInteger)self.numOsc * 2u * sizeof(float) * 2u;
+
+    [self dispatchThreadgroupKernel:self.gpeStep
+                           buffers:@[
+                               self.oscPhase, self.oscOmega, self.oscAmp,
+                               self.modeReal, self.modeImag,
+                               self.modeOmega, self.modeGate,
+                               self.modeAnchorIdx, self.modeAnchorWeight,
+                               self.accums, self.numCarriers, self.particlePos,
+                               self.coherenceParams, self.gpeParams
+                           ]
+                   threadgroupSize:self.numOsc
+                  threadgroupCount:1
+          threadgroupMemoryLength:kineticScratchBytes];
 
     [self dispatchGridKernel:self.updatePhases
                      buffers:@[

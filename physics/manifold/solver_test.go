@@ -23,6 +23,7 @@ func smallTestConfig() Config {
 		MaxModes: 4,
 	}
 	ApplyDerivedGasParams(&config)
+	DefaultMarketGasBoundaries().Apply(&config)
 
 	return config
 }

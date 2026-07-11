@@ -114,14 +114,26 @@ static inline NSUInteger manifold_simd_threadgroup_width_for_pipeline(
     );
 }
 
+enum {
+    GasBoundaryPeriodic = 0u,
+    GasBoundaryOutflow = 1u,
+    GasBoundaryReflecting = 2u,
+};
+
 typedef struct GasGridParamsHost {
     uint32_t num_cells;
     uint32_t grid_x;
     uint32_t grid_y;
     uint32_t grid_z;
     float dx;
+    float dy;
+    float dz;
     float inv_dx;
+    float inv_dy;
+    float inv_dz;
     float inv_dx2;
+    float inv_dy2;
+    float inv_dz2;
     float dt;
     float gamma;
     float c_v;
@@ -129,6 +141,12 @@ typedef struct GasGridParamsHost {
     float p_min;
     float mu;
     float k_thermal;
+    uint32_t boundary_x_low;
+    uint32_t boundary_x_high;
+    uint32_t boundary_y_low;
+    uint32_t boundary_y_high;
+    uint32_t boundary_z_low;
+    uint32_t boundary_z_high;
 } GasGridParamsHost;
 
 typedef struct BinParamsHost {
@@ -309,8 +327,65 @@ typedef struct ParticleGenParamsHost {
     float dir_z;
 } ParticleGenParamsHost;
 
+typedef struct {
+    uint32_t x;
+    uint32_t y;
+    uint32_t z;
+    bool is_ghost;
+} ManifoldGasNeighborCoord;
+
 void manifold_write_error(char *err_out, int err_cap, NSString *message);
 uint32_t manifold_cell_index(uint32_t x, uint32_t y, uint32_t z, uint32_t gx, uint32_t gy, uint32_t gz);
+uint32_t manifold_gas_boundary_mode(
+    const ManifoldConfig *config,
+    uint32_t axis,
+    bool high_face
+);
+ManifoldGasNeighborCoord manifold_gas_neighbor_coord(
+    uint32_t x,
+    uint32_t y,
+    uint32_t z,
+    uint32_t axis,
+    bool high_face,
+    uint32_t gx,
+    uint32_t gy,
+    uint32_t gz,
+    uint32_t boundary
+);
+float manifold_gas_pressure_at(
+    float *eData,
+    float gamma,
+    uint32_t x,
+    uint32_t y,
+    uint32_t z,
+    uint32_t gx,
+    uint32_t gy,
+    uint32_t gz,
+    bool is_ghost,
+    uint32_t ghost_axis,
+    uint32_t ghost_boundary,
+    uint32_t cx,
+    uint32_t cy,
+    uint32_t cz
+);
+void manifold_gas_velocity_at(
+    float *momRhoData,
+    uint32_t x,
+    uint32_t y,
+    uint32_t z,
+    uint32_t gx,
+    uint32_t gy,
+    uint32_t gz,
+    bool is_ghost,
+    uint32_t ghost_axis,
+    uint32_t ghost_boundary,
+    uint32_t cx,
+    uint32_t cy,
+    uint32_t cz,
+    float *ux,
+    float *uy,
+    float *uz
+);
 float manifold_pressure_at(
     float *eData,
     float gamma,
@@ -347,6 +422,7 @@ void manifold_velocity_at(
 @property(nonatomic, strong) id<MTLComputePipelineState> clearCarrierAccums;
 @property(nonatomic, strong) id<MTLComputePipelineState> deriveMaxCarrierBin;
 @property(nonatomic, strong) id<MTLComputePipelineState> initOmegaScanKeys;
+@property(nonatomic, strong) id<MTLComputePipelineState> gasApplySources;
 @property(nonatomic, strong) id<MTLComputePipelineState> gasComputePrimitives;
 @property(nonatomic, strong) id<MTLComputePipelineState> gasStage1;
 @property(nonatomic, strong) id<MTLComputePipelineState> gasStage2;
@@ -401,6 +477,8 @@ void manifold_velocity_at(
 @property(nonatomic, assign) BOOL stepDispatchActive;
 @property(nonatomic, strong) id<MTLBuffer> gasPrim;
 @property(nonatomic, strong) id<MTLBuffer> gasParams;
+@property(nonatomic, strong) id<MTLBuffer> sourceMomRho;
+@property(nonatomic, strong) id<MTLBuffer> sourceE;
 @property(nonatomic, strong) id<MTLBuffer> maxCarrierBinKey;
 @property(nonatomic, strong) id<MTLBuffer> dbgCap;
 @property(nonatomic, strong) id<MTLBuffer> dbgHead;
@@ -483,10 +561,20 @@ void manifold_velocity_at(
                          error:(NSString **)error;
 - (BOOL)setControls:(const ManifoldControls *)controls error:(NSString **)error;
 - (void)resetDepositsInternal;
+- (void)resetSourcesInternal;
 - (BOOL)depositCell:(uint32_t)cellX cellY:(uint32_t)cellY cellZ:(uint32_t)cellZ
                 rho:(float)rho momX:(float)momX momY:(float)momY momZ:(float)momZ eInt:(float)eInt error:(NSString **)error;
+- (BOOL)sourceCell:(uint32_t)cellX cellY:(uint32_t)cellY cellZ:(uint32_t)cellZ
+            deltaMomX:(float)deltaMomX deltaMomY:(float)deltaMomY deltaMomZ:(float)deltaMomZ
+            deltaRho:(float)deltaRho deltaE:(float)deltaE error:(NSString **)error;
+- (BOOL)applySources:(NSString **)error;
+- (BOOL)readCell:(uint32_t)cellX cellY:(uint32_t)cellY cellZ:(uint32_t)cellZ
+             rho:(float *)rho momX:(float *)momX momY:(float *)momY momZ:(float *)momZ
+            eInt:(float *)eInt error:(NSString **)error;
+- (BOOL)conservedStateIsFinite:(NSString **)error;
 - (BOOL)setOscillators:(const ManifoldOscillator *)oscillators count:(uint32_t)count error:(NSString **)error;
 - (BOOL)runGasStep:(NSString **)error;
+- (BOOL)runGasTransport:(NSString **)error;
 - (BOOL)computeReading:(ManifoldReading *)reading error:(NSString **)error;
 - (BOOL)readRhoMaxProjection:(float *)out length:(uint32_t)length error:(NSString **)error;
 - (BOOL)computeProjectionReading:(ManifoldReading *)reading error:(NSString **)error;

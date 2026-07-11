@@ -43,7 +43,30 @@ func (solver *Solver) DepositCell(
 	return fmt.Errorf("physics: Metal manifold solver unavailable on this platform")
 }
 
+func (solver *Solver) ResetSources() error {
+	return fmt.Errorf("physics: Metal manifold solver unavailable on this platform")
+}
+
+func (solver *Solver) SourceCell(
+	cellX, cellY, cellZ uint32,
+	deltaMomX, deltaMomY, deltaMomZ, deltaRho, deltaE float64,
+) error {
+	return fmt.Errorf("physics: Metal manifold solver unavailable on this platform")
+}
+
+func (solver *Solver) ApplySources() error {
+	return fmt.Errorf("physics: Metal manifold solver unavailable on this platform")
+}
+
+func (solver *Solver) ReadCell(cellX, cellY, cellZ uint32) (float64, float64, float64, float64, float64, error) {
+	return 0, 0, 0, 0, 0, fmt.Errorf("physics: Metal manifold solver unavailable on this platform")
+}
+
 func (solver *Solver) SetOscillators(oscillators []Oscillator) error {
+	return fmt.Errorf("physics: Metal manifold solver unavailable on this platform")
+}
+
+func (solver *Solver) RunGasTransport() error {
 	return fmt.Errorf("physics: Metal manifold solver unavailable on this platform")
 }
 

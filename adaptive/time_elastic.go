@@ -141,3 +141,21 @@ func (timeElastic *TimeElastic) Measure(sample TimedValue) (TimeElasticOutput, e
 		Count: timeElastic.count,
 	}, nil
 }
+
+/*
+Baseline returns the current time-decayed scale estimate.
+*/
+func (timeElastic *TimeElastic) Baseline() float64 {
+	if !timeElastic.ready {
+		return 0
+	}
+
+	return timeElastic.baseline
+}
+
+/*
+Ready reports whether at least one timed sample established a baseline.
+*/
+func (timeElastic *TimeElastic) Ready() bool {
+	return timeElastic.ready
+}

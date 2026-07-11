@@ -165,6 +165,7 @@
     self.clearCarrierAccums = [self pipelineNamed:@"clear_carrier_accums" error:&pipelineError];
     self.deriveMaxCarrierBin = [self pipelineNamed:@"derive_max_carrier_bin" error:&pipelineError];
     self.initOmegaScanKeys = [self pipelineNamed:@"init_omega_scan_keys" error:&pipelineError];
+    self.gasApplySources = [self pipelineNamed:@"gas_apply_sources" error:&pipelineError];
     self.gasComputePrimitives = [self pipelineNamed:@"gas_compute_primitives" error:&pipelineError];
     self.gasStage1 = [self pipelineNamed:@"gas_rk2_stage1" error:&pipelineError];
     self.gasStage2 = [self pipelineNamed:@"gas_rk2_stage2" error:&pipelineError];
@@ -233,6 +234,8 @@
     self.particleCicA = [self newGPUBufferWithLength:particleCicBytes];
     self.particleCicB = [self newGPUBufferWithLength:particleCicBytes];
     self.gasParams = [self.device newBufferWithLength:sizeof(GasGridParamsHost) options:MTLResourceStorageModeShared];
+    self.sourceMomRho = [self newSharedBufferWithLength:cellBytes * 4];
+    self.sourceE = [self newSharedBufferWithLength:cellBytes];
     self.dbgCap = [self.device newBufferWithLength:sizeof(uint32_t) options:MTLResourceStorageModeShared];
     self.dbgHead = [self.device newBufferWithLength:sizeof(uint32_t) options:MTLResourceStorageModeShared];
     self.dbgWords = [self.device newBufferWithLength:sizeof(uint32_t) options:MTLResourceStorageModeShared];
@@ -314,6 +317,7 @@
     self.gpeParams = [self.device newBufferWithLength:sizeof(GPEParamsHost) options:MTLResourceStorageModeShared];
 
     [self resetDepositsInternal];
+    [self resetSourcesInternal];
     *(uint32_t *)self.dbgCap.contents = 0;
     *(uint32_t *)self.dbgHead.contents = 0;
 
@@ -323,6 +327,12 @@
 - (void)resetDepositsInternal {
     [self runClearField:self.momRho count:(self.numCells * 4)];
     [self runClearField:self.eInt count:self.numCells];
+    [self resetSourcesInternal];
+}
+
+- (void)resetSourcesInternal {
+    [self runClearField:self.sourceMomRho count:(self.numCells * 4)];
+    [self runClearField:self.sourceE count:self.numCells];
 }
 
 - (BOOL)depositCell:(uint32_t)cellX cellY:(uint32_t)cellY cellZ:(uint32_t)cellZ
@@ -336,17 +346,130 @@
     }
 
     uint32_t index = manifold_cell_index(cellX, cellY, cellZ, self.config.grid_x, self.config.grid_y, self.config.grid_z);
+    float *sourceMomRhoData = (float *)self.sourceMomRho.contents;
+    float *sourceEData = (float *)self.sourceE.contents;
+
+    uint32_t base = index * 4;
+    sourceMomRhoData[base + 0] += momX;
+    sourceMomRhoData[base + 1] += momY;
+    sourceMomRhoData[base + 2] += momZ;
+    sourceMomRhoData[base + 3] += rho;
+    sourceEData[index] += eInt;
+
+    return YES;
+}
+
+- (BOOL)sourceCell:(uint32_t)cellX cellY:(uint32_t)cellY cellZ:(uint32_t)cellZ
+          deltaMomX:(float)deltaMomX deltaMomY:(float)deltaMomY deltaMomZ:(float)deltaMomZ
+           deltaRho:(float)deltaRho deltaE:(float)deltaE error:(NSString **)error {
+    if (cellX >= self.config.grid_x || cellY >= self.config.grid_y || cellZ >= self.config.grid_z) {
+        if (error != nil) {
+            *error = @"source cell out of bounds";
+        }
+
+        return NO;
+    }
+
+    if (!isfinite(deltaMomX) || !isfinite(deltaMomY) || !isfinite(deltaMomZ) ||
+        !isfinite(deltaRho) || !isfinite(deltaE)) {
+        if (error != nil) {
+            *error = @"source deltas must be finite";
+        }
+
+        return NO;
+    }
+
+    uint32_t index = manifold_cell_index(cellX, cellY, cellZ, self.config.grid_x, self.config.grid_y, self.config.grid_z);
+    float *sourceMomRhoData = (float *)self.sourceMomRho.contents;
+    float *sourceEData = (float *)self.sourceE.contents;
+    uint32_t base = index * 4;
+
+    sourceMomRhoData[base + 0] += deltaMomX;
+    sourceMomRhoData[base + 1] += deltaMomY;
+    sourceMomRhoData[base + 2] += deltaMomZ;
+    sourceMomRhoData[base + 3] += deltaRho;
+    sourceEData[index] += deltaE;
+
+    return YES;
+}
+
+- (BOOL)readCell:(uint32_t)cellX cellY:(uint32_t)cellY cellZ:(uint32_t)cellZ
+             rho:(float *)rho momX:(float *)momX momY:(float *)momY momZ:(float *)momZ
+            eInt:(float *)eInt error:(NSString **)error {
+    if (rho == NULL || momX == NULL || momY == NULL || momZ == NULL || eInt == NULL) {
+        if (error != nil) {
+            *error = @"cell read buffers are required";
+        }
+
+        return NO;
+    }
+
+    if (cellX >= self.config.grid_x || cellY >= self.config.grid_y || cellZ >= self.config.grid_z) {
+        if (error != nil) {
+            *error = @"read cell out of bounds";
+        }
+
+        return NO;
+    }
+
+    uint32_t index = manifold_cell_index(cellX, cellY, cellZ, self.config.grid_x, self.config.grid_y, self.config.grid_z);
+    float *momRhoData = (float *)self.momRho.contents;
+    float *eData = (float *)self.eInt.contents;
+    uint32_t base = index * 4;
+
+    *momX = momRhoData[base + 0];
+    *momY = momRhoData[base + 1];
+    *momZ = momRhoData[base + 2];
+    *rho = momRhoData[base + 3];
+    *eInt = eData[index];
+
+    return YES;
+}
+
+- (BOOL)conservedStateIsFinite:(NSString **)error {
     float *momRhoData = (float *)self.momRho.contents;
     float *eData = (float *)self.eInt.contents;
 
-    uint32_t base = index * 4;
-    momRhoData[base + 0] += momX;
-    momRhoData[base + 1] += momY;
-    momRhoData[base + 2] += momZ;
-    momRhoData[base + 3] += rho;
-    eData[index] += eInt;
+    for (uint32_t index = 0; index < self.numCells; index++) {
+        uint32_t base = index * 4;
+
+        if (!isfinite(momRhoData[base + 0]) || !isfinite(momRhoData[base + 1]) ||
+            !isfinite(momRhoData[base + 2]) || !isfinite(momRhoData[base + 3]) ||
+            !isfinite(eData[index])) {
+            if (error != nil) {
+                *error = @"conserved gas state is not finite";
+            }
+
+            return NO;
+        }
+    }
 
     return YES;
+}
+
+- (BOOL)applySources:(NSString **)error {
+    [self configureGasParams];
+    *(uint32_t *)self.dbgHead.contents = 0;
+
+    [self dispatchGasBrickSynchronized:self.gasApplySources
+                               buffers:@[
+                                   self.momRho,
+                                   self.eInt,
+                                   self.sourceMomRho,
+                                   self.sourceE,
+                                   self.momRhoStage,
+                                   self.eStage,
+                                   self.gasParams,
+                                   self.dbgHead,
+                                   self.dbgWords,
+                                   self.dbgCap
+                               ]];
+
+    [self runCopyFloat:self.momRhoStage dst:self.momRho count:(self.numCells * 4)];
+    [self runCopyFloat:self.eStage dst:self.eInt count:self.numCells];
+    [self resetSourcesInternal];
+
+    return [self conservedStateIsFinite:error];
 }
 
 - (BOOL)setOscillators:(const ManifoldOscillator *)oscillators count:(uint32_t)count error:(NSString **)error {
@@ -452,14 +575,22 @@
 - (void)configureGasParams {
     GasGridParamsHost *params = (GasGridParamsHost *)self.gasParams.contents;
     float dx = self.config.domain_x / (float)self.config.grid_x;
+    float dy = self.config.domain_y / (float)self.config.grid_y;
+    float dz = self.config.domain_z / (float)self.config.grid_z;
 
     params->num_cells = self.numCells;
     params->grid_x = self.config.grid_x;
     params->grid_y = self.config.grid_y;
     params->grid_z = self.config.grid_z;
     params->dx = dx;
+    params->dy = dy;
+    params->dz = dz;
     params->inv_dx = 1.0f / dx;
+    params->inv_dy = 1.0f / dy;
+    params->inv_dz = 1.0f / dz;
     params->inv_dx2 = params->inv_dx * params->inv_dx;
+    params->inv_dy2 = params->inv_dy * params->inv_dy;
+    params->inv_dz2 = params->inv_dz * params->inv_dz;
     params->dt = self.controls.dt;
     params->gamma = self.config.gamma;
     params->c_v = self.config.c_v;
@@ -488,10 +619,19 @@
     params->p_min = gasPMin;
     params->mu = 0.0f;
     params->k_thermal = self.config.k_thermal;
+    params->boundary_x_low = self.config.boundary_x_low;
+    params->boundary_x_high = self.config.boundary_x_high;
+    params->boundary_y_low = self.config.boundary_y_low;
+    params->boundary_y_high = self.config.boundary_y_high;
+    params->boundary_z_low = self.config.boundary_z_low;
+    params->boundary_z_high = self.config.boundary_z_high;
 }
 
 - (BOOL)runGasStep:(NSString **)error {
-    (void)error;
+    if (![self applySources:error]) {
+        return NO;
+    }
+
     [self configureGasParams];
     *(uint32_t *)self.dbgCap.contents = 0;
 
@@ -524,7 +664,11 @@
                              self.gasParams, self.dbgHead, self.dbgWords, self.dbgCap
                          ]];
 
-    return YES;
+    return [self conservedStateIsFinite:error];
+}
+
+- (BOOL)runGasTransport:(NSString **)error {
+    return [self runGasStep:error];
 }
 
 - (BOOL)computeReading:(ManifoldReading *)reading error:(NSString **)error {
@@ -540,31 +684,70 @@
     uint32_t cy = gy / 2;
     uint32_t cz = gz / 2;
     float dx = self.config.domain_x / (float)gx;
-    uint32_t xm = (cx == 0) ? (gx - 1) : (cx - 1);
-    uint32_t xp = (cx + 1 == gx) ? 0 : (cx + 1);
-    uint32_t ym = (cy == 0) ? (gy - 1) : (cy - 1);
-    uint32_t yp = (cy + 1 == gy) ? 0 : (cy + 1);
-    uint32_t zm = (cz == 0) ? (gz - 1) : (cz - 1);
-    uint32_t zp = (cz + 1 == gz) ? 0 : (cz + 1);
+    float dy = self.config.domain_y / (float)gy;
+    float dz = self.config.domain_z / (float)gz;
+    ManifoldConfig gasConfig = self.config;
+    uint32_t bxm = manifold_gas_boundary_mode(&gasConfig, 0u, false);
+    uint32_t bxp = manifold_gas_boundary_mode(&gasConfig, 0u, true);
+    uint32_t bym = manifold_gas_boundary_mode(&gasConfig, 1u, false);
+    uint32_t byp = manifold_gas_boundary_mode(&gasConfig, 1u, true);
+    uint32_t bzm = manifold_gas_boundary_mode(&gasConfig, 2u, false);
+    uint32_t bzp = manifold_gas_boundary_mode(&gasConfig, 2u, true);
+    ManifoldGasNeighborCoord neighbor_xm = manifold_gas_neighbor_coord(cx, cy, cz, 0u, false, gx, gy, gz, bxm);
+    ManifoldGasNeighborCoord neighbor_xp = manifold_gas_neighbor_coord(cx, cy, cz, 0u, true, gx, gy, gz, bxp);
+    ManifoldGasNeighborCoord neighbor_ym = manifold_gas_neighbor_coord(cx, cy, cz, 1u, false, gx, gy, gz, bym);
+    ManifoldGasNeighborCoord neighbor_yp = manifold_gas_neighbor_coord(cx, cy, cz, 1u, true, gx, gy, gz, byp);
+    ManifoldGasNeighborCoord neighbor_zm = manifold_gas_neighbor_coord(cx, cy, cz, 2u, false, gx, gy, gz, bzm);
+    ManifoldGasNeighborCoord neighbor_zp = manifold_gas_neighbor_coord(cx, cy, cz, 2u, true, gx, gy, gz, bzp);
 
-    float dpx = (manifold_pressure_at(eData, self.config.gamma, xp, cy, cz, gx, gy, gz) -
-                 manifold_pressure_at(eData, self.config.gamma, xm, cy, cz, gx, gy, gz)) / (2.0f * dx);
-    float dpy = (manifold_pressure_at(eData, self.config.gamma, cx, yp, cz, gx, gy, gz) -
-                 manifold_pressure_at(eData, self.config.gamma, cx, ym, cz, gx, gy, gz)) / (2.0f * dx);
-    float dpz = (manifold_pressure_at(eData, self.config.gamma, cx, cy, zp, gx, gy, gz) -
-                 manifold_pressure_at(eData, self.config.gamma, cx, cy, zm, gx, gy, gz)) / (2.0f * dx);
+    float pressure_xm = manifold_gas_pressure_at(
+        eData, self.config.gamma, neighbor_xm.x, neighbor_xm.y, neighbor_xm.z, gx, gy, gz,
+        neighbor_xm.is_ghost, 0u, bxm, cx, cy, cz);
+    float pressure_xp = manifold_gas_pressure_at(
+        eData, self.config.gamma, neighbor_xp.x, neighbor_xp.y, neighbor_xp.z, gx, gy, gz,
+        neighbor_xp.is_ghost, 0u, bxp, cx, cy, cz);
+    float pressure_ym = manifold_gas_pressure_at(
+        eData, self.config.gamma, neighbor_ym.x, neighbor_ym.y, neighbor_ym.z, gx, gy, gz,
+        neighbor_ym.is_ghost, 1u, bym, cx, cy, cz);
+    float pressure_yp = manifold_gas_pressure_at(
+        eData, self.config.gamma, neighbor_yp.x, neighbor_yp.y, neighbor_yp.z, gx, gy, gz,
+        neighbor_yp.is_ghost, 1u, byp, cx, cy, cz);
+    float pressure_zm = manifold_gas_pressure_at(
+        eData, self.config.gamma, neighbor_zm.x, neighbor_zm.y, neighbor_zm.z, gx, gy, gz,
+        neighbor_zm.is_ghost, 2u, bzm, cx, cy, cz);
+    float pressure_zp = manifold_gas_pressure_at(
+        eData, self.config.gamma, neighbor_zp.x, neighbor_zp.y, neighbor_zp.z, gx, gy, gz,
+        neighbor_zp.is_ghost, 2u, bzp, cx, cy, cz);
+
+    float dpx = (pressure_xp - pressure_xm) / (2.0f * dx);
+    float dpy = (pressure_yp - pressure_ym) / (2.0f * dy);
+    float dpz = (pressure_zp - pressure_zm) / (2.0f * dz);
 
     float ux_xm, uy_xm, uz_xm, ux_xp, uy_xp, uz_xp;
     float ux_ym, uy_ym, uz_ym, ux_yp, uy_yp, uz_yp;
     float ux_zm, uy_zm, uz_zm, ux_zp, uy_zp, uz_zp;
-    manifold_velocity_at(momRhoData, xm, cy, cz, gx, gy, gz, &ux_xm, &uy_xm, &uz_xm);
-    manifold_velocity_at(momRhoData, xp, cy, cz, gx, gy, gz, &ux_xp, &uy_xp, &uz_xp);
-    manifold_velocity_at(momRhoData, cx, ym, cz, gx, gy, gz, &ux_ym, &uy_ym, &uz_ym);
-    manifold_velocity_at(momRhoData, cx, yp, cz, gx, gy, gz, &ux_yp, &uy_yp, &uz_yp);
-    manifold_velocity_at(momRhoData, cx, cy, zm, gx, gy, gz, &ux_zm, &uy_zm, &uz_zm);
-    manifold_velocity_at(momRhoData, cx, cy, zp, gx, gy, gz, &ux_zp, &uy_zp, &uz_zp);
+    manifold_gas_velocity_at(
+        momRhoData, neighbor_xm.x, neighbor_xm.y, neighbor_xm.z, gx, gy, gz,
+        neighbor_xm.is_ghost, 0u, bxm, cx, cy, cz, &ux_xm, &uy_xm, &uz_xm);
+    manifold_gas_velocity_at(
+        momRhoData, neighbor_xp.x, neighbor_xp.y, neighbor_xp.z, gx, gy, gz,
+        neighbor_xp.is_ghost, 0u, bxp, cx, cy, cz, &ux_xp, &uy_xp, &uz_xp);
+    manifold_gas_velocity_at(
+        momRhoData, neighbor_ym.x, neighbor_ym.y, neighbor_ym.z, gx, gy, gz,
+        neighbor_ym.is_ghost, 1u, bym, cx, cy, cz, &ux_ym, &uy_ym, &uz_ym);
+    manifold_gas_velocity_at(
+        momRhoData, neighbor_yp.x, neighbor_yp.y, neighbor_yp.z, gx, gy, gz,
+        neighbor_yp.is_ghost, 1u, byp, cx, cy, cz, &ux_yp, &uy_yp, &uz_yp);
+    manifold_gas_velocity_at(
+        momRhoData, neighbor_zm.x, neighbor_zm.y, neighbor_zm.z, gx, gy, gz,
+        neighbor_zm.is_ghost, 2u, bzm, cx, cy, cz, &ux_zm, &uy_zm, &uz_zm);
+    manifold_gas_velocity_at(
+        momRhoData, neighbor_zp.x, neighbor_zp.y, neighbor_zp.z, gx, gy, gz,
+        neighbor_zp.is_ghost, 2u, bzp, cx, cy, cz, &ux_zp, &uy_zp, &uz_zp);
 
-    float divergence = (ux_xp - ux_xm + uy_yp - uy_ym + uz_zp - uz_zm) / (2.0f * dx);
+    float divergence = (ux_xp - ux_xm) / (2.0f * dx) +
+        (uy_yp - uy_ym) / (2.0f * dy) +
+        (uz_zp - uz_zm) / (2.0f * dz);
     float coherenceMag2 = 0.0f;
     float guidanceSpeed = 0.0f;
 
@@ -777,6 +960,9 @@
 }
 
 - (BOOL)step:(ManifoldReading *)reading error:(NSString **)error {
+    [self runClearField:self.momRho count:(self.numCells * 4)];
+    [self runClearField:self.eInt count:self.numCells];
+
     [self beginStepDispatches];
     if (![self runPicScatter:error]) {
         [self endStepDispatches];
@@ -924,6 +1110,97 @@ int manifold_solver_reset_deposits(void *handle, char *err_out, int err_cap) {
 
     ManifoldSolver *solver = (__bridge ManifoldSolver *)handle;
     [solver resetDepositsInternal];
+    [solver resetSourcesInternal];
+    return 0;
+}
+
+int manifold_solver_reset_sources(void *handle, char *err_out, int err_cap) {
+    if (handle == NULL) {
+        manifold_write_error(err_out, err_cap, @"solver handle is nil");
+        return 1;
+    }
+
+    ManifoldSolver *solver = (__bridge ManifoldSolver *)handle;
+    [solver resetSourcesInternal];
+    return 0;
+}
+
+int manifold_solver_source_cell(
+    void *handle,
+    uint32_t cell_x,
+    uint32_t cell_y,
+    uint32_t cell_z,
+    float delta_mom_x,
+    float delta_mom_y,
+    float delta_mom_z,
+    float delta_rho,
+    float delta_e,
+    char *err_out,
+    int err_cap
+) {
+    if (handle == NULL) {
+        manifold_write_error(err_out, err_cap, @"solver handle is nil");
+        return 1;
+    }
+
+    ManifoldSolver *solver = (__bridge ManifoldSolver *)handle;
+    NSString *error = nil;
+
+    if (![solver sourceCell:cell_x cellY:cell_y cellZ:cell_z
+                  deltaMomX:delta_mom_x deltaMomY:delta_mom_y deltaMomZ:delta_mom_z
+                   deltaRho:delta_rho deltaE:delta_e error:&error]) {
+        manifold_write_error(err_out, err_cap, error ?: @"source cell failed");
+        return 1;
+    }
+
+    return 0;
+}
+
+int manifold_solver_apply_sources(void *handle, char *err_out, int err_cap) {
+    if (handle == NULL) {
+        manifold_write_error(err_out, err_cap, @"solver handle is nil");
+        return 1;
+    }
+
+    ManifoldSolver *solver = (__bridge ManifoldSolver *)handle;
+    NSString *error = nil;
+
+    if (![solver applySources:&error]) {
+        manifold_write_error(err_out, err_cap, error ?: @"apply sources failed");
+        return 1;
+    }
+
+    return 0;
+}
+
+int manifold_solver_read_cell(
+    void *handle,
+    uint32_t cell_x,
+    uint32_t cell_y,
+    uint32_t cell_z,
+    float *rho,
+    float *mom_x,
+    float *mom_y,
+    float *mom_z,
+    float *e_int,
+    char *err_out,
+    int err_cap
+) {
+    if (handle == NULL) {
+        manifold_write_error(err_out, err_cap, @"solver handle is nil");
+        return 1;
+    }
+
+    ManifoldSolver *solver = (__bridge ManifoldSolver *)handle;
+    NSString *error = nil;
+
+    if (![solver readCell:cell_x cellY:cell_y cellZ:cell_z
+                     rho:rho momX:mom_x momY:mom_y momZ:mom_z
+                    eInt:e_int error:&error]) {
+        manifold_write_error(err_out, err_cap, error ?: @"read cell failed");
+        return 1;
+    }
+
     return 0;
 }
 
@@ -990,6 +1267,23 @@ int manifold_solver_step(void *handle, ManifoldReading *reading, char *err_out, 
 
     if (![solver step:reading error:&error]) {
         manifold_write_error(err_out, err_cap, error ?: @"step failed");
+        return 1;
+    }
+
+    return 0;
+}
+
+int manifold_solver_run_gas_transport(void *handle, char *err_out, int err_cap) {
+    if (handle == NULL) {
+        manifold_write_error(err_out, err_cap, @"solver handle is nil");
+        return 1;
+    }
+
+    ManifoldSolver *solver = (__bridge ManifoldSolver *)handle;
+    NSString *error = nil;
+
+    if (![solver runGasTransport:&error]) {
+        manifold_write_error(err_out, err_cap, error ?: @"gas transport failed");
         return 1;
     }
 

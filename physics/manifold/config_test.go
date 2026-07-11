@@ -17,7 +17,7 @@ func TestApplyDerivedGasParams(t *testing.T) {
 		})
 
 		convey.Convey("It should satisfy the von Neumann diffusion CFL bound", func() {
-			convey.So(config.DiffusionCFL(), convey.ShouldBeLessThan, 1.0/6.0)
+			convey.So(config.DiffusionCFL(), convey.ShouldBeLessThan, 0.5)
 			convey.So(config.Validate(), convey.ShouldBeNil)
 		})
 
@@ -34,7 +34,7 @@ func TestValidateRejectsUnstableDiffusion(t *testing.T) {
 		config.KThermal = config.RhoMin / config.DeltaT
 
 		convey.Convey("It should fail validation", func() {
-			convey.So(config.DiffusionCFL(), convey.ShouldBeGreaterThan, 1.0/6.0)
+			convey.So(config.DiffusionCFL(), convey.ShouldBeGreaterThan, 0.5)
 			convey.So(config.Validate(), convey.ShouldNotBeNil)
 		})
 	})
@@ -84,6 +84,7 @@ func productionTestConfig() Config {
 	}
 
 	ApplyDerivedGasParams(&config)
+	DefaultMarketGasBoundaries().Apply(&config)
 
 	return config
 }

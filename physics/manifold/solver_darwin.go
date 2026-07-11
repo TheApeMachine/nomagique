@@ -69,6 +69,12 @@ func NewSolver(config Config) *Solver {
 		coupling_scale:       C.float(config.CouplingScale()),
 		gate_width_min:       C.float(config.GateWidthMin()),
 		gate_width_max:       C.float(config.GateWidthMax()),
+		boundary_x_low:       C.uint32_t(config.BoundaryXLow),
+		boundary_x_high:      C.uint32_t(config.BoundaryXHigh),
+		boundary_y_low:       C.uint32_t(config.BoundaryYLow),
+		boundary_y_high:      C.uint32_t(config.BoundaryYHigh),
+		boundary_z_low:       C.uint32_t(config.BoundaryZLow),
+		boundary_z_high:      C.uint32_t(config.BoundaryZHigh),
 	}
 
 	errBuf := make([]byte, 512)
@@ -136,6 +142,83 @@ func (solver *Solver) ResetDeposits() error {
 	})
 }
 
+func (solver *Solver) ResetSources() error {
+	return solver.call(func(errBuf []byte) C.int {
+		return C.manifold_solver_reset_sources(
+			solver.handle,
+			(*C.char)(unsafe.Pointer(&errBuf[0])),
+			C.int(len(errBuf)),
+		)
+	})
+}
+
+func (solver *Solver) SourceCell(
+	cellX, cellY, cellZ uint32,
+	deltaMomX, deltaMomY, deltaMomZ, deltaRho, deltaE float64,
+) error {
+	return solver.call(func(errBuf []byte) C.int {
+		return C.manifold_solver_source_cell(
+			solver.handle,
+			C.uint32_t(cellX),
+			C.uint32_t(cellY),
+			C.uint32_t(cellZ),
+			C.float(deltaMomX),
+			C.float(deltaMomY),
+			C.float(deltaMomZ),
+			C.float(deltaRho),
+			C.float(deltaE),
+			(*C.char)(unsafe.Pointer(&errBuf[0])),
+			C.int(len(errBuf)),
+		)
+	})
+}
+
+func (solver *Solver) ApplySources() error {
+	return solver.call(func(errBuf []byte) C.int {
+		return C.manifold_solver_apply_sources(
+			solver.handle,
+			(*C.char)(unsafe.Pointer(&errBuf[0])),
+			C.int(len(errBuf)),
+		)
+	})
+}
+
+func (solver *Solver) ReadCell(cellX, cellY, cellZ uint32) (rho, momX, momY, momZ, eInt float64, err error) {
+	if solver == nil || solver.handle == nil {
+		return 0, 0, 0, 0, 0, fmt.Errorf("physics: solver is not initialized")
+	}
+
+	var (
+		cRho  C.float
+		cMomX C.float
+		cMomY C.float
+		cMomZ C.float
+		cEInt C.float
+	)
+
+	callErr := solver.call(func(errBuf []byte) C.int {
+		return C.manifold_solver_read_cell(
+			solver.handle,
+			C.uint32_t(cellX),
+			C.uint32_t(cellY),
+			C.uint32_t(cellZ),
+			&cRho,
+			&cMomX,
+			&cMomY,
+			&cMomZ,
+			&cEInt,
+			(*C.char)(unsafe.Pointer(&errBuf[0])),
+			C.int(len(errBuf)),
+		)
+	})
+
+	if callErr != nil {
+		return 0, 0, 0, 0, 0, callErr
+	}
+
+	return float64(cRho), float64(cMomX), float64(cMomY), float64(cMomZ), float64(cEInt), nil
+}
+
 func (solver *Solver) DepositCell(
 	cellX, cellY, cellZ uint32,
 	rho, momX, momY, momZ, eInt float64,
@@ -188,6 +271,16 @@ func (solver *Solver) SetOscillators(oscillators []Oscillator) error {
 			solver.handle,
 			(*C.ManifoldOscillator)(unsafe.Pointer(&cOscillators[0])),
 			C.uint32_t(len(cOscillators)),
+			(*C.char)(unsafe.Pointer(&errBuf[0])),
+			C.int(len(errBuf)),
+		)
+	})
+}
+
+func (solver *Solver) RunGasTransport() error {
+	return solver.call(func(errBuf []byte) C.int {
+		return C.manifold_solver_run_gas_transport(
+			solver.handle,
 			(*C.char)(unsafe.Pointer(&errBuf[0])),
 			C.int(len(errBuf)),
 		)

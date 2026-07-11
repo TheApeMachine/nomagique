@@ -1748,10 +1748,10 @@ kernel void scatter_gather_cells(
 // Numerics:
 //   - Inviscid fluxes: Rusanov/LLF at faces (robust, diffusive).
 //   - Time stepping: RK2 (Heun): U1 = U0 + dt*k1 ; U2 = U0 + 0.5*dt*(k1+k2)
-//   - Spatial derivatives: second-order central differences via periodic indexing.
+//   - Spatial derivatives: axis-specific finite-volume differences.
 //
 // Notes:
-//   - This intentionally matches the periodic torus domain used elsewhere.
+//   - Gas boundary topology is independent of the GPE frequency lattice.
 //   - Viscosity terms are not included yet (mu parameter reserved).
 // =============================================================================
 
@@ -1761,8 +1761,14 @@ struct GasGridParams {
     uint32_t grid_y;
     uint32_t grid_z;
     float dx;
+    float dy;
+    float dz;
     float inv_dx;
+    float inv_dy;
+    float inv_dz;
     float inv_dx2;
+    float inv_dy2;
+    float inv_dz2;
     float dt;
     float gamma;
     float c_v;
@@ -1770,7 +1776,17 @@ struct GasGridParams {
     float p_min;
     float mu;        // reserved (viscosity) – not used yet
     float k_thermal; // thermal conductivity (constant)
+    uint32_t boundary_x_low;
+    uint32_t boundary_x_high;
+    uint32_t boundary_y_low;
+    uint32_t boundary_y_high;
+    uint32_t boundary_z_low;
+    uint32_t boundary_z_high;
 };
+
+constant uint32_t gas_boundary_periodic = 0u;
+constant uint32_t gas_boundary_outflow = 1u;
+constant uint32_t gas_boundary_reflecting = 2u;
 
 struct U5 {
     float rho;
@@ -1963,15 +1979,54 @@ inline F5 rusanov_flux(F5 FL, F5 FR, U5 UL, U5 UR, float smax) {
     return F;
 }
 
+inline bool gas_boundary_valid(uint32_t boundary) {
+    return boundary == gas_boundary_periodic ||
+        boundary == gas_boundary_outflow ||
+        boundary == gas_boundary_reflecting;
+}
+
+inline bool gas_geometry_admissible(constant GasGridParams& p) {
+    return p.dx > 0.0f && p.dy > 0.0f && p.dz > 0.0f &&
+        isfinite(p.dx) && isfinite(p.dy) && isfinite(p.dz) &&
+        p.inv_dx > 0.0f && p.inv_dy > 0.0f && p.inv_dz > 0.0f &&
+        isfinite(p.inv_dx) && isfinite(p.inv_dy) && isfinite(p.inv_dz) &&
+        p.inv_dx2 > 0.0f && p.inv_dy2 > 0.0f && p.inv_dz2 > 0.0f &&
+        isfinite(p.inv_dx2) && isfinite(p.inv_dy2) && isfinite(p.inv_dz2) &&
+        gas_boundary_valid(p.boundary_x_low) && gas_boundary_valid(p.boundary_x_high) &&
+        gas_boundary_valid(p.boundary_y_low) && gas_boundary_valid(p.boundary_y_high) &&
+        gas_boundary_valid(p.boundary_z_low) && gas_boundary_valid(p.boundary_z_high);
+}
+
 inline bool gas_diffusion_cfl_admissible(constant GasGridParams& p) {
     if (!(p.rho_min > 0.0f) || !(p.c_v > 0.0f) || !(p.k_thermal >= 0.0f) || !(p.dt > 0.0f)) {
         return false;
     }
 
-    float diffusive_number = p.k_thermal * p.dt * p.inv_dx2 / (p.rho_min * p.c_v);
-    const float von_neumann_limit = 1.0f / 6.0f;
+    float inverse_spacing_sum = p.inv_dx2 + p.inv_dy2 + p.inv_dz2;
+    float diffusive_number = p.k_thermal * p.dt * inverse_spacing_sum / (p.rho_min * p.c_v);
+    const float von_neumann_limit = 0.5f;
     const float cfl_epsilon = 1.0e-5f;
     return diffusive_number <= von_neumann_limit + cfl_epsilon;
+}
+
+inline bool gas_advective_cfl_admissible(
+    float speed_x,
+    float speed_y,
+    float speed_z,
+    constant GasGridParams& p
+) {
+    if (!(p.dt > 0.0f) || !isfinite(p.dt)) {
+        return false;
+    }
+
+    float courant = p.dt * (
+        speed_x * p.inv_dx +
+        speed_y * p.inv_dy +
+        speed_z * p.inv_dz
+    );
+    const float cfl_limit = 1.0f;
+    const float cfl_epsilon = 1.0e-5f;
+    return isfinite(courant) && courant <= cfl_limit + cfl_epsilon;
 }
 
 inline bool admissible_U5(
@@ -2026,6 +2081,56 @@ inline uint gas_cell_gid(
     return idx3_periodic(cell_x, cell_y, cell_z, kGridX, kGridY, kGridZ);
 }
 
+// Applies one ordered population source/sink operation before transport.
+// source_mom_rho stores {delta_mom_x, delta_mom_y, delta_mom_z, delta_rho};
+// source_e stores delta internal-energy density. The host owns event ordering
+// and clears the source buffers after each application.
+kernel void gas_apply_sources(
+    device const float4* mom_rho_in      [[buffer(0)]],
+    device const float* e_in             [[buffer(1)]],
+    device const float4* source_mom_rho  [[buffer(2)]],
+    device const float* source_e         [[buffer(3)]],
+    device float4* mom_rho_out           [[buffer(4)]],
+    device float* e_out                  [[buffer(5)]],
+    constant GasGridParams& p            [[buffer(6)]],
+    device atomic_uint* dbg_head         [[buffer(7)]],
+    device uint* dbg_words               [[buffer(8)]],
+    constant uint& dbg_cap               [[buffer(9)]],
+    uint3 threadgroup_pos [[threadgroup_position_in_grid]],
+    uint3 threadgroup_tid [[thread_position_in_threadgroup]],
+    uint3 threadgroup_dim [[threads_per_threadgroup]]
+) {
+    uint gid = gas_cell_gid(p, threadgroup_pos, threadgroup_tid, threadgroup_dim);
+    if (gid >= p.num_cells) return;
+
+    U5 state = load_U5(mom_rho_in, e_in, gid);
+    float4 source = source_mom_rho[gid];
+    float energy_source = source_e[gid];
+
+    if (!isfinite(source.x) || !isfinite(source.y) || !isfinite(source.z) ||
+        !isfinite(source.w) || !isfinite(energy_source)) {
+        dbg_log(dbg_head, dbg_words, dbg_cap, 0x22u, gid, source.w, energy_source, source.x, source.y);
+        float qn = qnan_f();
+        mom_rho_out[gid] = float4(qn);
+        e_out[gid] = qn;
+        return;
+    }
+
+    state.mom += source.xyz;
+    state.rho += source.w;
+    state.e_int += energy_source;
+
+    if (!admissible_U5(state, p.gamma, p.rho_min, p.p_min)) {
+        dbg_log(dbg_head, dbg_words, dbg_cap, 0x23u, gid, state.rho, state.e_int, state.mom.x, state.mom.y);
+        float qn = qnan_f();
+        mom_rho_out[gid] = float4(qn);
+        e_out[gid] = qn;
+        return;
+    }
+
+    store_U5(mom_rho_out, e_out, gid, state);
+}
+
 kernel void gas_compute_primitives(
     device const float4* mom_rho  [[buffer(0)]],
     device const float* e0        [[buffer(1)]],
@@ -2059,6 +2164,90 @@ kernel void gas_compute_primitives(
     prim[gid] = pr;
 }
 
+inline uint gas_boundary_mode(
+    uint axis,
+    bool high_face,
+    constant GasGridParams& p
+) {
+    if (axis == 0u) return high_face ? p.boundary_x_high : p.boundary_x_low;
+    if (axis == 1u) return high_face ? p.boundary_y_high : p.boundary_y_low;
+    return high_face ? p.boundary_z_high : p.boundary_z_low;
+}
+
+inline uint gas_neighbor_index(
+    uint x,
+    uint y,
+    uint z,
+    uint axis,
+    bool high_face,
+    uint32_t boundary,
+    thread bool& ghost
+) {
+    uint coordinate = axis == 0u ? x : (axis == 1u ? y : z);
+    uint extent = axis == 0u ? kGridX : (axis == 1u ? kGridY : kGridZ);
+    bool edge = high_face ? coordinate + 1u == extent : coordinate == 0u;
+    ghost = edge && boundary != gas_boundary_periodic;
+
+    if (ghost) {
+        return idx3_periodic(x, y, z, kGridX, kGridY, kGridZ);
+    }
+
+    uint neighbor = high_face ? wrap_plus_one(coordinate, extent) : wrap_minus_one(coordinate, extent);
+    if (axis == 0u) x = neighbor;
+    if (axis == 1u) y = neighbor;
+    if (axis == 2u) z = neighbor;
+    return idx3_periodic(x, y, z, kGridX, kGridY, kGridZ);
+}
+
+inline U5 gas_ghost_state(U5 interior, uint axis, uint32_t boundary) {
+    if (boundary == gas_boundary_reflecting) {
+        if (axis == 0u) interior.mom.x = -interior.mom.x;
+        if (axis == 1u) interior.mom.y = -interior.mom.y;
+        if (axis == 2u) interior.mom.z = -interior.mom.z;
+    }
+
+    return interior;
+}
+
+inline GasPrim gas_primitive(U5 state, constant GasGridParams& p) {
+    GasPrim primitive;
+    float rho_safe, pressure, temperature, sound_speed, speed;
+    float3 velocity;
+    primitives_from_U(
+        state,
+        p.gamma,
+        p.c_v,
+        p.rho_min,
+        p.p_min,
+        rho_safe,
+        velocity,
+        pressure,
+        temperature,
+        sound_speed,
+        speed
+    );
+    primitive.u_p = float4(velocity, pressure);
+    primitive.thermo = float4(temperature, sound_speed, speed, rho_safe);
+    return primitive;
+}
+
+inline F5 gas_outflow_flux(F5 flux, bool high_face, uint32_t boundary) {
+    if (boundary != gas_boundary_outflow) {
+        return flux;
+    }
+
+    bool incoming = high_face ? flux.frho < 0.0f : flux.frho > 0.0f;
+    if (!incoming) {
+        return flux;
+    }
+
+    F5 zero;
+    zero.frho = 0.0f;
+    zero.fmom = float3(0.0f);
+    zero.fe_int = 0.0f;
+    return zero;
+}
+
 inline void gas_rhs_cell(
     device const float4* mom_rho0,
     device const float* e0,
@@ -2069,10 +2258,7 @@ inline void gas_rhs_cell(
     thread float3& dmom,
     thread float& de_int
 ) {
-    float inv_dx = p.inv_dx;
-    float inv_dx2 = p.inv_dx2;
-
-    if (!gas_diffusion_cfl_admissible(p)) {
+    if (!gas_geometry_admissible(p) || !gas_diffusion_cfl_admissible(p)) {
         float qn = qnan_f();
         drho = qn;
         dmom = float3(qn);
@@ -2083,32 +2269,32 @@ inline void gas_rhs_cell(
     uint x, y, z;
     ijk_from_linear(idx, kGridX, kGridY, kGridZ, x, y, z);
 
-    uint xm = wrap_minus_one(x, kGridX), xp = wrap_plus_one(x, kGridX);
-    uint ym = wrap_minus_one(y, kGridY), yp = wrap_plus_one(y, kGridY);
-    uint zm = wrap_minus_one(z, kGridZ), zp = wrap_plus_one(z, kGridZ);
-
-    uint idx_xm = idx3_periodic(xm, y, z, kGridX, kGridY, kGridZ);
-    uint idx_xp = idx3_periodic(xp, y, z, kGridX, kGridY, kGridZ);
-    uint idx_ym = idx3_periodic(x, ym, z, kGridX, kGridY, kGridZ);
-    uint idx_yp = idx3_periodic(x, yp, z, kGridX, kGridY, kGridZ);
-    uint idx_zm = idx3_periodic(x, y, zm, kGridX, kGridY, kGridZ);
-    uint idx_zp = idx3_periodic(x, y, zp, kGridX, kGridY, kGridZ);
+    uint bxm = gas_boundary_mode(0u, false, p), bxp = gas_boundary_mode(0u, true, p);
+    uint bym = gas_boundary_mode(1u, false, p), byp = gas_boundary_mode(1u, true, p);
+    uint bzm = gas_boundary_mode(2u, false, p), bzp = gas_boundary_mode(2u, true, p);
+    bool ghost_xm, ghost_xp, ghost_ym, ghost_yp, ghost_zm, ghost_zp;
+    uint idx_xm = gas_neighbor_index(x, y, z, 0u, false, bxm, ghost_xm);
+    uint idx_xp = gas_neighbor_index(x, y, z, 0u, true, bxp, ghost_xp);
+    uint idx_ym = gas_neighbor_index(x, y, z, 1u, false, bym, ghost_ym);
+    uint idx_yp = gas_neighbor_index(x, y, z, 1u, true, byp, ghost_yp);
+    uint idx_zm = gas_neighbor_index(x, y, z, 2u, false, bzm, ghost_zm);
+    uint idx_zp = gas_neighbor_index(x, y, z, 2u, true, bzp, ghost_zp);
 
     U5 Uc  = load_U5(mom_rho0, e0, idx);
-    U5 Uxm = load_U5(mom_rho0, e0, idx_xm);
-    U5 Uxp = load_U5(mom_rho0, e0, idx_xp);
-    U5 Uym = load_U5(mom_rho0, e0, idx_ym);
-    U5 Uyp = load_U5(mom_rho0, e0, idx_yp);
-    U5 Uzm = load_U5(mom_rho0, e0, idx_zm);
-    U5 Uzp = load_U5(mom_rho0, e0, idx_zp);
+    U5 Uxm = ghost_xm ? gas_ghost_state(Uc, 0u, bxm) : load_U5(mom_rho0, e0, idx_xm);
+    U5 Uxp = ghost_xp ? gas_ghost_state(Uc, 0u, bxp) : load_U5(mom_rho0, e0, idx_xp);
+    U5 Uym = ghost_ym ? gas_ghost_state(Uc, 1u, bym) : load_U5(mom_rho0, e0, idx_ym);
+    U5 Uyp = ghost_yp ? gas_ghost_state(Uc, 1u, byp) : load_U5(mom_rho0, e0, idx_yp);
+    U5 Uzm = ghost_zm ? gas_ghost_state(Uc, 2u, bzm) : load_U5(mom_rho0, e0, idx_zm);
+    U5 Uzp = ghost_zp ? gas_ghost_state(Uc, 2u, bzp) : load_U5(mom_rho0, e0, idx_zp);
 
     GasPrim Pc  = prim[idx];
-    GasPrim Pxm = prim[idx_xm];
-    GasPrim Pxp = prim[idx_xp];
-    GasPrim Pym = prim[idx_ym];
-    GasPrim Pyp = prim[idx_yp];
-    GasPrim Pzm = prim[idx_zm];
-    GasPrim Pzp = prim[idx_zp];
+    GasPrim Pxm = ghost_xm ? gas_primitive(Uxm, p) : prim[idx_xm];
+    GasPrim Pxp = ghost_xp ? gas_primitive(Uxp, p) : prim[idx_xp];
+    GasPrim Pym = ghost_ym ? gas_primitive(Uym, p) : prim[idx_ym];
+    GasPrim Pyp = ghost_yp ? gas_primitive(Uyp, p) : prim[idx_yp];
+    GasPrim Pzm = ghost_zm ? gas_primitive(Uzm, p) : prim[idx_zm];
+    GasPrim Pzp = ghost_zp ? gas_primitive(Uzp, p) : prim[idx_zp];
 
     if (!isfinite(Pc.thermo.z)  || !isfinite(Pxm.thermo.z) || !isfinite(Pxp.thermo.z) ||
         !isfinite(Pym.thermo.z) || !isfinite(Pyp.thermo.z) || !isfinite(Pzm.thermo.z) ||
@@ -2142,6 +2328,19 @@ inline void gas_rhs_cell(
     float speed_zm = Pzm.thermo.z;
     float speed_zp = Pzp.thermo.z;
 
+    if (!gas_advective_cfl_admissible(
+        max(speed_xm, max(speed_c, speed_xp)),
+        max(speed_ym, max(speed_c, speed_yp)),
+        max(speed_zm, max(speed_c, speed_zp)),
+        p
+    )) {
+        float qn = qnan_f();
+        drho = qn;
+        dmom = float3(qn);
+        de_int = qn;
+        return;
+    }
+
     F5 Fx_m = rusanov_flux(
         inviscid_flux_dir(0u, Uxm, u_xm, p_xm),
         inviscid_flux_dir(0u, Uc,  u_c,  p_c),
@@ -2167,18 +2366,33 @@ inline void gas_rhs_cell(
         inviscid_flux_dir(2u, Uzp, u_zp, p_zp),
         Uc, Uzp, max(speed_c, speed_zp));
 
-    float div_frho = ((Fx_p.frho - Fx_m.frho) + (Fy_p.frho - Fy_m.frho) + (Fz_p.frho - Fz_m.frho)) * inv_dx;
-    float3 div_fmom = ((Fx_p.fmom - Fx_m.fmom) + (Fy_p.fmom - Fy_m.fmom) + (Fz_p.fmom - Fz_m.fmom)) * inv_dx;
-    float div_fe = ((Fx_p.fe_int - Fx_m.fe_int) + (Fy_p.fe_int - Fy_m.fe_int) + (Fz_p.fe_int - Fz_m.fe_int)) * inv_dx;
+    if (ghost_xm) Fx_m = gas_outflow_flux(Fx_m, false, bxm);
+    if (ghost_xp) Fx_p = gas_outflow_flux(Fx_p, true, bxp);
+    if (ghost_ym) Fy_m = gas_outflow_flux(Fy_m, false, bym);
+    if (ghost_yp) Fy_p = gas_outflow_flux(Fy_p, true, byp);
+    if (ghost_zm) Fz_m = gas_outflow_flux(Fz_m, false, bzm);
+    if (ghost_zp) Fz_p = gas_outflow_flux(Fz_p, true, bzp);
+
+    float div_frho = (Fx_p.frho - Fx_m.frho) * p.inv_dx +
+        (Fy_p.frho - Fy_m.frho) * p.inv_dy +
+        (Fz_p.frho - Fz_m.frho) * p.inv_dz;
+    float3 div_fmom = (Fx_p.fmom - Fx_m.fmom) * p.inv_dx +
+        (Fy_p.fmom - Fy_m.fmom) * p.inv_dy +
+        (Fz_p.fmom - Fz_m.fmom) * p.inv_dz;
+    float div_fe = (Fx_p.fe_int - Fx_m.fe_int) * p.inv_dx +
+        (Fy_p.fe_int - Fy_m.fe_int) * p.inv_dy +
+        (Fz_p.fe_int - Fz_m.fe_int) * p.inv_dz;
 
     drho = -div_frho;
     dmom = -div_fmom;
 
-    float div_u = (u_xp.x - u_xm.x) * (0.5f * inv_dx)
-                + (u_yp.y - u_ym.y) * (0.5f * inv_dx)
-                + (u_zp.z - u_zm.z) * (0.5f * inv_dx);
+    float div_u = (u_xp.x - u_xm.x) * (0.5f * p.inv_dx)
+                + (u_yp.y - u_ym.y) * (0.5f * p.inv_dy)
+                + (u_zp.z - u_zm.z) * (0.5f * p.inv_dz);
 
-    float lap_T = (Pxp.thermo.x + Pxm.thermo.x + Pyp.thermo.x + Pym.thermo.x + Pzp.thermo.x + Pzm.thermo.x - 6.0f * Pc.thermo.x) * inv_dx2;
+    float lap_T = (Pxp.thermo.x - 2.0f * Pc.thermo.x + Pxm.thermo.x) * p.inv_dx2 +
+        (Pyp.thermo.x - 2.0f * Pc.thermo.x + Pym.thermo.x) * p.inv_dy2 +
+        (Pzp.thermo.x - 2.0f * Pc.thermo.x + Pzm.thermo.x) * p.inv_dz2;
 
     de_int = -div_fe + (-p_c * div_u) + (p.k_thermal * lap_T);
 }

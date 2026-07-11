@@ -28,7 +28,58 @@ type Config struct {
 	GasPMin                 float64
 	KThermal                float64
 	MaxModes                uint32
+	BoundaryXLow            uint32
+	BoundaryXHigh           uint32
+	BoundaryYLow            uint32
+	BoundaryYHigh           uint32
+	BoundaryZLow            uint32
+	BoundaryZHigh           uint32
 	snapshotPublishInterval time.Duration
+}
+
+const (
+	GasBoundaryPeriodic   = 0
+	GasBoundaryOutflow    = 1
+	GasBoundaryReflecting = 2
+)
+
+/*
+GasBoundaries configures per-face gas-grid boundary topology.
+*/
+type GasBoundaries struct {
+	XLow  uint32
+	XHigh uint32
+	YLow  uint32
+	YHigh uint32
+	ZLow  uint32
+	ZHigh uint32
+}
+
+/*
+DefaultMarketGasBoundaries returns the recommended open-market gas topology.
+*/
+func DefaultMarketGasBoundaries() GasBoundaries {
+	return GasBoundaries{
+		XLow:  GasBoundaryOutflow,
+		XHigh: GasBoundaryOutflow,
+		YLow:  GasBoundaryOutflow,
+		YHigh: GasBoundaryOutflow,
+		ZLow:  GasBoundaryOutflow,
+		ZHigh: GasBoundaryOutflow,
+	}
+}
+
+func (boundaries GasBoundaries) Apply(config *Config) {
+	if config == nil {
+		return
+	}
+
+	config.BoundaryXLow = boundaries.XLow
+	config.BoundaryXHigh = boundaries.XHigh
+	config.BoundaryYLow = boundaries.YLow
+	config.BoundaryYHigh = boundaries.YHigh
+	config.BoundaryZLow = boundaries.ZLow
+	config.BoundaryZHigh = boundaries.ZHigh
 }
 
 type RuntimeControls struct {
@@ -154,10 +205,44 @@ func ApplyDerivedGasParams(config *Config) {
 	config.GasEnvelopeRhoMin = envelopeRho
 	config.GasPMin = (gamma - 1.0) * envelopeRho * cellVolume
 
-	gasCellSpacing := config.GasCellSpacing()
+	gasCellSpacing := config.MinGasCellSpacing()
 	const diffusionCFLSafety = 0.99
-	config.KThermal = envelopeRho * config.CV * gasCellSpacing * gasCellSpacing /
-		(6.0 * config.DeltaT) * diffusionCFLSafety
+	const vonNeumannLimit = 0.5
+	inverseSpacingSum := config.inverseSpacingSum()
+	config.KThermal = envelopeRho * config.CV * gasCellSpacing * gasCellSpacing *
+		vonNeumannLimit / (config.DeltaT * inverseSpacingSum) * diffusionCFLSafety
+}
+
+func (config Config) inverseSpacingSum() float64 {
+	dx := config.DomainX / float64(config.GridX)
+	dy := config.DomainY / float64(config.GridY)
+	dz := config.DomainZ / float64(config.GridZ)
+
+	if dx <= 0 || dy <= 0 || dz <= 0 {
+		return math.Inf(1)
+	}
+
+	return 1.0/(dx*dx) + 1.0/(dy*dy) + 1.0/(dz*dz)
+}
+
+/*
+MinGasCellSpacing returns the smallest axis cell width on the gas grid.
+*/
+func (config Config) MinGasCellSpacing() float64 {
+	dx := config.DomainX / float64(config.GridX)
+	dy := config.DomainY / float64(config.GridY)
+	dz := config.DomainZ / float64(config.GridZ)
+	minSpacing := dx
+
+	if dy < minSpacing {
+		minSpacing = dy
+	}
+
+	if dz < minSpacing {
+		minSpacing = dz
+	}
+
+	return minSpacing
 }
 
 /*
@@ -168,17 +253,16 @@ func (config Config) GasCellSpacing() float64 {
 }
 
 /*
-DiffusionCFL returns k_thermal·dt / (ρ_envelope·c_v·dx²) for explicit 3D diffusion.
+DiffusionCFL returns the multidimensional explicit diffusion number used by the gas kernel.
 */
 func (config Config) DiffusionCFL() float64 {
-	gasCellSpacing := config.GasCellSpacing()
 	envelopeRho := config.GasEnvelopeRhoMin
 
-	if envelopeRho <= 0 || config.CV <= 0 || gasCellSpacing <= 0 || config.DeltaT <= 0 {
+	if envelopeRho <= 0 || config.CV <= 0 || config.DeltaT <= 0 {
 		return math.Inf(1)
 	}
 
-	return config.KThermal * config.DeltaT / (envelopeRho * config.CV * gasCellSpacing * gasCellSpacing)
+	return config.KThermal * config.DeltaT * config.inverseSpacingSum() / (envelopeRho * config.CV)
 }
 
 /*
@@ -186,7 +270,7 @@ Validate rejects configs whose explicit thermal diffusion violates von Neumann s
 */
 func (config Config) Validate() error {
 	diffusionCFL := config.DiffusionCFL()
-	const vonNeumannLimit = 1.0 / 6.0
+	const vonNeumannLimit = 0.5
 
 	if diffusionCFL > vonNeumannLimit+1e-9 {
 		return fmt.Errorf(
@@ -196,6 +280,28 @@ func (config Config) Validate() error {
 			config.KThermal,
 			config.GasEnvelopeRhoMin,
 		)
+	}
+
+	return config.validateBoundaries()
+}
+
+func (config Config) validateBoundaries() error {
+	boundaries := []struct {
+		name  string
+		value uint32
+	}{
+		{"boundary_x_low", config.BoundaryXLow},
+		{"boundary_x_high", config.BoundaryXHigh},
+		{"boundary_y_low", config.BoundaryYLow},
+		{"boundary_y_high", config.BoundaryYHigh},
+		{"boundary_z_low", config.BoundaryZLow},
+		{"boundary_z_high", config.BoundaryZHigh},
+	}
+
+	for _, boundary := range boundaries {
+		if boundary.value > GasBoundaryReflecting {
+			return fmt.Errorf("physics: %s has invalid gas boundary mode %d", boundary.name, boundary.value)
+		}
 	}
 
 	return nil

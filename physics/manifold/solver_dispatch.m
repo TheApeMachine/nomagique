@@ -20,48 +20,6 @@ uint32_t manifold_cell_index(uint32_t x, uint32_t y, uint32_t z, uint32_t gx, ui
     return x * (gy * gz) + y * gz + z;
 }
 
-float manifold_pressure_at(
-    float *eData,
-    float gamma,
-    uint32_t x,
-    uint32_t y,
-    uint32_t z,
-    uint32_t gx,
-    uint32_t gy,
-    uint32_t gz
-) {
-    uint32_t index = manifold_cell_index(x, y, z, gx, gy, gz);
-    return (gamma - 1.0f) * eData[index];
-}
-
-void manifold_velocity_at(
-    float *momRhoData,
-    uint32_t x,
-    uint32_t y,
-    uint32_t z,
-    uint32_t gx,
-    uint32_t gy,
-    uint32_t gz,
-    float *ux,
-    float *uy,
-    float *uz
-) {
-    uint32_t index = manifold_cell_index(x, y, z, gx, gy, gz);
-    uint32_t base = index * 4;
-    float rho = momRhoData[base + 3];
-
-    if (!(rho > 0.0f)) {
-        *ux = 0.0f;
-        *uy = 0.0f;
-        *uz = 0.0f;
-        return;
-    }
-
-    *ux = momRhoData[base + 0] / rho;
-    *uy = momRhoData[base + 1] / rho;
-    *uz = momRhoData[base + 2] / rho;
-}
-
 @implementation ManifoldSolver (DispatchPrivate)
 
 - (void)beginStepDispatches {

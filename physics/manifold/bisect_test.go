@@ -4,7 +4,7 @@ package manifold
 
 import "testing"
 
-func tryStep(t *testing.T, config Config, numOsc uint32) {
+func trySteps(t *testing.T, config Config, numOsc uint32, steps int) {
 	t.Helper()
 	ApplyDerivedGasParams(&config)
 	solver := NewSolver(config)
@@ -22,9 +22,15 @@ func tryStep(t *testing.T, config Config, numOsc uint32) {
 	if err := solver.SetOscillators(osc); err != nil {
 		t.Fatalf("osc: %v", err)
 	}
-	if _, err := solver.Step(); err != nil {
-		t.Fatalf("step: %v", err)
+	for step := 0; step < steps; step++ {
+		if _, err := solver.Step(); err != nil {
+			t.Fatalf("step %d: %v", step, err)
+		}
 	}
+}
+
+func tryStep(t *testing.T, config Config, numOsc uint32) {
+	trySteps(t, config, numOsc, 1)
 }
 
 func TestBisectGridY3(t *testing.T) {
@@ -41,4 +47,12 @@ func TestBisectBigGrid(t *testing.T) {
 
 func TestBisectProductionLite(t *testing.T) {
 	tryStep(t, Config{GridX: 32, GridY: 3, GridZ: 16, DomainX: 0.32, DomainY: 3, DomainZ: 16, DeltaT: 0.1, Gamma: 5.0 / 3.0, MaxModes: 32}, 32)
+}
+
+func TestBisectProduction128Osc(t *testing.T) {
+	tryStep(t, Config{GridX: 32, GridY: 3, GridZ: 16, DomainX: 0.65, DomainY: 3, DomainZ: 16, DeltaT: 0.1, Gamma: 5.0 / 3.0, MaxModes: 128}, 128)
+}
+
+func TestBisectProduction128OscSustained(t *testing.T) {
+	trySteps(t, Config{GridX: 32, GridY: 3, GridZ: 16, DomainX: 0.65, DomainY: 3, DomainZ: 16, DeltaT: 0.1, Gamma: 5.0 / 3.0, MaxModes: 128}, 128, 256)
 }

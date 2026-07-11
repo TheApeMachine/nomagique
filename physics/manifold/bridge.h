@@ -25,7 +25,19 @@ typedef struct ManifoldConfig {
     float coupling_scale;
     float gate_width_min;
     float gate_width_max;
+    uint32_t boundary_x_low;
+    uint32_t boundary_x_high;
+    uint32_t boundary_y_low;
+    uint32_t boundary_y_high;
+    uint32_t boundary_z_low;
+    uint32_t boundary_z_high;
 } ManifoldConfig;
+
+enum {
+    MANIFOLD_GAS_BOUNDARY_PERIODIC = 0,
+    MANIFOLD_GAS_BOUNDARY_OUTFLOW = 1,
+    MANIFOLD_GAS_BOUNDARY_REFLECTING = 2,
+};
 
 typedef struct ManifoldControls {
     float dt;
@@ -69,6 +81,34 @@ int manifold_solver_set_controls(
 );
 
 int manifold_solver_reset_deposits(void *handle, char *err_out, int err_cap);
+int manifold_solver_reset_sources(void *handle, char *err_out, int err_cap);
+int manifold_solver_source_cell(
+    void *handle,
+    uint32_t cell_x,
+    uint32_t cell_y,
+    uint32_t cell_z,
+    float delta_mom_x,
+    float delta_mom_y,
+    float delta_mom_z,
+    float delta_rho,
+    float delta_e,
+    char *err_out,
+    int err_cap
+);
+int manifold_solver_apply_sources(void *handle, char *err_out, int err_cap);
+int manifold_solver_read_cell(
+    void *handle,
+    uint32_t cell_x,
+    uint32_t cell_y,
+    uint32_t cell_z,
+    float *rho,
+    float *mom_x,
+    float *mom_y,
+    float *mom_z,
+    float *e_int,
+    char *err_out,
+    int err_cap
+);
 int manifold_solver_deposit_cell(
     void *handle,
     uint32_t cell_x,
@@ -92,6 +132,7 @@ int manifold_solver_set_oscillators(
 );
 
 int manifold_solver_step(void *handle, ManifoldReading *reading, char *err_out, int err_cap);
+int manifold_solver_run_gas_transport(void *handle, char *err_out, int err_cap);
 
 int manifold_solver_read_rho_projection(
     void *handle,

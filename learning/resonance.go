@@ -317,7 +317,8 @@ func (rm *ResonanceManifold) Settle(input []float64, advanceTemporal bool) error
 
 	rm.initializeLatents(xCol)
 
-	trace := []float64{rm.Energy()}
+	trace := make([]float64, 0, rm.cfg.MaxInferenceSteps+2)
+	trace = append(trace, rm.Energy())
 
 	for step := 0; step < rm.cfg.MaxInferenceSteps; step++ {
 		predictions, layerErrors := rm.predictAdjacentLayers()
@@ -384,16 +385,14 @@ func (rm *ResonanceManifold) Learn(target []float64) {
 
 	for layerIndex, weightMatrix := range rm.W {
 		localSignal := rm.workspace.localSignal[layerIndex]
-		localSignal.Apply(func(rowIndex, colIndex int, value float64) float64 {
-			return 1.0 - value*value
-		}, predictions[layerIndex])
+		denseApplyOneMinusSquareInto(localSignal, predictions[layerIndex])
 
 		precision := rm.precisionFor(layerIndex)
 		localSignal.MulElem(localSignal, layerErrors[layerIndex])
 		localSignal.MulElem(localSignal, precision)
 
 		update := rm.workspace.weightUpdate[layerIndex]
-		update.Outer(1.0, localSignal.ColView(0), rm.z[layerIndex+1].ColView(0))
+		denseOuterColsInto(update, localSignal, rm.z[layerIndex+1], 1.0)
 
 		norm := mat.Norm(update, 2)
 		if norm > rm.cfg.GradClip {
@@ -411,17 +410,17 @@ func (rm *ResonanceManifold) Learn(target []float64) {
 	for layerIndex, recognitionMatrix := range rm.R {
 		proposal := rm.workspace.recProposal[layerIndex]
 		proposal.Mul(recognitionMatrix, rm.z[layerIndex])
-		proposal.Apply(func(rowIndex, colIndex int, value float64) float64 { return math.Tanh(value) }, proposal)
+		denseApplyTanhInPlace(proposal)
 
 		recError := rm.workspace.recError[layerIndex]
 		recError.Sub(rm.z[layerIndex+1], proposal)
 
 		recSignal := rm.workspace.recSignal[layerIndex]
-		recSignal.Apply(func(rowIndex, colIndex int, value float64) float64 { return 1.0 - value*value }, proposal)
+		denseApplyOneMinusSquareInto(recSignal, proposal)
 		recSignal.MulElem(recSignal, recError)
 
 		update := rm.workspace.recUpdate[layerIndex]
-		update.Outer(1.0, recSignal.ColView(0), rm.z[layerIndex].ColView(0))
+		denseOuterColsInto(update, recSignal, rm.z[layerIndex], 1.0)
 
 		norm := mat.Norm(update, 2)
 		if norm > rm.cfg.GradClip {
@@ -439,20 +438,20 @@ func (rm *ResonanceManifold) Learn(target []float64) {
 	if targetCol != nil && rm.V != nil {
 		taskPred := rm.workspace.taskPred
 		taskPred.Mul(rm.V, rm.z[topIndex])
-		taskPred.Apply(func(rowIndex, colIndex int, value float64) float64 { return math.Tanh(value) }, taskPred)
+		denseApplyTanhInPlace(taskPred)
 
 		taskError := rm.workspace.taskError
 		taskError.Sub(targetCol, taskPred)
 
 		taskSignal := rm.workspace.taskSignal
-		taskSignal.Apply(func(rowIndex, colIndex int, value float64) float64 { return 1.0 - value*value }, taskPred)
+		denseApplyOneMinusSquareInto(taskSignal, taskPred)
 
 		precision := rm.taskPrecisionVec()
 		taskSignal.MulElem(taskSignal, taskError)
 		taskSignal.MulElem(taskSignal, precision)
 
 		update := rm.workspace.taskUpdate
-		update.Outer(1.0, taskSignal.ColView(0), rm.z[topIndex].ColView(0))
+		denseOuterColsInto(update, taskSignal, rm.z[topIndex], 1.0)
 
 		norm := mat.Norm(update, 2)
 		if norm > rm.cfg.GradClip {
@@ -470,15 +469,13 @@ func (rm *ResonanceManifold) Learn(target []float64) {
 	if rm.prevTop != nil {
 		topPrior := rm.workspace.topPrior
 		topPrior.Mul(rm.A, rm.prevTop)
-		topPrior.Apply(func(rowIndex, colIndex int, value float64) float64 { return math.Tanh(value) }, topPrior)
+		denseApplyTanhInPlace(topPrior)
 
 		temporalError := rm.workspace.temporalError
 		temporalError.Sub(rm.z[topIndex], topPrior)
 
 		temporalSignal := rm.workspace.temporalSignal
-		temporalSignal.Apply(func(rowIndex, colIndex int, value float64) float64 {
-			return 1.0 - value*value
-		}, topPrior)
+		denseApplyOneMinusSquareInto(temporalSignal, topPrior)
 
 		precision := rm.temporalPrecisionVec()
 		temporalSignal.MulElem(temporalSignal, temporalError)
@@ -486,7 +483,7 @@ func (rm *ResonanceManifold) Learn(target []float64) {
 		temporalSignal.Scale(rm.cfg.TemporalWeight, temporalSignal)
 
 		update := rm.workspace.temporalUpdate
-		update.Outer(1.0, temporalSignal.ColView(0), rm.prevTop.ColView(0))
+		denseOuterColsInto(update, temporalSignal, rm.prevTop, 1.0)
 
 		norm := mat.Norm(update, 2)
 		if norm > rm.cfg.GradClip {
@@ -513,17 +510,18 @@ func (rm *ResonanceManifold) Energy() float64 {
 		if rm.cfg.UsePrecision {
 			weightedError := rm.workspace.weightedErr[layerIndex]
 			weightedError.MulElem(rm.precisionFor(layerIndex), layerError)
-			energy += 0.5 * mat.Dot(weightedError.ColView(0), layerError.ColView(0))
+			energy += 0.5 * denseColDot(weightedError, layerError)
+
 			continue
 		}
 
-		energy += 0.5 * mat.Dot(layerError.ColView(0), layerError.ColView(0))
+		energy += 0.5 * denseColDot(layerError, layerError)
 	}
 
 	if rm.prevTop != nil {
 		topPrior := rm.workspace.topPrior
 		topPrior.Mul(rm.A, rm.prevTop)
-		topPrior.Apply(func(rowIndex, colIndex int, value float64) float64 { return math.Tanh(value) }, topPrior)
+		denseApplyTanhInPlace(topPrior)
 
 		temporalError := rm.workspace.temporalError
 		temporalError.Sub(rm.z[len(rm.z)-1], topPrior)
@@ -531,15 +529,15 @@ func (rm *ResonanceManifold) Energy() float64 {
 		if rm.cfg.UsePrecision {
 			weightedError := rm.workspace.temporalWeightedErr
 			weightedError.MulElem(rm.temporalPrecisionVec(), temporalError)
-			energy += 0.5 * rm.cfg.TemporalWeight * mat.Dot(weightedError.ColView(0), temporalError.ColView(0))
+			energy += 0.5 * rm.cfg.TemporalWeight * denseColDot(weightedError, temporalError)
 		} else {
-			energy += 0.5 * rm.cfg.TemporalWeight * mat.Dot(temporalError.ColView(0), temporalError.ColView(0))
+			energy += 0.5 * rm.cfg.TemporalWeight * denseColDot(temporalError, temporalError)
 		}
 	}
 
 	if rm.cfg.LatentDecay > 0 {
 		for layerIndex := 1; layerIndex < len(rm.z); layerIndex++ {
-			norm := mat.Norm(rm.z[layerIndex], 2)
+			norm := denseColNorm(rm.z[layerIndex])
 			energy += 0.5 * rm.cfg.LatentDecay * norm * norm
 		}
 	}
@@ -559,12 +557,32 @@ func (rm *ResonanceManifold) Energy() float64 {
 func (rm *ResonanceManifold) ReconstructionError() float64 {
 	reconstruction := rm.workspace.reconPred
 	reconstruction.Mul(rm.W[0], rm.z[1])
-	reconstruction.Apply(func(rowIndex, colIndex int, value float64) float64 { return math.Tanh(value) }, reconstruction)
+	denseApplyTanhInPlace(reconstruction)
 
 	diff := rm.workspace.reconDiff
 	diff.Sub(rm.z[0], reconstruction)
 
-	return mat.Norm(diff, 2)
+	return denseColNorm(diff)
+}
+
+func (rm *ResonanceManifold) TaskPrediction() []float64 {
+	if rm.V == nil || rm.targetDim <= 0 {
+		return nil
+	}
+
+	topIndex := len(rm.z) - 1
+	taskPred := rm.workspace.taskPred
+	taskPred.Mul(rm.V, rm.z[topIndex])
+	denseApplyTanhInPlace(taskPred)
+
+	rowCount, _ := taskPred.Dims()
+	prediction := make([]float64, rowCount)
+
+	for rowIndex := 0; rowIndex < rowCount; rowIndex++ {
+		prediction[rowIndex] = taskPred.At(rowIndex, 0)
+	}
+
+	return prediction
 }
 
 func (rm *ResonanceManifold) LatentState() []float64 {
@@ -615,7 +633,7 @@ func (rm *ResonanceManifold) WireSnapshot() (
 		errorNorm := 0.0
 
 		if layerIndex < len(layerErrors) {
-			errorNorm = mat.Norm(layerErrors[layerIndex], 2)
+			errorNorm = denseColNorm(layerErrors[layerIndex])
 		}
 
 		layers[layerIndex] = ResonanceLayerWire{
@@ -654,7 +672,7 @@ func (rm *ResonanceManifold) predictAdjacentLayers() ([]*mat.Dense, []*mat.Dense
 	for layerIndex := 0; layerIndex < len(rm.W); layerIndex++ {
 		prediction := rm.workspace.predictions[layerIndex]
 		prediction.Mul(rm.W[layerIndex], rm.z[layerIndex+1])
-		prediction.Apply(func(rowIndex, colIndex int, value float64) float64 { return math.Tanh(value) }, prediction)
+		denseApplyTanhInPlace(prediction)
 
 		layerError := rm.workspace.errors[layerIndex]
 		layerError.Sub(rm.z[layerIndex], prediction)
@@ -670,7 +688,7 @@ func (rm *ResonanceManifold) initializeLatents(xCol *mat.Dense) {
 	for layerIndex := 0; layerIndex < len(rm.R); layerIndex++ {
 		proposal := bottomUp[layerIndex+1]
 		proposal.Mul(rm.R[layerIndex], bottomUp[layerIndex])
-		proposal.Apply(func(rowIndex, colIndex int, value float64) float64 { return math.Tanh(value) }, proposal)
+		denseApplyTanhInPlace(proposal)
 	}
 
 	rm.z[0].Copy(xCol)
@@ -685,7 +703,7 @@ func (rm *ResonanceManifold) initializeLatents(xCol *mat.Dense) {
 
 	topPrior := rm.workspace.topPrior
 	topPrior.Mul(rm.A, rm.prevTop)
-	topPrior.Apply(func(rowIndex, colIndex int, value float64) float64 { return math.Tanh(value) }, topPrior)
+	denseApplyTanhInPlace(topPrior)
 
 	topDown := rm.workspace.topDown
 	topDown[len(topDown)-1].Copy(topPrior)
@@ -693,7 +711,7 @@ func (rm *ResonanceManifold) initializeLatents(xCol *mat.Dense) {
 	for layerIndex := len(rm.W) - 1; layerIndex > 0; layerIndex-- {
 		proposal := topDown[layerIndex]
 		proposal.Mul(rm.W[layerIndex], topDown[layerIndex+1])
-		proposal.Apply(func(rowIndex, colIndex int, value float64) float64 { return math.Tanh(value) }, proposal)
+		denseApplyTanhInPlace(proposal)
 	}
 
 	initMix := rm.cfg.TopDownInitMix
@@ -706,9 +724,7 @@ func (rm *ResonanceManifold) initializeLatents(xCol *mat.Dense) {
 
 		merged := rm.z[layerIndex]
 		merged.Add(topDownTerm, bottomUpTerm)
-		merged.Apply(func(rowIndex, colIndex int, value float64) float64 {
-			return math.Min(rm.cfg.StateClip, math.Max(-rm.cfg.StateClip, value))
-		}, merged)
+		denseClipColInPlace(merged, rm.cfg.StateClip)
 	}
 }
 
@@ -733,9 +749,7 @@ func (rm *ResonanceManifold) stateGradients(
 		}
 
 		belowSignal := rm.workspace.belowSignal[layerIndex-1]
-		belowSignal.Apply(func(rowIndex, colIndex int, value float64) float64 {
-			return 1.0 - value*value
-		}, predictions[layerIndex-1])
+		denseApplyOneMinusSquareInto(belowSignal, predictions[layerIndex-1])
 
 		if rm.cfg.UsePrecision {
 			belowSignal.MulElem(belowSignal, layerErrors[layerIndex-1])
@@ -745,13 +759,13 @@ func (rm *ResonanceManifold) stateGradients(
 		}
 
 		correction := rm.workspace.correction[layerIndex]
-		correction.Mul(rm.W[layerIndex-1].T(), belowSignal)
+		denseMulWeightTransposeInto(correction, rm.W[layerIndex-1], belowSignal)
 		gradient.Sub(gradient, correction)
 
 		if layerIndex == topIndex && rm.prevTop != nil {
 			topPrior := rm.workspace.topPrior
 			topPrior.Mul(rm.A, rm.prevTop)
-			topPrior.Apply(func(rowIndex, colIndex int, value float64) float64 { return math.Tanh(value) }, topPrior)
+			denseApplyTanhInPlace(topPrior)
 
 			temporalError := rm.workspace.temporalError
 			temporalError.Sub(rm.z[topIndex], topPrior)
@@ -783,7 +797,7 @@ func (rm *ResonanceManifold) stateGradients(
 			}
 		}
 
-		gradientNorm := mat.Norm(gradient, 2)
+		gradientNorm := denseColNorm(gradient)
 		if gradientNorm > rm.cfg.GradClip {
 			gradient.Scale(rm.cfg.GradClip/(gradientNorm+1e-12), gradient)
 		}
@@ -811,9 +825,7 @@ func (rm *ResonanceManifold) tryStateUpdate(gradients []*mat.Dense, stepSize flo
 
 		nextState := rm.z[layerIndex]
 		nextState.Sub(rm.workspace.savedStates[layerIndex], step)
-		nextState.Apply(func(rowIndex, colIndex int, value float64) float64 {
-			return math.Min(rm.cfg.StateClip, math.Max(-rm.cfg.StateClip, value))
-		}, nextState)
+		denseClipColInPlace(nextState, rm.cfg.StateClip)
 	}
 }
 
@@ -843,7 +855,7 @@ func (rm *ResonanceManifold) updatePrecision(layerErrors []*mat.Dense, targetCol
 	if rm.prevTop != nil {
 		topPrior := rm.workspace.topPrior
 		topPrior.Mul(rm.A, rm.prevTop)
-		topPrior.Apply(func(rowIndex, colIndex int, value float64) float64 { return math.Tanh(value) }, topPrior)
+		denseApplyTanhInPlace(topPrior)
 
 		temporalError := rm.workspace.temporalError
 		temporalError.Sub(rm.z[topIndex], topPrior)
@@ -865,7 +877,7 @@ func (rm *ResonanceManifold) updatePrecision(layerErrors []*mat.Dense, targetCol
 	if targetCol != nil && rm.V != nil {
 		taskPred := rm.workspace.taskPred
 		taskPred.Mul(rm.V, rm.z[topIndex])
-		taskPred.Apply(func(rowIndex, colIndex int, value float64) float64 { return math.Tanh(value) }, taskPred)
+		denseApplyTanhInPlace(taskPred)
 
 		taskError := rm.workspace.taskError
 		taskError.Sub(targetCol, taskPred)

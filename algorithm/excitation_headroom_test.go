@@ -60,6 +60,96 @@ func TestOrganicHeadroomScores(t *testing.T) {
 	})
 }
 
+func TestOrganicHeadroomScoresSymmetricPoissonMonotonicity(t *testing.T) {
+	Convey("Given fixed excitation gates and a Poisson baseline (mu equals observed intensity)", t, func() {
+		gates := hawkes.FitGates{
+			SaturationRadius: 0.8,
+			FrenzyAsymmetry:  0.5,
+		}
+		baseline := 1.0
+
+		Convey("When spectral radius sweeps from quiet (zero) up through and past the saturation gate, holding asymmetry at zero", func() {
+			steps := 9
+			previousOrganic := math.Inf(1)
+
+			for step := range steps {
+				radius := gates.SaturationRadius * float64(step) / float64(steps-1)
+				fit := hawkes.BivariateFit{
+					MuX: baseline, IntensityX: baseline, SpectralRadius: radius,
+				}
+
+				frenzy, saturation, organic, _ := organicHeadroomScores(fit, 0, false, gates)
+
+				// Organic stability never increases as self-excitation rises
+				// toward the gate, and saturation stays silent below it.
+				So(organic, ShouldBeLessThanOrEqualTo, previousOrganic)
+				So(saturation, ShouldEqual, 0)
+				So(frenzy, ShouldEqual, 0)
+
+				previousOrganic = organic
+			}
+
+			beyondGate := hawkes.BivariateFit{
+				MuX: baseline, IntensityX: baseline, SpectralRadius: 0.95,
+			}
+			_, saturationBeyond, organicBeyond, _ := organicHeadroomScores(beyondGate, 0, false, gates)
+
+			Convey("Then crossing the gate flips dominance from organic to saturation", func() {
+				So(saturationBeyond, ShouldBeGreaterThan, 0)
+				So(organicBeyond, ShouldEqual, 0)
+				So(saturationBeyond, ShouldBeGreaterThan, organicBeyond)
+			})
+		})
+
+		Convey("When asymmetry sweeps from symmetric (zero) up through and past the frenzy gate, holding spectral radius at zero", func() {
+			steps := 9
+			previousOrganic := math.Inf(1)
+
+			for step := range steps {
+				asymmetry := gates.FrenzyAsymmetry * float64(step) / float64(steps-1)
+				fit := hawkes.BivariateFit{
+					MuX: baseline, IntensityX: baseline, SpectralRadius: 0,
+				}
+
+				frenzy, saturation, organic, _ := organicHeadroomScores(fit, asymmetry, false, gates)
+
+				// Organic stability never increases as buy/sell asymmetry
+				// rises toward the gate, and frenzy stays silent below it.
+				So(organic, ShouldBeLessThanOrEqualTo, previousOrganic)
+				So(frenzy, ShouldEqual, 0)
+				So(saturation, ShouldEqual, 0)
+
+				previousOrganic = organic
+			}
+
+			beyondGate := hawkes.BivariateFit{
+				MuX: baseline, IntensityX: baseline, SpectralRadius: 0,
+			}
+			frenzyBeyond, _, organicBeyond, _ := organicHeadroomScores(beyondGate, 0.95, false, gates)
+
+			Convey("Then crossing the gate flips dominance from organic to frenzy", func() {
+				So(frenzyBeyond, ShouldBeGreaterThan, 0)
+				So(organicBeyond, ShouldEqual, 0)
+				So(frenzyBeyond, ShouldBeGreaterThan, organicBeyond)
+			})
+		})
+
+		Convey("When flow is fully quiet and symmetric (zero radius, zero asymmetry)", func() {
+			fit := hawkes.BivariateFit{
+				MuX: baseline, IntensityX: baseline, SpectralRadius: 0,
+			}
+
+			frenzy, saturation, organic, _ := organicHeadroomScores(fit, 0, false, gates)
+
+			Convey("Then organic stability strictly dominates both frenzy and saturation", func() {
+				So(organic, ShouldBeGreaterThan, frenzy)
+				So(organic, ShouldBeGreaterThan, saturation)
+				So(organic, ShouldBeGreaterThan, 0)
+			})
+		})
+	})
+}
+
 func TestExcitationSymbolMeasureBaseline(t *testing.T) {
 	Convey("Given an arrival stream below the bivariate identifiability floor", t, func() {
 		symbolState := newExcitationSymbol()

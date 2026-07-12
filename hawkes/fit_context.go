@@ -3,8 +3,6 @@ package hawkes
 import (
 	"math"
 	"time"
-
-	"github.com/theapemachine/nomagique/statistic"
 )
 
 const bivariateParamCount = 7
@@ -46,7 +44,21 @@ type arrivalTune struct {
 NewFitContext derives fit bounds from an arrival stream.
 */
 func NewFitContext(stream ArrivalStream, horizon time.Time) (FitContext, bool) {
-	marked := stream.Marked()
+	context, ok := NewObservationContext(stream, horizon)
+
+	if !ok {
+		return FitContext{}, false
+	}
+
+	return context.withSearchGrid()
+}
+
+/*
+NewObservationContext derives the exact fit statistics needed between refits.
+It omits optimizer candidate grids, which are constructed only by NewFitContext.
+*/
+func NewObservationContext(stream ArrivalStream, horizon time.Time) (FitContext, bool) {
+	marked := stream.markedEvents()
 
 	if len(marked) < 2 {
 		return FitContext{}, false
@@ -58,27 +70,27 @@ func NewFitContext(stream ArrivalStream, horizon time.Time) (FitContext, bool) {
 		return FitContext{}, false
 	}
 
-	gaps := stream.Gaps()
+	gaps := stream.gaps
 
-	if len(gaps) == 0 {
+	if len(gaps.values) == 0 {
 		return FitContext{}, false
 	}
 
-	medianGap, ok := statistic.MedianOf(gaps)
+	medianGap, ok := gaps.median()
 
 	if !ok || medianGap <= 0 {
 		return FitContext{}, false
 	}
 
-	lowerGap, upperGap, quartileErr := quartiles(gaps)
+	lowerGap, upperGap, quartileErr := gaps.quartiles()
 
 	if quartileErr != nil {
 		return FitContext{}, false
 	}
 
 	if upperGap <= lowerGap {
-		upperGap = medianGap * (1 + 1/math.Sqrt(float64(len(gaps))))
-		lowerGap = medianGap * (1 - 1/math.Sqrt(float64(len(gaps))))
+		upperGap = medianGap * (1 + 1/math.Sqrt(float64(len(gaps.values))))
+		lowerGap = medianGap * (1 - 1/math.Sqrt(float64(len(gaps.values))))
 
 		if lowerGap <= 0 {
 			lowerGap = medianGap / 2
@@ -92,52 +104,6 @@ func NewFitContext(stream ArrivalStream, horizon time.Time) (FitContext, bool) {
 		eventsX:     stream.buy.Len(),
 		eventsY:     stream.sell.Len(),
 	}
-	localMin, localMax := tune.localScaleRange(gapCV)
-	scanSteps := tune.scanSteps()
-	betaCandidates, betaErr := logspace(
-		1/upperGap, 1/lowerGap, scanSteps,
-	)
-
-	if betaErr != nil {
-		return FitContext{}, false
-	}
-
-	branchSelfCandidates, selfErr := linspace(
-		tune.branchFloor(),
-		tune.branchCeiling()*tune.selfBranchShare(),
-		tune.branchScanSteps(),
-	)
-
-	if selfErr != nil {
-		return FitContext{}, false
-	}
-
-	branchCrossCandidates, crossErr := linspace(
-		0, tune.branchCeiling(), tune.branchScanSteps(),
-	)
-
-	if crossErr != nil {
-		return FitContext{}, false
-	}
-
-	localScales, scalesErr := linspace(localMin, localMax, scanSteps)
-
-	if scalesErr != nil {
-		return FitContext{}, false
-	}
-
-	muXFactors, muXErr := tune.muUncertaintyFactors(tune.eventsX)
-
-	if muXErr != nil {
-		return FitContext{}, false
-	}
-
-	muYFactors, muYErr := tune.muUncertaintyFactors(tune.eventsY)
-
-	if muYErr != nil {
-		return FitContext{}, false
-	}
-
 	return FitContext{
 		SpanSec:      span,
 		MedianGapSec: medianGap,
@@ -152,17 +118,67 @@ func NewFitContext(stream ArrivalStream, horizon time.Time) (FitContext, bool) {
 		TradeWindow: tune.tradeWindowDuration(
 			medianGap, tune.minFitEvents(),
 		),
-		ScanSteps:             tune.scanSteps(),
-		BranchScanSteps:       tune.branchScanSteps(),
-		BranchFloor:           tune.branchFloor(),
-		BranchCeiling:         tune.branchCeiling(),
-		BetaCandidates:        betaCandidates,
-		MuXFactors:            muXFactors,
-		MuYFactors:            muYFactors,
-		BranchSelfCandidates:  branchSelfCandidates,
-		BranchCrossCandidates: branchCrossCandidates,
-		LocalScales:           localScales,
+		ScanSteps:       tune.scanSteps(),
+		BranchScanSteps: tune.branchScanSteps(),
+		BranchFloor:     tune.branchFloor(),
+		BranchCeiling:   tune.branchCeiling(),
 	}, true
+}
+
+func (context FitContext) withSearchGrid() (FitContext, bool) {
+	tune := arrivalTune{
+		totalEvents: context.TotalEvents,
+		eventsX:     context.EventsX,
+		eventsY:     context.EventsY,
+	}
+	localMin, localMax := tune.localScaleRange(context.GapCV)
+	var err error
+
+	context.BetaCandidates, err = logspace(
+		1/context.GapUpperSec, 1/context.GapLowerSec, context.ScanSteps,
+	)
+
+	if err != nil {
+		return FitContext{}, false
+	}
+
+	context.BranchSelfCandidates, err = linspace(
+		context.BranchFloor,
+		context.BranchCeiling*tune.selfBranchShare(),
+		context.BranchScanSteps,
+	)
+
+	if err != nil {
+		return FitContext{}, false
+	}
+
+	context.BranchCrossCandidates, err = linspace(
+		0, context.BranchCeiling, context.BranchScanSteps,
+	)
+
+	if err != nil {
+		return FitContext{}, false
+	}
+
+	context.LocalScales, err = linspace(localMin, localMax, context.ScanSteps)
+
+	if err != nil {
+		return FitContext{}, false
+	}
+
+	context.MuXFactors, err = tune.muUncertaintyFactors(context.EventsX)
+
+	if err != nil {
+		return FitContext{}, false
+	}
+
+	context.MuYFactors, err = tune.muUncertaintyFactors(context.EventsY)
+
+	if err != nil {
+		return FitContext{}, false
+	}
+
+	return context, true
 }
 
 /*

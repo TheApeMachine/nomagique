@@ -21,20 +21,22 @@ func marketGasTestConfig() Config {
 		Gamma:    5.0 / 3.0,
 		MaxModes: 4,
 	}
-	ApplyDerivedGasParams(&config)
+	config = config.stableGasTestConfig(0.4, 1)
 	DefaultMarketGasBoundaries().Apply(&config)
 
 	return config
 }
 
-func testOscillator() Oscillator {
+func testOscillator(config Config) Oscillator {
+	posX, posY, posZ := config.testCellCenter(4, 0, 1)
+
 	return Oscillator{
 		Phase:     0.5,
 		Omega:     6.28,
 		Amplitude: 0.2,
-		PosX:      0.4,
-		PosY:      0,
-		PosZ:      1.2,
+		PosX:      posX,
+		PosY:      posY,
+		PosZ:      posZ,
 		Heat:      0.2,
 		VelX:      0.4,
 	}
@@ -45,7 +47,7 @@ func seedSolverForStep(t *testing.T, solver *Solver, config Config) {
 
 	convey.So(solver.ResetDeposits(), convey.ShouldBeNil)
 	convey.So(solver.DepositCell(config.GridX/2, 0, config.GridZ/2, 0.05, 0, 0, 0, 0.05), convey.ShouldBeNil)
-	convey.So(solver.SetOscillators([]Oscillator{testOscillator()}), convey.ShouldBeNil)
+	convey.So(solver.SetOscillators([]Oscillator{testOscillator(config)}), convey.ShouldBeNil)
 }
 
 func TestGasSourceInjectionReconcilesDeltas(t *testing.T) {
@@ -122,6 +124,76 @@ func TestGasInvalidSourceBufferIsRejected(t *testing.T) {
 	})
 }
 
+func TestGasLowDensityMomentumUsesCFL(t *testing.T) {
+	convey.Convey("Given a finite sub-resolution density with high momentum", t, func() {
+		config := marketGasTestConfig()
+		solver := NewSolver(config)
+
+		convey.So(solver, convey.ShouldNotBeNil)
+		defer solver.Close()
+
+		convey.So(solver.ResetDeposits(), convey.ShouldBeNil)
+		convey.So(solver.DepositCell(2, 0, 2, 0.04, 20, 0, 0, 0.04), convey.ShouldBeNil)
+		convey.So(solver.SetControls(RuntimeControls{
+			DeltaT:        0.00001,
+			MetabolicRate: 100000,
+		}), convey.ShouldBeNil)
+
+		convey.Convey("It should accept the conserved state when the derived timestep is stable", func() {
+			convey.So(solver.RunGasTransport(), convey.ShouldBeNil)
+		})
+	})
+}
+
+func TestGasVacuumRejectsMomentum(t *testing.T) {
+	convey.Convey("Given exact vacuum carrying non-zero momentum", t, func() {
+		config := marketGasTestConfig()
+		solver := NewSolver(config)
+
+		convey.So(solver, convey.ShouldNotBeNil)
+		defer solver.Close()
+
+		convey.So(solver.ResetSources(), convey.ShouldBeNil)
+		convey.So(solver.SourceCell(2, 0, 2, 0.1, 0, 0, 0, 0), convey.ShouldBeNil)
+
+		convey.Convey("It should reject the non-physical conserved state", func() {
+			convey.So(solver.ApplySources(), convey.ShouldNotBeNil)
+		})
+	})
+}
+
+func TestGasSubResolutionTransportReconcilesVacuum(t *testing.T) {
+	convey.Convey("Given a state below one binary32 unit of a carrier", t, func() {
+		config := marketGasTestConfig()
+		solver := NewSolver(config)
+
+		convey.So(solver, convey.ShouldNotBeNil)
+		defer solver.Close()
+
+		density := math.Ldexp(config.GasEnvelopeRhoMin, -25)
+		specificInternal := config.GasPMin /
+			((config.Gamma - 1) * config.GasEnvelopeRhoMin)
+		convey.So(solver.ResetDeposits(), convey.ShouldBeNil)
+		convey.So(
+			solver.DepositCell(2, 0, 2, density, 0, 0, 0, density*specificInternal),
+			convey.ShouldBeNil,
+		)
+
+		convey.Convey("It should reconcile the unresolvable transport tail to exact vacuum", func() {
+			convey.So(solver.RunGasTransport(), convey.ShouldBeNil)
+
+			for cellX := range config.GridX {
+				for cellZ := range config.GridZ {
+					rho, _, _, _, eInt, err := solver.ReadCell(cellX, 0, cellZ)
+					convey.So(err, convey.ShouldBeNil)
+					convey.So(rho, convey.ShouldBeGreaterThanOrEqualTo, 0)
+					convey.So(eInt, convey.ShouldBeGreaterThanOrEqualTo, 0)
+				}
+			}
+		})
+	})
+}
+
 func TestGasOutflowPulseDoesNotWrap(t *testing.T) {
 	convey.Convey("Given an outflow pulse at the high price face", t, func() {
 		config := marketGasTestConfig()
@@ -135,7 +207,7 @@ func TestGasOutflowPulseDoesNotWrap(t *testing.T) {
 			solver.DepositCell(config.GridX-1, 0, config.GridZ/2, 0.2, 0.5, 0, 0, 0.2),
 			convey.ShouldBeNil,
 		)
-		convey.So(solver.SetOscillators([]Oscillator{testOscillator()}), convey.ShouldBeNil)
+		convey.So(solver.SetOscillators([]Oscillator{testOscillator(config)}), convey.ShouldBeNil)
 
 		_, stepErr := solver.Step()
 
@@ -151,6 +223,7 @@ func TestGasOutflowPulseDoesNotWrap(t *testing.T) {
 func TestGasOutflowBoundaryAdmitsNoIncomingMass(t *testing.T) {
 	convey.Convey("Given an isolated outflow boundary cell", t, func() {
 		config := marketGasTestConfig()
+		config = config.stableGasTestConfig(5, 1)
 		solver := NewSolver(config)
 
 		convey.So(solver, convey.ShouldNotBeNil)
@@ -158,7 +231,7 @@ func TestGasOutflowBoundaryAdmitsNoIncomingMass(t *testing.T) {
 
 		convey.So(solver.ResetDeposits(), convey.ShouldBeNil)
 		convey.So(solver.DepositCell(0, 0, 1, 0.1, 0.5, 0, 0, 0.1), convey.ShouldBeNil)
-		convey.So(solver.SetOscillators([]Oscillator{testOscillator()}), convey.ShouldBeNil)
+		convey.So(solver.SetOscillators([]Oscillator{testOscillator(config)}), convey.ShouldBeNil)
 
 		_, stepErr := solver.Step()
 
@@ -174,7 +247,9 @@ func TestGasOutflowBoundaryAdmitsNoIncomingMass(t *testing.T) {
 func TestGasReflectingBoundaryPreservesBoundaryMass(t *testing.T) {
 	convey.Convey("Given reflecting versus outflow low-price faces", t, func() {
 		outflowConfig := marketGasTestConfig()
+		outflowConfig = outflowConfig.stableGasTestConfig(4, 1)
 		reflectConfig := marketGasTestConfig()
+		reflectConfig = reflectConfig.stableGasTestConfig(4, 1)
 		reflectConfig.BoundaryXLow = GasBoundaryReflecting
 
 		runBoundaryStep := func(config Config) float64 {
@@ -184,7 +259,7 @@ func TestGasReflectingBoundaryPreservesBoundaryMass(t *testing.T) {
 
 			convey.So(solver.ResetDeposits(), convey.ShouldBeNil)
 			convey.So(solver.DepositCell(0, 0, config.GridZ/2, 0.1, -0.4, 0, 0, 0.1), convey.ShouldBeNil)
-			convey.So(solver.SetOscillators([]Oscillator{testOscillator()}), convey.ShouldBeNil)
+			convey.So(solver.SetOscillators([]Oscillator{testOscillator(config)}), convey.ShouldBeNil)
 			_, stepErr := solver.Step()
 			convey.So(stepErr, convey.ShouldBeNil)
 
@@ -214,7 +289,7 @@ func TestGasUnequalAxisSpacingSteps(t *testing.T) {
 			Gamma:    5.0 / 3.0,
 			MaxModes: 4,
 		}
-		ApplyDerivedGasParams(&config)
+		config = config.stableGasTestConfig(0.4, 1)
 		DefaultMarketGasBoundaries().Apply(&config)
 
 		solver := NewSolver(config)
@@ -231,8 +306,81 @@ func TestGasUnequalAxisSpacingSteps(t *testing.T) {
 	})
 }
 
-func TestGasInvalidAdvectiveCFLPoisonsStep(t *testing.T) {
-	convey.Convey("Given an advective CFL violation", t, func() {
+func TestGasStepReturnsPhysicalReading(t *testing.T) {
+	convey.Convey("Given an asymmetric physical pressure field", t, func() {
+		config := marketGasTestConfig()
+		solver := NewSolver(config)
+
+		convey.So(solver, convey.ShouldNotBeNil)
+		defer solver.Close()
+
+		convey.So(solver.ResetSources(), convey.ShouldBeNil)
+		convey.So(
+			solver.SourceCell(config.GridX/2, 0, config.GridZ/2, 0, 0, 0, 0.2, 0.4),
+			convey.ShouldBeNil,
+		)
+		convey.So(
+			solver.SourceCell(config.GridX/2+1, 0, config.GridZ/2, 0, 0, 0, 0.1, 0.05),
+			convey.ShouldBeNil,
+		)
+		convey.So(solver.SetOscillators([]Oscillator{testOscillator(config)}), convey.ShouldBeNil)
+
+		reading, err := solver.Step()
+
+		convey.Convey("It should return the signed gas derivatives rather than density curvature labels", func() {
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(reading.PressureGradNorm, convey.ShouldBeGreaterThan, 0)
+			convey.So(
+				reading.PressureGradNorm,
+				convey.ShouldBeGreaterThanOrEqualTo,
+				math.Abs(reading.PressureGradX),
+			)
+		})
+	})
+}
+
+func TestGasAnisotropicPICConservesCarrierMass(t *testing.T) {
+	convey.Convey("Given one carrier on an anisotropic periodic grid", t, func() {
+		config := Config{
+			GridX: 4, GridY: 2, GridZ: 4,
+			DomainX: 0.4, DomainY: 2, DomainZ: 1,
+			DeltaT:   0.01,
+			Gamma:    5.0 / 3.0,
+			MaxModes: 1,
+		}
+		ApplyDerivedGasParams(&config)
+		solver := NewSolver(config)
+
+		convey.So(solver, convey.ShouldNotBeNil)
+		defer solver.Close()
+
+		convey.So(solver.SetOscillators([]Oscillator{{
+			Omega: 1, Amplitude: 0.25,
+			PosX: 0.15, PosY: 0.5, PosZ: 0.3,
+		}}), convey.ShouldBeNil)
+		_, err := solver.Step()
+		convey.So(err, convey.ShouldBeNil)
+
+		mass := 0.0
+
+		for cellX := range config.GridX {
+			for cellY := range config.GridY {
+				for cellZ := range config.GridZ {
+					rho, _, _, _, _, readErr := solver.ReadCell(cellX, cellY, cellZ)
+					convey.So(readErr, convey.ShouldBeNil)
+					mass += rho * config.CellVolume()
+				}
+			}
+		}
+
+		convey.Convey("It should preserve the supplied normalized carrier mass", func() {
+			convey.So(mass, convey.ShouldAlmostEqual, 0.25, 1e-5)
+		})
+	})
+}
+
+func TestGasAdvectiveCFLIsSubdivided(t *testing.T) {
+	convey.Convey("Given an interval exceeding the materialized advective CFL", t, func() {
 		config := marketGasTestConfig()
 		solver := NewSolver(config)
 
@@ -240,17 +388,20 @@ func TestGasInvalidAdvectiveCFLPoisonsStep(t *testing.T) {
 		defer solver.Close()
 
 		convey.So(solver.ResetDeposits(), convey.ShouldBeNil)
-		convey.So(solver.DepositCell(2, 0, 2, 0.01, 20, 0, 0, 0.01), convey.ShouldBeNil)
-		convey.So(solver.SetControls(RuntimeControls{DeltaT: 10, MetabolicRate: 0.1}), convey.ShouldBeNil)
+		convey.So(solver.DepositCell(2, 0, 2, 0.1, 0.2, 0, 0, 0.1), convey.ShouldBeNil)
+		convey.So(solver.SetControls(RuntimeControls{
+			DeltaT:        config.DeltaT * 2,
+			MetabolicRate: 1 / (config.DeltaT * 2),
+		}), convey.ShouldBeNil)
 
-		convey.So(solver.RunGasTransport(), convey.ShouldNotBeNil)
+		convey.So(solver.RunGasTransport(), convey.ShouldBeNil)
 	})
 }
 
-func TestGasInvalidDiffusiveCFLPoisonsStep(t *testing.T) {
-	convey.Convey("Given a diffusive CFL violation", t, func() {
+func TestGasDiffusiveCFLIsSubdivided(t *testing.T) {
+	convey.Convey("Given an interval exceeding the materialized diffusive CFL", t, func() {
 		config := marketGasTestConfig()
-		config.KThermal = config.GasEnvelopeRhoMin * config.CV * 1000
+		config.KThermal *= 2
 		solver := NewSolver(config)
 
 		convey.So(solver, convey.ShouldNotBeNil)
@@ -259,7 +410,7 @@ func TestGasInvalidDiffusiveCFLPoisonsStep(t *testing.T) {
 		convey.So(solver.ResetDeposits(), convey.ShouldBeNil)
 		convey.So(solver.DepositCell(2, 0, 2, 0.05, 0, 0, 0, 0.05), convey.ShouldBeNil)
 
-		convey.So(solver.RunGasTransport(), convey.ShouldNotBeNil)
+		convey.So(solver.RunGasTransport(), convey.ShouldBeNil)
 	})
 }
 

@@ -8,6 +8,12 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 )
 
+var (
+	benchmarkLogLikelihood float64
+	benchmarkGradient      [bivariateParamCount]float64
+	benchmarkGradientOK    bool
+)
+
 func TestBivariateFit_LogLikelihoodGradient(testingTB *testing.T) {
 	Convey("Given a valid fit and arrival stream", testingTB, func() {
 		start := time.Unix(0, 0)
@@ -96,4 +102,44 @@ func TestKernelIntegralSupportBetaDerivative(testingTB *testing.T) {
 			So(derivative, ShouldAlmostEqual, 2*math.Exp(-2), 1e-12)
 		})
 	})
+}
+
+func BenchmarkBivariateFit_LogLikelihoodGradient(testingTB *testing.B) {
+	const eventCount = 1024
+
+	start := time.Unix(0, 0)
+	arrivalInterval := 10 * time.Millisecond
+	buyTimes := make([]time.Time, 0, eventCount/2)
+	sellTimes := make([]time.Time, 0, eventCount/2)
+
+	for eventIndex := 0; eventIndex < eventCount; eventIndex++ {
+		arrival := start.Add(time.Duration(eventIndex) * arrivalInterval)
+
+		if eventIndex%2 == 0 {
+			buyTimes = append(buyTimes, arrival)
+			continue
+		}
+
+		sellTimes = append(sellTimes, arrival)
+	}
+
+	stream := NewArrivalStream(buyTimes, sellTimes)
+	horizon := start.Add(eventCount * arrivalInterval)
+	fit := BivariateFit{
+		MuX:     50,
+		MuY:     50,
+		AlphaXX: 10,
+		AlphaXY: 5,
+		AlphaYX: 5,
+		AlphaYY: 10,
+		Beta:    100,
+	}
+
+	testingTB.ReportAllocs()
+	testingTB.ResetTimer()
+
+	for iteration := 0; iteration < testingTB.N; iteration++ {
+		benchmarkLogLikelihood, benchmarkGradient, benchmarkGradientOK =
+			fit.LogLikelihoodGradient(stream, horizon)
+	}
 }

@@ -70,6 +70,55 @@ func TestExcitation_Measure(testingTB *testing.T) {
 	})
 }
 
+func TestExcitation_MeasureArrivals(testingTB *testing.T) {
+	Convey("Given identical incremental trades through typed and legacy excitation", testingTB, func() {
+		typedSample := NewTradeExcitationSample()
+		legacySample := NewTradeExcitationSample()
+		typedExcitation := NewExcitation()
+		legacyExcitation := NewExcitation()
+		base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
+		var typed ExcitationOutcome
+		var legacy ExcitationOutcome
+		var typedReady bool
+		var legacyReady bool
+
+		for index := range 128 {
+			side := "buy"
+
+			if index%2 == 1 {
+				side = "sell"
+			}
+
+			tradeInput := tradeExcitationInput(
+				"ALT/EUR",
+				side,
+				base.Add(time.Duration(index)*time.Millisecond),
+			)
+			typedInput, _, _ := typedSample.MeasureArrival(tradeInput)
+			legacyInput, _, _ := legacySample.MeasureTrade(tradeInput)
+			typed, typedReady, _ = typedExcitation.MeasureArrivals(typedInput)
+			legacy, legacyReady, _ = legacyExcitation.Measure(legacyInput)
+		}
+
+		Convey("It should preserve fitted classification and continuous outputs", func() {
+			So(typedReady, ShouldEqual, legacyReady)
+			So(typed.EventCount, ShouldEqual, legacy.EventCount)
+			So(typed.HighRisk, ShouldEqual, legacy.HighRisk)
+			So(typed.Eligible, ShouldEqual, legacy.Eligible)
+			So(typed.Frenzy, ShouldEqual, legacy.Frenzy)
+			So(typed.Saturation, ShouldEqual, legacy.Saturation)
+			So(typed.Organic, ShouldEqual, legacy.Organic)
+			So(typed.Exhaustion, ShouldEqual, legacy.Exhaustion)
+			So(typed.Strength, ShouldEqual, legacy.Strength)
+			So(typed.BranchingRatio, ShouldEqual, legacy.BranchingRatio)
+			So(typed.SpectralRadius, ShouldEqual, legacy.SpectralRadius)
+			So(typed.BaselineMu, ShouldEqual, legacy.BaselineMu)
+			So(typed.IntensityRatio, ShouldEqual, legacy.IntensityRatio)
+			So(typed.Maturity, ShouldEqual, legacy.Maturity)
+		})
+	})
+}
+
 func TestClassifyFitSaturation(testingTB *testing.T) {
 	Convey("Given a fit at critical spectral radius", testingTB, func() {
 		fit := hawkes.BivariateFit{
@@ -201,5 +250,42 @@ func BenchmarkExcitation_Measure(b *testing.B) {
 
 	for b.Loop() {
 		_, _, _ = excitation.Measure(input)
+	}
+}
+
+func BenchmarkExcitation_MeasureArrivals(b *testing.B) {
+	sample := NewTradeExcitationSample()
+	excitation := NewExcitation()
+	base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
+	iteration := 0
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		side := "buy"
+
+		if iteration%2 == 1 {
+			side = "sell"
+		}
+
+		input, ready, err := sample.MeasureArrival(tradeExcitationInput(
+			"ALT/EUR",
+			side,
+			base.Add(time.Duration(iteration)*time.Millisecond),
+		))
+
+		if err != nil {
+			b.Fatal(err)
+		}
+
+		if ready {
+			_, _, err = excitation.MeasureArrivals(input)
+		}
+
+		if err != nil {
+			b.Fatal(err)
+		}
+
+		iteration++
 	}
 }

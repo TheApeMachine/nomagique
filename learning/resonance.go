@@ -600,9 +600,9 @@ func (rm *ResonanceManifold) LatentState() []float64 {
 ResonanceLayerWire exports one settled layer for UI x-ray visualization.
 */
 type ResonanceLayerWire struct {
-	State      []float64
-	Prediction []float64
-	ErrorNorm  float64
+	State      []float64 `json:"state"`
+	Prediction []float64 `json:"prediction"`
+	ErrorNorm  float64   `json:"errorNorm"`
 }
 
 /*

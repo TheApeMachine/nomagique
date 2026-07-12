@@ -309,7 +309,7 @@ struct SpatialCollisionParams {
 // Compute trilinear weights and grid indices for a position
 inline void trilinear_coords(
     float3 pos,
-    float inv_spacing,
+    float3 inv_spacing,
     uint3 grid_dims,
     thread uint3& base_idx,
     thread float3& frac
@@ -380,7 +380,7 @@ inline float3 sample_gradient_trilinear(
     uint3 base_idx,
     float3 frac,
     uint3 grid_dims,
-    float inv_spacing
+    float3 inv_spacing
 ) {
     uint stride_z = 1;
     uint stride_y = grid_dims.z;
@@ -414,18 +414,18 @@ inline float3 sample_gradient_trilinear(
     // dF/dx: difference between x=1 and x=0 faces
     float face_x0 = c000 * (1-fy) * (1-fz) + c010 * fy * (1-fz) + c001 * (1-fy) * fz + c011 * fy * fz;
     float face_x1 = c100 * (1-fy) * (1-fz) + c110 * fy * (1-fz) + c101 * (1-fy) * fz + c111 * fy * fz;
-    float grad_x = (face_x1 - face_x0) * inv_spacing;
+    float grad_x = (face_x1 - face_x0) * inv_spacing.x;
     
     float fx = frac.x;
     // dF/dy
     float face_y0 = c000 * (1-fx) * (1-fz) + c100 * fx * (1-fz) + c001 * (1-fx) * fz + c101 * fx * fz;
     float face_y1 = c010 * (1-fx) * (1-fz) + c110 * fx * (1-fz) + c011 * (1-fx) * fz + c111 * fx * fz;
-    float grad_y = (face_y1 - face_y0) * inv_spacing;
+    float grad_y = (face_y1 - face_y0) * inv_spacing.y;
     
     // dF/dz
     float face_z0 = c000 * (1-fx) * (1-fy) + c100 * fx * (1-fy) + c010 * (1-fx) * fy + c110 * fx * fy;
     float face_z1 = c001 * (1-fx) * (1-fy) + c101 * fx * (1-fy) + c011 * (1-fx) * fy + c111 * fx * fy;
-    float grad_z = (face_z1 - face_z0) * inv_spacing;
+    float grad_z = (face_z1 - face_z0) * inv_spacing.z;
     
     return float3(grad_x, grad_y, grad_z);
 }
@@ -435,7 +435,7 @@ inline float4 sample_value_and_gradient_trilinear(
     uint3 base_idx,
     float3 frac,
     uint3 grid_dims,
-    float inv_spacing
+    float3 inv_spacing
 ) {
     uint stride_z = 1;
     uint stride_y = grid_dims.z;
@@ -477,9 +477,9 @@ inline float4 sample_value_and_gradient_trilinear(
     float face_z1 = c001 * (1.0f - fx) * (1.0f - fy) + c101 * fx * (1.0f - fy) + c011 * (1.0f - fx) * fy + c111 * fx * fy;
 
     return float4(
-        (face_x1 - face_x0) * inv_spacing,
-        (face_y1 - face_y0) * inv_spacing,
-        (face_z1 - face_z0) * inv_spacing,
+        (face_x1 - face_x0) * inv_spacing.x,
+        (face_y1 - face_y0) * inv_spacing.y,
+        (face_z1 - face_z0) * inv_spacing.z,
         value
     );
 }
@@ -497,8 +497,8 @@ inline float sample_trilinear(
     device const float* field,
     float3 pos,
     uint gx, uint gy, uint gz,
-    float spacing,
-    float inv_spacing
+    float3 spacing,
+    float3 inv_spacing
 ) {
     uint3 base_idx; float3 frac;
     trilinear_coords(pos, inv_spacing, uint3(gx, gy, gz), base_idx, frac);
@@ -509,8 +509,8 @@ inline float3 sample_gradient_trilinear(
     device const float* field,
     float3 pos,
     uint gx, uint gy, uint gz,
-    float spacing,
-    float inv_spacing
+    float3 spacing,
+    float3 inv_spacing
 ) {
     uint3 base_idx; float3 frac;
     trilinear_coords(pos, inv_spacing, uint3(gx, gy, gz), base_idx, frac);
@@ -1443,8 +1443,12 @@ struct SortScatterParams {
     uint32_t grid_x;
     uint32_t grid_y;
     uint32_t grid_z;
-    float grid_spacing;
-    float inv_grid_spacing;
+    float cell_x;
+    float cell_y;
+    float cell_z;
+    float inv_cell_x;
+    float inv_cell_y;
+    float inv_cell_z;
 };
 
 struct PicGatherParams {
@@ -1452,8 +1456,12 @@ struct PicGatherParams {
     uint32_t grid_x;
     uint32_t grid_y;
     uint32_t grid_z;
-    float grid_spacing;
-    float inv_grid_spacing;
+    float cell_x;
+    float cell_y;
+    float cell_z;
+    float inv_cell_x;
+    float inv_cell_y;
+    float inv_cell_z;
     float dt;
     float domain_x;
     float domain_y;
@@ -1488,8 +1496,12 @@ struct ModeProjectParams {
     uint32_t grid_x;
     uint32_t grid_y;
     uint32_t grid_z;
-    float grid_spacing;
-    float inv_grid_spacing;
+    float cell_x;
+    float cell_y;
+    float cell_z;
+    float inv_cell_x;
+    float inv_cell_y;
+    float inv_cell_z;
 };
 
 struct PilotWaveParams {
@@ -1497,8 +1509,12 @@ struct PilotWaveParams {
     uint32_t grid_x;
     uint32_t grid_y;
     uint32_t grid_z;
-    float grid_spacing;
-    float inv_grid_spacing;
+    float cell_x;
+    float cell_y;
+    float cell_z;
+    float inv_cell_x;
+    float inv_cell_y;
+    float inv_cell_z;
     float dt;
     float domain_x;
     float domain_y;
@@ -1527,7 +1543,8 @@ kernel void scatter_compute_cell_idx(
     // Primary cell for sort binning. Positions are host-wrapped into [0,domain);
     // uint(scaled) differs from trilinear_coords floor-mod on negative values.
     uint3 grid_dims = uint3(p.grid_x, p.grid_y, p.grid_z);
-    float3 scaled = pos * p.inv_grid_spacing;
+    float3 inv_cell = float3(p.inv_cell_x, p.inv_cell_y, p.inv_cell_z);
+    float3 scaled = pos * inv_cell;
     uint3 cell = uint3(
         uint(scaled.x) % grid_dims.x,
         uint(scaled.y) % grid_dims.y,
@@ -1606,9 +1623,7 @@ kernel void scatter_reorder_particles(
     if (gid >= p.num_particles) return;
 
     uint cell = particle_cell_idx[gid];
-    uint base = cell_starts[cell];
-    uint offset = atomic_fetch_add_explicit(&cell_offsets[cell], 1u, memory_order_relaxed);
-    uint dest = base + offset;
+    uint dest = atomic_fetch_add_explicit(&cell_offsets[cell], 1u, memory_order_relaxed);
 
     // Copy particle data to sorted position
     float3 pos = float3(
@@ -1640,8 +1655,9 @@ kernel void scatter_reorder_particles(
     // Precompute CIC fractions/weights at sorted destination index
     uint3 base_idx;
     float3 frac;
-    trilinear_coords(pos, p.inv_grid_spacing, uint3(kGridX, kGridY, kGridZ), base_idx, frac);
-    float iv = p.inv_grid_spacing * p.inv_grid_spacing * p.inv_grid_spacing;
+    float3 inv_cell = float3(p.inv_cell_x, p.inv_cell_y, p.inv_cell_z);
+    trilinear_coords(pos, inv_cell, uint3(kGridX, kGridY, kGridZ), base_idx, frac);
+    float iv = inv_cell.x * inv_cell.y * inv_cell.z;
     particle_cic_a[dest] = float4(frac, mass * iv);
     particle_cic_b[dest] = float4(mass * vel * iv, heat * iv);
 }
@@ -1731,22 +1747,23 @@ kernel void scatter_gather_cells(
 // Compressible Ideal-Gas Dynamics (Eulerian grid update)
 // =============================================================================
 // Port of the correctness-first reference in `sensorium/kernels/gas_dynamics.py`,
-// adapted to this project’s **dual-energy** grid semantics:
+// adapted to this project's grid/PIC boundary semantics:
 //
 //   - grid carries (rho, mom, e_int) where e_int is INTERNAL energy density
-//     (no kinetic energy term stored in the grid scalar channel).
+//     at the API and PIC boundaries.
 //   - pressure uses ideal-gas closure with constant γ:
 //         p = (γ - 1) * e_int
 //
-// Unlike total-energy formulations, the internal-energy equation contains a
-// non-conservative pressure-work term. We therefore evolve:
+// Hyperbolic transport is evolved in conservative total-energy form, recovering
+// internal energy after every RK stage:
 //
 //   ∂t rho  + ∇·(rho u)           = 0
 //   ∂t mom  + ∇·(mom ⊗ u + p I)   = 0
-//   ∂t e_int + ∇·(e_int u)        = - p (∇·u)  + ∇·(k ∇T)
+//   E = e_int + |mom|²/(2 rho)
+//   ∂t E + ∇·((E + p)u)          = ∇·(k ∇T)
 //
 // Numerics:
-//   - Inviscid fluxes: Rusanov/LLF at faces (robust, diffusive).
+//   - Inviscid fluxes: positivity-preserving HLL at faces.
 //   - Time stepping: RK2 (Heun): U1 = U0 + dt*k1 ; U2 = U0 + 0.5*dt*(k1+k2)
 //   - Spatial derivatives: axis-specific finite-volume differences.
 //
@@ -1797,7 +1814,8 @@ struct U5 {
 struct F5 {
     float frho;
     float3 fmom;
-    float fe_int;
+    float fenergy;
+    float fentropy;
 };
 
 inline uint idx3_periodic(uint x, uint y, uint z, uint gx, uint gy, uint gz) {
@@ -1838,6 +1856,117 @@ inline void store_U5(
 ) {
     mom_rho[idx] = float4(U.mom, U.rho);
     e_int[idx] = U.e_int;
+}
+
+inline float gas_kinetic_energy(U5 U) {
+    if (U.rho == 0.0f) {
+        return 0.0f;
+    }
+
+    return 0.5f * dot(U.mom, U.mom) / U.rho;
+}
+
+inline float gas_total_energy(U5 U) {
+    return U.e_int + gas_kinetic_energy(U);
+}
+
+inline float gas_entropy_density(U5 state, float gamma) {
+    if (state.rho == 0.0f) {
+        return 0.0f;
+    }
+
+    return (gamma - 1.0f) * state.e_int * pow(state.rho, 1.0f - gamma);
+}
+
+inline float gas_entropy_internal(float entropy, float rho, float gamma) {
+    if (rho == 0.0f) {
+        return 0.0f;
+    }
+
+    return entropy * pow(rho, gamma - 1.0f) / (gamma - 1.0f);
+}
+
+inline float gas_internal_energy(
+    float total_energy,
+    float entropy,
+    U5 state,
+    float gamma,
+    float rho_resolution,
+    float pressure_resolution
+) {
+    float kinetic_energy = gas_kinetic_energy(state);
+    float internal_energy = total_energy - kinetic_energy;
+    const float dual_energy_resolution = 0.000244140625f; // sqrt(2^-24) = 2^-12
+    float reference_specific_internal = pressure_resolution /
+        ((gamma - 1.0f) * rho_resolution);
+    float reference_internal = reference_specific_internal * state.rho;
+    float energy_scale = max(
+        fabs(total_energy) + fabs(kinetic_energy),
+        reference_internal);
+
+    if (internal_energy > dual_energy_resolution * energy_scale) {
+        return internal_energy;
+    }
+
+    // For binary32 unit roundoff u=2^-24, accepting E-K only above sqrt(u)
+    // bounds cancellation amplification by sqrt(u). Below that conditioning
+    // gate, the independently transported entropy density supplies pressure.
+    // Its correction is accepted only inside the same derived resolution band;
+    // larger disagreement remains a fail-fast conservation error.
+    float entropy_internal = gas_entropy_internal(entropy, state.rho, gamma);
+    float correction = fabs(entropy_internal - internal_energy);
+
+    float resolution = dual_energy_resolution * energy_scale;
+
+    // rho_resolution is the configured single-carrier density. Below one
+    // binary32 unit roundoff of that reference, total-energy flux arithmetic
+    // cannot retain a thermodynamic residual reliably. The separately evolved
+    // entropy remains the resolved pressure variable without discarding mass.
+    const float fp32_unit_roundoff = 5.9604644775390625e-8f; // 2^-24
+    float density_resolution = fp32_unit_roundoff * rho_resolution;
+
+    if (state.rho > 0.0f && state.rho <= density_resolution && entropy_internal >= 0.0f) {
+        return entropy_internal;
+    }
+
+    if (entropy_internal >= -resolution && correction <= resolution) {
+        return max(entropy_internal, 0.0f);
+    }
+
+    return internal_energy;
+}
+
+inline bool gas_reconcile_vacuum(
+    thread U5& state,
+    float total_energy,
+    thread float& entropy,
+    constant GasGridParams& p
+) {
+    const float fp32_unit_roundoff = 5.9604644775390625e-8f; // 2^-24
+    float density_resolution = fp32_unit_roundoff * p.rho_min;
+
+    if (fabs(state.rho) > density_resolution) {
+        return false;
+    }
+
+    float reference_sound = sqrt(p.gamma * p.p_min / p.rho_min);
+    float reference_wave = 2.0f * reference_sound / (p.gamma - 1.0f);
+    float momentum_resolution = density_resolution * reference_wave;
+    float specific_internal = p.p_min / ((p.gamma - 1.0f) * p.rho_min);
+    float energy_resolution = density_resolution * (
+        specific_internal + 0.5f * reference_wave * reference_wave);
+
+    if (length(state.mom) > momentum_resolution || fabs(total_energy) > energy_resolution) {
+        return false;
+    }
+
+    // A state smaller than one binary32 unit of a configured carrier in mass,
+    // momentum, and total energy is indistinguishable from exact grid vacuum.
+    state.rho = 0.0f;
+    state.mom = float3(0.0f);
+    state.e_int = 0.0f;
+    entropy = 0.0f;
+    return true;
 }
 
 // NOTE: `clamp_pos` was used for silent positivity floors.
@@ -1882,24 +2011,11 @@ inline void primitives_from_U(
         return;
     }
 
-    // Numerical low-density envelope:
-    // For very-low density cells we regularize primitive recovery to avoid division
-    // blow-ups, without projecting or clamping the *conserved* state.
-    //
-    // Key idea: when |rho| is below a resolution-scale threshold, treat rho as
-    // `rho_eps` for primitive *computation* (u, T, c). This keeps velocities and
-    // temperatures bounded in cells that are effectively under-resolved.
-    float rho_eps = max(rho_min, 0.0f);
-    const float f32_eps = 1.1920929e-7f;
-    float e_eps = 4.0f * rho_eps * f32_eps;
-    // Max internal energy density allowed in the low-density envelope.
-    // This prevents T = e_int/(rho c_v) from becoming astronomically large.
-    const float e_spec_max = 10.0f; // ~O(1) temperature scale in sim units
-    float e_int_max = e_spec_max * rho_eps;
-    if (fabs(U.rho) <= rho_eps) {
-        // Low-density: require bounded momentum and bounded internal energy density.
-        // Allow tiny signed e_int noise around 0 (|e_int|<=e_eps).
-        if (length(U.mom) > rho_eps) {
+    // Exact vacuum is the only state without defined primitives. A positive
+    // conserved density, however small, still carries well-defined velocity and
+    // thermodynamic state and must not be reclassified by a numerical envelope.
+    if (U.rho == 0.0f) {
+        if (U.mom.x != 0.0f || U.mom.y != 0.0f || U.mom.z != 0.0f || U.e_int != 0.0f) {
             float qn = qnan_f();
             rho_safe = qn;
             u = float3(qn);
@@ -1909,29 +2025,17 @@ inline void primitives_from_U(
             speed = qn;
             return;
         }
-        if (U.e_int < -e_eps || U.e_int > e_int_max) {
-            float qn = qnan_f();
-            rho_safe = qn;
-            u = float3(qn);
-            p = qn;
-            T = qn;
-            c = qn;
-            speed = qn;
-            return;
-        }
-        // Regularize primitive recovery using rho_eps (not U.rho).
-        rho_safe = rho_eps;
-        u = U.mom / rho_safe;
-        float e_used = (U.e_int < 0.0f) ? 0.0f : U.e_int; // only affects primitives
-        p = (gamma - 1.0f) * e_used;
-        T = e_used / (rho_safe * c_v);
-        c = sqrt((gamma * p) / rho_safe);
-        speed = length(u) + c;
+
+        rho_safe = max(rho_min, 0.0f);
+        u = float3(0.0f);
+        p = 0.0f;
+        T = 0.0f;
+        c = 0.0f;
+        speed = 0.0f;
         return;
     }
 
-    // Positive-density state.
-    if (!(U.rho > 0.0f) || !(U.e_int >= 0.0f)) {
+    if (!(U.rho > 0.0f) || U.e_int < 0.0f) {
         float qn = qnan_f();
         rho_safe = qn;
         u = float3(qn);
@@ -1942,16 +2046,21 @@ inline void primitives_from_U(
         return;
     }
 
+    // A positive conserved density must recover velocity from that same density.
+    // Using the resolution density here would make rho*u differ from conserved
+    // momentum, while the mass flux below transports the conserved momentum.
+    // That mismatch can move more mass through a face than the wave speed used by
+    // the CFL condition permits. Sub-resolution states therefore retain their
+    // exact primitive velocity; the CFL check remains the stability authority.
     rho_safe = U.rho;
     u = U.mom / rho_safe;
     p = (gamma - 1.0f) * U.e_int;
-    // (gamma>1 and e_int>=0) => p>=0
     T = U.e_int / (rho_safe * c_v);
     c = sqrt((gamma * p) / rho_safe);
     speed = length(u) + c;
 }
 
-inline F5 inviscid_flux_dir(uint dir, U5 U, float3 u, float p) {
+inline F5 inviscid_flux_dir(uint dir, U5 U, float3 u, float p, float gamma) {
     F5 F;
     float u_d = (dir == 0u) ? u.x : ((dir == 1u) ? u.y : u.z);
     // rho flux = rho * u_d = mom_d (exact for conserved momentum density)
@@ -1961,21 +2070,53 @@ inline F5 inviscid_flux_dir(uint dir, U5 U, float3 u, float p) {
     if (dir == 0u) F.fmom.x += p;
     if (dir == 1u) F.fmom.y += p;
     if (dir == 2u) F.fmom.z += p;
-    // internal-energy advective flux
-    F.fe_int = U.e_int * u_d;
+    F.fenergy = (gas_total_energy(U) + p) * u_d;
+    F.fentropy = gas_entropy_density(U, gamma) * u_d;
     return F;
 }
 
-inline F5 rusanov_flux(F5 FL, F5 FR, U5 UL, U5 UR, float smax) {
-    // F = 0.5*(FL+FR) - 0.5*smax*(UR-UL)
+inline F5 hll_flux(
+    F5 FL,
+    F5 FR,
+    U5 UL,
+    U5 UR,
+    float velocity_left,
+    float sound_left,
+    float velocity_right,
+    float sound_right,
+    float gamma
+) {
+    float wave_left = min(velocity_left - sound_left, velocity_right - sound_right);
+    float wave_right = max(velocity_left + sound_left, velocity_right + sound_right);
+
+    if (wave_left >= 0.0f) {
+        return FL;
+    }
+
+    if (wave_right <= 0.0f) {
+        return FR;
+    }
+
+    float inverse_span = 1.0f / (wave_right - wave_left);
+    float wave_product = wave_left * wave_right;
     F5 F;
-    float a = 0.5f;
-    float d_rho = UR.rho - UL.rho;
-    float3 d_mom = UR.mom - UL.mom;
-    float d_e = UR.e_int - UL.e_int;
-    F.frho = a * (FL.frho + FR.frho) - a * smax * d_rho;
-    F.fmom = a * (FL.fmom + FR.fmom) - a * smax * d_mom;
-    F.fe_int = a * (FL.fe_int + FR.fe_int) - a * smax * d_e;
+    F.frho = (
+        wave_right * FL.frho - wave_left * FR.frho +
+        wave_product * (UR.rho - UL.rho)
+    ) * inverse_span;
+    F.fmom = (
+        wave_right * FL.fmom - wave_left * FR.fmom +
+        wave_product * (UR.mom - UL.mom)
+    ) * inverse_span;
+    F.fenergy = (
+        wave_right * FL.fenergy - wave_left * FR.fenergy +
+        wave_product * (gas_total_energy(UR) - gas_total_energy(UL))
+    ) * inverse_span;
+    F.fentropy = (
+        wave_right * FL.fentropy - wave_left * FR.fentropy +
+        wave_product * (
+            gas_entropy_density(UR, gamma) - gas_entropy_density(UL, gamma))
+    ) * inverse_span;
     return F;
 }
 
@@ -2035,28 +2176,19 @@ inline bool admissible_U5(
     float rho_min,
     float p_min
 ) {
-    // FAIL-FAST admissibility: do not modify state.
-    // For rho>0 we require rho finite and positive, mom finite, e_int finite and >=0.
-    // In the low-density envelope (|rho|<=rho_eps) we allow small/bounded e_int with
-    // bounded momentum so primitives remain finite.
+    // FAIL-FAST admissibility: do not modify state. Positive density and
+    // non-negative internal energy are admissible at every resolved magnitude;
+    // primitive recovery handles sub-resolution density separately. Exact vacuum
+    // is admissible only when momentum and internal energy are also exactly zero.
     (void)p_min; // no silent floors; this is not used for admissibility.
     if (!(gamma > 1.0f) || !isfinite(gamma)) return false;
     if (!isfinite(U.rho) || !isfinite(U.e_int) || !isfinite(U.mom.x) || !isfinite(U.mom.y) || !isfinite(U.mom.z)) return false;
-    float rho_eps = max(rho_min, 0.0f);
-    const float f32_eps = 1.1920929e-7f;
-    float e_eps = 4.0f * rho_eps * f32_eps;
-    const float e_spec_max = 10.0f;
-    float e_int_max = e_spec_max * rho_eps;
-    if (fabs(U.rho) <= rho_eps) {
-        // Low-density: tolerate tiny signed rho and bounded momentum / bounded e_int.
-        if (length(U.mom) > rho_eps) return false;
-        if (U.e_int < -e_eps) return false;
-        if (U.e_int > e_int_max) return false;
-        return true;
+    (void)rho_min;
+    if (U.rho == 0.0f) {
+        return U.mom.x == 0.0f && U.mom.y == 0.0f && U.mom.z == 0.0f &&
+            U.e_int == 0.0f;
     }
-    if (!(U.rho > rho_eps)) return false;
-    if (!(U.e_int >= 0.0f)) return false;
-    return true;
+    return U.rho > 0.0f && U.e_int >= 0.0f;
 }
 
 struct GasPrim {
@@ -2231,6 +2363,27 @@ inline GasPrim gas_primitive(U5 state, constant GasGridParams& p) {
     return primitive;
 }
 
+inline float gas_cell_conductivity(float rho, constant GasGridParams& p) {
+    if (!(rho > 0.0f) || !(p.rho_min > 0.0f)) {
+        return 0.0f;
+    }
+
+    // rho/rho_min is the resolved material fraction of a sub-resolution cell.
+    // Scaling conductivity by that fraction keeps thermal diffusivity finite as
+    // density approaches vacuum and makes exact vacuum thermally insulating.
+    return p.k_thermal * min(rho / p.rho_min, 1.0f);
+}
+
+inline float gas_face_conductivity(float left, float right) {
+    if (!(left > 0.0f) || !(right > 0.0f)) {
+        return 0.0f;
+    }
+
+    // Harmonic averaging is the finite-volume interface conductivity for two
+    // adjacent materials in series; it also preserves a zero-flux vacuum face.
+    return (2.0f * left * right) / (left + right);
+}
+
 inline F5 gas_outflow_flux(F5 flux, bool high_face, uint32_t boundary) {
     if (boundary != gas_boundary_outflow) {
         return flux;
@@ -2244,7 +2397,8 @@ inline F5 gas_outflow_flux(F5 flux, bool high_face, uint32_t boundary) {
     F5 zero;
     zero.frho = 0.0f;
     zero.fmom = float3(0.0f);
-    zero.fe_int = 0.0f;
+    zero.fenergy = 0.0f;
+    zero.fentropy = 0.0f;
     return zero;
 }
 
@@ -2256,13 +2410,19 @@ inline void gas_rhs_cell(
     uint idx,
     thread float& drho,
     thread float3& dmom,
-    thread float& de_int
+    thread float& denergy,
+    thread float& dentropy,
+    thread float& diagnostic
 ) {
+    diagnostic = 0.0f;
+
     if (!gas_geometry_admissible(p) || !gas_diffusion_cfl_admissible(p)) {
+        diagnostic = -1.0f;
         float qn = qnan_f();
         drho = qn;
         dmom = float3(qn);
-        de_int = qn;
+        denergy = qn;
+        dentropy = qn;
         return;
     }
 
@@ -2299,8 +2459,9 @@ inline void gas_rhs_cell(
     if (!isfinite(Pc.thermo.z)  || !isfinite(Pxm.thermo.z) || !isfinite(Pxp.thermo.z) ||
         !isfinite(Pym.thermo.z) || !isfinite(Pyp.thermo.z) || !isfinite(Pzm.thermo.z) ||
         !isfinite(Pzp.thermo.z)) {
+        diagnostic = -2.0f;
         float qn = qnan_f();
-        drho = qn; dmom = float3(qn); de_int = qn;
+        drho = qn; dmom = float3(qn); denergy = qn; dentropy = qn;
         return;
     }
 
@@ -2320,51 +2481,61 @@ inline void gas_rhs_cell(
     float p_zm = Pzm.u_p.w;
     float p_zp = Pzp.u_p.w;
 
-    float speed_c  = Pc.thermo.z;
-    float speed_xm = Pxm.thermo.z;
-    float speed_xp = Pxp.thermo.z;
-    float speed_ym = Pym.thermo.z;
-    float speed_yp = Pyp.thermo.z;
-    float speed_zm = Pzm.thermo.z;
-    float speed_zp = Pzp.thermo.z;
+    float sound_c = Pc.thermo.y;
+    float sound_xm = Pxm.thermo.y;
+    float sound_xp = Pxp.thermo.y;
+    float sound_ym = Pym.thermo.y;
+    float sound_yp = Pyp.thermo.y;
+    float sound_zm = Pzm.thermo.y;
+    float sound_zp = Pzp.thermo.y;
 
-    if (!gas_advective_cfl_admissible(
-        max(speed_xm, max(speed_c, speed_xp)),
-        max(speed_ym, max(speed_c, speed_yp)),
-        max(speed_zm, max(speed_c, speed_zp)),
-        p
-    )) {
+    float cfl_speed_x = max(
+        fabs(u_xm.x) + sound_xm,
+        max(fabs(u_c.x) + sound_c, fabs(u_xp.x) + sound_xp));
+    float cfl_speed_y = max(
+        fabs(u_ym.y) + sound_ym,
+        max(fabs(u_c.y) + sound_c, fabs(u_yp.y) + sound_yp));
+    float cfl_speed_z = max(
+        fabs(u_zm.z) + sound_zm,
+        max(fabs(u_c.z) + sound_c, fabs(u_zp.z) + sound_zp));
+    diagnostic = p.dt * (
+        cfl_speed_x * p.inv_dx +
+        cfl_speed_y * p.inv_dy +
+        cfl_speed_z * p.inv_dz);
+
+    if (!gas_advective_cfl_admissible(cfl_speed_x, cfl_speed_y, cfl_speed_z, p)) {
         float qn = qnan_f();
         drho = qn;
         dmom = float3(qn);
-        de_int = qn;
+        denergy = qn;
+        dentropy = qn;
         return;
     }
 
-    F5 Fx_m = rusanov_flux(
-        inviscid_flux_dir(0u, Uxm, u_xm, p_xm),
-        inviscid_flux_dir(0u, Uc,  u_c,  p_c),
-        Uxm, Uc, max(speed_xm, speed_c));
-    F5 Fx_p = rusanov_flux(
-        inviscid_flux_dir(0u, Uc,  u_c,  p_c),
-        inviscid_flux_dir(0u, Uxp, u_xp, p_xp),
-        Uc, Uxp, max(speed_c, speed_xp));
-    F5 Fy_m = rusanov_flux(
-        inviscid_flux_dir(1u, Uym, u_ym, p_ym),
-        inviscid_flux_dir(1u, Uc,  u_c,  p_c),
-        Uym, Uc, max(speed_ym, speed_c));
-    F5 Fy_p = rusanov_flux(
-        inviscid_flux_dir(1u, Uc,  u_c,  p_c),
-        inviscid_flux_dir(1u, Uyp, u_yp, p_yp),
-        Uc, Uyp, max(speed_c, speed_yp));
-    F5 Fz_m = rusanov_flux(
-        inviscid_flux_dir(2u, Uzm, u_zm, p_zm),
-        inviscid_flux_dir(2u, Uc,  u_c,  p_c),
-        Uzm, Uc, max(speed_zm, speed_c));
-    F5 Fz_p = rusanov_flux(
-        inviscid_flux_dir(2u, Uc,  u_c,  p_c),
-        inviscid_flux_dir(2u, Uzp, u_zp, p_zp),
-        Uc, Uzp, max(speed_c, speed_zp));
+    F5 Fx_m = hll_flux(
+        inviscid_flux_dir(0u, Uxm, u_xm, p_xm, p.gamma),
+        inviscid_flux_dir(0u, Uc,  u_c,  p_c, p.gamma),
+        Uxm, Uc, u_xm.x, Pxm.thermo.y, u_c.x, Pc.thermo.y, p.gamma);
+    F5 Fx_p = hll_flux(
+        inviscid_flux_dir(0u, Uc,  u_c,  p_c, p.gamma),
+        inviscid_flux_dir(0u, Uxp, u_xp, p_xp, p.gamma),
+        Uc, Uxp, u_c.x, Pc.thermo.y, u_xp.x, Pxp.thermo.y, p.gamma);
+    F5 Fy_m = hll_flux(
+        inviscid_flux_dir(1u, Uym, u_ym, p_ym, p.gamma),
+        inviscid_flux_dir(1u, Uc,  u_c,  p_c, p.gamma),
+        Uym, Uc, u_ym.y, Pym.thermo.y, u_c.y, Pc.thermo.y, p.gamma);
+    F5 Fy_p = hll_flux(
+        inviscid_flux_dir(1u, Uc,  u_c,  p_c, p.gamma),
+        inviscid_flux_dir(1u, Uyp, u_yp, p_yp, p.gamma),
+        Uc, Uyp, u_c.y, Pc.thermo.y, u_yp.y, Pyp.thermo.y, p.gamma);
+    F5 Fz_m = hll_flux(
+        inviscid_flux_dir(2u, Uzm, u_zm, p_zm, p.gamma),
+        inviscid_flux_dir(2u, Uc,  u_c,  p_c, p.gamma),
+        Uzm, Uc, u_zm.z, Pzm.thermo.y, u_c.z, Pc.thermo.y, p.gamma);
+    F5 Fz_p = hll_flux(
+        inviscid_flux_dir(2u, Uc,  u_c,  p_c, p.gamma),
+        inviscid_flux_dir(2u, Uzp, u_zp, p_zp, p.gamma),
+        Uc, Uzp, u_c.z, Pc.thermo.y, u_zp.z, Pzp.thermo.y, p.gamma);
 
     if (ghost_xm) Fx_m = gas_outflow_flux(Fx_m, false, bxm);
     if (ghost_xp) Fx_p = gas_outflow_flux(Fx_p, true, bxp);
@@ -2379,22 +2550,45 @@ inline void gas_rhs_cell(
     float3 div_fmom = (Fx_p.fmom - Fx_m.fmom) * p.inv_dx +
         (Fy_p.fmom - Fy_m.fmom) * p.inv_dy +
         (Fz_p.fmom - Fz_m.fmom) * p.inv_dz;
-    float div_fe = (Fx_p.fe_int - Fx_m.fe_int) * p.inv_dx +
-        (Fy_p.fe_int - Fy_m.fe_int) * p.inv_dy +
-        (Fz_p.fe_int - Fz_m.fe_int) * p.inv_dz;
+    float div_energy = (Fx_p.fenergy - Fx_m.fenergy) * p.inv_dx +
+        (Fy_p.fenergy - Fy_m.fenergy) * p.inv_dy +
+        (Fz_p.fenergy - Fz_m.fenergy) * p.inv_dz;
+    float div_entropy = (Fx_p.fentropy - Fx_m.fentropy) * p.inv_dx +
+        (Fy_p.fentropy - Fy_m.fentropy) * p.inv_dy +
+        (Fz_p.fentropy - Fz_m.fentropy) * p.inv_dz;
 
     drho = -div_frho;
     dmom = -div_fmom;
 
-    float div_u = (u_xp.x - u_xm.x) * (0.5f * p.inv_dx)
-                + (u_yp.y - u_ym.y) * (0.5f * p.inv_dy)
-                + (u_zp.z - u_zm.z) * (0.5f * p.inv_dz);
+    float conductivity_c = gas_cell_conductivity(Uc.rho, p);
+    float conductivity_xm = gas_face_conductivity(
+        gas_cell_conductivity(Uxm.rho, p), conductivity_c);
+    float conductivity_xp = gas_face_conductivity(
+        conductivity_c, gas_cell_conductivity(Uxp.rho, p));
+    float conductivity_ym = gas_face_conductivity(
+        gas_cell_conductivity(Uym.rho, p), conductivity_c);
+    float conductivity_yp = gas_face_conductivity(
+        conductivity_c, gas_cell_conductivity(Uyp.rho, p));
+    float conductivity_zm = gas_face_conductivity(
+        gas_cell_conductivity(Uzm.rho, p), conductivity_c);
+    float conductivity_zp = gas_face_conductivity(
+        conductivity_c, gas_cell_conductivity(Uzp.rho, p));
+    float thermal_divergence = (
+        conductivity_xp * (Pxp.thermo.x - Pc.thermo.x) -
+        conductivity_xm * (Pc.thermo.x - Pxm.thermo.x)
+    ) * p.inv_dx2 + (
+        conductivity_yp * (Pyp.thermo.x - Pc.thermo.x) -
+        conductivity_ym * (Pc.thermo.x - Pym.thermo.x)
+    ) * p.inv_dy2 + (
+        conductivity_zp * (Pzp.thermo.x - Pc.thermo.x) -
+        conductivity_zm * (Pc.thermo.x - Pzm.thermo.x)
+    ) * p.inv_dz2;
 
-    float lap_T = (Pxp.thermo.x - 2.0f * Pc.thermo.x + Pxm.thermo.x) * p.inv_dx2 +
-        (Pyp.thermo.x - 2.0f * Pc.thermo.x + Pym.thermo.x) * p.inv_dy2 +
-        (Pzp.thermo.x - 2.0f * Pc.thermo.x + Pzm.thermo.x) * p.inv_dz2;
-
-    de_int = -div_fe + (-p_c * div_u) + (p.k_thermal * lap_T);
+    denergy = -div_energy + thermal_divergence;
+    float entropy_source = Uc.rho > 0.0f
+        ? (p.gamma - 1.0f) * pow(Uc.rho, 1.0f - p.gamma) * thermal_divergence
+        : 0.0f;
+    dentropy = -div_entropy + entropy_source;
 }
 
 kernel void gas_rk2_stage1(
@@ -2403,10 +2597,11 @@ kernel void gas_rk2_stage1(
     device const GasPrim* prim0    [[buffer(2)]],
     device float4* mom_rho1        [[buffer(3)]],
     device float* e1               [[buffer(4)]],
-    constant GasGridParams& p      [[buffer(5)]],
-    device atomic_uint* dbg_head   [[buffer(6)]],
-    device uint* dbg_words         [[buffer(7)]],
-    constant uint& dbg_cap         [[buffer(8)]],
+    device float* entropy1         [[buffer(5)]],
+    constant GasGridParams& p      [[buffer(6)]],
+    device atomic_uint* dbg_head   [[buffer(7)]],
+    device uint* dbg_words         [[buffer(8)]],
+    constant uint& dbg_cap         [[buffer(9)]],
     uint3 threadgroup_pos [[threadgroup_position_in_grid]],
     uint3 threadgroup_tid [[thread_position_in_threadgroup]],
     uint3 threadgroup_dim [[threads_per_threadgroup]]
@@ -2414,14 +2609,18 @@ kernel void gas_rk2_stage1(
     uint gid = gas_cell_gid(p, threadgroup_pos, threadgroup_tid, threadgroup_dim);
     if (gid >= p.num_cells) return;
 
-    float dr; float3 dm; float de;
-    gas_rhs_cell(mom_rho0, e0, prim0, p, gid, dr, dm, de);
-    if (!isfinite(dr) || !isfinite(dm.x) || !isfinite(dm.y) || !isfinite(dm.z) || !isfinite(de)) {
+    float dr; float3 dm; float de; float ds; float diagnostic;
+    gas_rhs_cell(mom_rho0, e0, prim0, p, gid, dr, dm, de, ds, diagnostic);
+    if (!isfinite(dr) || !isfinite(dm.x) || !isfinite(dm.y) ||
+        !isfinite(dm.z) || !isfinite(de) || !isfinite(ds)) {
         U5 Uc_bad = load_U5(mom_rho0, e0, gid);
-        dbg_log(dbg_head, dbg_words, dbg_cap, 0x20u, gid, Uc_bad.rho, Uc_bad.e_int, Uc_bad.mom.x, Uc_bad.mom.y);
+        dbg_log(
+            dbg_head, dbg_words, dbg_cap, 0x20u, gid,
+            Uc_bad.rho, Uc_bad.e_int, p.dt, diagnostic);
         float qn = qnan_f();
         mom_rho1[gid] = float4(qn);
         e1[gid] = qn;
+        entropy1[gid] = qn;
         return;
     }
 
@@ -2429,16 +2628,28 @@ kernel void gas_rk2_stage1(
     U5 U1;
     U1.rho = Uc.rho + p.dt * dr;
     U1.mom = Uc.mom + p.dt * dm;
-    U1.e_int = Uc.e_int + p.dt * de;
+    float energy1 = gas_total_energy(Uc) + p.dt * de;
+    float stage_entropy = gas_entropy_density(Uc, p.gamma) + p.dt * ds;
+    bool stage_vacuum = gas_reconcile_vacuum(U1, energy1, stage_entropy, p);
+
+    if (!stage_vacuum) {
+        U1.e_int = gas_internal_energy(
+            energy1, stage_entropy, U1, p.gamma, p.rho_min, p.p_min);
+    }
     if (!admissible_U5(U1, p.gamma, p.rho_min, p.p_min)) {
-        dbg_log(dbg_head, dbg_words, dbg_cap, 0x12u, gid, Uc.rho, Uc.e_int, U1.rho, U1.e_int);
+        dbg_log(
+            dbg_head, dbg_words, dbg_cap, 0x12u, gid,
+            U1.rho, U1.e_int, energy1,
+            gas_entropy_internal(stage_entropy, U1.rho, p.gamma));
         float qn = qnan_f();
         mom_rho1[gid] = float4(qn);
         e1[gid] = qn;
+        entropy1[gid] = qn;
         return;
     }
 
     store_U5(mom_rho1, e1, gid, U1);
+    entropy1[gid] = gas_entropy_density(U1, p.gamma);
 }
 
 kernel void gas_rk2_stage2(
@@ -2447,12 +2658,13 @@ kernel void gas_rk2_stage2(
     device const float4* mom_rho1  [[buffer(2)]],
     device const float* e1         [[buffer(3)]],
     device const GasPrim* prim1    [[buffer(4)]],
-    device float4* mom_rho_out     [[buffer(5)]],
-    device float* e_out            [[buffer(6)]],
-    constant GasGridParams& p      [[buffer(7)]],
-    device atomic_uint* dbg_head   [[buffer(8)]],
-    device uint* dbg_words         [[buffer(9)]],
-    constant uint& dbg_cap         [[buffer(10)]],
+    device const float* entropy1   [[buffer(5)]],
+    device float4* mom_rho_out     [[buffer(6)]],
+    device float* e_out            [[buffer(7)]],
+    constant GasGridParams& p      [[buffer(8)]],
+    device atomic_uint* dbg_head   [[buffer(9)]],
+    device uint* dbg_words         [[buffer(10)]],
+    constant uint& dbg_cap         [[buffer(11)]],
     uint3 threadgroup_pos [[threadgroup_position_in_grid]],
     uint3 threadgroup_tid [[thread_position_in_threadgroup]],
     uint3 threadgroup_dim [[threads_per_threadgroup]]
@@ -2460,11 +2672,14 @@ kernel void gas_rk2_stage2(
     uint gid = gas_cell_gid(p, threadgroup_pos, threadgroup_tid, threadgroup_dim);
     if (gid >= p.num_cells) return;
 
-    float dr2; float3 dm2; float de2;
-    gas_rhs_cell(mom_rho1, e1, prim1, p, gid, dr2, dm2, de2);
-    if (!isfinite(dr2) || !isfinite(dm2.x) || !isfinite(dm2.y) || !isfinite(dm2.z) || !isfinite(de2)) {
+    float dr2; float3 dm2; float de2; float ds2; float diagnostic;
+    gas_rhs_cell(mom_rho1, e1, prim1, p, gid, dr2, dm2, de2, ds2, diagnostic);
+    if (!isfinite(dr2) || !isfinite(dm2.x) || !isfinite(dm2.y) ||
+        !isfinite(dm2.z) || !isfinite(de2) || !isfinite(ds2)) {
         U5 Uc_bad = load_U5(mom_rho1, e1, gid);
-        dbg_log(dbg_head, dbg_words, dbg_cap, 0x21u, gid, Uc_bad.rho, Uc_bad.e_int, Uc_bad.mom.x, Uc_bad.mom.y);
+        dbg_log(
+            dbg_head, dbg_words, dbg_cap, 0x21u, gid,
+            Uc_bad.rho, Uc_bad.e_int, p.dt, diagnostic);
         float qn = qnan_f();
         mom_rho_out[gid] = float4(qn);
         e_out[gid] = qn;
@@ -2477,9 +2692,21 @@ kernel void gas_rk2_stage2(
     U5 U2;
     U2.rho = 0.5f * (Uc.rho + U1.rho + p.dt * dr2);
     U2.mom = 0.5f * (Uc.mom + U1.mom + p.dt * dm2);
-    U2.e_int = 0.5f * (Uc.e_int + U1.e_int + p.dt * de2);
+    float energy2 = 0.5f * (
+        gas_total_energy(Uc) + gas_total_energy(U1) + p.dt * de2);
+    float entropy2 = 0.5f * (
+        gas_entropy_density(Uc, p.gamma) + entropy1[gid] + p.dt * ds2);
+    bool output_vacuum = gas_reconcile_vacuum(U2, energy2, entropy2, p);
+
+    if (!output_vacuum) {
+        U2.e_int = gas_internal_energy(
+            energy2, entropy2, U2, p.gamma, p.rho_min, p.p_min);
+    }
     if (!admissible_U5(U2, p.gamma, p.rho_min, p.p_min)) {
-        dbg_log(dbg_head, dbg_words, dbg_cap, 0x13u, gid, Uc.rho, Uc.e_int, U2.rho, U2.e_int);
+        dbg_log(
+            dbg_head, dbg_words, dbg_cap, 0x13u, gid,
+            U2.rho, U2.e_int, energy2,
+            gas_entropy_internal(entropy2, U2.rho, p.gamma));
         float qn = qnan_f();
         mom_rho_out[gid] = float4(qn);
         e_out[gid] = qn;
@@ -2523,7 +2750,8 @@ kernel void pic_gather_update_particles(
     uint3 grid_dims = uint3(kGridX, kGridY, kGridZ);
     uint3 base_idx;
     float3 frac;
-    trilinear_coords(pos, p.inv_grid_spacing, grid_dims, base_idx, frac);
+    float3 inv_cell = float3(p.inv_cell_x, p.inv_cell_y, p.inv_cell_z);
+    trilinear_coords(pos, inv_cell, grid_dims, base_idx, frac);
 
     float wx0 = 1.0f - frac.x, wx1 = frac.x;
     float wy0 = 1.0f - frac.y, wy1 = frac.y;
@@ -2686,7 +2914,7 @@ kernel void pic_gather_update_particles(
             base_idx,
             frac,
             grid_dims,
-            p.inv_grid_spacing
+            inv_cell
         );
         g_accel = -grad_phi;
     }
@@ -2945,7 +3173,8 @@ kernel void project_modes_to_spatial_psi(
     }
 
     // CIC splat onto the spatial grid (periodic).
-    float3 g = pos * p.inv_grid_spacing;
+    float3 inv_cell = float3(p.inv_cell_x, p.inv_cell_y, p.inv_cell_z);
+    float3 g = pos * inv_cell;
 
     int ix0 = (int)floor(g.x);
     int iy0 = (int)floor(g.y);
@@ -3049,12 +3278,13 @@ kernel void pic_gather_update_particles_pilot_wave(
 
     uint3 grid_dims = uint3(p.grid_x, p.grid_y, p.grid_z);
     uint3 base_idx; float3 frac;
-    trilinear_coords(pos, p.inv_grid_spacing, grid_dims, base_idx, frac);
+    float3 inv_cell = float3(p.inv_cell_x, p.inv_cell_y, p.inv_cell_z);
+    trilinear_coords(pos, inv_cell, grid_dims, base_idx, frac);
 
     float4 re = sample_value_and_gradient_trilinear(
-        psi_re_field, base_idx, frac, grid_dims, p.inv_grid_spacing);
+        psi_re_field, base_idx, frac, grid_dims, inv_cell);
     float4 im = sample_value_and_gradient_trilinear(
-        psi_im_field, base_idx, frac, grid_dims, p.inv_grid_spacing);
+        psi_im_field, base_idx, frac, grid_dims, inv_cell);
 
     float psi_re = re.w;
     float psi_im = im.w;

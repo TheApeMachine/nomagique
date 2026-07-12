@@ -55,6 +55,34 @@ func TestNewFitContext(testingTB *testing.T) {
 	})
 }
 
+func TestNewObservationContext(testingTB *testing.T) {
+	Convey("Given the same valid arrival stream as a complete fit context", testingTB, func() {
+		start := time.Unix(350, 0)
+		stream := NewArrivalStream(
+			[]time.Time{start, start.Add(time.Second), start.Add(3 * time.Second)},
+			[]time.Time{start.Add(500 * time.Millisecond), start.Add(2 * time.Second)},
+		)
+		horizon := start.Add(4 * time.Second)
+		observation, observationOK := NewObservationContext(stream, horizon)
+		complete, completeOK := NewFitContext(stream, horizon)
+
+		Convey("It should preserve every observed statistic without allocating search grids", func() {
+			So(observationOK, ShouldBeTrue)
+			So(completeOK, ShouldBeTrue)
+			So(observation.SpanSec, ShouldEqual, complete.SpanSec)
+			So(observation.MedianGapSec, ShouldEqual, complete.MedianGapSec)
+			So(observation.GapLowerSec, ShouldEqual, complete.GapLowerSec)
+			So(observation.GapUpperSec, ShouldEqual, complete.GapUpperSec)
+			So(observation.GapCV, ShouldEqual, complete.GapCV)
+			So(observation.TotalEvents, ShouldEqual, complete.TotalEvents)
+			So(observation.MinFitEvents, ShouldEqual, complete.MinFitEvents)
+			So(observation.TradeWindow, ShouldEqual, complete.TradeWindow)
+			So(observation.BetaCandidates, ShouldBeEmpty)
+			So(complete.BetaCandidates, ShouldNotBeEmpty)
+		})
+	})
+}
+
 func TestFitContext_EnoughEvents(testingTB *testing.T) {
 	Convey("Given fit context minima", testingTB, func() {
 		start := time.Unix(400, 0)

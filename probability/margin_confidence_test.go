@@ -1,6 +1,7 @@
 package probability
 
 import (
+	"math"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
@@ -48,6 +49,22 @@ func TestCategoryShareConfidence(t *testing.T) {
 		So(err, ShouldBeNil)
 		So(confidence, ShouldAlmostEqual, 0.25, 1e-9)
 	})
+
+	Convey("Given huge finite evidence whose unscaled sum overflows", t, func() {
+		confidence, err := CategoryShareConfidence([]float64{
+			0,
+			math.MaxFloat64 * 0.75,
+			math.MaxFloat64 * 0.5,
+			math.MaxFloat64 * 0.25,
+		}, 2)
+
+		Convey("It should return the selected category's finite evidence share", func() {
+			So(err, ShouldBeNil)
+			So(confidence, ShouldAlmostEqual, 0.5, 1e-15)
+			So(math.IsNaN(confidence), ShouldBeFalse)
+			So(math.IsInf(confidence, 0), ShouldBeFalse)
+		})
+	})
 }
 
 func TestCategoryEvidenceBaselines(t *testing.T) {
@@ -76,6 +93,27 @@ func TestCategoryEvidenceBaselines(t *testing.T) {
 			So(confidenceBaseline, ShouldAlmostEqual, 0.25, 1e-12)
 			So(entryBaseline, ShouldAlmostEqual, 0.25, 1e-12)
 			So(exitBaseline, ShouldAlmostEqual, 0.25, 1e-12)
+		})
+	})
+
+	Convey("Given huge finite category evidence whose unscaled sum overflows", t, func() {
+		confidenceBaseline, entryBaseline, exitBaseline, err := CategoryEvidenceBaselines(
+			[]float64{
+				0,
+				math.MaxFloat64 * 0.75,
+				math.MaxFloat64 * 0.5,
+				math.MaxFloat64 * 0.25,
+			},
+			2,
+		)
+
+		Convey("It should preserve finite runner-up and non-winning evidence shares", func() {
+			So(err, ShouldBeNil)
+			So(confidenceBaseline, ShouldAlmostEqual, 1.0/6.0, 1e-15)
+			So(entryBaseline, ShouldAlmostEqual, 1.0/3.0, 1e-15)
+			So(exitBaseline, ShouldAlmostEqual, 1.0/6.0, 1e-15)
+			So(math.IsNaN(entryBaseline), ShouldBeFalse)
+			So(math.IsInf(entryBaseline, 0), ShouldBeFalse)
 		})
 	})
 }

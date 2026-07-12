@@ -85,6 +85,30 @@ func (rls *RLS) Measure(sample RLSSample) (RLSOutput, error) {
 	}, nil
 }
 
+/*
+Predict evaluates features against the retained coefficients without observing a
+target. This keeps a live forecast strictly prior to the outcome used to train
+the next step.
+*/
+func (rls *RLS) Predict(features []float64) (RLSOutput, error) {
+	if rls == nil || rls.session == nil {
+		return RLSOutput{}, fmt.Errorf("learning: rls session required")
+	}
+
+	prediction, err := rls.session.predict(features)
+
+	if err != nil {
+		return RLSOutput{}, fmt.Errorf("learning: rls predict failed: %w", err)
+	}
+
+	return RLSOutput{
+		Value:              prediction,
+		Beta:               append([]float64(nil), rls.session.beta...),
+		Covariance:         flattenCovariance(rls.session.covariance),
+		CovarianceDiagonal: covarianceDiagonal(rls.session.covariance),
+	}, nil
+}
+
 type rlsSession struct {
 	dimension        int
 	initialVariance  float64

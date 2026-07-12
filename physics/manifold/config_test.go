@@ -83,10 +83,29 @@ func productionTestConfig() Config {
 		MaxModes: 128,
 	}
 
-	ApplyDerivedGasParams(&config)
+	config = config.stableGasTestConfig(0, 1)
 	DefaultMarketGasBoundaries().Apply(&config)
 
 	return config
+}
+
+func (config Config) stableGasTestConfig(velocity, specificInternalEnergy float64) Config {
+	ApplyDerivedGasParams(&config)
+
+	soundSpeed := math.Sqrt(config.Gamma * (config.Gamma - 1) * specificInternalEnergy)
+	rarefactionSpeed := velocity + 2*soundSpeed/(config.Gamma-1)
+	config.DeltaT = config.AdvectiveDeltaT(rarefactionSpeed)
+	ApplyDerivedGasParams(&config)
+
+	return config
+}
+
+func (config Config) testCellCenter(
+	cellX, cellY, cellZ uint32,
+) (float64, float64, float64) {
+	return (float64(cellX) + 0.5) * config.DomainX / float64(config.GridX),
+		(float64(cellY) + 0.5) * config.DomainY / float64(config.GridY),
+		(float64(cellZ) + 0.5) * config.DomainZ / float64(config.GridZ)
 }
 
 func BenchmarkDiffusionCFL(b *testing.B) {
@@ -97,4 +116,19 @@ func BenchmarkDiffusionCFL(b *testing.B) {
 			b.Fatal("diffusion CFL is NaN")
 		}
 	}
+}
+
+func TestConfigAdvectiveDeltaT(t *testing.T) {
+	convey.Convey("Given an anisotropic grid and a finite characteristic speed", t, func() {
+		config := Config{
+			GridX: 10, GridY: 2, GridZ: 5,
+			DomainX: 1, DomainY: 2, DomainZ: 1,
+		}
+
+		deltaT := config.AdvectiveDeltaT(2)
+
+		convey.Convey("It should invert the exact multidimensional Courant rate", func() {
+			convey.So(deltaT, convey.ShouldAlmostEqual, 1.0/(2.0*(10.0+1.0+5.0)))
+		})
+	})
 }

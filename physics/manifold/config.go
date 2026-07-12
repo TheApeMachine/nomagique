@@ -266,6 +266,26 @@ func (config Config) DiffusionCFL() float64 {
 }
 
 /*
+AdvectiveDeltaT returns the largest timestep whose multidimensional Courant
+number is one for the supplied characteristic speed.
+*/
+func (config Config) AdvectiveDeltaT(characteristicSpeed float64) float64 {
+	if characteristicSpeed <= 0 || math.IsNaN(characteristicSpeed) || math.IsInf(characteristicSpeed, 0) {
+		return 0
+	}
+
+	dx := config.DomainX / float64(config.GridX)
+	dy := config.DomainY / float64(config.GridY)
+	dz := config.DomainZ / float64(config.GridZ)
+
+	if dx <= 0 || dy <= 0 || dz <= 0 {
+		return 0
+	}
+
+	return 1 / (characteristicSpeed * (1/dx + 1/dy + 1/dz))
+}
+
+/*
 Validate rejects configs whose explicit thermal diffusion violates von Neumann stability.
 */
 func (config Config) Validate() error {

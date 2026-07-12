@@ -53,6 +53,32 @@ func TestRLSMeasure(testingTB *testing.T) {
 	})
 }
 
+func TestRLSPredict(testingTB *testing.T) {
+	Convey("Given a trained one-dimensional learner", testingTB, func() {
+		stage, err := NewRLS(RLSConfig{Dimension: 1, InitialVariance: 1000})
+		So(err, ShouldBeNil)
+
+		for _, feature := range []float64{1, 2, 3, 4, 5} {
+			_, err = stage.Measure(RLSSample{
+				Features: []float64{feature},
+				Target:   2*feature + 1,
+			})
+			So(err, ShouldBeNil)
+		}
+
+		before, err := stage.Predict([]float64{6})
+		So(err, ShouldBeNil)
+		after, err := stage.Predict([]float64{6})
+
+		Convey("It should predict without changing retained state", func() {
+			So(err, ShouldBeNil)
+			So(after.Value, ShouldEqual, before.Value)
+			So(after.Beta, ShouldResemble, before.Beta)
+			So(after.Covariance, ShouldResemble, before.Covariance)
+		})
+	})
+}
+
 func BenchmarkRLSMeasure(b *testing.B) {
 	stage, err := NewRLS(RLSConfig{
 		Dimension:        3,

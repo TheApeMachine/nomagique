@@ -169,7 +169,7 @@ func (fit BivariateFit) LogLikelihood(stream ArrivalStream, horizon time.Time) f
 		return math.Inf(-1)
 	}
 
-	marked := stream.Marked()
+	marked := stream.markedEvents()
 
 	if len(marked) == 0 {
 		return math.Inf(-1)

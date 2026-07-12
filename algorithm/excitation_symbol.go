@@ -37,12 +37,13 @@ type excitationSymbol struct {
 	lastFitEventKey fitEventKey
 	lastFitTime     time.Time
 	fitCooldown     time.Duration
-	minFitEvents    int
 	rawBase         *adaptive.EMA
 	lastRawNorm     float64
 	lastCategory    hawkes.FitCategory
 	spectralRadii   []float64
 	asymmetries     []float64
+	adaptive        *hawkes.ArrivalWorkspace
+	fitGates        *hawkes.FitGateEstimator
 }
 
 type fitEventKey struct {
@@ -54,21 +55,21 @@ type fitEventKey struct {
 
 func newExcitationSymbol() *excitationSymbol {
 	return &excitationSymbol{
-		minFitEvents: bivariateParamCount * 2,
-		rawBase:      adaptive.NewEMA(),
+		rawBase:  adaptive.NewEMA(),
+		adaptive: hawkes.NewArrivalWorkspace(),
+		fitGates: hawkes.NewFitGateEstimator(),
 	}
 }
 
 func (symbol *excitationSymbol) measure(
-	buyTimes, sellTimes []time.Time,
+	stream hawkes.ArrivalStream,
 	horizon time.Time,
 	fitCooldown time.Duration,
 	_ float64,
 ) (excitationReading, bool) {
 	symbol.fitCooldown = fitCooldown
 
-	stream := hawkes.NewArrivalStream(buyTimes, sellTimes)
-	context, adaptiveStream, ok := fitContextFromStream(stream, horizon)
+	context, adaptiveStream, ok := symbol.fitContext(stream, horizon)
 
 	if !ok {
 		return excitationReading{}, false
@@ -170,10 +171,6 @@ func (symbol *excitationSymbol) fitBivariate(
 		prior = symbol.fit
 	}
 
-	if context, ok := hawkes.NewFitContext(stream, horizon); ok {
-		symbol.minFitEvents = context.MinFitEvents
-	}
-
 	fit := hawkes.NewBivariateEstimator(prior).Fit(stream, horizon)
 
 	if fit.MuX > 0 {
@@ -235,7 +232,7 @@ func (symbol *excitationSymbol) measureFit(fit hawkes.BivariateFit) (excitationR
 
 	symbol.recordFitGates(fit.SpectralRadius, asymmetry)
 
-	gates, gatesReady := hawkes.FitGatesFromHistory(symbol.spectralRadii, symbol.asymmetries)
+	gates, gatesReady := symbol.fitGates.Measure(symbol.spectralRadii, symbol.asymmetries)
 
 	if !gatesReady {
 		return excitationReading{}, false
@@ -370,7 +367,7 @@ func fitGateHistoryCapacity(history []float64) (int, error) {
 	return longWindow, nil
 }
 
-func fitContextFromStream(
+func (symbol *excitationSymbol) fitContext(
 	stream hawkes.ArrivalStream,
 	horizon time.Time,
 ) (hawkes.FitContext, hawkes.ArrivalStream, bool) {
@@ -378,45 +375,31 @@ func fitContextFromStream(
 		return hawkes.FitContext{}, hawkes.ArrivalStream{}, false
 	}
 
-	probe, ok := hawkes.NewFitContext(stream, horizon)
+	probe, ok := hawkes.NewObservationContext(stream, horizon)
 
 	if !ok {
 		return hawkes.FitContext{}, hawkes.ArrivalStream{}, false
 	}
 
 	adaptiveStart := horizon.Add(-probe.TradeWindow)
-	adaptiveStream := clipStream(stream, adaptiveStart, horizon)
-	context, ok := hawkes.NewFitContext(adaptiveStream, horizon)
+	adaptiveStream := stream.BetweenInto(
+		adaptiveStart,
+		horizon,
+		symbol.adaptive,
+	)
+
+	if len(adaptiveStream.BuyTimes()) == len(stream.BuyTimes()) &&
+		len(adaptiveStream.SellTimes()) == len(stream.SellTimes()) {
+		return probe, stream, true
+	}
+
+	context, ok := hawkes.NewObservationContext(adaptiveStream, horizon)
 
 	if !ok {
 		return hawkes.FitContext{}, hawkes.ArrivalStream{}, false
 	}
 
 	return context, adaptiveStream, true
-}
-
-func clipStream(
-	stream hawkes.ArrivalStream,
-	windowStart, horizon time.Time,
-) hawkes.ArrivalStream {
-	buyTimes := clipTimes(stream.BuyTimes(), windowStart, horizon)
-	sellTimes := clipTimes(stream.SellTimes(), windowStart, horizon)
-
-	return hawkes.NewArrivalStream(buyTimes, sellTimes)
-}
-
-func clipTimes(times []time.Time, windowStart, horizon time.Time) []time.Time {
-	clipped := make([]time.Time, 0, len(times))
-
-	for _, wall := range times {
-		if wall.Before(windowStart) || wall.After(horizon) {
-			continue
-		}
-
-		clipped = append(clipped, wall)
-	}
-
-	return clipped
 }
 
 func revisionKey(stream hawkes.ArrivalStream) fitEventKey {

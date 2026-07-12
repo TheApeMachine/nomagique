@@ -125,7 +125,9 @@ static const uint32_t kDirectInteractionLimit = 64u;
 
 - (void)configureModeProjectParams {
     ModeProjectParamsHost *params = (ModeProjectParamsHost *)self.modeProjectParams.contents;
-    float spacing = [self gridSpacing];
+    float cellX = self.config.domain_x / (float)self.config.grid_x;
+    float cellY = self.config.domain_y / (float)self.config.grid_y;
+    float cellZ = self.config.domain_z / (float)self.config.grid_z;
 
     params->num_modes = self.numOsc;
     params->num_particles = self.numOsc;
@@ -133,20 +135,30 @@ static const uint32_t kDirectInteractionLimit = 64u;
     params->grid_x = self.config.grid_x;
     params->grid_y = self.config.grid_y;
     params->grid_z = self.config.grid_z;
-    params->grid_spacing = spacing;
-    params->inv_grid_spacing = 1.0f / spacing;
+    params->cell_x = cellX;
+    params->cell_y = cellY;
+    params->cell_z = cellZ;
+    params->inv_cell_x = 1.0f / cellX;
+    params->inv_cell_y = 1.0f / cellY;
+    params->inv_cell_z = 1.0f / cellZ;
 }
 
 - (void)configurePilotWaveParams {
     PilotWaveParamsHost *params = (PilotWaveParamsHost *)self.pilotWaveParams.contents;
-    float spacing = [self gridSpacing];
+    float cellX = self.config.domain_x / (float)self.config.grid_x;
+    float cellY = self.config.domain_y / (float)self.config.grid_y;
+    float cellZ = self.config.domain_z / (float)self.config.grid_z;
 
     params->num_particles = self.numOsc;
     params->grid_x = self.config.grid_x;
     params->grid_y = self.config.grid_y;
     params->grid_z = self.config.grid_z;
-    params->grid_spacing = spacing;
-    params->inv_grid_spacing = 1.0f / spacing;
+    params->cell_x = cellX;
+    params->cell_y = cellY;
+    params->cell_z = cellZ;
+    params->inv_cell_x = 1.0f / cellX;
+    params->inv_cell_y = 1.0f / cellY;
+    params->inv_cell_z = 1.0f / cellZ;
     params->dt = self.controls.dt;
     params->domain_x = self.config.domain_x;
     params->domain_y = self.config.domain_y;

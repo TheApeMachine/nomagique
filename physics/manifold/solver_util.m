@@ -167,9 +167,9 @@ static const uint32_t kReduceThreads = 256u;
     float spacing = [self gridSpacing];
 
     params->num_particles = self.numOsc;
-    params->grid_x = (float)self.config.grid_x;
-    params->grid_y = (float)self.config.grid_y;
-    params->grid_z = (float)self.config.grid_z;
+    params->grid_x = self.config.domain_x;
+    params->grid_y = self.config.domain_y;
+    params->grid_z = self.config.domain_z;
     params->energy_scale = self.config.rho_min;
     params->pattern = 3u;
     params->center_x = 0.5f * self.config.domain_x;

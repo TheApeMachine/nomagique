@@ -1,6 +1,7 @@
 package probability
 
 import (
+	"math"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
@@ -40,6 +41,34 @@ func TestScoreClassifier_Classify(t *testing.T) {
 
 			Convey("It should return an error", func() {
 				So(err, ShouldNotBeNil)
+			})
+		})
+	})
+
+	Convey("Given huge finite scores whose raw moments and evidence sum overflow", t, func() {
+		classifier := NewScoreClassifier(
+			[]string{"zero", "winner", "runner_up", "tail"},
+			[]float64{10, 20, 30, 40},
+		)
+
+		Convey("When the winning score is not the first category", func() {
+			result, err := classifier.Classify(map[string]float64{
+				"zero":      0,
+				"winner":    math.MaxFloat64 * 0.75,
+				"runner_up": math.MaxFloat64 * 0.5,
+				"tail":      math.MaxFloat64 * 0.25,
+				"strength":  math.MaxFloat64 * 0.75,
+			})
+
+			Convey("It should return the finite winning category and adaptive gates", func() {
+				So(err, ShouldBeNil)
+				So(result.Category, ShouldEqual, 20)
+				So(result.Confidence, ShouldAlmostEqual, 0.5, 1e-15)
+				So(result.EntryBaseline, ShouldAlmostEqual, 1.0/3.0, 1e-15)
+				So(result.ExitBaseline, ShouldAlmostEqual, 1.0/6.0, 1e-15)
+				So(ArgmaxIndex(result.Probabilities), ShouldEqual, 1)
+				So(math.IsNaN(result.Probabilities[1]), ShouldBeFalse)
+				So(math.IsInf(result.Probabilities[1], 0), ShouldBeFalse)
 			})
 		})
 	})

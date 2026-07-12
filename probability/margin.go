@@ -1,6 +1,9 @@
 package probability
 
-import "fmt"
+import (
+	"fmt"
+	"math"
+)
 
 /*
 ArgmaxIndex returns the index of the largest value.
@@ -69,30 +72,29 @@ func CategoryShareConfidence(scores []float64, categoryIndex int) (float64, erro
 	selected := scores[index]
 
 	if selected <= 0 {
-		evidenceSum := 0.0
-
 		for _, score := range scores {
 			if score > 0 {
-				evidenceSum += score
+				return 0, fmt.Errorf("probability: category share confidence requires positive selected evidence")
 			}
 		}
 
-		if evidenceSum <= 0 {
-			return 1.0 / float64(len(scores)), nil
-		}
-
-		return 0, fmt.Errorf("probability: category share confidence requires positive selected evidence")
+		return 1.0 / float64(len(scores)), nil
 	}
 
+	scaleExponent := categoryEvidenceExponent(scores)
 	evidenceSum := 0.0
 
 	for _, score := range scores {
 		if score > 0 {
-			evidenceSum += score
+			evidenceSum += math.Ldexp(score, -scaleExponent)
 		}
 	}
 
-	return (selected + 1) / (evidenceSum + float64(len(scores))), nil
+	pseudocount := math.Ldexp(1, -scaleExponent)
+	numerator := math.Ldexp(selected, -scaleExponent) + pseudocount
+	denominator := evidenceSum + float64(len(scores))*pseudocount
+
+	return numerator / denominator, nil
 }
 
 /*
@@ -120,6 +122,7 @@ func CategoryEvidenceBaselines(
 		return 0, 0, 0, fmt.Errorf("probability: category baseline index out of range")
 	}
 
+	scaleExponent := categoryEvidenceExponent(scores)
 	evidenceSum := 0.0
 	runnerUp := 0.0
 	nonWinningSum := 0.0
@@ -134,35 +137,57 @@ func CategoryEvidenceBaselines(
 			continue
 		}
 
-		evidenceSum += score
+		scaledScore := math.Ldexp(score, -scaleExponent)
+		evidenceSum += scaledScore
 
 		if scoreIndex == index {
 			continue
 		}
 
 		nonWinningCount++
-		nonWinningSum += score
+		nonWinningSum += scaledScore
 
-		if score > runnerUp {
-			runnerUp = score
+		if scaledScore > runnerUp {
+			runnerUp = scaledScore
 		}
 	}
 
-	denominator := evidenceSum + float64(len(scores))
+	pseudocount := math.Ldexp(1, -scaleExponent)
+	denominator := evidenceSum + float64(len(scores))*pseudocount
 
 	if denominator <= 0 {
 		return 0, 0, 0, fmt.Errorf("probability: category baseline denominator required")
 	}
 
-	entryBaseline := (runnerUp + 1) / denominator
+	entryBaseline := (runnerUp + pseudocount) / denominator
 	exitEvidence := runnerUp
 
 	if nonWinningCount > 0 {
 		exitEvidence = nonWinningSum / float64(nonWinningCount)
 	}
 
-	exitBaseline := (exitEvidence + 1) / denominator
+	exitBaseline := (exitEvidence + pseudocount) / denominator
 	confidenceBaseline := exitBaseline
 
 	return confidenceBaseline, entryBaseline, exitBaseline, nil
+}
+
+/*
+categoryEvidenceExponent returns a power-of-two exponent that bounds positive
+evidence without changing any evidence-to-pseudocount ratio.
+*/
+func categoryEvidenceExponent(scores []float64) int {
+	maxEvidence := 0.0
+
+	for _, score := range scores {
+		maxEvidence = math.Max(maxEvidence, score)
+	}
+
+	if maxEvidence <= 1 {
+		return 0
+	}
+
+	_, scaleExponent := math.Frexp(maxEvidence)
+
+	return scaleExponent
 }

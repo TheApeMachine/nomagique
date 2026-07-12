@@ -4,6 +4,7 @@
 #import <Metal/Metal.h>
 #include "bridge.h"
 #include <math.h>
+#include <stddef.h>
 #include <string.h>
 
 static const uint32_t kMaxCarriersForTG = 256u;
@@ -221,8 +222,12 @@ typedef struct SortScatterParamsHost {
     uint32_t grid_x;
     uint32_t grid_y;
     uint32_t grid_z;
-    float grid_spacing;
-    float inv_grid_spacing;
+    float cell_x;
+    float cell_y;
+    float cell_z;
+    float inv_cell_x;
+    float inv_cell_y;
+    float inv_cell_z;
 } SortScatterParamsHost;
 
 typedef struct PicGatherParamsHost {
@@ -230,8 +235,12 @@ typedef struct PicGatherParamsHost {
     uint32_t grid_x;
     uint32_t grid_y;
     uint32_t grid_z;
-    float grid_spacing;
-    float inv_grid_spacing;
+    float cell_x;
+    float cell_y;
+    float cell_z;
+    float inv_cell_x;
+    float inv_cell_y;
+    float inv_cell_z;
     float dt;
     float domain_x;
     float domain_y;
@@ -291,8 +300,12 @@ typedef struct ModeProjectParamsHost {
     uint32_t grid_x;
     uint32_t grid_y;
     uint32_t grid_z;
-    float grid_spacing;
-    float inv_grid_spacing;
+    float cell_x;
+    float cell_y;
+    float cell_z;
+    float inv_cell_x;
+    float inv_cell_y;
+    float inv_cell_z;
 } ModeProjectParamsHost;
 
 typedef struct PilotWaveParamsHost {
@@ -300,8 +313,12 @@ typedef struct PilotWaveParamsHost {
     uint32_t grid_x;
     uint32_t grid_y;
     uint32_t grid_z;
-    float grid_spacing;
-    float inv_grid_spacing;
+    float cell_x;
+    float cell_y;
+    float cell_z;
+    float inv_cell_x;
+    float inv_cell_y;
+    float inv_cell_z;
     float dt;
     float domain_x;
     float domain_y;
@@ -310,6 +327,12 @@ typedef struct PilotWaveParamsHost {
     float eps_denom;
     float mass_min;
 } PilotWaveParamsHost;
+
+_Static_assert(sizeof(SortScatterParamsHost) == 44, "SortScatterParamsHost ABI mismatch");
+_Static_assert(sizeof(PicGatherParamsHost) == 80, "PicGatherParamsHost ABI mismatch");
+_Static_assert(sizeof(ModeProjectParamsHost) == 48, "ModeProjectParamsHost ABI mismatch");
+_Static_assert(sizeof(PilotWaveParamsHost) == 68, "PilotWaveParamsHost ABI mismatch");
+_Static_assert(offsetof(PilotWaveParamsHost, mass_min) == 64, "PilotWaveParamsHost field mismatch");
 
 typedef struct ParticleGenParamsHost {
     uint32_t num_particles;
@@ -469,6 +492,7 @@ void manifold_velocity_at(
 @property(nonatomic, strong) id<MTLBuffer> eInt;
 @property(nonatomic, strong) id<MTLBuffer> momRhoStage;
 @property(nonatomic, strong) id<MTLBuffer> eStage;
+@property(nonatomic, strong) id<MTLBuffer> entropyStage;
 @property(nonatomic, strong) id<MTLBuffer> particleCicA;
 @property(nonatomic, strong) id<MTLBuffer> particleCicB;
 @property(nonatomic, strong) id<MTLHeap> gpuHeap;
@@ -572,6 +596,7 @@ void manifold_velocity_at(
              rho:(float *)rho momX:(float *)momX momY:(float *)momY momZ:(float *)momZ
             eInt:(float *)eInt error:(NSString **)error;
 - (BOOL)conservedStateIsFinite:(NSString **)error;
+- (void)configureGasParams;
 - (BOOL)setOscillators:(const ManifoldOscillator *)oscillators count:(uint32_t)count error:(NSString **)error;
 - (BOOL)runGasStep:(NSString **)error;
 - (BOOL)runGasTransport:(NSString **)error;
@@ -622,6 +647,13 @@ void manifold_velocity_at(
 
 @interface ManifoldSolver (GravityPrivate)
 - (BOOL)runGravityPoisson:(NSString **)error;
+@end
+
+@interface ManifoldSolver (GasPrivate)
+- (BOOL)gasSubsteps:(uint32_t *)substeps error:(NSString **)error;
+- (BOOL)gasWaveRate:(float *)rate error:(NSString **)error;
+- (BOOL)gasDiffusionRate:(float *)rate error:(NSString **)error;
+- (void)runGasSubstep;
 @end
 
 @interface ManifoldSolver (ParticlesPrivate)

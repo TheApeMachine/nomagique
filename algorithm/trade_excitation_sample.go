@@ -6,9 +6,9 @@ import (
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/algorithm/book/flow"
+	"github.com/theapemachine/nomagique/hawkes"
 )
 
-const excitationSampleHistoryCap = 128
 const excitationSampleSideCap = 64
 
 /*
@@ -34,6 +34,20 @@ type ExcitationInput struct {
 }
 
 /*
+ExcitationArrivalInput carries typed arrival time directly into Hawkes fitting.
+*/
+type ExcitationArrivalInput struct {
+	Symbol         string
+	Horizon        time.Time
+	FitCooldown    time.Duration
+	TouchImbalance float64
+	Stream         hawkes.ArrivalStream
+	buySeconds     []float64
+	sellSeconds    []float64
+	horizonSeconds float64
+}
+
+/*
 TradeExcitationSample accumulates trade arrival times into the batch Excitation expects.
 Horizon and fit cooldown are derived from the observed arrival span.
 */
@@ -42,6 +56,7 @@ type TradeExcitationSample struct {
 }
 
 type tradeExcitationWindow struct {
+	arrivals       *hawkes.ArrivalWindow
 	buySeconds     []float64
 	sellSeconds    []float64
 	touchImbalance float64
@@ -82,18 +97,33 @@ MeasureTrade observes a trade arrival and returns an excitation batch when ready
 func (tradeExcitationSample *TradeExcitationSample) MeasureTrade(
 	input TradeExcitationInput,
 ) (ExcitationInput, bool, error) {
+	arrivals, ready, err := tradeExcitationSample.MeasureArrival(input)
+
+	if err != nil || !ready {
+		return ExcitationInput{}, ready, err
+	}
+
+	return arrivals.legacy(), true, nil
+}
+
+/*
+MeasureArrival precomputes a typed stream while preserving legacy timestamp semantics.
+*/
+func (tradeExcitationSample *TradeExcitationSample) MeasureArrival(
+	input TradeExcitationInput,
+) (ExcitationArrivalInput, bool, error) {
 	if input.Symbol == "" || (input.Side != "buy" && input.Side != "sell") {
-		return ExcitationInput{}, false, errnie.Error(errnie.Err(
+		return ExcitationArrivalInput{}, false, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"trade-excitation-sample: trade frame requires symbol and buy/sell side",
 			nil,
 		))
 	}
 
-	arrival := input.ArrivalSecond()
+	arrivalSecond := input.ArrivalSecond()
 
-	if arrival <= 0 {
-		return ExcitationInput{}, false, errnie.Error(errnie.Err(
+	if arrivalSecond <= 0 {
+		return ExcitationArrivalInput{}, false, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"trade-excitation-sample: timestamp required",
 			nil,
@@ -101,16 +131,17 @@ func (tradeExcitationSample *TradeExcitationSample) MeasureTrade(
 	}
 
 	window := tradeExcitationSample.window(input.Symbol)
+	arrival := secondToTime(arrivalSecond)
 
 	if input.Side == "buy" {
-		window.buySeconds = append(window.buySeconds, arrival)
+		window.arrivals.AppendBuy(arrival)
+		window.buySeconds = appendExcitationSecond(window.buySeconds, arrivalSecond)
 	}
 
 	if input.Side == "sell" {
-		window.sellSeconds = append(window.sellSeconds, arrival)
+		window.arrivals.AppendSell(arrival)
+		window.sellSeconds = appendExcitationSecond(window.sellSeconds, arrivalSecond)
 	}
-
-	window.trim()
 
 	return window.features(input.Symbol)
 }
@@ -139,48 +170,21 @@ func (tradeExcitationSample *TradeExcitationSample) window(
 		return existing.(*tradeExcitationWindow)
 	}
 
-	window := &tradeExcitationWindow{}
+	window := &tradeExcitationWindow{
+		arrivals:    hawkes.NewArrivalWindow(excitationSampleSideCap),
+		buySeconds:  make([]float64, 0, excitationSampleSideCap),
+		sellSeconds: make([]float64, 0, excitationSampleSideCap),
+	}
 	tradeExcitationSample.windows.Store(symbol, window)
 
 	return window
 }
 
-func (window *tradeExcitationWindow) trim() {
-	if len(window.buySeconds) > excitationSampleSideCap {
-		window.buySeconds = window.buySeconds[len(
-			window.buySeconds,
-		)-excitationSampleSideCap:]
-	}
-
-	if len(window.sellSeconds) > excitationSampleSideCap {
-		window.sellSeconds = window.sellSeconds[len(
-			window.sellSeconds,
-		)-excitationSampleSideCap:]
-	}
-
-	total := len(window.buySeconds) + len(window.sellSeconds)
-
-	if total <= excitationSampleHistoryCap {
-		return
-	}
-
-	trim := total - excitationSampleHistoryCap
-
-	for trim > 0 && len(window.buySeconds) > 0 {
-		window.buySeconds = window.buySeconds[1:]
-		trim--
-	}
-
-	for trim > 0 && len(window.sellSeconds) > 0 {
-		window.sellSeconds = window.sellSeconds[1:]
-		trim--
-	}
-}
-
 func (window *tradeExcitationWindow) features(
 	symbol string,
-) (ExcitationInput, bool, error) {
-	eventCount := len(window.buySeconds) + len(window.sellSeconds)
+) (ExcitationArrivalInput, bool, error) {
+	stream := window.arrivals.Stream()
+	eventCount := len(stream.BuyTimes()) + len(stream.SellTimes())
 
 	// Emit a measurement from whatever the window holds — a signal must produce
 	// a reading on every tick, never sit silent behind a warmup gate. With a
@@ -190,7 +194,7 @@ func (window *tradeExcitationWindow) features(
 	// this is always satisfied because features() runs after the current trade
 	// has been appended.
 	if eventCount == 0 {
-		return ExcitationInput{}, false, nil
+		return ExcitationArrivalInput{}, false, nil
 	}
 
 	first, last := window.bounds()
@@ -200,33 +204,67 @@ func (window *tradeExcitationWindow) features(
 		span = time.Second
 	}
 
-	return ExcitationInput{
-		Symbol:             symbol,
-		HorizonSeconds:     last,
-		FitCooldownSeconds: DeriveFitCooldown(span).Seconds(),
-		TouchImbalance:     window.touchImbalance,
-		BuySeconds:         append([]float64(nil), window.buySeconds...),
-		SellSeconds:        append([]float64(nil), window.sellSeconds...),
+	return ExcitationArrivalInput{
+		Symbol:         symbol,
+		Horizon:        time.Unix(0, int64(last*float64(time.Second))),
+		FitCooldown:    DeriveFitCooldown(span),
+		TouchImbalance: window.touchImbalance,
+		Stream:         stream,
+		buySeconds:     window.buySeconds,
+		sellSeconds:    window.sellSeconds,
+		horizonSeconds: last,
 	}, true, nil
 }
 
+func (input ExcitationArrivalInput) legacy() ExcitationInput {
+	return ExcitationInput{
+		Symbol:             input.Symbol,
+		HorizonSeconds:     input.horizonSeconds,
+		FitCooldownSeconds: input.FitCooldown.Seconds(),
+		TouchImbalance:     input.TouchImbalance,
+		BuySeconds:         append([]float64(nil), input.buySeconds...),
+		SellSeconds:        append([]float64(nil), input.sellSeconds...),
+	}
+}
+
 func (window *tradeExcitationWindow) bounds() (float64, float64) {
-	allSeconds := append([]float64(nil), window.buySeconds...)
-	allSeconds = append(allSeconds, window.sellSeconds...)
-	first := allSeconds[0]
-	last := allSeconds[0]
+	first := 0.0
+	last := 0.0
 
-	for _, second := range allSeconds[1:] {
-		if second < first {
-			first = second
-		}
+	if len(window.buySeconds) > 0 {
+		first = window.buySeconds[0]
+		last = window.buySeconds[0]
+	}
 
-		if second > last {
-			last = second
+	if len(window.buySeconds) == 0 {
+		first = window.sellSeconds[0]
+		last = window.sellSeconds[0]
+	}
+
+	for _, seconds := range [][]float64{window.buySeconds, window.sellSeconds} {
+		for _, second := range seconds {
+			if second < first {
+				first = second
+			}
+
+			if second > last {
+				last = second
+			}
 		}
 	}
 
 	return first, last
+}
+
+func appendExcitationSecond(seconds []float64, arrival float64) []float64 {
+	if len(seconds) < excitationSampleSideCap {
+		return append(seconds, arrival)
+	}
+
+	copy(seconds, seconds[1:])
+	seconds[len(seconds)-1] = arrival
+
+	return seconds
 }
 
 func bookTouchImbalance(input flow.BookInput) float64 {

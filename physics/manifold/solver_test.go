@@ -22,7 +22,7 @@ func smallTestConfig() Config {
 		Gamma:    5.0 / 3.0,
 		MaxModes: 4,
 	}
-	ApplyDerivedGasParams(&config)
+	config = config.stableGasTestConfig(0.4, 1)
 	DefaultMarketGasBoundaries().Apply(&config)
 
 	return config
@@ -38,6 +38,7 @@ func TestSolverStep(t *testing.T) {
 			convey.So(solver, convey.ShouldNotBeNil)
 
 			defer solver.Close()
+			posX, posY, posZ := config.testCellCenter(4, 0, 1)
 
 			convey.So(solver.ResetDeposits(), convey.ShouldBeNil)
 
@@ -51,9 +52,9 @@ func TestSolverStep(t *testing.T) {
 				Phase:     0.5,
 				Omega:     6.28,
 				Amplitude: 0.2,
-				PosX:      0.4,
-				PosY:      0,
-				PosZ:      1.2,
+				PosX:      posX,
+				PosY:      posY,
+				PosZ:      posZ,
 				Heat:      0.2,
 				VelX:      0.4,
 			}}), convey.ShouldBeNil)
@@ -139,6 +140,7 @@ func TestReadOscillators(t *testing.T) {
 			convey.So(solver, convey.ShouldNotBeNil)
 
 			defer solver.Close()
+			posX, posY, posZ := config.testCellCenter(4, 0, 4)
 
 			convey.So(solver.ResetDeposits(), convey.ShouldBeNil)
 			convey.So(solver.DepositCell(4, 0, 4, 0.5, 0, 0, 0, 0.5), convey.ShouldBeNil)
@@ -146,9 +148,9 @@ func TestReadOscillators(t *testing.T) {
 				Phase:     0.5,
 				Omega:     6.28,
 				Amplitude: 0.2,
-				PosX:      0.09,
-				PosY:      0,
-				PosZ:      4.5,
+				PosX:      posX,
+				PosY:      posY,
+				PosZ:      posZ,
 				Heat:      0.2,
 				VelX:      0.4,
 			}}), convey.ShouldBeNil)
@@ -187,15 +189,7 @@ func TestReadOscillatorsDecisionLattice(t *testing.T) {
 		}
 		ApplyDerivedGasParams(&config)
 
-		solver := NewSolver(config)
-
 		convey.Convey("It should return finite post-step particle readback", func() {
-			convey.So(solver, convey.ShouldNotBeNil)
-
-			defer solver.Close()
-
-			convey.So(solver.ResetDeposits(), convey.ShouldBeNil)
-
 			clamps := []struct {
 				cellY uint32
 				rho   float64
@@ -229,13 +223,14 @@ func TestReadOscillatorsDecisionLattice(t *testing.T) {
 			for _, clamp := range clamps {
 				pressure := math.Abs(clamp.momX) + clamp.momY + clamp.momZ
 				internalEnergy := pressure / (config.Gamma - 1)
+				posX, posY, posZ := config.testCellCenter(7, clamp.cellY, 0)
 				oscillators = append(oscillators, Oscillator{
 					Phase:     math.Atan2(clamp.momX, pressure),
 					Omega:     pressure,
 					Amplitude: math.Sqrt(clamp.rho),
-					PosX:      7,
-					PosY:      float64(clamp.cellY),
-					PosZ:      0,
+					PosX:      posX,
+					PosY:      posY,
+					PosZ:      posZ,
 					Heat:      internalEnergy,
 					VelX:      clamp.momX,
 					VelY:      clamp.momY,
@@ -243,6 +238,33 @@ func TestReadOscillatorsDecisionLattice(t *testing.T) {
 				})
 			}
 
+			characteristicSpeed := 0.0
+
+			for _, oscillator := range oscillators {
+				velocity := math.Sqrt(
+					oscillator.VelX*oscillator.VelX +
+						oscillator.VelY*oscillator.VelY +
+						oscillator.VelZ*oscillator.VelZ,
+				)
+				specificInternalEnergy := oscillator.Heat / oscillator.Amplitude
+				soundSpeed := math.Sqrt(
+					config.Gamma * (config.Gamma - 1) * specificInternalEnergy,
+				)
+				rarefactionSpeed := velocity + 2*soundSpeed/(config.Gamma-1)
+
+				if rarefactionSpeed > characteristicSpeed {
+					characteristicSpeed = rarefactionSpeed
+				}
+			}
+
+			config.DeltaT = config.AdvectiveDeltaT(characteristicSpeed)
+			ApplyDerivedGasParams(&config)
+			solver := NewSolver(config)
+			convey.So(solver, convey.ShouldNotBeNil)
+
+			defer solver.Close()
+
+			convey.So(solver.ResetDeposits(), convey.ShouldBeNil)
 			convey.So(solver.SetOscillators(oscillators), convey.ShouldBeNil)
 
 			_, stepErr := solver.Step()
@@ -287,6 +309,7 @@ func TestSolverWhaleParticleVelocity(t *testing.T) {
 
 		convey.Convey("It should step with whale particles carrying directional velocity", func() {
 			defer solver.Close()
+			posX, posY, posZ := config.testCellCenter(4, 0, 1)
 
 			convey.So(solver.ResetDeposits(), convey.ShouldBeNil)
 
@@ -300,9 +323,9 @@ func TestSolverWhaleParticleVelocity(t *testing.T) {
 				Phase:     0.5,
 				Omega:     6.28,
 				Amplitude: 0.2,
-				PosX:      0.4,
-				PosY:      0,
-				PosZ:      1.2,
+				PosX:      posX,
+				PosY:      posY,
+				PosZ:      posZ,
 				Heat:      0.2,
 				VelX:      0.4,
 			}}), convey.ShouldBeNil)
@@ -330,7 +353,9 @@ func TestSolverProductionConfig(t *testing.T) {
 			Gamma:    5.0 / 3.0,
 			MaxModes: 32,
 		}
-		ApplyDerivedGasParams(&config)
+		carrierMass := 0.1
+		carrierHeat := 0.1
+		config = config.stableGasTestConfig(0, carrierHeat/carrierMass)
 
 		solver := NewSolver(config)
 
@@ -348,16 +373,19 @@ func TestSolverProductionConfig(t *testing.T) {
 			}
 
 			oscillators := make([]Oscillator, config.MaxModes)
+			cellX := config.DomainX / float64(config.GridX)
+			cellY := config.DomainY / float64(config.GridY)
+			cellZ := config.DomainZ / float64(config.GridZ)
 
 			for index := range oscillators {
 				oscillators[index] = Oscillator{
 					Phase:     float64(index) * 0.1,
 					Omega:     6.28,
-					Amplitude: 0.1,
-					PosX:      float64(index % int(config.GridX)),
-					PosY:      float64(index % int(config.GridY)),
-					PosZ:      float64(index % int(config.GridZ)),
-					Heat:      0.1,
+					Amplitude: carrierMass,
+					PosX:      (float64(index%int(config.GridX)) + 0.5) * cellX,
+					PosY:      (float64(index%int(config.GridY)) + 0.5) * cellY,
+					PosZ:      (float64(index%int(config.GridZ)) + 0.5) * cellZ,
+					Heat:      carrierHeat,
 				}
 			}
 
@@ -385,6 +413,7 @@ func TestSolverCarrierThreshold(t *testing.T) {
 	for _, count := range []int{128} {
 		t.Run(fmt.Sprintf("count=%d", count), func(t *testing.T) {
 			solver := NewSolver(config)
+			posX, posY, posZ := config.testCellCenter(1, 0, 1)
 
 			defer solver.Close()
 
@@ -404,11 +433,11 @@ func TestSolverCarrierThreshold(t *testing.T) {
 				osc[index] = Oscillator{
 					Phase:     float64(index) * 0.1,
 					Omega:     omega,
-					Amplitude: math.Sqrt(perCarrierEnergy),
+					Amplitude: perCarrierEnergy,
 					Heat:      perCarrierEnergy,
-					PosX:      1,
-					PosY:      0,
-					PosZ:      1,
+					PosX:      posX,
+					PosY:      posY,
+					PosZ:      posZ,
 				}
 			}
 
@@ -442,6 +471,7 @@ func TestSolverProduction128Oscillators(t *testing.T) {
 
 		convey.Convey("It should return finite oscillator readback after step", func() {
 			defer solver.Close()
+			posX, posY, posZ := config.testCellCenter(1, 0, 1)
 
 			convey.So(solver.ResetDeposits(), convey.ShouldBeNil)
 			convey.So(
@@ -457,10 +487,10 @@ func TestSolverProduction128Oscillators(t *testing.T) {
 				oscillators[index] = Oscillator{
 					Phase:     float64(index) * 0.1,
 					Omega:     omega,
-					Amplitude: math.Sqrt(perCarrierEnergy),
-					PosX:      1,
-					PosY:      0,
-					PosZ:      1,
+					Amplitude: perCarrierEnergy,
+					PosX:      posX,
+					PosY:      posY,
+					PosZ:      posZ,
 					Heat:      perCarrierEnergy,
 				}
 			}
@@ -505,16 +535,17 @@ func TestSolverMultiSymbolDeposits(t *testing.T) {
 
 	omega := 2 * math.Pi / config.DeltaT
 	oscillators := make([]Oscillator, carrierCount)
+	posX, posY, posZ := config.testCellCenter(1, 0, 1)
 
 	for index := range oscillators {
 		perCarrierEnergy := config.RhoMin / float64(carrierCount)
 		oscillators[index] = Oscillator{
 			Phase:     float64(index) * 0.1,
 			Omega:     omega,
-			Amplitude: math.Sqrt(perCarrierEnergy),
-			PosX:      1,
-			PosY:      0,
-			PosZ:      1,
+			Amplitude: perCarrierEnergy,
+			PosX:      posX,
+			PosY:      posY,
+			PosZ:      posZ,
 			Heat:      perCarrierEnergy,
 		}
 	}
@@ -551,6 +582,7 @@ func TestSpreadDepositOscCount(t *testing.T) {
 		t.Run(testCase.name, func(t *testing.T) {
 			config := productionTestConfig()
 			solver := NewSolver(config)
+			posX, posY, posZ := config.testCellCenter(1, 0, 1)
 
 			defer solver.Close()
 
@@ -585,9 +617,13 @@ func TestSpreadDepositOscCount(t *testing.T) {
 			for index := range oscillators {
 				perCarrierEnergy := config.RhoMin / float64(oscCount)
 				oscillators[index] = Oscillator{
-					Phase: float64(index) * 0.1, Omega: omega,
-					Amplitude: math.Sqrt(perCarrierEnergy), PosX: 1, PosY: 0, PosZ: 1,
-					Heat: perCarrierEnergy,
+					Phase:     float64(index) * 0.1,
+					Omega:     omega,
+					Amplitude: perCarrierEnergy,
+					PosX:      posX,
+					PosY:      posY,
+					PosZ:      posZ,
+					Heat:      perCarrierEnergy,
 				}
 			}
 
@@ -605,6 +641,7 @@ func TestSpreadDepositOscCount(t *testing.T) {
 func TestSingleCarrierDepositMagnitude(t *testing.T) {
 	config := productionTestConfig()
 	solver := NewSolver(config)
+	posX, posY, posZ := config.testCellCenter(1, 0, 1)
 
 	defer solver.Close()
 
@@ -617,8 +654,13 @@ func TestSingleCarrierDepositMagnitude(t *testing.T) {
 			omega := 2 * math.Pi / config.DeltaT
 			perCarrierEnergy := config.RhoMin
 			osc := []Oscillator{{
-				Phase: 0, Omega: omega, Amplitude: math.Sqrt(perCarrierEnergy),
-				PosX: 1, PosY: 0, PosZ: 1, Heat: perCarrierEnergy,
+				Phase:     0,
+				Omega:     omega,
+				Amplitude: perCarrierEnergy,
+				PosX:      posX,
+				PosY:      posY,
+				PosZ:      posZ,
+				Heat:      perCarrierEnergy,
 			}}
 			solver.SetOscillators(osc)
 			solver.Step()
@@ -643,7 +685,7 @@ func BenchmarkSolverStep(b *testing.B) {
 		Gamma:    5.0 / 3.0,
 		MaxModes: 8,
 	}
-	ApplyDerivedGasParams(&config)
+	config = config.stableGasTestConfig(0, 1)
 
 	solver := NewSolver(config)
 
@@ -652,13 +694,18 @@ func BenchmarkSolverStep(b *testing.B) {
 	oscillators := make([]Oscillator, 8)
 
 	for index := range oscillators {
+		posX, posY, posZ := config.testCellCenter(
+			uint32(index%int(config.GridX)),
+			0,
+			uint32(index%int(config.GridZ)),
+		)
 		oscillators[index] = Oscillator{
 			Phase:     float64(index) * 0.1,
 			Omega:     6.28,
 			Amplitude: 0.1,
-			PosX:      float64(index),
-			PosY:      0,
-			PosZ:      float64(index),
+			PosX:      posX,
+			PosY:      posY,
+			PosZ:      posZ,
 			Heat:      0.1,
 		}
 	}
@@ -700,6 +747,7 @@ func TestMaxModesVsOscCount(t *testing.T) {
 		t.Run(fmt.Sprintf("max=%d-osc=%d", testCase.maxModes, testCase.numOsc), func(t *testing.T) {
 			config := productionTestConfig()
 			config.MaxModes = uint32(testCase.maxModes)
+			posX, posY, posZ := config.testCellCenter(1, 0, 1)
 
 			solver := NewSolver(config)
 
@@ -721,10 +769,10 @@ func TestMaxModesVsOscCount(t *testing.T) {
 				oscillators[index] = Oscillator{
 					Phase:     float64(index) * 0.1,
 					Omega:     omega,
-					Amplitude: math.Sqrt(perCarrierEnergy),
-					PosX:      1,
-					PosY:      0,
-					PosZ:      1,
+					Amplitude: perCarrierEnergy,
+					PosX:      posX,
+					PosY:      posY,
+					PosZ:      posZ,
 					Heat:      perCarrierEnergy,
 				}
 			}

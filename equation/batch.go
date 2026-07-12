@@ -97,11 +97,17 @@ func MarshalFeatureSchema(inputs []string, values []float64) []byte {
 		"root":     frame.Root,
 	}
 
-	return errnie.Does(func() ([]byte, error) {
-		return sonic.Marshal(payload)
-	}).Or(func(err error) {
-		errnie.Error(errnie.Err(errnie.IO, "equation: marshal feature schema payload", err))
-	}).Value()
+	json, err := sonic.Marshal(payload)
+	if err != nil {
+		errnie.Error(errnie.Err(
+			errnie.Validation,
+			"equation: marshal feature schema payload",
+			err,
+		))
+
+		return nil
+	}
+	return json
 }
 
 func outputKeys(fields map[string]float64) []string {

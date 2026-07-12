@@ -1,5 +1,16 @@
 #import "solver_private.h"
 
+static float manifold_debug_float(uint32_t bits) {
+    float value;
+    memcpy(&value, &bits, sizeof(value));
+
+    return value;
+}
+
+static float manifold_wrap_coordinate(float value, float extent) {
+    return value - floorf(value / extent) * extent;
+}
+
 @implementation ManifoldSolver
 
 - (instancetype)initWithConfig:(const ManifoldConfig *)config
@@ -217,7 +228,7 @@
     uint32_t maxModes = self.config.max_carriers;
     size_t gasPrimBytes = (size_t)self.numCells * 32;
     size_t particleCicBytes = (size_t)maxModes * 4 * sizeof(float);
-    size_t gpuOnlyBytes = cellBytes * 4 + cellBytes + gasPrimBytes +
+    size_t gpuOnlyBytes = cellBytes * 4 + cellBytes * 2 + gasPrimBytes +
         (size_t)maxModes * kModeAnchors * 3 * sizeof(float) +
         (size_t)maxModes * 4 * sizeof(float) +
         particleCicBytes * 2;
@@ -230,6 +241,7 @@
     self.eInt = [self newSharedBufferWithLength:cellBytes];
     self.momRhoStage = [self newGPUBufferWithLength:cellBytes * 4];
     self.eStage = [self newGPUBufferWithLength:cellBytes];
+    self.entropyStage = [self newGPUBufferWithLength:cellBytes];
     self.gasPrim = [self newGPUBufferWithLength:gasPrimBytes];
     self.particleCicA = [self newGPUBufferWithLength:particleCicBytes];
     self.particleCicB = [self newGPUBufferWithLength:particleCicBytes];
@@ -238,7 +250,10 @@
     self.sourceE = [self newSharedBufferWithLength:cellBytes];
     self.dbgCap = [self.device newBufferWithLength:sizeof(uint32_t) options:MTLResourceStorageModeShared];
     self.dbgHead = [self.device newBufferWithLength:sizeof(uint32_t) options:MTLResourceStorageModeShared];
-    self.dbgWords = [self.device newBufferWithLength:sizeof(uint32_t) options:MTLResourceStorageModeShared];
+    self.dbgWords = [self.device
+        newBufferWithLength:(size_t)self.numCells * 6u * sizeof(uint32_t)
+        options:MTLResourceStorageModeShared
+    ];
 
     self.oscPhase = [self.device newBufferWithLength:(size_t)maxModes * sizeof(float) options:MTLResourceStorageModeShared];
     self.oscOmega = [self.device newBufferWithLength:(size_t)maxModes * sizeof(float) options:MTLResourceStorageModeShared];
@@ -318,7 +333,7 @@
 
     [self resetDepositsInternal];
     [self resetSourcesInternal];
-    *(uint32_t *)self.dbgCap.contents = 0;
+    *(uint32_t *)self.dbgCap.contents = self.numCells;
     *(uint32_t *)self.dbgHead.contents = 0;
 
     return YES;
@@ -437,7 +452,39 @@
             !isfinite(momRhoData[base + 2]) || !isfinite(momRhoData[base + 3]) ||
             !isfinite(eData[index])) {
             if (error != nil) {
-                *error = @"conserved gas state is not finite";
+                uint32_t debugCount = *(uint32_t *)self.dbgHead.contents;
+                uint32_t *debugWords = (uint32_t *)self.dbgWords.contents;
+
+                if (debugCount == 0) {
+                    *error = [NSString stringWithFormat:
+                        @"conserved gas state is not finite at cell %u: rho=%g mom=(%g,%g,%g) e_int=%g",
+                        index,
+                        momRhoData[base + 3],
+                        momRhoData[base + 0],
+                        momRhoData[base + 1],
+                        momRhoData[base + 2],
+                        eData[index]
+                    ];
+
+                    return NO;
+                }
+
+                *error = [NSString stringWithFormat:
+                    @"conserved gas state is not finite at cell %u: rho=%g mom=(%g,%g,%g) e_int=%g; "
+                    @"gpu tag=0x%x gid=%u values=(%g,%g,%g,%g)",
+                    index,
+                    momRhoData[base + 3],
+                    momRhoData[base + 0],
+                    momRhoData[base + 1],
+                    momRhoData[base + 2],
+                    eData[index],
+                    debugWords[0],
+                    debugWords[1],
+                    manifold_debug_float(debugWords[2]),
+                    manifold_debug_float(debugWords[3]),
+                    manifold_debug_float(debugWords[4]),
+                    manifold_debug_float(debugWords[5])
+                ];
             }
 
             return NO;
@@ -469,6 +516,10 @@
     [self runCopyFloat:self.eStage dst:self.eInt count:self.numCells];
     [self resetSourcesInternal];
 
+    if (self.stepDispatchActive) {
+        return YES;
+    }
+
     return [self conservedStateIsFinite:error];
 }
 
@@ -487,6 +538,24 @@
         }
 
         return NO;
+    }
+
+    for (uint32_t index = 0; index < count; index++) {
+        const ManifoldOscillator *oscillator = &oscillators[index];
+
+        if (!isfinite(oscillator->phase) || !isfinite(oscillator->omega) ||
+            !isfinite(oscillator->amplitude) || !(oscillator->amplitude > 0.0f) ||
+            !isfinite(oscillator->pos_x) ||
+            !isfinite(oscillator->pos_y) || !isfinite(oscillator->pos_z) ||
+            !isfinite(oscillator->heat) || oscillator->heat < 0.0f ||
+            !isfinite(oscillator->vel_x) ||
+            !isfinite(oscillator->vel_y) || !isfinite(oscillator->vel_z)) {
+            if (error != nil) {
+                *error = @"oscillator state must be finite";
+            }
+
+            return NO;
+        }
     }
 
     self.numOsc = count;
@@ -524,9 +593,9 @@
         excitationData[index] = oscillator->omega;
 
         if (!needsGeneratedPositions) {
-            posData[index * 3 + 0] = oscillator->pos_x;
-            posData[index * 3 + 1] = oscillator->pos_y;
-            posData[index * 3 + 2] = oscillator->pos_z;
+            posData[index * 3 + 0] = manifold_wrap_coordinate(oscillator->pos_x, self.config.domain_x);
+            posData[index * 3 + 1] = manifold_wrap_coordinate(oscillator->pos_y, self.config.domain_y);
+            posData[index * 3 + 2] = manifold_wrap_coordinate(oscillator->pos_z, self.config.domain_z);
         }
     }
 
@@ -538,21 +607,7 @@
                      threadCount:count];
     }
 
-    [self runInitializeParticleProperties:oscillators count:count];
-
-    float *velData = (float *)self.particleVel.contents;
-
-    for (uint32_t index = 0; index < count; index++) {
-        const ManifoldOscillator *oscillator = &oscillators[index];
-
-        if (oscillator->vel_x == 0.0f && oscillator->vel_y == 0.0f && oscillator->vel_z == 0.0f) {
-            continue;
-        }
-
-        velData[index * 3 + 0] = oscillator->vel_x;
-        velData[index * 3 + 1] = oscillator->vel_y;
-        velData[index * 3 + 2] = oscillator->vel_z;
-    }
+    [self initializeParticleStateFromOscillators:oscillators count:count];
 
     for (uint32_t index = 0; index < count; index++) {
         const ManifoldOscillator *oscillator = &oscillators[index];
@@ -632,39 +687,43 @@
         return NO;
     }
 
-    [self configureGasParams];
-    *(uint32_t *)self.dbgCap.contents = 0;
+    ManifoldControls intervalControls = self.controls;
+    float remainingDelta = intervalControls.dt;
 
-    [self dispatchGasBrickKernel:self.gasComputePrimitives
-                         buffers:@[
-                             self.momRho, self.eInt,
-                             self.gasPrim, self.gasParams
-                         ]];
+    while (remainingDelta > 0.0f) {
+        ManifoldControls remainingControls = intervalControls;
+        remainingControls.dt = remainingDelta;
+        self.controls = remainingControls;
 
-    [self dispatchGasBrickKernel:self.gasStage1
-                         buffers:@[
-                             self.momRho, self.eInt,
-                             self.gasPrim,
-                             self.momRhoStage, self.eStage,
-                             self.gasParams, self.dbgHead, self.dbgWords, self.dbgCap
-                         ]];
+        uint32_t substeps = 0;
 
-    [self dispatchGasBrickKernel:self.gasComputePrimitives
-                         buffers:@[
-                             self.momRhoStage, self.eStage,
-                             self.gasPrim, self.gasParams
-                         ]];
+        if (![self gasSubsteps:&substeps error:error]) {
+            self.controls = intervalControls;
+            return NO;
+        }
 
-    [self dispatchGasBrickKernel:self.gasStage2
-                         buffers:@[
-                             self.momRho, self.eInt,
-                             self.momRhoStage, self.eStage,
-                             self.gasPrim,
-                             self.momRho, self.eInt,
-                             self.gasParams, self.dbgHead, self.dbgWords, self.dbgCap
-                         ]];
+        ManifoldControls substepControls = intervalControls;
+        substepControls.dt = remainingDelta / (float)substeps;
+        self.controls = substepControls;
+        *(uint32_t *)self.dbgHead.contents = 0;
+        [self runGasSubstep];
 
-    return [self conservedStateIsFinite:error];
+        if (self.stepDispatchActive) {
+            [self flushStepDispatches];
+        }
+
+        if (![self conservedStateIsFinite:error]) {
+            self.controls = intervalControls;
+            return NO;
+        }
+
+        remainingDelta = substeps == 1
+            ? 0.0f
+            : remainingDelta - substepControls.dt;
+    }
+
+    self.controls = intervalControls;
+    return YES;
 }
 
 - (BOOL)runGasTransport:(NSString **)error {
@@ -672,7 +731,6 @@
 }
 
 - (BOOL)computeReading:(ManifoldReading *)reading error:(NSString **)error {
-    (void)error;
     float *momRhoData = (float *)self.momRho.contents;
     float *eData = (float *)self.eInt.contents;
     float *modeRealData = (float *)self.modeReal.contents;
@@ -771,6 +829,17 @@
     reading->coherence_mag2 = coherenceMag2;
     reading->guidance_speed = guidanceSpeed * self.config.hbar_eff;
     reading->viscosity_proxy = (fabsf(divergence) > 1e-8f) ? (1.0f / fabsf(divergence)) : 0.0f;
+
+    if (!isfinite(reading->pressure_grad_x) || !isfinite(reading->pressure_grad_y) ||
+        !isfinite(reading->pressure_grad_z) || !isfinite(reading->pressure_grad_norm) ||
+        !isfinite(reading->divergence) || !isfinite(reading->coherence_mag2) ||
+        !isfinite(reading->guidance_speed) || !isfinite(reading->viscosity_proxy)) {
+        if (error != nil) {
+            *error = @"manifold reading is not finite";
+        }
+
+        return NO;
+    }
 
     return YES;
 }
@@ -984,6 +1053,10 @@
     }
     [self endStepDispatches];
 
+    if (![self conservedStateIsFinite:error]) {
+        return NO;
+    }
+
     [self beginStepDispatches];
     if (![self runParticleCollisions:error]) {
         [self endStepDispatches];
@@ -1019,28 +1092,7 @@
     }
     [self endStepDispatches];
 
-    ManifoldReading modeReading;
-
-    if (![self computeReading:&modeReading error:error]) {
-        return NO;
-    }
-
-    ManifoldReading bulkReading;
-
-    if (![self computeProjectionReading:&bulkReading error:error]) {
-        return NO;
-    }
-
-    reading->pressure_grad_x = bulkReading.pressure_grad_x;
-    reading->pressure_grad_y = bulkReading.pressure_grad_y;
-    reading->pressure_grad_z = bulkReading.pressure_grad_z;
-    reading->pressure_grad_norm = bulkReading.pressure_grad_norm;
-    reading->divergence = bulkReading.divergence;
-    reading->viscosity_proxy = bulkReading.viscosity_proxy;
-    reading->coherence_mag2 = modeReading.coherence_mag2;
-    reading->guidance_speed = modeReading.guidance_speed;
-
-    return YES;
+    return [self computeReading:reading error:error];
 }
 
 @end

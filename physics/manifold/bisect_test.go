@@ -6,7 +6,7 @@ import "testing"
 
 func trySteps(t *testing.T, config Config, numOsc uint32, steps int) {
 	t.Helper()
-	ApplyDerivedGasParams(&config)
+	config = config.stableGasTestConfig(0, 1)
 	solver := NewSolver(config)
 	defer solver.Close()
 	if err := solver.ResetDeposits(); err != nil {
@@ -17,7 +17,15 @@ func trySteps(t *testing.T, config Config, numOsc uint32, steps int) {
 	}
 	osc := make([]Oscillator, numOsc)
 	for i := range osc {
-		osc[i] = Oscillator{Omega: 6.28, Amplitude: 0.1, PosX: 1, PosY: 0, PosZ: 1, Heat: 0.1}
+		posX, posY, posZ := config.testCellCenter(1, 0, 1)
+		osc[i] = Oscillator{
+			Omega:     6.28,
+			Amplitude: 0.1,
+			PosX:      posX,
+			PosY:      posY,
+			PosZ:      posZ,
+			Heat:      0.1,
+		}
 	}
 	if err := solver.SetOscillators(osc); err != nil {
 		t.Fatalf("osc: %v", err)

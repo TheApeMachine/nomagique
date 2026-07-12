@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/nomagique/hawkes"
 )
 
 const hawkesFitCooldownMult = 50
@@ -58,13 +59,39 @@ func (excitation *Excitation) Measure(
 		))
 	}
 
-	horizon := time.Unix(0, int64(input.HorizonSeconds*float64(time.Second)))
-	fitCooldown := time.Duration(input.FitCooldownSeconds * float64(time.Second))
-	buyTimes := secondsToTimes(input.BuySeconds)
-	sellTimes := secondsToTimes(input.SellSeconds)
+	return excitation.MeasureArrivals(ExcitationArrivalInput{
+		Symbol:         input.Symbol,
+		Horizon:        time.Unix(0, int64(input.HorizonSeconds*float64(time.Second))),
+		FitCooldown:    time.Duration(input.FitCooldownSeconds * float64(time.Second)),
+		TouchImbalance: input.TouchImbalance,
+		Stream: hawkes.NewArrivalStream(
+			secondsToTimes(input.BuySeconds),
+			secondsToTimes(input.SellSeconds),
+		),
+	})
+}
+
+/*
+MeasureArrivals scores one typed arrival stream without rebuilding timestamps.
+*/
+func (excitation *Excitation) MeasureArrivals(
+	input ExcitationArrivalInput,
+) (ExcitationOutcome, bool, error) {
+	if input.Symbol == "" ||
+		len(input.Stream.BuyTimes())+len(input.Stream.SellTimes()) == 0 {
+		return ExcitationOutcome{}, false, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"excitation: invalid arrival stream",
+			nil,
+		))
+	}
+
 	symbolState := excitation.loadSymbol(input.Symbol)
 	reading, ok := symbolState.measure(
-		buyTimes, sellTimes, horizon, fitCooldown, input.TouchImbalance,
+		input.Stream,
+		input.Horizon,
+		input.FitCooldown,
+		input.TouchImbalance,
 	)
 
 	if !ok {
@@ -75,7 +102,13 @@ func (excitation *Excitation) Measure(
 }
 
 func (excitation *Excitation) loadSymbol(scope string) *excitationSymbol {
-	value, _ := excitation.symbols.LoadOrStore(scope, newExcitationSymbol())
+	value, ok := excitation.symbols.Load(scope)
+
+	if ok {
+		return value.(*excitationSymbol)
+	}
+
+	value, _ = excitation.symbols.LoadOrStore(scope, newExcitationSymbol())
 
 	return value.(*excitationSymbol)
 }
@@ -127,12 +160,17 @@ func secondsToTimes(seconds []float64) []time.Time {
 	times := make([]time.Time, len(seconds))
 
 	for index, second := range seconds {
-		wholeSeconds := int64(second)
-		nanoseconds := int64((second - float64(wholeSeconds)) * float64(time.Second))
-		times[index] = time.Unix(wholeSeconds, nanoseconds)
+		times[index] = secondToTime(second)
 	}
 
 	return times
+}
+
+func secondToTime(second float64) time.Time {
+	wholeSeconds := int64(second)
+	nanoseconds := int64((second - float64(wholeSeconds)) * float64(time.Second))
+
+	return time.Unix(wholeSeconds, nanoseconds)
 }
 
 func DeriveFitCooldown(windowSpan time.Duration) time.Duration {

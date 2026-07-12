@@ -23,15 +23,16 @@ func TestSolverStepStability(t *testing.T) {
 		defer solver.Close()
 
 		oscillators := make([]Oscillator, config.MaxModes)
+		posX, posY, posZ := config.testCellCenter(1, 0, 1)
 
 		for index := range oscillators {
 			oscillators[index] = Oscillator{
 				Phase:     float64(index) * 0.1,
 				Omega:     6.28,
 				Amplitude: 0.1,
-				PosX:      1,
-				PosY:      0,
-				PosZ:      1,
+				PosX:      posX,
+				PosY:      posY,
+				PosZ:      posZ,
 				Heat:      0.1,
 			}
 		}
@@ -59,15 +60,16 @@ func BenchmarkSolverStepProduction(b *testing.B) {
 
 	oscillators := make([]Oscillator, config.MaxModes)
 	omega := 2 * math.Pi / config.DeltaT
+	posX, posY, posZ := config.testCellCenter(1, 0, 1)
 
 	for index := range oscillators {
 		oscillators[index] = Oscillator{
 			Phase:     float64(index) * 0.1,
 			Omega:     omega,
 			Amplitude: 0.1,
-			PosX:      1,
-			PosY:      0,
-			PosZ:      1,
+			PosX:      posX,
+			PosY:      posY,
+			PosZ:      posZ,
 			Heat:      0.1,
 		}
 	}

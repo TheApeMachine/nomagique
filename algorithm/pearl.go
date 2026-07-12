@@ -44,27 +44,27 @@ type PearlConfig struct {
 PearlOutput contains causal ladder, do, and counterfactual evidence.
 */
 type PearlOutput struct {
-	Value              float64
-	Category           float64
-	Confidence         float64
-	ConfidenceBaseline float64
-	EntryBaseline      float64
-	ExitBaseline       float64
-	Strength           float64
-	Association        float64
-	AssociationScore   float64
-	Intervention       float64
-	InterventionScore  float64
-	DoExpectation      float64
-	Uplift             float64
-	UpliftScore        float64
-	Counterfactual     float64
-	Noise              float64
-	Contagion          float64
-	Condition          float64
-	Inverted           bool
-	Probabilities      []float64
-	Distribution       map[string]float64
+	Value              float64            `json:"value"`
+	Category           float64            `json:"category"`
+	Confidence         float64            `json:"confidence"`
+	ConfidenceBaseline float64            `json:"confidenceBaseline"`
+	EntryBaseline      float64            `json:"entryBaseline"`
+	ExitBaseline       float64            `json:"exitBaseline"`
+	Strength           float64            `json:"strength"`
+	Association        float64            `json:"association"`
+	AssociationScore   float64            `json:"associationScore"`
+	Intervention       float64            `json:"intervention"`
+	InterventionScore  float64            `json:"interventionScore"`
+	DoExpectation      float64            `json:"doExpectation"`
+	Uplift             float64            `json:"uplift"`
+	UpliftScore        float64            `json:"upliftScore"`
+	Counterfactual     float64            `json:"counterfactual"`
+	Noise              float64            `json:"noise"`
+	Contagion          float64            `json:"contagion"`
+	Condition          float64            `json:"condition"`
+	Inverted           bool               `json:"inverted"`
+	Probabilities      []float64          `json:"probabilities"`
+	Distribution       map[string]float64 `json:"distribution"`
 }
 
 /*

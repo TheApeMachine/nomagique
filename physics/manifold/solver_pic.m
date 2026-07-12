@@ -17,43 +17,49 @@
 
     for (uint32_t index = 0; index < count; index++) {
         const ManifoldOscillator *oscillator = &oscillators[index];
-        float mass = oscillator->amplitude * self.config.rho_min;
-
-        if (!(mass > 0.0f)) {
-            mass = self.config.rho_min;
-        }
-
-        massData[index] = mass;
+        massData[index] = oscillator->amplitude;
         energyData[index] = oscillator->heat;
-        velData[index * 3 + 0] = 0.0f;
-        velData[index * 3 + 1] = 0.0f;
-        velData[index * 3 + 2] = 0.0f;
+        velData[index * 3 + 0] = oscillator->vel_x;
+        velData[index * 3 + 1] = oscillator->vel_y;
+        velData[index * 3 + 2] = oscillator->vel_z;
     }
 }
 
 - (void)configureSortScatterParams {
     SortScatterParamsHost *params = (SortScatterParamsHost *)self.sortScatterParams.contents;
-    float spacing = [self gridSpacing];
+    float cellX = self.config.domain_x / (float)self.config.grid_x;
+    float cellY = self.config.domain_y / (float)self.config.grid_y;
+    float cellZ = self.config.domain_z / (float)self.config.grid_z;
 
     params->num_particles = self.numOsc;
     params->num_cells = self.numCells;
     params->grid_x = self.config.grid_x;
     params->grid_y = self.config.grid_y;
     params->grid_z = self.config.grid_z;
-    params->grid_spacing = spacing;
-    params->inv_grid_spacing = 1.0f / spacing;
+    params->cell_x = cellX;
+    params->cell_y = cellY;
+    params->cell_z = cellZ;
+    params->inv_cell_x = 1.0f / cellX;
+    params->inv_cell_y = 1.0f / cellY;
+    params->inv_cell_z = 1.0f / cellZ;
 }
 
 - (void)configurePicGatherParams {
     PicGatherParamsHost *params = (PicGatherParamsHost *)self.picGatherParams.contents;
-    float spacing = [self gridSpacing];
+    float cellX = self.config.domain_x / (float)self.config.grid_x;
+    float cellY = self.config.domain_y / (float)self.config.grid_y;
+    float cellZ = self.config.domain_z / (float)self.config.grid_z;
 
     params->num_particles = self.numOsc;
     params->grid_x = self.config.grid_x;
     params->grid_y = self.config.grid_y;
     params->grid_z = self.config.grid_z;
-    params->grid_spacing = spacing;
-    params->inv_grid_spacing = 1.0f / spacing;
+    params->cell_x = cellX;
+    params->cell_y = cellY;
+    params->cell_z = cellZ;
+    params->inv_cell_x = 1.0f / cellX;
+    params->inv_cell_y = 1.0f / cellY;
+    params->inv_cell_z = 1.0f / cellZ;
     params->dt = self.controls.dt;
     params->domain_x = self.config.domain_x;
     params->domain_y = self.config.domain_y;
@@ -67,36 +73,11 @@
 }
 
 - (BOOL)runScatterPrefixSum:(NSString **)error {
-    (void)error;
-    uint32_t numCells = self.numCells;
-
-    if (numCells == 0) {
-        return YES;
-    }
-
-    [self runCopyU32:self.scatterCellCounts dst:self.scatterCellStarts count:numCells];
-
-    for (uint32_t stride = 1; stride < numCells; stride <<= 1) {
-        id<MTLBuffer> strideBuf = [self.device newBufferWithBytes:&stride length:sizeof(uint32_t) options:MTLResourceStorageModeShared];
-        id<MTLBuffer> numCellsBuf = [self.device newBufferWithBytes:&numCells length:sizeof(uint32_t) options:MTLResourceStorageModeShared];
-
-        [self dispatchGridKernel:self.scatterPrefixUpsweep
-                         buffers:@[self.scatterCellStarts, strideBuf, numCellsBuf]
-                     threadCount:numCells];
-    }
-
-    [self runScatterPrefixSeedLast:self.scatterCellStarts count:numCells];
-
-    for (uint32_t stride = numCells >> 1; stride > 0; stride >>= 1) {
-        id<MTLBuffer> strideBuf = [self.device newBufferWithBytes:&stride length:sizeof(uint32_t) options:MTLResourceStorageModeShared];
-        id<MTLBuffer> numCellsBuf = [self.device newBufferWithBytes:&numCells length:sizeof(uint32_t) options:MTLResourceStorageModeShared];
-
-        [self dispatchGridKernel:self.scatterPrefixDownsweep
-                         buffers:@[self.scatterCellStarts, strideBuf, numCellsBuf]
-                     threadCount:numCells];
-    }
-
-    return YES;
+    return [self runExclusiveScanU32:self.scatterCellCounts
+                              output:self.scatterCellStarts
+                              length:self.numCells
+                      writeTotalSlot:NO
+                               error:error];
 }
 
 - (BOOL)runPicScatter:(NSString **)error {

@@ -31,7 +31,7 @@ func (fit BivariateFit) LogLikelihoodGradient(
 		return math.Inf(-1), gradient, false
 	}
 
-	marked := stream.Marked()
+	marked := stream.markedEvents()
 
 	if len(marked) == 0 {
 		return math.Inf(-1), gradient, false

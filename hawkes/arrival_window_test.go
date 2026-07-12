@@ -7,32 +7,52 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 )
 
-func TestArrivalWindow_Stream(testingTB *testing.T) {
-	Convey("Given ordered and out-of-order arrivals inside a bounded window", testingTB, func() {
+func TestArrivalWindow_Stream(t *testing.T) {
+	Convey("Given ordered and out-of-order arrivals inside a bounded window", t, func() {
 		start := time.Unix(1000, 0)
-		window := NewArrivalWindow(2)
-		window.AppendBuy(start.Add(3 * time.Second))
-		window.AppendBuy(start.Add(time.Second))
+		window := NewArrivalWindow(3)
+		window.AppendSell(start.Add(time.Second))
+		window.AppendBuy(start.Add(4 * time.Second))
+		window.AppendSell(start.Add(3 * time.Second))
 		window.AppendBuy(start.Add(2 * time.Second))
-		window.AppendSell(start.Add(2500 * time.Millisecond))
-		window.AppendSell(start.Add(1500 * time.Millisecond))
 		stream := window.Stream()
 
-		Convey("It should retain the latest arrivals per side and expose sorted Hawkes input", func() {
+		Convey("It should evict the globally oldest arrival and preserve chronological sides", func() {
 			So(stream.BuyTimes(), ShouldResemble, []time.Time{
-				start.Add(time.Second),
 				start.Add(2 * time.Second),
+				start.Add(4 * time.Second),
 			})
 			So(stream.SellTimes(), ShouldResemble, []time.Time{
-				start.Add(1500 * time.Millisecond),
-				start.Add(2500 * time.Millisecond),
+				start.Add(3 * time.Second),
 			})
-			So(stream.Gaps(), ShouldResemble, []float64{0.5, 0.5, 0.5})
+			So(stream.Gaps(), ShouldResemble, []float64{1.0, 1.0})
 		})
 	})
 }
 
-func BenchmarkArrivalWindow_Stream(testingTB *testing.B) {
+func TestArrivalWindow_RetainFrom(t *testing.T) {
+	Convey("Given a marked stream and a derived time horizon", t, func() {
+		start := time.Unix(1000, 0)
+		window := NewArrivalWindow(0)
+		window.AppendBuy(start)
+		window.AppendSell(start.Add(time.Second))
+		window.AppendBuy(start.Add(2 * time.Second))
+
+		window.RetainFrom(start.Add(time.Second))
+		stream := window.Stream()
+
+		Convey("It should retain both sides at and after the horizon", func() {
+			So(stream.BuyTimes(), ShouldResemble, []time.Time{
+				start.Add(2 * time.Second),
+			})
+			So(stream.SellTimes(), ShouldResemble, []time.Time{
+				start.Add(time.Second),
+			})
+		})
+	})
+}
+
+func BenchmarkArrivalWindow_Stream(t *testing.B) {
 	window := NewArrivalWindow(64)
 	start := time.Unix(1000, 0)
 
@@ -47,9 +67,9 @@ func BenchmarkArrivalWindow_Stream(testingTB *testing.B) {
 		window.AppendSell(arrival)
 	}
 
-	testingTB.ReportAllocs()
+	t.ReportAllocs()
 
-	for testingTB.Loop() {
+	for t.Loop() {
 		_ = window.Stream()
 	}
 }

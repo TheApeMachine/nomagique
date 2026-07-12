@@ -191,11 +191,6 @@ func (context FitContext) EnoughEvents(stream ArrivalStream) bool {
 		return false
 	}
 
-	if stream.buy.Len() == 0 || stream.sell.Len() == 0 {
-		return stream.buy.Len() >= context.MinFitEvents ||
-			stream.sell.Len() >= context.MinFitEvents
-	}
-
 	if stream.buy.Len() < context.MinPerSide {
 		return false
 	}
@@ -207,26 +202,14 @@ func (context FitContext) EnoughEvents(stream ArrivalStream) bool {
 MuXStart returns the event-rate seed for stream x.
 */
 func (context FitContext) MuXStart() float64 {
-	muX := float64(context.EventsX) / context.SpanSec
-
-	if muX <= 0 {
-		return 1 / context.SpanSec
-	}
-
-	return muX
+	return float64(context.EventsX) / context.SpanSec
 }
 
 /*
 MuYStart returns the event-rate seed for stream y.
 */
 func (context FitContext) MuYStart() float64 {
-	muY := float64(context.EventsY) / context.SpanSec
-
-	if muY <= 0 {
-		return 1 / context.SpanSec
-	}
-
-	return muY
+	return float64(context.EventsY) / context.SpanSec
 }
 
 /*

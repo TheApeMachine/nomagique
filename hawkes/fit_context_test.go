@@ -7,8 +7,8 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 )
 
-func TestNewFitContext(testingTB *testing.T) {
-	Convey("Given fewer than two marked events", testingTB, func() {
+func TestNewFitContext(t *testing.T) {
+	Convey("Given fewer than two marked events", t, func() {
 		start := time.Unix(100, 0)
 		stream := NewArrivalStream([]time.Time{start}, nil)
 		context, ok := NewFitContext(stream, start.Add(time.Second))
@@ -19,7 +19,7 @@ func TestNewFitContext(testingTB *testing.T) {
 		})
 	})
 
-	Convey("Given a valid bivariate stream", testingTB, func() {
+	Convey("Given a valid bivariate stream", t, func() {
 		start := time.Unix(200, 0)
 		stream := NewArrivalStream(
 			[]time.Time{start, start.Add(time.Second), start.Add(2 * time.Second), start.Add(3 * time.Second)},
@@ -40,7 +40,7 @@ func TestNewFitContext(testingTB *testing.T) {
 		})
 	})
 
-	Convey("Given horizon before first event", testingTB, func() {
+	Convey("Given horizon before first event", t, func() {
 		start := time.Unix(300, 0)
 		stream := NewArrivalStream(
 			[]time.Time{start, start.Add(time.Second)},
@@ -55,8 +55,8 @@ func TestNewFitContext(testingTB *testing.T) {
 	})
 }
 
-func TestNewObservationContext(testingTB *testing.T) {
-	Convey("Given the same valid arrival stream as a complete fit context", testingTB, func() {
+func TestNewObservationContext(t *testing.T) {
+	Convey("Given the same valid arrival stream as a complete fit context", t, func() {
 		start := time.Unix(350, 0)
 		stream := NewArrivalStream(
 			[]time.Time{start, start.Add(time.Second), start.Add(3 * time.Second)},
@@ -83,8 +83,8 @@ func TestNewObservationContext(testingTB *testing.T) {
 	})
 }
 
-func TestFitContext_EnoughEvents(testingTB *testing.T) {
-	Convey("Given fit context minima", testingTB, func() {
+func TestFitContext_EnoughEvents(t *testing.T) {
+	Convey("Given fit context minima", t, func() {
 		start := time.Unix(400, 0)
 		buyTimes := make([]time.Time, 20)
 		sellTimes := make([]time.Time, 20)
@@ -109,7 +109,7 @@ func TestFitContext_EnoughEvents(testingTB *testing.T) {
 			So(context.EnoughEvents(buyOnly), ShouldBeFalse)
 		})
 
-		Convey("It should accept a single-side stream at minFitEvents", func() {
+		Convey("It should reject a single-side stream at the total-event minimum", func() {
 			singleSideBuyTimes := make([]time.Time, context.MinFitEvents)
 
 			for index := range singleSideBuyTimes {
@@ -118,7 +118,45 @@ func TestFitContext_EnoughEvents(testingTB *testing.T) {
 
 			singleSide := NewArrivalStream(singleSideBuyTimes, nil)
 
-			So(context.EnoughEvents(singleSide), ShouldBeTrue)
+			So(context.EnoughEvents(singleSide), ShouldBeFalse)
+		})
+	})
+}
+
+func TestFitContext_PoissonFit(t *testing.T) {
+	Convey("Given fit context with both side counts and a positive span", t, func() {
+		context := FitContext{
+			SpanSec:      10,
+			MedianGapSec: 0.5,
+			EventsX:      7,
+			EventsY:      3,
+		}
+		fit := context.PoissonFit()
+
+		Convey("It should derive the no-excitation likelihood reference", func() {
+			So(fit.Valid(), ShouldBeTrue)
+			So(fit.MuX, ShouldAlmostEqual, 0.7, 1e-12)
+			So(fit.MuY, ShouldAlmostEqual, 0.3, 1e-12)
+			So(fit.AlphaXX, ShouldEqual, 0)
+			So(fit.AlphaXY, ShouldEqual, 0)
+			So(fit.AlphaYX, ShouldEqual, 0)
+			So(fit.AlphaYY, ShouldEqual, 0)
+			So(fit.SpectralRadius, ShouldEqual, 0)
+		})
+	})
+
+	Convey("Given a context with no sell events", t, func() {
+		context := FitContext{
+			SpanSec:      10,
+			MedianGapSec: 0.5,
+			EventsX:      7,
+		}
+		fit := context.PoissonFit()
+
+		Convey("It should not invent an empty-side rate", func() {
+			So(fit.MuX, ShouldAlmostEqual, 0.7, 1e-12)
+			So(fit.MuY, ShouldEqual, 0)
+			So(fit.Valid(), ShouldBeFalse)
 		})
 	})
 }

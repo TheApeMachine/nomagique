@@ -11,192 +11,7 @@ import (
 const (
 	lbfgsMemory          = 12
 	lbfgsMajorIterations = 80
-	softplusLinearAt     = 20
-	softplusFloor        = 1e-12
-	paramRatioFloor      = 1e-9
 )
-
-type logParamBounds struct {
-	lower [bivariateParamCount]float64
-	upper [bivariateParamCount]float64
-}
-
-func (context FitContext) logParamBounds() logParamBounds {
-	betaMin := context.BetaCandidates[0]
-	betaMax := context.BetaCandidates[len(context.BetaCandidates)-1]
-	selfMax := context.BranchCeiling * selfBranchShareFromContext(context)
-	crossMax := context.BranchCeiling
-	crossMin := crossBranchFloorFromContext(context)
-	minRate := 1 / context.SpanSec
-	maxRate := float64(context.TotalEvents) / context.SpanSec
-
-	return logParamBounds{
-		lower: [bivariateParamCount]float64{
-			decay.LogPositive(minRate),
-			decay.LogPositive(minRate),
-			math.Log(betaMin),
-			decay.LogPositive(context.BranchFloor),
-			decay.LogPositive(crossMin),
-			decay.LogPositive(crossMin),
-			decay.LogPositive(context.BranchFloor),
-		},
-		upper: [bivariateParamCount]float64{
-			decay.LogPositive(maxRate),
-			decay.LogPositive(maxRate),
-			math.Log(betaMax),
-			math.Log(selfMax),
-			math.Log(crossMax),
-			math.Log(crossMax),
-			math.Log(selfMax),
-		},
-	}
-}
-
-func crossBranchFloorFromContext(context FitContext) float64 {
-	if context.BranchFloor > 0 {
-		return context.BranchFloor * math.Sqrt(math.Nextafter(1, 2)-1)
-	}
-
-	minRate := 1 / context.SpanSec
-
-	return minRate / float64(context.TotalEvents)
-}
-
-func selfBranchShareFromContext(context FitContext) float64 {
-	tune := arrivalTune{
-		totalEvents: context.TotalEvents,
-		eventsX:     context.EventsX,
-		eventsY:     context.EventsY,
-	}
-
-	return tune.selfBranchShare()
-}
-
-func (bounds logParamBounds) decode(free []float64) [bivariateParamCount]float64 {
-	params := [bivariateParamCount]float64{}
-
-	for index := range free {
-		span := bounds.upper[index] - bounds.lower[index]
-
-		if span <= 0 {
-			params[index] = bounds.lower[index]
-			continue
-		}
-
-		lift := softplus(free[index])
-		params[index] = bounds.lower[index] + span*lift/(1+lift)
-	}
-
-	return params
-}
-
-func (bounds logParamBounds) encode(params [bivariateParamCount]float64) []float64 {
-	free := make([]float64, bivariateParamCount)
-
-	for index := range params {
-		span := bounds.upper[index] - bounds.lower[index]
-
-		if span <= 0 {
-			free[index] = 0
-			continue
-		}
-
-		ratio := (params[index] - bounds.lower[index]) / span
-		ratio = math.Max(paramRatioFloor, math.Min(1-paramRatioFloor, ratio))
-		free[index] = inverseSoftplus(ratio / (1 - ratio))
-	}
-
-	return free
-}
-
-func (bounds logParamBounds) softplusJacobian(free []float64) [bivariateParamCount]float64 {
-	jacobian := [bivariateParamCount]float64{}
-
-	for index := range free {
-		span := bounds.upper[index] - bounds.lower[index]
-
-		if span <= 0 {
-			continue
-		}
-
-		lift := softplus(free[index])
-		jacobian[index] = span * softplusDerivative(free[index]) / ((1 + lift) * (1 + lift))
-	}
-
-	return jacobian
-}
-
-func softplus(value float64) float64 {
-	if value > softplusLinearAt {
-		return value
-	}
-
-	return math.Log1p(math.Exp(value))
-}
-
-func inverseSoftplus(value float64) float64 {
-	if value > softplusLinearAt {
-		return value
-	}
-
-	if value <= softplusFloor {
-		value = softplusFloor
-	}
-
-	return math.Log(math.Expm1(value))
-}
-
-func softplusDerivative(value float64) float64 {
-	if value > softplusLinearAt {
-		return 1
-	}
-
-	if value < -softplusLinearAt {
-		return math.Exp(value)
-	}
-
-	return 1 / (1 + math.Exp(-value))
-}
-
-func fitFromLogParams(
-	logParams [bivariateParamCount]float64,
-	context FitContext,
-) BivariateFit {
-	muX := math.Exp(logParams[0])
-	muY := math.Exp(logParams[1])
-	beta := math.Exp(logParams[2])
-	branchXX := math.Exp(logParams[3])
-	branchXY := math.Exp(logParams[4])
-	branchYX := math.Exp(logParams[5])
-	branchYY := math.Exp(logParams[6])
-
-	if branchXX > context.BranchCeiling || branchYY > context.BranchCeiling {
-		return BivariateFit{}
-	}
-
-	crossCap := context.CrossBranchCap(math.Max(branchXX, branchYY))
-
-	if branchXY > crossCap || branchYX > crossCap {
-		return BivariateFit{}
-	}
-
-	fit := BivariateFit{
-		MuX:     muX,
-		MuY:     muY,
-		AlphaXX: branchXX * beta,
-		AlphaXY: branchXY * beta,
-		AlphaYX: branchYX * beta,
-		AlphaYY: branchYY * beta,
-		Beta:    beta,
-	}
-	fit.SpectralRadius = fit.computeSpectralRadius()
-
-	if fit.SpectralRadius < 0 || fit.SpectralRadius >= criticalBranch {
-		return BivariateFit{}
-	}
-
-	return fit
-}
 
 func (estimator *BivariateEstimator) maximizeLikelihood(
 	stream ArrivalStream,
@@ -204,11 +19,29 @@ func (estimator *BivariateEstimator) maximizeLikelihood(
 	context FitContext,
 	start [bivariateParamCount]float64,
 ) BivariateFit {
+	return estimator.maximizeLikelihoodRestricted(
+		stream,
+		horizon,
+		context,
+		start,
+		fitUnrestricted,
+	)
+}
+
+func (estimator *BivariateEstimator) maximizeLikelihoodRestricted(
+	stream ArrivalStream,
+	horizon time.Time,
+	context FitContext,
+	start [bivariateParamCount]float64,
+	restriction fitRestriction,
+) BivariateFit {
 	bounds := context.logParamBounds()
 	freeStart := bounds.encode(start)
 	problem := optimize.Problem{
 		Func: func(free []float64) float64 {
-			value, _, ok := estimator.negLogLikelihood(free, bounds, stream, horizon, context)
+			value, _, ok := estimator.negLogLikelihoodRestricted(
+				free, bounds, stream, horizon, context, restriction,
+			)
 
 			if !ok {
 				return math.Inf(1)
@@ -217,8 +50,8 @@ func (estimator *BivariateEstimator) maximizeLikelihood(
 			return value
 		},
 		Grad: func(grad, free []float64) {
-			_, naturalGrad, ok := estimator.negLogLikelihoodGrad(
-				free, bounds, stream, horizon, context,
+			_, naturalGrad, ok := estimator.negLogLikelihoodGradRestricted(
+				free, bounds, stream, horizon, context, restriction,
 			)
 
 			if !ok {
@@ -250,7 +83,7 @@ func (estimator *BivariateEstimator) maximizeLikelihood(
 		return BivariateFit{}
 	}
 
-	fit := fitFromLogParams(bounds.decode(result.X), context)
+	fit := fitFromRestrictedLogParams(bounds.decode(result.X), context, restriction)
 
 	if fit.MuX <= 0 {
 		return BivariateFit{}
@@ -266,7 +99,20 @@ func (estimator *BivariateEstimator) negLogLikelihood(
 	horizon time.Time,
 	context FitContext,
 ) (float64, BivariateFit, bool) {
-	fit := fitFromLogParams(bounds.decode(free), context)
+	return estimator.negLogLikelihoodRestricted(
+		free, bounds, stream, horizon, context, fitUnrestricted,
+	)
+}
+
+func (estimator *BivariateEstimator) negLogLikelihoodRestricted(
+	free []float64,
+	bounds logParamBounds,
+	stream ArrivalStream,
+	horizon time.Time,
+	context FitContext,
+	restriction fitRestriction,
+) (float64, BivariateFit, bool) {
+	fit := fitFromRestrictedLogParams(bounds.decode(free), context, restriction)
 
 	if fit.MuX <= 0 {
 		return math.Inf(1), BivariateFit{}, false
@@ -288,7 +134,20 @@ func (estimator *BivariateEstimator) negLogLikelihoodGrad(
 	horizon time.Time,
 	context FitContext,
 ) (float64, [bivariateParamCount]float64, bool) {
-	fit := fitFromLogParams(bounds.decode(free), context)
+	return estimator.negLogLikelihoodGradRestricted(
+		free, bounds, stream, horizon, context, fitUnrestricted,
+	)
+}
+
+func (estimator *BivariateEstimator) negLogLikelihoodGradRestricted(
+	free []float64,
+	bounds logParamBounds,
+	stream ArrivalStream,
+	horizon time.Time,
+	context FitContext,
+	restriction fitRestriction,
+) (float64, [bivariateParamCount]float64, bool) {
+	fit := fitFromRestrictedLogParams(bounds.decode(free), context, restriction)
 
 	if fit.MuX <= 0 {
 		return math.Inf(1), [bivariateParamCount]float64{}, false

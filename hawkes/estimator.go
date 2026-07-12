@@ -13,6 +13,17 @@ type BivariateEstimator struct {
 }
 
 /*
+fitRestriction selects the nested statistical model optimized against the same
+observation window and data-derived parameter bounds.
+*/
+type fitRestriction int
+
+const (
+	fitUnrestricted fitRestriction = iota
+	fitSelfOnly
+)
+
+/*
 NewBivariateEstimator constructs an estimator with an optional warm-start prior.
 */
 func NewBivariateEstimator(prior BivariateFit) *BivariateEstimator {
@@ -25,6 +36,27 @@ Fit estimates parameters via multi-start L-BFGS on the exact log-likelihood.
 func (estimator *BivariateEstimator) Fit(
 	stream ArrivalStream,
 	horizon time.Time,
+) BivariateFit {
+	return estimator.fit(stream, horizon, fitUnrestricted)
+}
+
+/*
+FitSelfOnly re-estimates the baseline, decay, and diagonal excitation while
+constraining both cross-excitation terms to zero. It provides the correct
+restricted likelihood reference for testing whether cross excitation adds
+explanatory power.
+*/
+func (estimator *BivariateEstimator) FitSelfOnly(
+	stream ArrivalStream,
+	horizon time.Time,
+) BivariateFit {
+	return estimator.fit(stream, horizon, fitSelfOnly)
+}
+
+func (estimator *BivariateEstimator) fit(
+	stream ArrivalStream,
+	horizon time.Time,
+	restriction fitRestriction,
 ) BivariateFit {
 	context, ok := NewFitContext(stream, horizon)
 
@@ -42,13 +74,20 @@ func (estimator *BivariateEstimator) Fit(
 	}
 
 	for _, seed := range estimator.multiStartSeeds(context) {
-		candidate := estimator.maximizeLikelihood(stream, horizon, context, seed)
+		candidate := estimator.maximizeLikelihoodRestricted(
+			stream,
+			horizon,
+			context,
+			seed,
+			restriction,
+		)
 
 		if candidate.MuX <= 0 {
 			continue
 		}
 
-		if !estimator.crossLikelihoodValid(stream, horizon, candidate) {
+		if restriction == fitUnrestricted &&
+			!estimator.crossLikelihoodValid(stream, horizon, candidate) {
 			candidate = candidate.withCrossZeroed().WithIntensitiesAt(stream, horizon)
 		}
 
@@ -102,18 +141,7 @@ func (estimator *BivariateEstimator) preferCandidate(
 
 	improvementTolerance := logLikelihoodTolerance(currentLL, candidateLL)
 
-	if candidateLL > currentLL+improvementTolerance {
-		return true
-	}
-
-	if math.Abs(candidateLL-currentLL) > math.Sqrt(improvementTolerance) {
-		return false
-	}
-
-	crossCurrent := current.AlphaXY + current.AlphaYX
-	crossCandidate := candidate.AlphaXY + candidate.AlphaYX
-
-	return crossCandidate > crossCurrent
+	return candidateLL > currentLL+improvementTolerance
 }
 
 func logLikelihoodTolerance(values ...float64) float64 {

@@ -18,6 +18,7 @@ were re-estimated.
 */
 type symbol struct {
 	model           hawkes.BivariateFit
+	fitPrior        hawkes.BivariateFit
 	hasFit          bool
 	fitObservedFrom time.Time
 	fitAt           time.Time
@@ -183,6 +184,7 @@ func (symbol *symbol) fit(
 		ModelUpdated: true,
 		Reason:       forecastPendingReason,
 	}
+	symbol.fitPrior = prior
 	symbol.model = fit
 	symbol.hasFit = true
 	symbol.fitObservedFrom = outcome.ObservedFrom
@@ -200,7 +202,23 @@ func (symbol *symbol) project(
 	horizon time.Time,
 ) Outcome {
 	fit := symbol.model.WithIntensitiesAt(stream, horizon)
+	fullLikelihood := fit.LogLikelihood(stream, horizon)
+	selfOnly := hawkes.NewBivariateEstimator(symbol.fitPrior).
+		FitSelfOnly(stream, horizon)
+	selfLikelihood := selfOnly.LogLikelihood(stream, horizon)
+	poisson := context.PoissonFit().WithIntensitiesAt(stream, horizon)
+	immediateBuy, immediateSell, _ := symbol.model.ImmediateOffspring()
+	totalBuy, totalSell, _ := symbol.model.TotalDescendants()
 	outcome := symbol.outcome(context, stream, horizon, fit)
+	outcome.HawkesPoissonLogLikelihoodDelta =
+		fullLikelihood - poisson.LogLikelihood(stream, horizon)
+	outcome.CrossSelfLogLikelihoodDelta =
+		fullLikelihood - selfLikelihood
+	outcome.ImmediateBuyOffspring = immediateBuy
+	outcome.ImmediateSellOffspring = immediateSell
+	outcome.TotalBuyDescendants = totalBuy
+	outcome.TotalSellDescendants = totalSell
+	outcome.Maturity = 1
 	outcome.FitObservedFrom = symbol.fitObservedFrom
 	outcome.FitAt = symbol.fitAt
 	outcome.Readiness = Readiness{

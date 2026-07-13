@@ -127,7 +127,11 @@ func (window *window) input(symbol string) (Input, bool, error) {
 
 	context, ready := hawkes.NewObservationContext(stream, horizon)
 
-	if ready && context.TradeWindow > 0 {
+	if !ready {
+		return Input{}, false, nil
+	}
+
+	if context.TradeWindow > 0 {
 		window.arrivals.RetainFrom(horizon.Add(-context.TradeWindow))
 		stream = window.arrivals.Stream()
 	}

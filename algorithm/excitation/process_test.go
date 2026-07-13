@@ -83,7 +83,8 @@ func TestProcess_Measure(t *testing.T) {
 			context, contextReady := hawkes.NewObservationContext(stream, horizon)
 			So(contextReady, ShouldBeTrue)
 			poisson := context.PoissonFit().WithIntensitiesAt(stream, horizon)
-			selfOnly := hawkes.NewBivariateEstimator(outcome.Fit).FitSelfOnly(stream, horizon)
+			selfOnly := hawkes.NewBivariateEstimator(hawkes.BivariateFit{}).
+				FitSelfOnly(stream, horizon)
 			fullLikelihood := outcome.Fit.LogLikelihood(stream, horizon)
 
 			So(outcome.HawkesPoissonLogLikelihoodDelta, ShouldAlmostEqual,

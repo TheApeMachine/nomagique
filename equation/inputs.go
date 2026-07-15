@@ -22,20 +22,14 @@ var FluidflowInputKeys = []string{
 	"reynolds",
 	"divergence",
 	"viscosity",
-	"midAddRate",
-	"midExecuteRate",
 	"laminarCeiling",
 	"turbulentFloor",
-	"turbulentReady",
 	"divergenceEdge",
-	"icebergScore",
+	"viscosityBaseline",
 	"vorticity",
+	"vorticityBaseline",
 	"turbulence",
-	"memory",
-	"price",
-	"spreadBPS",
-	"changePct",
-	"volume",
+	"turbulenceBaseline",
 }
 
 var FlowInputKeys = []string{

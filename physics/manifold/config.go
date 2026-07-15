@@ -87,12 +87,16 @@ type RuntimeControls struct {
 	MetabolicRate      float64
 	TopdownPhaseScale  float64
 	TopdownEnergyScale float64
+	GInteraction       float64
+	EnergyDecay        float64
 }
 
 func (config Config) RuntimeControls() RuntimeControls {
 	return RuntimeControls{
 		DeltaT:        config.DeltaT,
 		MetabolicRate: config.MetabolicRate(),
+		GInteraction:  config.GInteraction(),
+		EnergyDecay:   config.EnergyDecay(),
 	}
 }
 
@@ -102,6 +106,8 @@ func (controls RuntimeControls) Validate() error {
 		"metabolic_rate":       controls.MetabolicRate,
 		"topdown_phase_scale":  controls.TopdownPhaseScale,
 		"topdown_energy_scale": controls.TopdownEnergyScale,
+		"g_interaction":        controls.GInteraction,
+		"energy_decay":         controls.EnergyDecay,
 	}
 
 	for name, value := range values {
@@ -124,6 +130,14 @@ func (controls RuntimeControls) Validate() error {
 
 	if controls.TopdownEnergyScale < 0 {
 		return fmt.Errorf("physics: runtime control topdown_energy_scale must be non-negative")
+	}
+
+	if controls.GInteraction <= 0 {
+		return fmt.Errorf("physics: runtime control g_interaction must be positive")
+	}
+
+	if controls.EnergyDecay < 0 {
+		return fmt.Errorf("physics: runtime control energy_decay must be non-negative")
 	}
 
 	return nil

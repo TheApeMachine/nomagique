@@ -67,7 +67,7 @@
 
 - (void)configureGPEParams {
     GPEParamsHost *params = (GPEParamsHost *)self.gpeParams.contents;
-    float dOmega = 2.0f * (float)M_PI / fmaxf((float)self.numOsc, 1.0f);
+    float dOmega = 2.0f * (float)M_PI / fmaxf((float)self.numBins, 1.0f);
 
     params->dt = self.controls.dt;
     params->hbar_eff = self.config.hbar_eff;
@@ -189,10 +189,28 @@ static const float kFp32ExpUnderflowX0 = 103.27893f;
     CoherenceParamsHost *params = (CoherenceParamsHost *)self.coherenceParams.contents;
 
     [self configureCoherenceParams];
-    [self configureGPEParams];
     [self clearAccumulators];
 
     if (![self runCoherenceBinning:error]) {
+        return NO;
+    }
+
+    [self configureGPEParams];
+
+    NSUInteger gpeWidth = manifold_simd_threadgroup_width_for_pipeline(
+        self.numBins,
+        self.simdWidth,
+        self.gpeStep
+    );
+
+    if (self.numBins > gpeWidth) {
+        if (error != nil) {
+            *error = [NSString stringWithFormat:
+                @"coherence bin count %u exceeds GPE threadgroup capacity %lu",
+                self.numBins,
+                (unsigned long)gpeWidth];
+        }
+
         return NO;
     }
 
@@ -246,7 +264,7 @@ static const float kFp32ExpUnderflowX0 = 103.27893f;
     }
 
     NSUInteger kineticScratchBytes =
-        (NSUInteger)self.numOsc * 2u * sizeof(float) * 2u;
+        (NSUInteger)self.numBins * 2u * sizeof(float) * 2u;
 
     [self dispatchThreadgroupKernel:self.gpeStep
                            buffers:@[
@@ -254,10 +272,10 @@ static const float kFp32ExpUnderflowX0 = 103.27893f;
                                self.modeReal, self.modeImag,
                                self.modeOmega, self.modeGate,
                                self.modeAnchorIdx, self.modeAnchorWeight,
-                               self.accums, self.numCarriers, self.particlePos,
+                               self.accums, self.numBinsBuf, self.particlePos,
                                self.coherenceParams, self.gpeParams
                            ]
-                   threadgroupSize:self.numOsc
+                   threadgroupSize:self.numBins
                   threadgroupCount:1
           threadgroupMemoryLength:kineticScratchBytes];
 

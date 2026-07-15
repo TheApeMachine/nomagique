@@ -1,6 +1,7 @@
 package excitation
 
 import (
+	"sort"
 	"time"
 
 	"github.com/theapemachine/errnie"
@@ -110,4 +111,40 @@ func (process *Process) symbol(symbolName string) *symbol {
 	process.symbols[symbolName] = model
 
 	return model
+}
+
+/*
+Symbols returns every symbol that has produced at least one excitation outcome.
+*/
+func (process *Process) Symbols() []string {
+	if process == nil || len(process.symbols) == 0 {
+		return nil
+	}
+
+	symbols := make([]string, 0, len(process.symbols))
+
+	for symbolName := range process.symbols {
+		symbols = append(symbols, symbolName)
+	}
+
+	sort.Strings(symbols)
+
+	return symbols
+}
+
+/*
+Outcome returns the latest measured Hawkes outcome for one symbol.
+*/
+func (process *Process) Outcome(symbolName string) (Outcome, bool) {
+	if process == nil || symbolName == "" {
+		return Outcome{}, false
+	}
+
+	model, ok := process.symbols[symbolName]
+
+	if !ok || !model.lastReady {
+		return Outcome{}, false
+	}
+
+	return model.lastOutcome, true
 }

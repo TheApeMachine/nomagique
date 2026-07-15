@@ -228,6 +228,12 @@ typedef struct SortScatterParamsHost {
     float inv_cell_x;
     float inv_cell_y;
     float inv_cell_z;
+    uint32_t boundary_x_low;
+    uint32_t boundary_x_high;
+    uint32_t boundary_y_low;
+    uint32_t boundary_y_high;
+    uint32_t boundary_z_low;
+    uint32_t boundary_z_high;
 } SortScatterParamsHost;
 
 typedef struct PicGatherParamsHost {
@@ -251,6 +257,12 @@ typedef struct PicGatherParamsHost {
     float rho_min;
     float p_min;
     float gravity_enabled;
+    uint32_t boundary_x_low;
+    uint32_t boundary_x_high;
+    uint32_t boundary_y_low;
+    uint32_t boundary_y_high;
+    uint32_t boundary_z_low;
+    uint32_t boundary_z_high;
 } PicGatherParamsHost;
 
 typedef struct SpatialHashParamsHost {
@@ -326,12 +338,18 @@ typedef struct PilotWaveParamsHost {
     float hbar_eff;
     float eps_denom;
     float mass_min;
+    uint32_t boundary_x_low;
+    uint32_t boundary_x_high;
+    uint32_t boundary_y_low;
+    uint32_t boundary_y_high;
+    uint32_t boundary_z_low;
+    uint32_t boundary_z_high;
 } PilotWaveParamsHost;
 
-_Static_assert(sizeof(SortScatterParamsHost) == 44, "SortScatterParamsHost ABI mismatch");
-_Static_assert(sizeof(PicGatherParamsHost) == 80, "PicGatherParamsHost ABI mismatch");
+_Static_assert(sizeof(SortScatterParamsHost) == 68, "SortScatterParamsHost ABI mismatch");
+_Static_assert(sizeof(PicGatherParamsHost) == 104, "PicGatherParamsHost ABI mismatch");
 _Static_assert(sizeof(ModeProjectParamsHost) == 48, "ModeProjectParamsHost ABI mismatch");
-_Static_assert(sizeof(PilotWaveParamsHost) == 68, "PilotWaveParamsHost ABI mismatch");
+_Static_assert(sizeof(PilotWaveParamsHost) == 92, "PilotWaveParamsHost ABI mismatch");
 _Static_assert(offsetof(PilotWaveParamsHost, mass_min) == 64, "PilotWaveParamsHost field mismatch");
 
 typedef struct ParticleGenParamsHost {

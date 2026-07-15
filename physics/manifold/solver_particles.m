@@ -166,6 +166,12 @@ static const uint32_t kDirectInteractionLimit = 64u;
     params->hbar_eff = self.config.hbar_eff;
     params->eps_denom = self.config.rho_min * self.config.rho_min;
     params->mass_min = self.config.rho_min;
+    params->boundary_x_low = self.config.boundary_x_low;
+    params->boundary_x_high = self.config.boundary_x_high;
+    params->boundary_y_low = self.config.boundary_y_low;
+    params->boundary_y_high = self.config.boundary_y_high;
+    params->boundary_z_low = self.config.boundary_z_low;
+    params->boundary_z_high = self.config.boundary_z_high;
 }
 
 - (void)clearPsiFields {

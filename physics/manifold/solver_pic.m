@@ -42,6 +42,12 @@
     params->inv_cell_x = 1.0f / cellX;
     params->inv_cell_y = 1.0f / cellY;
     params->inv_cell_z = 1.0f / cellZ;
+    params->boundary_x_low = self.config.boundary_x_low;
+    params->boundary_x_high = self.config.boundary_x_high;
+    params->boundary_y_low = self.config.boundary_y_low;
+    params->boundary_y_high = self.config.boundary_y_high;
+    params->boundary_z_low = self.config.boundary_z_low;
+    params->boundary_z_high = self.config.boundary_z_high;
 }
 
 - (void)configurePicGatherParams {
@@ -70,6 +76,12 @@
     params->rho_min = self.config.rho_min;
     params->p_min = self.config.p_min;
     params->gravity_enabled = self.gravityReady ? 1.0f : 0.0f;
+    params->boundary_x_low = self.config.boundary_x_low;
+    params->boundary_x_high = self.config.boundary_x_high;
+    params->boundary_y_low = self.config.boundary_y_low;
+    params->boundary_y_high = self.config.boundary_y_high;
+    params->boundary_z_low = self.config.boundary_z_low;
+    params->boundary_z_high = self.config.boundary_z_high;
 }
 
 - (BOOL)runScatterPrefixSum:(NSString **)error {

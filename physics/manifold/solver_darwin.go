@@ -15,6 +15,7 @@ import "C"
 import (
 	_ "embed"
 	"fmt"
+	"runtime"
 	"unsafe"
 )
 
@@ -27,6 +28,7 @@ Solver runs the 3D PIC + GPE manifold on Metal.
 type Solver struct {
 	handle unsafe.Pointer
 	config Config
+	errBuf [512]byte
 }
 
 /*
@@ -45,7 +47,7 @@ type Oscillator struct {
 	VelZ      float64
 }
 
-func NewSolver(config Config) *Solver {
+func NewSolver(config Config) (*Solver, error) {
 	cConfig := C.ManifoldConfig{
 		grid_x:               C.uint32_t(config.GridX),
 		grid_y:               C.uint32_t(config.GridY),
@@ -88,13 +90,13 @@ func NewSolver(config Config) *Solver {
 	)
 
 	if handle == nil {
-		return nil
+		return nil, fmt.Errorf("physics: failed to create solver")
 	}
 
 	return &Solver{
 		handle: handle,
 		config: config,
-	}
+	}, nil
 }
 
 func (solver *Solver) Close() {
@@ -120,9 +122,11 @@ func (solver *Solver) SetControls(controls RuntimeControls) error {
 		metabolic_rate:       C.float(controls.MetabolicRate),
 		topdown_phase_scale:  C.float(controls.TopdownPhaseScale),
 		topdown_energy_scale: C.float(controls.TopdownEnergyScale),
+		g_interaction:        C.float(controls.GInteraction),
+		energy_decay:         C.float(controls.EnergyDecay),
 	}
 
-	return solver.call(func(errBuf []byte) C.int {
+	err := solver.call(func(errBuf []byte) C.int {
 		return C.manifold_solver_set_controls(
 			solver.handle,
 			&cControls,
@@ -130,6 +134,9 @@ func (solver *Solver) SetControls(controls RuntimeControls) error {
 			C.int(len(errBuf)),
 		)
 	})
+	runtime.KeepAlive(&cControls)
+
+	return err
 }
 
 func (solver *Solver) ResetDeposits() error {
@@ -211,6 +218,11 @@ func (solver *Solver) ReadCell(cellX, cellY, cellZ uint32) (rho, momX, momY, mom
 			C.int(len(errBuf)),
 		)
 	})
+	runtime.KeepAlive(&cRho)
+	runtime.KeepAlive(&cMomX)
+	runtime.KeepAlive(&cMomY)
+	runtime.KeepAlive(&cMomZ)
+	runtime.KeepAlive(&cEInt)
 
 	if callErr != nil {
 		return 0, 0, 0, 0, 0, callErr
@@ -266,7 +278,7 @@ func (solver *Solver) SetOscillators(oscillators []Oscillator) error {
 		}
 	}
 
-	return solver.call(func(errBuf []byte) C.int {
+	err := solver.call(func(errBuf []byte) C.int {
 		return C.manifold_solver_set_oscillators(
 			solver.handle,
 			(*C.ManifoldOscillator)(unsafe.Pointer(&cOscillators[0])),
@@ -275,6 +287,9 @@ func (solver *Solver) SetOscillators(oscillators []Oscillator) error {
 			C.int(len(errBuf)),
 		)
 	})
+	runtime.KeepAlive(cOscillators)
+
+	return err
 }
 
 func (solver *Solver) RunGasTransport() error {
@@ -298,6 +313,7 @@ func (solver *Solver) Step() (Reading, error) {
 			C.int(len(errBuf)),
 		)
 	})
+	runtime.KeepAlive(&cReading)
 
 	if err != nil {
 		return Reading{}, err
@@ -341,24 +357,82 @@ func (solver *Solver) ReadRhoProjection() ([][]float64, error) {
 			C.int(len(errBuf)),
 		)
 	})
+	runtime.KeepAlive(buffer)
+	runtime.KeepAlive(&cGridX)
+	runtime.KeepAlive(&cGridZ)
 
 	if err != nil {
 		return nil, err
 	}
 
-	rows := make([][]float64, cGridZ)
+	return rowsFromBuffer(buffer, cGridX, cGridZ), nil
+}
 
-	for zIndex := range cGridZ {
-		row := make([]float64, cGridX)
+/*
+ReadPilotWaveProjection returns the max-|psi|^2 slice over Y and the guidance
+velocity field derived from the Bohm current at each projected column.
+*/
+func (solver *Solver) ReadPilotWaveProjection() (PilotWaveProjection, error) {
+	if solver == nil || solver.handle == nil {
+		return PilotWaveProjection{}, fmt.Errorf("physics: solver is not initialized")
+	}
 
-		for xIndex := range cGridX {
-			row[xIndex] = float64(buffer[xIndex+zIndex*cGridX])
+	gridX := solver.config.GridX
+	gridZ := solver.config.GridZ
+	length := int(gridX * gridZ)
+	mag2 := make([]float32, length)
+	velX := make([]float32, length)
+	velZ := make([]float32, length)
+
+	var (
+		cGridX C.uint32_t
+		cGridZ C.uint32_t
+	)
+
+	err := solver.call(func(errBuf []byte) C.int {
+		return C.manifold_solver_read_pilot_wave_projection(
+			solver.handle,
+			(*C.float)(unsafe.Pointer(&mag2[0])),
+			(*C.float)(unsafe.Pointer(&velX[0])),
+			(*C.float)(unsafe.Pointer(&velZ[0])),
+			C.uint32_t(length),
+			&cGridX,
+			&cGridZ,
+			(*C.char)(unsafe.Pointer(&errBuf[0])),
+			C.int(len(errBuf)),
+		)
+	})
+	runtime.KeepAlive(mag2)
+	runtime.KeepAlive(velX)
+	runtime.KeepAlive(velZ)
+	runtime.KeepAlive(&cGridX)
+	runtime.KeepAlive(&cGridZ)
+
+	if err != nil {
+		return PilotWaveProjection{}, err
+	}
+
+	return PilotWaveProjection{
+		Mag2: rowsFromBuffer(mag2, cGridX, cGridZ),
+		VelX: rowsFromBuffer(velX, cGridX, cGridZ),
+		VelZ: rowsFromBuffer(velZ, cGridX, cGridZ),
+	}, nil
+}
+
+func rowsFromBuffer(buffer []float32, gridX, gridZ C.uint32_t) [][]float64 {
+	rows := make([][]float64, gridZ)
+
+	for zIndex := range gridZ {
+		row := make([]float64, gridX)
+
+		for xIndex := range gridX {
+			row[xIndex] = float64(buffer[xIndex+zIndex*gridX])
 		}
 
 		rows[zIndex] = row
 	}
 
-	return rows, nil
+	return rows
 }
 
 func (solver *Solver) ReadProjectionReading() (Reading, error) {
@@ -376,6 +450,7 @@ func (solver *Solver) ReadProjectionReading() (Reading, error) {
 			C.int(len(errBuf)),
 		)
 	})
+	runtime.KeepAlive(&cReading)
 
 	if err != nil {
 		return Reading{}, err
@@ -408,6 +483,7 @@ func (solver *Solver) ReadOscillators(count int) ([]Oscillator, error) {
 			C.int(len(errBuf)),
 		)
 	})
+	runtime.KeepAlive(cOscillators)
 
 	if err != nil {
 		return nil, err
@@ -434,7 +510,15 @@ func (solver *Solver) ReadOscillators(count int) ([]Oscillator, error) {
 }
 
 func (solver *Solver) call(run func(errBuf []byte) C.int) error {
-	errBuf := make([]byte, 512)
+	if solver == nil || solver.handle == nil {
+		return fmt.Errorf("physics: solver is not initialized")
+	}
+
+	errBuf := solver.errBuf[:]
+
+	for index := range errBuf {
+		errBuf[index] = 0
+	}
 
 	if run(errBuf) != 0 {
 		return fmt.Errorf("physics: %s", cString(errBuf))

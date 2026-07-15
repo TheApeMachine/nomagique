@@ -119,13 +119,16 @@ float manifold_gas_pressure_at(
 ) {
     (void)ghost_axis;
     (void)ghost_boundary;
+    (void)cx;
+    (void)cy;
+    (void)cz;
 
     if (!is_ghost) {
         return manifold_pressure_at(eData, gamma, x, y, z, gx, gy, gz);
     }
 
-    uint32_t center_index = manifold_cell_index(cx, cy, cz, gx, gy, gz);
-    return (gamma - 1.0f) * eData[center_index];
+    uint32_t face_index = manifold_cell_index(x, y, z, gx, gy, gz);
+    return (gamma - 1.0f) * eData[face_index];
 }
 
 void manifold_gas_velocity_at(
@@ -151,8 +154,12 @@ void manifold_gas_velocity_at(
         return;
     }
 
-    uint32_t center_index = manifold_cell_index(cx, cy, cz, gx, gy, gz);
-    uint32_t base = center_index * 4;
+    (void)cx;
+    (void)cy;
+    (void)cz;
+
+    uint32_t face_index = manifold_cell_index(x, y, z, gx, gy, gz);
+    uint32_t base = face_index * 4;
     float rho = momRhoData[base + 3];
 
     if (!(rho > 0.0f)) {

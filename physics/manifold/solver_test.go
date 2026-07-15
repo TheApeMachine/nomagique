@@ -32,7 +32,9 @@ func TestSolverStep(t *testing.T) {
 	convey.Convey("Given a Metal manifold solver", t, func() {
 		config := smallTestConfig()
 
-		solver := NewSolver(config)
+		solver, err := NewSolver(config)
+
+		convey.So(err, convey.ShouldBeNil)
 
 		convey.Convey("It should accept deposits, oscillators, and return finite readings", func() {
 			convey.So(solver, convey.ShouldNotBeNil)
@@ -71,6 +73,14 @@ func TestSolverStep(t *testing.T) {
 			convey.So(rhoErr, convey.ShouldBeNil)
 			convey.So(len(rho), convey.ShouldEqual, int(config.GridZ))
 			convey.So(len(rho[0]), convey.ShouldEqual, int(config.GridX))
+
+			pilotWave, pilotErr := solver.ReadPilotWaveProjection()
+
+			convey.So(pilotErr, convey.ShouldBeNil)
+			convey.So(len(pilotWave.Mag2), convey.ShouldEqual, int(config.GridZ))
+			convey.So(len(pilotWave.Mag2[0]), convey.ShouldEqual, int(config.GridX))
+			convey.So(len(pilotWave.VelX), convey.ShouldEqual, int(config.GridZ))
+			convey.So(len(pilotWave.VelZ), convey.ShouldEqual, int(config.GridZ))
 		})
 	})
 }
@@ -78,7 +88,8 @@ func TestSolverStep(t *testing.T) {
 func TestSolverSetControls(t *testing.T) {
 	convey.Convey("Given a Metal manifold solver", t, func() {
 		config := smallTestConfig()
-		solver := NewSolver(config)
+		solver, err := NewSolver(config)
+		convey.So(err, convey.ShouldBeNil)
 
 		convey.Convey("It should accept validated runtime controls before stepping", func() {
 			convey.So(solver, convey.ShouldNotBeNil)
@@ -103,7 +114,8 @@ func TestReadProjectionReading(t *testing.T) {
 	convey.Convey("Given a deposited rho lattice", t, func() {
 		config := smallTestConfig()
 
-		solver := NewSolver(config)
+		solver, err := NewSolver(config)
+		convey.So(err, convey.ShouldBeNil)
 
 		convey.Convey("It should derive bulk observables from the rho projection", func() {
 			convey.So(solver, convey.ShouldNotBeNil)
@@ -134,7 +146,8 @@ func TestReadOscillators(t *testing.T) {
 	convey.Convey("Given a stepped solver with oscillators", t, func() {
 		config := smallTestConfig()
 
-		solver := NewSolver(config)
+		solver, err := NewSolver(config)
+		convey.So(err, convey.ShouldBeNil)
 
 		convey.Convey("It should read post-step particle state from Metal", func() {
 			convey.So(solver, convey.ShouldNotBeNil)
@@ -259,7 +272,8 @@ func TestReadOscillatorsDecisionLattice(t *testing.T) {
 
 			config.DeltaT = config.AdvectiveDeltaT(characteristicSpeed)
 			ApplyDerivedGasParams(&config)
-			solver := NewSolver(config)
+			solver, err := NewSolver(config)
+			convey.So(err, convey.ShouldBeNil)
 			convey.So(solver, convey.ShouldNotBeNil)
 
 			defer solver.Close()
@@ -305,7 +319,8 @@ func TestSolverWhaleParticleVelocity(t *testing.T) {
 	convey.Convey("Given a Metal manifold solver", t, func() {
 		config := smallTestConfig()
 
-		solver := NewSolver(config)
+		solver, err := NewSolver(config)
+		convey.So(err, convey.ShouldBeNil)
 
 		convey.Convey("It should step with whale particles carrying directional velocity", func() {
 			defer solver.Close()
@@ -357,7 +372,8 @@ func TestSolverProductionConfig(t *testing.T) {
 		carrierHeat := 0.1
 		config = config.stableGasTestConfig(0, carrierHeat/carrierMass)
 
-		solver := NewSolver(config)
+		solver, err := NewSolver(config)
+		convey.So(err, convey.ShouldBeNil)
 
 		convey.Convey("It should step with 32 oscillators on a 32x3x16 grid", func() {
 			defer solver.Close()
@@ -412,7 +428,9 @@ func TestSolverCarrierThreshold(t *testing.T) {
 
 	for _, count := range []int{128} {
 		t.Run(fmt.Sprintf("count=%d", count), func(t *testing.T) {
-			solver := NewSolver(config)
+			solver, err := NewSolver(config)
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(solver, convey.ShouldNotBeNil)
 			posX, posY, posZ := config.testCellCenter(1, 0, 1)
 
 			defer solver.Close()
@@ -467,7 +485,9 @@ func TestSolverProduction128Oscillators(t *testing.T) {
 		config := productionTestConfig()
 		carrierCount := 128
 
-		solver := NewSolver(config)
+		solver, err := NewSolver(config)
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(solver, convey.ShouldNotBeNil)
 
 		convey.Convey("It should return finite oscillator readback after step", func() {
 			defer solver.Close()
@@ -516,7 +536,9 @@ func TestSolverMultiSymbolDeposits(t *testing.T) {
 	config := productionTestConfig()
 	carrierCount := 128
 
-	solver := NewSolver(config)
+	solver, err := NewSolver(config)
+	convey.So(err, convey.ShouldBeNil)
+	convey.So(solver, convey.ShouldNotBeNil)
 
 	defer solver.Close()
 
@@ -581,7 +603,9 @@ func TestSpreadDepositOscCount(t *testing.T) {
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			config := productionTestConfig()
-			solver := NewSolver(config)
+			solver, err := NewSolver(config)
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(solver, convey.ShouldNotBeNil)
 			posX, posY, posZ := config.testCellCenter(1, 0, 1)
 
 			defer solver.Close()
@@ -640,7 +664,9 @@ func TestSpreadDepositOscCount(t *testing.T) {
 
 func TestSingleCarrierDepositMagnitude(t *testing.T) {
 	config := productionTestConfig()
-	solver := NewSolver(config)
+	solver, err := NewSolver(config)
+	convey.So(err, convey.ShouldBeNil)
+	convey.So(solver, convey.ShouldNotBeNil)
 	posX, posY, posZ := config.testCellCenter(1, 0, 1)
 
 	defer solver.Close()
@@ -687,7 +713,9 @@ func BenchmarkSolverStep(b *testing.B) {
 	}
 	config = config.stableGasTestConfig(0, 1)
 
-	solver := NewSolver(config)
+	solver, err := NewSolver(config)
+	convey.So(err, convey.ShouldBeNil)
+	convey.So(solver, convey.ShouldNotBeNil)
 
 	defer solver.Close()
 
@@ -749,7 +777,9 @@ func TestMaxModesVsOscCount(t *testing.T) {
 			config.MaxModes = uint32(testCase.maxModes)
 			posX, posY, posZ := config.testCellCenter(1, 0, 1)
 
-			solver := NewSolver(config)
+			solver, err := NewSolver(config)
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(solver, convey.ShouldNotBeNil)
 
 			defer solver.Close()
 

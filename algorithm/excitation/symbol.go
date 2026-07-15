@@ -22,6 +22,8 @@ type symbol struct {
 	hasFit          bool
 	fitObservedFrom time.Time
 	fitAt           time.Time
+	lastOutcome     Outcome
+	lastReady       bool
 	adaptive        *hawkes.ArrivalWorkspace
 	revision        *revision
 	schedule        *schedule
@@ -42,7 +44,7 @@ func (symbol *symbol) measure(
 	context, observed, ready := symbol.context(stream, horizon)
 
 	if !ready {
-		return symbol.observation(stream, horizon), true
+		return symbol.retain(symbol.observation(stream, horizon)), true
 	}
 
 	changedEvents := symbol.revision.Observe(observed)
@@ -52,14 +54,27 @@ func (symbol *symbol) measure(
 	}
 
 	if !context.EnoughEvents(observed) {
-		return symbol.baseline(context, observed, horizon), true
+		return symbol.retain(symbol.baseline(context, observed, horizon)), true
 	}
 
 	if symbol.hasFit && !symbol.schedule.Ready() {
-		return symbol.project(context, observed, horizon), true
+		return symbol.retain(symbol.project(context, observed, horizon)), true
 	}
 
-	return symbol.fit(context, observed, horizon)
+	outcome, ok := symbol.fit(context, observed, horizon)
+
+	if !ok {
+		return Outcome{}, false
+	}
+
+	return symbol.retain(outcome), true
+}
+
+func (symbol *symbol) retain(outcome Outcome) Outcome {
+	symbol.lastOutcome = outcome
+	symbol.lastReady = true
+
+	return outcome
 }
 
 func (symbol *symbol) observation(

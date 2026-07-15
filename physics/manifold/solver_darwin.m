@@ -145,7 +145,28 @@ static float manifold_wrap_coordinate(float value, float extent) {
         return NO;
     }
 
+    if (!isfinite(controls->g_interaction) || controls->g_interaction <= 0.0f) {
+        if (error != nil) {
+            *error = @"runtime control g_interaction must be positive and finite";
+        }
+
+        return NO;
+    }
+
+    if (!isfinite(controls->energy_decay) || controls->energy_decay < 0.0f) {
+        if (error != nil) {
+            *error = @"runtime control energy_decay must be non-negative and finite";
+        }
+
+        return NO;
+    }
+
     self.controls = *controls;
+
+    ManifoldConfig config = self.config;
+    config.g_interaction = controls->g_interaction;
+    config.energy_decay = controls->energy_decay;
+    self.config = config;
 
     return YES;
 }
@@ -985,6 +1006,149 @@ static float manifold_wrap_coordinate(float value, float extent) {
     return YES;
 }
 
+- (BOOL)readPilotWaveProjection:(float *)mag2Out
+                          velX:(float *)velXOut
+                          velZ:(float *)velZOut
+                         length:(uint32_t)length
+                          error:(NSString **)error {
+    if (mag2Out == NULL || velXOut == NULL || velZOut == NULL) {
+        if (error != NULL) {
+            *error = @"pilot-wave projection buffers are required";
+        }
+
+        return NO;
+    }
+
+    float *reData = (float *)self.psiReField.contents;
+    float *imData = (float *)self.psiImField.contents;
+    uint32_t gx = self.config.grid_x;
+    uint32_t gy = self.config.grid_y;
+    uint32_t gz = self.config.grid_z;
+    uint32_t expected = gx * gz;
+
+    if (length < expected) {
+        if (error != NULL) {
+            *error = @"pilot-wave projection buffer is too small";
+        }
+
+        return NO;
+    }
+
+    float cellX = self.config.domain_x / (float)gx;
+    float cellZ = self.config.domain_z / (float)gz;
+    float hbarEff = self.config.hbar_eff;
+    float massMin = self.config.rho_min;
+
+    if (!(cellX > 0.0f) || !(cellZ > 0.0f) || !(hbarEff > 0.0f) || !(massMin > 0.0f)) {
+        if (error != NULL) {
+            *error = @"pilot-wave projection requires positive cell scale and mass floor";
+        }
+
+        return NO;
+    }
+
+    float invMass = 1.0f / massMin;
+    uint32_t xLow = self.config.boundary_x_low;
+    uint32_t xHigh = gx > 0u ? gx - 1u - self.config.boundary_x_high : 0u;
+    uint32_t yLow = self.config.boundary_y_low;
+    uint32_t yHigh = gy > 0u ? gy - 1u - self.config.boundary_y_high : 0u;
+    uint32_t zLow = self.config.boundary_z_low;
+    uint32_t zHigh = gz > 0u ? gz - 1u - self.config.boundary_z_high : 0u;
+
+    if (xLow >= gx) {
+        xLow = 0u;
+    }
+
+    if (xHigh >= gx) {
+        xHigh = gx - 1u;
+    }
+
+    if (yLow >= gy) {
+        yLow = 0u;
+    }
+
+    if (yHigh >= gy) {
+        yHigh = gy - 1u;
+    }
+
+    if (zLow >= gz) {
+        zLow = 0u;
+    }
+
+    if (zHigh >= gz) {
+        zHigh = gz - 1u;
+    }
+
+    if (xHigh < xLow) {
+        xLow = 0u;
+        xHigh = gx - 1u;
+    }
+
+    if (yHigh < yLow) {
+        yLow = 0u;
+        yHigh = gy - 1u;
+    }
+
+    if (zHigh < zLow) {
+        zLow = 0u;
+        zHigh = gz - 1u;
+    }
+
+    for (uint32_t zIndex = 0; zIndex < gz; zIndex++) {
+        for (uint32_t xIndex = 0; xIndex < gx; xIndex++) {
+            float peakMag2 = 0.0f;
+            uint32_t peakY = yLow;
+
+            for (uint32_t yIndex = yLow; yIndex <= yHigh; yIndex++) {
+                uint32_t index = manifold_cell_index(xIndex, yIndex, zIndex, gx, gy, gz);
+                float re = reData[index];
+                float im = imData[index];
+                float mag2 = re * re + im * im;
+
+                if (mag2 > peakMag2) {
+                    peakMag2 = mag2;
+                    peakY = yIndex;
+                }
+            }
+
+            uint32_t xMinus = xIndex > xLow ? xIndex - 1u : xIndex;
+            uint32_t xPlus = xIndex < xHigh ? xIndex + 1u : xIndex;
+            uint32_t zMinus = zIndex > zLow ? zIndex - 1u : zIndex;
+            uint32_t zPlus = zIndex < zHigh ? zIndex + 1u : zIndex;
+
+            uint32_t centerIndex = manifold_cell_index(xIndex, peakY, zIndex, gx, gy, gz);
+            uint32_t xPlusIndex = manifold_cell_index(xPlus, peakY, zIndex, gx, gy, gz);
+            uint32_t xMinusIndex = manifold_cell_index(xMinus, peakY, zIndex, gx, gy, gz);
+            uint32_t zPlusIndex = manifold_cell_index(xIndex, peakY, zPlus, gx, gy, gz);
+            uint32_t zMinusIndex = manifold_cell_index(xIndex, peakY, zMinus, gx, gy, gz);
+
+            float re = reData[centerIndex];
+            float im = imData[centerIndex];
+            float dReDx = (reData[xPlusIndex] - reData[xMinusIndex]) / (2.0f * cellX);
+            float dReDz = (reData[zPlusIndex] - reData[zMinusIndex]) / (2.0f * cellZ);
+            float dImDx = (imData[xPlusIndex] - imData[xMinusIndex]) / (2.0f * cellX);
+            float dImDz = (imData[zPlusIndex] - imData[zMinusIndex]) / (2.0f * cellZ);
+            float denom = re * re + im * im + massMin;
+            float currentX = 0.0f;
+            float currentZ = 0.0f;
+
+            if (isfinite(re) && isfinite(im) && isfinite(denom) && denom > 0.0f &&
+                isfinite(dReDx) && isfinite(dReDz) && isfinite(dImDx) && isfinite(dImDz)) {
+                currentX = (re * dImDx - im * dReDx) / denom;
+                currentZ = (re * dImDz - im * dReDz) / denom;
+            }
+
+            uint32_t outIndex = xIndex + zIndex * gx;
+
+            mag2Out[outIndex] = peakMag2;
+            velXOut[outIndex] = currentX * hbarEff * invMass;
+            velZOut[outIndex] = currentZ * hbarEff * invMass;
+        }
+    }
+
+    return YES;
+}
+
 - (BOOL)readRhoMaxProjection:(float *)out length:(uint32_t)length error:(NSString **)error {
     if (out == NULL) {
         if (error != NULL) {
@@ -1361,6 +1525,41 @@ int manifold_solver_read_rho_projection(
 
     if (![solver readRhoMaxProjection:out length:out_length error:&error]) {
         manifold_write_error(err_out, err_cap, error ?: @"rho projection read failed");
+        return 1;
+    }
+
+    *grid_x = solver.config.grid_x;
+    *grid_z = solver.config.grid_z;
+
+    return 0;
+}
+
+int manifold_solver_read_pilot_wave_projection(
+    void *handle,
+    float *mag2_out,
+    float *vel_x_out,
+    float *vel_z_out,
+    uint32_t out_length,
+    uint32_t *grid_x,
+    uint32_t *grid_z,
+    char *err_out,
+    int err_cap
+) {
+    if (handle == NULL || mag2_out == NULL || vel_x_out == NULL || vel_z_out == NULL ||
+        grid_x == NULL || grid_z == NULL) {
+        manifold_write_error(err_out, err_cap, @"solver handle and pilot-wave projection buffers are required");
+        return 1;
+    }
+
+    ManifoldSolver *solver = (__bridge ManifoldSolver *)handle;
+    NSString *error = nil;
+
+    if (![solver readPilotWaveProjection:mag2_out
+                                    velX:vel_x_out
+                                    velZ:vel_z_out
+                                  length:out_length
+                                   error:&error]) {
+        manifold_write_error(err_out, err_cap, error ?: @"pilot-wave projection read failed");
         return 1;
     }
 

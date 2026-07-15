@@ -49,6 +49,8 @@ func TestConfigRuntimeControls(t *testing.T) {
 
 			convey.So(controls.DeltaT, convey.ShouldEqual, config.DeltaT)
 			convey.So(controls.MetabolicRate, convey.ShouldEqual, config.MetabolicRate())
+			convey.So(controls.GInteraction, convey.ShouldEqual, config.GInteraction())
+			convey.So(controls.EnergyDecay, convey.ShouldEqual, config.EnergyDecay())
 			convey.So(controls.Validate(), convey.ShouldBeNil)
 		})
 	})

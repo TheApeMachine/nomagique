@@ -302,6 +302,174 @@ struct SpatialCollisionParams {
     float restitution;
 };
 
+constant uint32_t gas_boundary_periodic = 0u;
+constant uint32_t gas_boundary_outflow = 1u;
+constant uint32_t gas_boundary_reflecting = 2u;
+
+inline bool pic_axis_periodic(uint32_t low, uint32_t high) {
+    return low == gas_boundary_periodic && high == gas_boundary_periodic;
+}
+
+inline float pic_axis_coord(
+    float g,
+    uint extent,
+    uint32_t low,
+    uint32_t high
+) {
+    if (pic_axis_periodic(low, high)) {
+        float gd = (float)extent;
+        return g - gd * floor(g / gd);
+    }
+
+    float max_g = (float)(extent - 1u);
+
+    if (g < 0.0f) {
+        return 0.0f;
+    }
+
+    if (g > max_g) {
+        return max_g;
+    }
+
+    return g;
+}
+
+inline uint pic_axis_corner(uint base, uint extent, uint32_t low, uint32_t high) {
+    if (pic_axis_periodic(low, high)) {
+        return (base + 1u) % extent;
+    }
+
+    return min(base + 1u, extent - 1u);
+}
+
+inline void pic_trilinear_coords(
+    float3 pos,
+    float3 inv_spacing,
+    uint3 grid_dims,
+    uint3 boundary_low,
+    uint3 boundary_high,
+    thread uint3& base_idx,
+    thread float3& frac
+) {
+    float3 g = pos * inv_spacing;
+    g.x = pic_axis_coord(g.x, grid_dims.x, boundary_low.x, boundary_high.x);
+    g.y = pic_axis_coord(g.y, grid_dims.y, boundary_low.y, boundary_high.y);
+    g.z = pic_axis_coord(g.z, grid_dims.z, boundary_low.z, boundary_high.z);
+    base_idx = uint3(floor(g));
+    frac = g - float3(base_idx);
+}
+
+inline float3 pic_advect_position(
+    float3 pos,
+    float3 velocity,
+    float dt,
+    float3 domain,
+    uint3 boundary_low,
+    uint3 boundary_high
+) {
+    float3 next = pos + velocity * dt;
+
+    if (pic_axis_periodic(boundary_low.x, boundary_high.x)) {
+        next.x = next.x - floor(next.x / domain.x) * domain.x;
+    } else {
+        next.x = clamp(next.x, 0.0f, nextafter(domain.x, 0.0f));
+    }
+
+    if (pic_axis_periodic(boundary_low.y, boundary_high.y)) {
+        next.y = next.y - floor(next.y / domain.y) * domain.y;
+    } else {
+        next.y = clamp(next.y, 0.0f, nextafter(domain.y, 0.0f));
+    }
+
+    if (pic_axis_periodic(boundary_low.z, boundary_high.z)) {
+        next.z = next.z - floor(next.z / domain.z) * domain.z;
+    } else {
+        next.z = clamp(next.z, 0.0f, nextafter(domain.z, 0.0f));
+    }
+
+    return next;
+}
+
+inline uint pic_primary_cell_axis(float scaled, uint extent, uint32_t low, uint32_t high) {
+    if (pic_axis_periodic(low, high)) {
+        return uint(scaled) % extent;
+    }
+
+    int cell = (int)floor(scaled);
+
+    if (cell < 0) {
+        cell = 0;
+    }
+
+    if ((uint)cell >= extent) {
+        cell = (int)extent - 1;
+    }
+
+    return (uint)cell;
+}
+
+inline float4 pic_sample_value_and_gradient_trilinear(
+    device const float* field,
+    uint3 base_idx,
+    float3 frac,
+    uint3 grid_dims,
+    float3 inv_spacing,
+    uint3 boundary_low,
+    uint3 boundary_high
+) {
+    uint stride_z = 1;
+    uint stride_y = grid_dims.z;
+    uint stride_x = grid_dims.y * grid_dims.z;
+
+    uint x0 = base_idx.x;
+    uint y0 = base_idx.y;
+    uint z0 = base_idx.z;
+    uint x1 = pic_axis_corner(x0, grid_dims.x, boundary_low.x, boundary_high.x);
+    uint y1 = pic_axis_corner(y0, grid_dims.y, boundary_low.y, boundary_high.y);
+    uint z1 = pic_axis_corner(z0, grid_dims.z, boundary_low.z, boundary_high.z);
+
+    float c000 = field[x0 * stride_x + y0 * stride_y + z0 * stride_z];
+    float c001 = field[x0 * stride_x + y0 * stride_y + z1 * stride_z];
+    float c010 = field[x0 * stride_x + y1 * stride_y + z0 * stride_z];
+    float c011 = field[x0 * stride_x + y1 * stride_y + z1 * stride_z];
+    float c100 = field[x1 * stride_x + y0 * stride_y + z0 * stride_z];
+    float c101 = field[x1 * stride_x + y0 * stride_y + z1 * stride_z];
+    float c110 = field[x1 * stride_x + y1 * stride_y + z0 * stride_z];
+    float c111 = field[x1 * stride_x + y1 * stride_y + z1 * stride_z];
+
+    float fx = frac.x;
+    float fy = frac.y;
+    float fz = frac.z;
+
+    float c00 = c000 * (1.0f - fz) + c001 * fz;
+    float c01 = c010 * (1.0f - fz) + c011 * fz;
+    float c10 = c100 * (1.0f - fz) + c101 * fz;
+    float c11 = c110 * (1.0f - fz) + c111 * fz;
+    float c0 = c00 * (1.0f - fy) + c01 * fy;
+    float c1 = c10 * (1.0f - fy) + c11 * fy;
+    float value = c0 * (1.0f - fx) + c1 * fx;
+
+    float face_x0 = c000 * (1.0f - fy) * (1.0f - fz) + c010 * fy * (1.0f - fz) +
+        c001 * (1.0f - fy) * fz + c011 * fy * fz;
+    float face_x1 = c100 * (1.0f - fy) * (1.0f - fz) + c110 * fy * (1.0f - fz) +
+        c101 * (1.0f - fy) * fz + c111 * fy * fz;
+    float face_y0 = c000 * (1.0f - fx) * (1.0f - fz) + c100 * fx * (1.0f - fz) +
+        c001 * (1.0f - fx) * fz + c101 * fx * fz;
+    float face_y1 = c010 * (1.0f - fx) * (1.0f - fz) + c110 * fx * (1.0f - fz) +
+        c011 * (1.0f - fx) * fz + c111 * fx * fz;
+    float face_z0 = c000 * (1.0f - fx) * (1.0f - fy) + c100 * fx * (1.0f - fy) +
+        c010 * (1.0f - fx) * fy + c110 * fx * fy;
+    float face_z1 = c001 * (1.0f - fx) * (1.0f - fy) + c101 * fx * (1.0f - fy) +
+        c011 * (1.0f - fx) * fy + c111 * fx * fy;
+
+    return float4(
+        (face_x1 - face_x0) * inv_spacing.x,
+        (face_y1 - face_y0) * inv_spacing.y,
+        (face_z1 - face_z0) * inv_spacing.z,
+        value
+    );
+}
+
 // -----------------------------------------------------------------------------
 // Utility: Trilinear Interpolation
 // -----------------------------------------------------------------------------
@@ -1449,6 +1617,12 @@ struct SortScatterParams {
     float inv_cell_x;
     float inv_cell_y;
     float inv_cell_z;
+    uint32_t boundary_x_low;
+    uint32_t boundary_x_high;
+    uint32_t boundary_y_low;
+    uint32_t boundary_y_high;
+    uint32_t boundary_z_low;
+    uint32_t boundary_z_high;
 };
 
 struct PicGatherParams {
@@ -1472,6 +1646,12 @@ struct PicGatherParams {
     float rho_min;
     float p_min;
     float gravity_enabled;  // 1.0 if gravity field is valid, 0.0 otherwise
+    uint32_t boundary_x_low;
+    uint32_t boundary_x_high;
+    uint32_t boundary_y_low;
+    uint32_t boundary_y_high;
+    uint32_t boundary_z_low;
+    uint32_t boundary_z_high;
 };
 
 // -----------------------------------------------------------------------------
@@ -1522,6 +1702,12 @@ struct PilotWaveParams {
     float hbar_eff;
     float eps_denom;
     float mass_min;
+    uint32_t boundary_x_low;
+    uint32_t boundary_x_high;
+    uint32_t boundary_y_low;
+    uint32_t boundary_y_high;
+    uint32_t boundary_z_low;
+    uint32_t boundary_z_high;
 };
 
 
@@ -1541,14 +1727,18 @@ kernel void scatter_compute_cell_idx(
     );
 
     // Primary cell for sort binning. Positions are host-wrapped into [0,domain);
-    // uint(scaled) differs from trilinear_coords floor-mod on negative values.
+    // non-periodic faces clamp into the boundary cell instead of wrapping.
     uint3 grid_dims = uint3(p.grid_x, p.grid_y, p.grid_z);
     float3 inv_cell = float3(p.inv_cell_x, p.inv_cell_y, p.inv_cell_z);
     float3 scaled = pos * inv_cell;
+    uint3 boundary_low = uint3(
+        p.boundary_x_low, p.boundary_y_low, p.boundary_z_low);
+    uint3 boundary_high = uint3(
+        p.boundary_x_high, p.boundary_y_high, p.boundary_z_high);
     uint3 cell = uint3(
-        uint(scaled.x) % grid_dims.x,
-        uint(scaled.y) % grid_dims.y,
-        uint(scaled.z) % grid_dims.z
+        pic_primary_cell_axis(scaled.x, grid_dims.x, boundary_low.x, boundary_high.x),
+        pic_primary_cell_axis(scaled.y, grid_dims.y, boundary_low.y, boundary_high.y),
+        pic_primary_cell_axis(scaled.z, grid_dims.z, boundary_low.z, boundary_high.z)
     );
 
     // Linear cell index (x-major order)
@@ -1656,7 +1846,13 @@ kernel void scatter_reorder_particles(
     uint3 base_idx;
     float3 frac;
     float3 inv_cell = float3(p.inv_cell_x, p.inv_cell_y, p.inv_cell_z);
-    trilinear_coords(pos, inv_cell, uint3(kGridX, kGridY, kGridZ), base_idx, frac);
+    uint3 grid_dims = uint3(p.grid_x, p.grid_y, p.grid_z);
+    uint3 boundary_low = uint3(
+        p.boundary_x_low, p.boundary_y_low, p.boundary_z_low);
+    uint3 boundary_high = uint3(
+        p.boundary_x_high, p.boundary_y_high, p.boundary_z_high);
+    pic_trilinear_coords(
+        pos, inv_cell, grid_dims, boundary_low, boundary_high, base_idx, frac);
     float iv = inv_cell.x * inv_cell.y * inv_cell.z;
     particle_cic_a[dest] = float4(frac, mass * iv);
     particle_cic_b[dest] = float4(mass * vel * iv, heat * iv);
@@ -1800,10 +1996,6 @@ struct GasGridParams {
     uint32_t boundary_z_low;
     uint32_t boundary_z_high;
 };
-
-constant uint32_t gas_boundary_periodic = 0u;
-constant uint32_t gas_boundary_outflow = 1u;
-constant uint32_t gas_boundary_reflecting = 2u;
 
 struct U5 {
     float rho;
@@ -2747,11 +2939,16 @@ kernel void pic_gather_update_particles(
     );
 
     // CIC gather of conserved fields at particle location
-    uint3 grid_dims = uint3(kGridX, kGridY, kGridZ);
+    uint3 grid_dims = uint3(p.grid_x, p.grid_y, p.grid_z);
     uint3 base_idx;
     float3 frac;
     float3 inv_cell = float3(p.inv_cell_x, p.inv_cell_y, p.inv_cell_z);
-    trilinear_coords(pos, inv_cell, grid_dims, base_idx, frac);
+    uint3 boundary_low = uint3(
+        p.boundary_x_low, p.boundary_y_low, p.boundary_z_low);
+    uint3 boundary_high = uint3(
+        p.boundary_x_high, p.boundary_y_high, p.boundary_z_high);
+    pic_trilinear_coords(
+        pos, inv_cell, grid_dims, boundary_low, boundary_high, base_idx, frac);
 
     float wx0 = 1.0f - frac.x, wx1 = frac.x;
     float wy0 = 1.0f - frac.y, wy1 = frac.y;
@@ -2769,13 +2966,13 @@ kernel void pic_gather_update_particles(
     };
 
     uint x0 = base_idx.x, y0 = base_idx.y, z0 = base_idx.z;
-    uint x1 = (x0 + 1) % kGridX;
-    uint y1 = (y0 + 1) % kGridY;
-    uint z1 = (z0 + 1) % kGridZ;
+    uint x1 = pic_axis_corner(x0, grid_dims.x, boundary_low.x, boundary_high.x);
+    uint y1 = pic_axis_corner(y0, grid_dims.y, boundary_low.y, boundary_high.y);
+    uint z1 = pic_axis_corner(z0, grid_dims.z, boundary_low.z, boundary_high.z);
 
     uint stride_z = 1;
-    uint stride_y = kGridZ;
-    uint stride_x = kGridY * kGridZ;
+    uint stride_y = grid_dims.z;
+    uint stride_x = grid_dims.y * grid_dims.z;
 
     uint idxs[8] = {
         x0 * stride_x + y0 * stride_y + z0 * stride_z,
@@ -2923,9 +3120,9 @@ kernel void pic_gather_update_particles(
     float3 u_with_gravity = u + g_accel * p.dt;
 
     // Advect particle with gravity-corrected velocity (PIC)
-    float3 pos_next = pos + u_with_gravity * p.dt;
     float3 domain = float3(p.domain_x, p.domain_y, p.domain_z);
-    pos_next = pos_next - floor(pos_next / domain) * domain;
+    float3 pos_next = pic_advect_position(
+        pos, u_with_gravity, p.dt, domain, boundary_low, boundary_high);
     if (!isfinite(pos_next.x) || !isfinite(pos_next.y) || !isfinite(pos_next.z) ||
         !isfinite(u_with_gravity.x) || !isfinite(u_with_gravity.y) || !isfinite(u_with_gravity.z)) {
         // TAG 0x06: non-finite advection state
@@ -3277,14 +3474,20 @@ kernel void pic_gather_update_particles_pilot_wave(
     );
 
     uint3 grid_dims = uint3(p.grid_x, p.grid_y, p.grid_z);
-    uint3 base_idx; float3 frac;
+    uint3 base_idx;
+    float3 frac;
     float3 inv_cell = float3(p.inv_cell_x, p.inv_cell_y, p.inv_cell_z);
-    trilinear_coords(pos, inv_cell, grid_dims, base_idx, frac);
+    uint3 boundary_low = uint3(
+        p.boundary_x_low, p.boundary_y_low, p.boundary_z_low);
+    uint3 boundary_high = uint3(
+        p.boundary_x_high, p.boundary_y_high, p.boundary_z_high);
+    pic_trilinear_coords(
+        pos, inv_cell, grid_dims, boundary_low, boundary_high, base_idx, frac);
 
-    float4 re = sample_value_and_gradient_trilinear(
-        psi_re_field, base_idx, frac, grid_dims, inv_cell);
-    float4 im = sample_value_and_gradient_trilinear(
-        psi_im_field, base_idx, frac, grid_dims, inv_cell);
+    float4 re = pic_sample_value_and_gradient_trilinear(
+        psi_re_field, base_idx, frac, grid_dims, inv_cell, boundary_low, boundary_high);
+    float4 im = pic_sample_value_and_gradient_trilinear(
+        psi_im_field, base_idx, frac, grid_dims, inv_cell, boundary_low, boundary_high);
 
     float psi_re = re.w;
     float psi_im = im.w;
@@ -3315,9 +3518,9 @@ kernel void pic_gather_update_particles_pilot_wave(
 
     float3 v = current * (p.hbar_eff * inv_m);
 
-    float3 pos_new = pos + v * p.dt;
     float3 domain = float3(p.domain_x, p.domain_y, p.domain_z);
-    pos_new = pos_new - floor(pos_new / domain) * domain;
+    float3 pos_new = pic_advect_position(
+        pos, v, p.dt, domain, boundary_low, boundary_high);
 
     if (!isfinite(pos_new.x) || !isfinite(pos_new.y) || !isfinite(pos_new.z) ||
         !isfinite(v.x) || !isfinite(v.y) || !isfinite(v.z)) {

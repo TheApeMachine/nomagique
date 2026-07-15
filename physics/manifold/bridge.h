@@ -44,6 +44,8 @@ typedef struct ManifoldControls {
     float metabolic_rate;
     float topdown_phase_scale;
     float topdown_energy_scale;
+    float g_interaction;
+    float energy_decay;
 } ManifoldControls;
 
 typedef struct ManifoldReading {
@@ -137,6 +139,18 @@ int manifold_solver_run_gas_transport(void *handle, char *err_out, int err_cap);
 int manifold_solver_read_rho_projection(
     void *handle,
     float *out,
+    uint32_t out_length,
+    uint32_t *grid_x,
+    uint32_t *grid_z,
+    char *err_out,
+    int err_cap
+);
+
+int manifold_solver_read_pilot_wave_projection(
+    void *handle,
+    float *mag2_out,
+    float *vel_x_out,
+    float *vel_z_out,
     uint32_t out_length,
     uint32_t *grid_x,
     uint32_t *grid_z,

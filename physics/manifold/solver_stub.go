@@ -78,6 +78,10 @@ func (solver *Solver) ReadRhoProjection() ([][]float64, error) {
 	return nil, fmt.Errorf("physics: Metal manifold solver unavailable on this platform")
 }
 
+func (solver *Solver) ReadPilotWaveProjection() (PilotWaveProjection, error) {
+	return PilotWaveProjection{}, fmt.Errorf("physics: Metal manifold solver unavailable on this platform")
+}
+
 func (solver *Solver) ReadProjectionReading() (Reading, error) {
 	return Reading{}, fmt.Errorf("physics: Metal manifold solver unavailable on this platform")
 }

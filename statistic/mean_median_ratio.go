@@ -2,7 +2,6 @@ package statistic
 
 import (
 	"math"
-	"time"
 
 	"github.com/theapemachine/errnie"
 	"gonum.org/v1/gonum/stat"
@@ -254,8 +253,4 @@ func positiveValues(values []float64) []float64 {
 	}
 
 	return positive
-}
-
-func timestamp(seconds int64) time.Time {
-	return time.Unix(seconds, 0)
 }

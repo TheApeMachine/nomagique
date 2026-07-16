@@ -172,13 +172,3 @@ Compose chains two rotors: result = other · multivector.
 func (multivector Multivector) Compose(other Multivector) Multivector {
 	return other.GeometricProduct(multivector)
 }
-
-func multivectorSlice(multivector Multivector) []float64 {
-	slice := make([]float64, multivectorComponentCount)
-
-	for index := range slice {
-		slice[index] = multivector[index]
-	}
-
-	return slice
-}

@@ -55,11 +55,23 @@ func NewBookflow() *Bookflow {
 Measure calculates book-flow scores from floats without artifact transport.
 */
 func (bookflow *Bookflow) Measure(input BookflowInput) (BookflowOutput, error) {
-	if input.Mid <= 0 ||
-		input.Spread <= 0 ||
-		len(input.WeightedHistory) == 0 ||
-		len(input.Level1History) == 0 {
+	if input.Mid <= 0 || input.Spread <= 0 {
 		return BookflowOutput{}, nil
+	}
+
+	// First observation: history-derived thresholds have nothing to contrast
+	// against, so the baseline is nothing and the measurement is the current
+	// weighted imbalance itself with zero spoof/thin contrast.
+	if len(input.WeightedHistory) == 0 || len(input.Level1History) == 0 {
+		strength := math.Abs(input.Weighted)
+
+		return BookflowOutput{
+			Value:       strength,
+			Strength:    strength,
+			LoadedScore: strength,
+			Category:    float64(bookflowClassify(false, false, strength > 0)),
+			Ready:       true,
+		}, nil
 	}
 
 	weightedThreshold := bookflowMedianAbsolute(input.WeightedHistory)

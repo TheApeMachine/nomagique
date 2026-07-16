@@ -2,39 +2,9 @@ package hawkes
 
 import (
 	"math"
-	"sort"
 
 	"github.com/theapemachine/errnie"
-	"gonum.org/v1/gonum/stat"
 )
-
-func quartiles(values []float64) (lower float64, upper float64, err error) {
-	if len(values) == 0 {
-		return 0, 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"hawkes grid: quartiles require values",
-			nil,
-		))
-	}
-
-	sorted := append([]float64(nil), values...)
-	sort.Float64s(sorted)
-
-	for _, value := range sorted {
-		if math.IsNaN(value) || math.IsInf(value, 0) {
-			return 0, 0, errnie.Error(errnie.Err(
-				errnie.Validation,
-				"hawkes grid: quartiles sample is non-finite",
-				nil,
-			))
-		}
-	}
-
-	lower = stat.Quantile(0.25, stat.LinInterp, sorted, nil)
-	upper = stat.Quantile(0.75, stat.LinInterp, sorted, nil)
-
-	return lower, upper, nil
-}
 
 func linspace(start, end float64, count int) ([]float64, error) {
 	if count <= 0 {

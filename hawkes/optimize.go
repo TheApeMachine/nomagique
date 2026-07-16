@@ -13,21 +13,6 @@ const (
 	lbfgsMajorIterations = 80
 )
 
-func (estimator *BivariateEstimator) maximizeLikelihood(
-	stream ArrivalStream,
-	horizon time.Time,
-	context FitContext,
-	start [bivariateParamCount]float64,
-) BivariateFit {
-	return estimator.maximizeLikelihoodRestricted(
-		stream,
-		horizon,
-		context,
-		start,
-		fitUnrestricted,
-	)
-}
-
 func (estimator *BivariateEstimator) maximizeLikelihoodRestricted(
 	stream ArrivalStream,
 	horizon time.Time,
@@ -92,18 +77,6 @@ func (estimator *BivariateEstimator) maximizeLikelihoodRestricted(
 	return fit.WithIntensitiesAt(stream, horizon)
 }
 
-func (estimator *BivariateEstimator) negLogLikelihood(
-	free []float64,
-	bounds logParamBounds,
-	stream ArrivalStream,
-	horizon time.Time,
-	context FitContext,
-) (float64, BivariateFit, bool) {
-	return estimator.negLogLikelihoodRestricted(
-		free, bounds, stream, horizon, context, fitUnrestricted,
-	)
-}
-
 func (estimator *BivariateEstimator) negLogLikelihoodRestricted(
 	free []float64,
 	bounds logParamBounds,
@@ -125,18 +98,6 @@ func (estimator *BivariateEstimator) negLogLikelihoodRestricted(
 	}
 
 	return -logLikelihood, fit, true
-}
-
-func (estimator *BivariateEstimator) negLogLikelihoodGrad(
-	free []float64,
-	bounds logParamBounds,
-	stream ArrivalStream,
-	horizon time.Time,
-	context FitContext,
-) (float64, [bivariateParamCount]float64, bool) {
-	return estimator.negLogLikelihoodGradRestricted(
-		free, bounds, stream, horizon, context, fitUnrestricted,
-	)
 }
 
 func (estimator *BivariateEstimator) negLogLikelihoodGradRestricted(

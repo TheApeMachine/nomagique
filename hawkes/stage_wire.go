@@ -1,19 +1,5 @@
 package hawkes
 
-import (
-	"time"
-)
-
-func fitTimesToTime(samples []float64) []time.Time {
-	times := make([]time.Time, len(samples))
-
-	for index, sample := range samples {
-		times[index] = time.Unix(0, int64(sample))
-	}
-
-	return times
-}
-
 func EncodeMomentBatch(xStream, yStream []float64) []float64 {
 	if len(xStream) != len(yStream) || len(xStream) < 2 {
 		return nil

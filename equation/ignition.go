@@ -100,12 +100,13 @@ func (ignition *Ignition) Measure(
 	}
 
 	volumeLift := math.Max(0, input.Volume-window.lastVolume)
-	precursor := math.Max(0, math.Log(input.Last/window.lastPrice))
+	priceMove := math.Log(input.Last / window.lastPrice)
+	precursor := math.Max(0, priceMove)
 	window.volumeLift = appendPositive(window.volumeLift, volumeLift)
 	window.precursors = appendPositive(window.precursors, precursor)
 	window.spreads = appendPositive(window.spreads, spread)
 
-	output, ready, err := window.measure(volumeLift, precursor, spread)
+	output, ready, err := window.measure(volumeLift, priceMove, spread)
 	window.lastVolume = input.Volume
 	window.lastPrice = input.Last
 
@@ -143,7 +144,7 @@ func (window *ignitionWindow) measure(
 	}
 
 	rvol := volumeLift / volumeBaseline
-	precursor := precursorMove / precursorBaseline
+	precursor := math.Max(0, precursorMove) / precursorBaseline
 	compression := math.Max(0, 1-spread/spreadBaseline)
 	ignitionScore := 0.0
 
@@ -191,9 +192,11 @@ func (window *ignitionWindow) measure(
 
 	rvolDecline := math.Max(0, window.lastRVOL-rvol)
 	exhaustionScore := 0.0
+	rejection := math.Max(0, -precursorMove) / precursorBaseline
 
-	if window.lastRVOL > 0 {
-		exhaustionScore = (rvolDecline / window.lastRVOL) * (1 / (1 + precursor))
+	if window.lastRVOL > 0 && rejection > 0 {
+		exhaustionScore = (rvolDecline / window.lastRVOL) *
+			(rejection / (1 + rejection))
 	}
 
 	window.lastRVOL = rvol

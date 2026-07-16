@@ -56,7 +56,33 @@ func TestIgnition_Measure(testingTB *testing.T) {
 		Convey("It emits a zero-score observation instead of an error", func() {
 			So(err, ShouldBeNil)
 			So(ready, ShouldBeTrue)
-			So(output.Strength, ShouldBeGreaterThanOrEqualTo, 0)
+			So(output.Exhaustion, ShouldEqual, 0)
+			So(output.Strength, ShouldEqual, 0)
+		})
+	})
+
+	Convey("Given declining relative volume with a price rejection", testingTB, func() {
+		ignition := NewIgnition()
+
+		for index := range 8 {
+			_, _, _, err := ignition.Measure(ignitionInput(index))
+			So(err, ShouldBeNil)
+		}
+
+		output, ready, _, err := ignition.Measure(IgnitionInput{
+			Symbol: "BTC/USD",
+			Volume: 1140,
+			Last:   106,
+			Bid:    105.5,
+			Ask:    106.5,
+		})
+
+		Convey("It should require the rejection and remain below certainty", func() {
+			So(err, ShouldBeNil)
+			So(ready, ShouldBeTrue)
+			So(output.Exhaustion, ShouldBeGreaterThan, 0)
+			So(output.Exhaustion, ShouldBeLessThan, 1)
+			So(output.Strength, ShouldBeLessThan, 1)
 		})
 	})
 }

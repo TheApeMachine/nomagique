@@ -178,6 +178,7 @@ Directory Structure:
     │       │   ├── main.go
     │       │   ├── probe_darwin.go
     │       │   └── probe_stub.go
+    │       ├── pilot_wave.go
     │       ├── reading.go
     │       ├── solver_coherence.m
     │       ├── solver_darwin.go
@@ -12491,7 +12492,8 @@ import (
 )
 
 /*
-Fluidflow classifies laminar, turbulent, inertial, and viscous book-flow regimes.
+Fluidflow measures laminar, turbulent, inertial, and viscous book-flow evidence
+without selecting a market category.
 */
 type Fluidflow struct{}
 
@@ -12499,40 +12501,27 @@ type Fluidflow struct{}
 FluidflowInput contains the float-only fluid-flow inputs.
 */
 type FluidflowInput struct {
-	Reynolds       float64
-	Divergence     float64
-	Viscosity      float64
-	MidAddRate     float64
-	MidExecuteRate float64
-	LaminarCeiling float64
-	TurbulentFloor float64
-	TurbulentReady bool
-	DivergenceEdge float64
-	IcebergScore   float64
-	Vorticity      float64
-	Turbulence     float64
-	Memory         float64
-	Price          float64
-	SpreadBPS      float64
-	ChangePct      float64
-	Volume         float64
+	Reynolds           float64
+	Divergence         float64
+	Viscosity          float64
+	LaminarCeiling     float64
+	TurbulentFloor     float64
+	DivergenceEdge     float64
+	ViscosityBaseline  float64
+	Vorticity          float64
+	VorticityBaseline  float64
+	Turbulence         float64
+	TurbulenceBaseline float64
 }
 
 /*
 FluidflowOutput contains the float-only fluid-flow scores.
 */
 type FluidflowOutput struct {
-	Value          float64
 	LaminarScore   float64
 	TurbulentScore float64
 	InertialScore  float64
 	ViscousScore   float64
-	Strength       float64
-	Category       float64
-	Price          float64
-	SpreadBPS      float64
-	ChangePct      float64
-	Volume         float64
 }
 
 /*
@@ -12548,174 +12537,91 @@ Measure calculates fluid-flow scores from floats without artifact transport.
 func (fluidflow *Fluidflow) Measure(
 	input FluidflowInput,
 ) (FluidflowOutput, error) {
-	if input.Price <= 0 ||
-		input.SpreadBPS <= 0 ||
-		input.Volume <= 0 ||
-		math.IsNaN(input.ChangePct) ||
-		math.IsInf(input.ChangePct, 0) {
-		return FluidflowOutput{}, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"fluidflow: invalid market input",
-			nil,
-		))
+	values := []float64{
+		input.Reynolds,
+		input.Divergence,
+		input.Viscosity,
+		input.LaminarCeiling,
+		input.TurbulentFloor,
+		input.DivergenceEdge,
+		input.ViscosityBaseline,
+		input.Vorticity,
+		input.VorticityBaseline,
+		input.Turbulence,
+		input.TurbulenceBaseline,
 	}
 
-	// Viscosity (touch-band replenishment rate) can be legitimately zero — no
-	// add/cancel flux was observed in the touch band this step. That is a
-	// defined "undamped" reading, not missing data, so it is not rejected
-	// here; laminarScore and viscousScore already guard their own divisions
-	// by it below.
-	if math.IsNaN(input.Viscosity) || math.IsInf(input.Viscosity, 0) ||
-		math.IsNaN(input.Reynolds) || math.IsInf(input.Reynolds, 0) {
-		return FluidflowOutput{}, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"fluidflow: invalid mechanics input",
-			nil,
-		))
-	}
-
-	divergenceEdge := input.DivergenceEdge
-	if divergenceEdge <= 0 && input.Divergence > 0 {
-		divergenceEdge = input.Divergence
-	}
-
-	laminarScore := 0.0
-	lowReynolds := input.Reynolds <= 0 ||
-		(input.LaminarCeiling > 0 && input.Reynolds <= input.LaminarCeiling)
-	lowDivergence := input.Divergence <= 0 ||
-		(divergenceEdge > 0 && input.Divergence <= divergenceEdge)
-
-	if lowReynolds && lowDivergence {
-		laminarScore = input.Viscosity
-
-		if divergenceEdge > 0 && input.Divergence > 0 {
-			laminarScore = input.Viscosity * (1 - input.Divergence/divergenceEdge)
+	for _, value := range values {
+		if value < 0 || math.IsNaN(value) || math.IsInf(value, 0) {
+			return FluidflowOutput{}, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"fluidflow: invalid mechanics input",
+				nil,
+			))
 		}
 	}
 
-	turbulentScore := 0.0
+	reynoldsActivity := 0.0
+	reynoldsTurbulence := 0.0
+	divergenceActivity := 0.0
+	viscosityActivity := 0.0
+	vorticityActivity := 0.0
+	turbulenceActivity := 0.0
 
-	if input.TurbulentReady && input.Reynolds >= input.TurbulentFloor {
-		turbulentScore = input.Reynolds / input.TurbulentFloor
+	if input.LaminarCeiling > 0 {
+		reynoldsActivity = input.Reynolds / input.LaminarCeiling
 	}
 
-	if input.Turbulence > 0 && input.TurbulentReady {
-		turbulentFromField := input.Turbulence * input.Reynolds
-
-		if turbulentFromField > turbulentScore {
-			turbulentScore = turbulentFromField
-		}
+	if input.TurbulentFloor > 0 {
+		reynoldsTurbulence = input.Reynolds / input.TurbulentFloor
 	}
 
-	if input.Vorticity > 0 && input.TurbulentReady {
-		vortScore := input.Vorticity * input.Turbulence
-
-		if vortScore > turbulentScore {
-			turbulentScore = vortScore
-		}
+	if input.DivergenceEdge > 0 {
+		divergenceActivity = input.Divergence / input.DivergenceEdge
 	}
 
-	inertialScore := input.Divergence
+	if input.ViscosityBaseline > 0 {
+		viscosityActivity = input.Viscosity / input.ViscosityBaseline
+	}
+
+	if input.VorticityBaseline > 0 {
+		vorticityActivity = input.Vorticity / input.VorticityBaseline
+	}
+
+	if input.TurbulenceBaseline > 0 {
+		turbulenceActivity = input.Turbulence / input.TurbulenceBaseline
+	}
+
+	fieldActivity := math.Max(
+		reynoldsActivity,
+		math.Max(divergenceActivity, math.Max(vorticityActivity, turbulenceActivity)),
+	)
+	laminarScore := viscosityActivity / math.Max(1, fieldActivity)
+	turbulentScore := math.Max(
+		0,
+		math.Max(
+			reynoldsTurbulence,
+			math.Max(vorticityActivity, turbulenceActivity),
+		)-1,
+	)
+	inertialScore := math.Max(
+		0,
+		math.Min(reynoldsActivity, divergenceActivity)-1,
+	)
 	viscousScore := 0.0
 
-	if input.Viscosity > 0 {
-		viscousScore = input.Divergence / input.Viscosity
-	}
-
-	if input.IcebergScore > 0 {
-		viscousScore = math.Max(viscousScore, input.IcebergScore)
-	}
-
-	if !math.IsNaN(input.Memory) && !math.IsInf(input.Memory, 0) && input.Memory > 0 {
-		viscousScore = math.Max(viscousScore, input.Memory*input.Viscosity)
-	}
-
-	midActivity := input.MidAddRate + input.MidExecuteRate
-
-	if midActivity > 0 {
-		executeShare := input.MidExecuteRate / midActivity
-		addShare := input.MidAddRate / midActivity
-
-		inertialScore = math.Max(inertialScore, executeShare*input.Divergence)
-
-		if addShare > executeShare {
-			laminarRegime := input.LaminarCeiling > 0 &&
-				input.Reynolds <= input.LaminarCeiling &&
-				divergenceEdge > 0 &&
-				input.Divergence <= divergenceEdge
-
-			if !laminarRegime {
-				viscousScore = math.Max(viscousScore, addShare*input.Viscosity)
-			}
-		}
-
-		if input.TurbulentReady && executeShare > 0 {
-			turbulentScore = math.Max(turbulentScore, executeShare*input.Reynolds)
-		}
-	}
-
-	category := 1
-	best := laminarScore
-
-	if turbulentScore > best {
-		best = turbulentScore
-		category = 2
-	}
-
-	if inertialScore > best {
-		best = inertialScore
-		category = 3
-	}
-
-	if viscousScore > best {
-		best = viscousScore
-		category = 4
-	}
-
-	if best <= 0 &&
-		input.Price > 0 &&
-		input.LaminarCeiling > 0 &&
-		input.Reynolds <= input.LaminarCeiling {
-		category = 1
-		laminarScore = input.Viscosity
-		best = laminarScore
-	}
-
-	strength := input.Reynolds
-
-	if strength <= 0 || math.IsNaN(strength) || math.IsInf(strength, 0) {
-		strength = math.Max(
-			laminarScore,
-			math.Max(turbulentScore, math.Max(inertialScore, viscousScore)),
+	if input.Viscosity > 0 && input.ViscosityBaseline > 0 {
+		viscousScore = math.Max(
+			0,
+			math.Min(input.ViscosityBaseline/input.Viscosity, divergenceActivity)-1,
 		)
 	}
 
-	// Every score being exactly zero means the touch showed no measurable
-	// flow, divergence, or replenishment this tick — a defined "idle book"
-	// reading, not a missing one. category is already 1 (laminar) by
-	// construction when nothing else scored higher.
-	if strength <= 0 || math.IsNaN(strength) || math.IsInf(strength, 0) {
-		return FluidflowOutput{
-			Category:  float64(category),
-			Price:     input.Price,
-			SpreadBPS: input.SpreadBPS,
-			ChangePct: input.ChangePct,
-			Volume:    input.Volume,
-		}, nil
-	}
-
 	return FluidflowOutput{
-		Value:          strength,
 		LaminarScore:   laminarScore,
 		TurbulentScore: turbulentScore,
 		InertialScore:  inertialScore,
 		ViscousScore:   viscousScore,
-		Strength:       strength,
-		Category:       float64(category),
-		Price:          input.Price,
-		SpreadBPS:      input.SpreadBPS,
-		ChangePct:      input.ChangePct,
-		Volume:         input.Volume,
 	}, nil
 }
 
@@ -12827,12 +12733,13 @@ func (ignition *Ignition) Measure(
 	}
 
 	volumeLift := math.Max(0, input.Volume-window.lastVolume)
-	precursor := math.Max(0, math.Log(input.Last/window.lastPrice))
+	priceMove := math.Log(input.Last / window.lastPrice)
+	precursor := math.Max(0, priceMove)
 	window.volumeLift = appendPositive(window.volumeLift, volumeLift)
 	window.precursors = appendPositive(window.precursors, precursor)
 	window.spreads = appendPositive(window.spreads, spread)
 
-	output, ready, err := window.measure(volumeLift, precursor, spread)
+	output, ready, err := window.measure(volumeLift, priceMove, spread)
 	window.lastVolume = input.Volume
 	window.lastPrice = input.Last
 
@@ -12870,7 +12777,7 @@ func (window *ignitionWindow) measure(
 	}
 
 	rvol := volumeLift / volumeBaseline
-	precursor := precursorMove / precursorBaseline
+	precursor := math.Max(0, precursorMove) / precursorBaseline
 	compression := math.Max(0, 1-spread/spreadBaseline)
 	ignitionScore := 0.0
 
@@ -12918,9 +12825,11 @@ func (window *ignitionWindow) measure(
 
 	rvolDecline := math.Max(0, window.lastRVOL-rvol)
 	exhaustionScore := 0.0
+	rejection := math.Max(0, -precursorMove) / precursorBaseline
 
-	if window.lastRVOL > 0 {
-		exhaustionScore = (rvolDecline / window.lastRVOL) * (1 / (1 + precursor))
+	if window.lastRVOL > 0 && rejection > 0 {
+		exhaustionScore = (rvolDecline / window.lastRVOL) *
+			(rejection / (1 + rejection))
 	}
 
 	window.lastRVOL = rvol
@@ -12984,20 +12893,14 @@ var FluidflowInputKeys = []string{
 	"reynolds",
 	"divergence",
 	"viscosity",
-	"midAddRate",
-	"midExecuteRate",
 	"laminarCeiling",
 	"turbulentFloor",
-	"turbulentReady",
 	"divergenceEdge",
-	"icebergScore",
+	"viscosityBaseline",
 	"vorticity",
+	"vorticityBaseline",
 	"turbulence",
-	"memory",
-	"price",
-	"spreadBPS",
-	"changePct",
-	"volume",
+	"turbulenceBaseline",
 }
 
 var FlowInputKeys = []string{
@@ -26724,6 +26627,8 @@ typedef struct ManifoldControls {
     float metabolic_rate;
     float topdown_phase_scale;
     float topdown_energy_scale;
+    float g_interaction;
+    float energy_decay;
 } ManifoldControls;
 
 typedef struct ManifoldReading {
@@ -26817,6 +26722,18 @@ int manifold_solver_run_gas_transport(void *handle, char *err_out, int err_cap);
 int manifold_solver_read_rho_projection(
     void *handle,
     float *out,
+    uint32_t out_length,
+    uint32_t *grid_x,
+    uint32_t *grid_z,
+    char *err_out,
+    int err_cap
+);
+
+int manifold_solver_read_pilot_wave_projection(
+    void *handle,
+    float *mag2_out,
+    float *vel_x_out,
+    float *vel_z_out,
     uint32_t out_length,
     uint32_t *grid_x,
     uint32_t *grid_z,
@@ -26934,12 +26851,16 @@ type RuntimeControls struct {
 	MetabolicRate      float64
 	TopdownPhaseScale  float64
 	TopdownEnergyScale float64
+	GInteraction       float64
+	EnergyDecay        float64
 }
 
 func (config Config) RuntimeControls() RuntimeControls {
 	return RuntimeControls{
 		DeltaT:        config.DeltaT,
 		MetabolicRate: config.MetabolicRate(),
+		GInteraction:  config.GInteraction(),
+		EnergyDecay:   config.EnergyDecay(),
 	}
 }
 
@@ -26949,6 +26870,8 @@ func (controls RuntimeControls) Validate() error {
 		"metabolic_rate":       controls.MetabolicRate,
 		"topdown_phase_scale":  controls.TopdownPhaseScale,
 		"topdown_energy_scale": controls.TopdownEnergyScale,
+		"g_interaction":        controls.GInteraction,
+		"energy_decay":         controls.EnergyDecay,
 	}
 
 	for name, value := range values {
@@ -26971,6 +26894,14 @@ func (controls RuntimeControls) Validate() error {
 
 	if controls.TopdownEnergyScale < 0 {
 		return fmt.Errorf("physics: runtime control topdown_energy_scale must be non-negative")
+	}
+
+	if controls.GInteraction <= 0 {
+		return fmt.Errorf("physics: runtime control g_interaction must be positive")
+	}
+
+	if controls.EnergyDecay < 0 {
+		return fmt.Errorf("physics: runtime control energy_decay must be non-negative")
 	}
 
 	return nil
@@ -31978,6 +31909,24 @@ func metallibLoadError(payload []byte) string {
 ---
 
 ---
+File: /physics/manifold/pilot_wave.go
+---
+
+package manifold
+
+/*
+PilotWaveProjection is the price-time slice of the coherence field and its
+guidance velocity used by the terminal fluid canvas.
+*/
+type PilotWaveProjection struct {
+	Mag2 [][]float64
+	VelX [][]float64
+	VelZ [][]float64
+}
+
+---
+
+---
 File: /physics/manifold/reading.go
 ---
 
@@ -32461,6 +32410,8 @@ func (solver *Solver) SetControls(controls RuntimeControls) error {
 		metabolic_rate:       C.float(controls.MetabolicRate),
 		topdown_phase_scale:  C.float(controls.TopdownPhaseScale),
 		topdown_energy_scale: C.float(controls.TopdownEnergyScale),
+		g_interaction:        C.float(controls.GInteraction),
+		energy_decay:         C.float(controls.EnergyDecay),
 	}
 
 	err := solver.call(func(errBuf []byte) C.int {
@@ -32702,19 +32653,74 @@ func (solver *Solver) ReadRhoProjection() ([][]float64, error) {
 		return nil, err
 	}
 
-	rows := make([][]float64, cGridZ)
+	return rowsFromBuffer(buffer, cGridX, cGridZ), nil
+}
 
-	for zIndex := range cGridZ {
-		row := make([]float64, cGridX)
+/*
+ReadPilotWaveProjection returns the max-|psi|^2 slice over Y and the guidance
+velocity field derived from the Bohm current at each projected column.
+*/
+func (solver *Solver) ReadPilotWaveProjection() (PilotWaveProjection, error) {
+	if solver == nil || solver.handle == nil {
+		return PilotWaveProjection{}, fmt.Errorf("physics: solver is not initialized")
+	}
 
-		for xIndex := range cGridX {
-			row[xIndex] = float64(buffer[xIndex+zIndex*cGridX])
+	gridX := solver.config.GridX
+	gridZ := solver.config.GridZ
+	length := int(gridX * gridZ)
+	mag2 := make([]float32, length)
+	velX := make([]float32, length)
+	velZ := make([]float32, length)
+
+	var (
+		cGridX C.uint32_t
+		cGridZ C.uint32_t
+	)
+
+	err := solver.call(func(errBuf []byte) C.int {
+		return C.manifold_solver_read_pilot_wave_projection(
+			solver.handle,
+			(*C.float)(unsafe.Pointer(&mag2[0])),
+			(*C.float)(unsafe.Pointer(&velX[0])),
+			(*C.float)(unsafe.Pointer(&velZ[0])),
+			C.uint32_t(length),
+			&cGridX,
+			&cGridZ,
+			(*C.char)(unsafe.Pointer(&errBuf[0])),
+			C.int(len(errBuf)),
+		)
+	})
+	runtime.KeepAlive(mag2)
+	runtime.KeepAlive(velX)
+	runtime.KeepAlive(velZ)
+	runtime.KeepAlive(&cGridX)
+	runtime.KeepAlive(&cGridZ)
+
+	if err != nil {
+		return PilotWaveProjection{}, err
+	}
+
+	return PilotWaveProjection{
+		Mag2: rowsFromBuffer(mag2, cGridX, cGridZ),
+		VelX: rowsFromBuffer(velX, cGridX, cGridZ),
+		VelZ: rowsFromBuffer(velZ, cGridX, cGridZ),
+	}, nil
+}
+
+func rowsFromBuffer(buffer []float32, gridX, gridZ C.uint32_t) [][]float64 {
+	rows := make([][]float64, gridZ)
+
+	for zIndex := range gridZ {
+		row := make([]float64, gridX)
+
+		for xIndex := range gridX {
+			row[xIndex] = float64(buffer[xIndex+zIndex*gridX])
 		}
 
 		rows[zIndex] = row
 	}
 
-	return rows, nil
+	return rows
 }
 
 func (solver *Solver) ReadProjectionReading() (Reading, error) {
@@ -32972,7 +32978,28 @@ static float manifold_wrap_coordinate(float value, float extent) {
         return NO;
     }
 
+    if (!isfinite(controls->g_interaction) || controls->g_interaction <= 0.0f) {
+        if (error != nil) {
+            *error = @"runtime control g_interaction must be positive and finite";
+        }
+
+        return NO;
+    }
+
+    if (!isfinite(controls->energy_decay) || controls->energy_decay < 0.0f) {
+        if (error != nil) {
+            *error = @"runtime control energy_decay must be non-negative and finite";
+        }
+
+        return NO;
+    }
+
     self.controls = *controls;
+
+    ManifoldConfig config = self.config;
+    config.g_interaction = controls->g_interaction;
+    config.energy_decay = controls->energy_decay;
+    self.config = config;
 
     return YES;
 }
@@ -33812,6 +33839,149 @@ static float manifold_wrap_coordinate(float value, float extent) {
     return YES;
 }
 
+- (BOOL)readPilotWaveProjection:(float *)mag2Out
+                          velX:(float *)velXOut
+                          velZ:(float *)velZOut
+                         length:(uint32_t)length
+                          error:(NSString **)error {
+    if (mag2Out == NULL || velXOut == NULL || velZOut == NULL) {
+        if (error != NULL) {
+            *error = @"pilot-wave projection buffers are required";
+        }
+
+        return NO;
+    }
+
+    float *reData = (float *)self.psiReField.contents;
+    float *imData = (float *)self.psiImField.contents;
+    uint32_t gx = self.config.grid_x;
+    uint32_t gy = self.config.grid_y;
+    uint32_t gz = self.config.grid_z;
+    uint32_t expected = gx * gz;
+
+    if (length < expected) {
+        if (error != NULL) {
+            *error = @"pilot-wave projection buffer is too small";
+        }
+
+        return NO;
+    }
+
+    float cellX = self.config.domain_x / (float)gx;
+    float cellZ = self.config.domain_z / (float)gz;
+    float hbarEff = self.config.hbar_eff;
+    float massMin = self.config.rho_min;
+
+    if (!(cellX > 0.0f) || !(cellZ > 0.0f) || !(hbarEff > 0.0f) || !(massMin > 0.0f)) {
+        if (error != NULL) {
+            *error = @"pilot-wave projection requires positive cell scale and mass floor";
+        }
+
+        return NO;
+    }
+
+    float invMass = 1.0f / massMin;
+    uint32_t xLow = self.config.boundary_x_low;
+    uint32_t xHigh = gx > 0u ? gx - 1u - self.config.boundary_x_high : 0u;
+    uint32_t yLow = self.config.boundary_y_low;
+    uint32_t yHigh = gy > 0u ? gy - 1u - self.config.boundary_y_high : 0u;
+    uint32_t zLow = self.config.boundary_z_low;
+    uint32_t zHigh = gz > 0u ? gz - 1u - self.config.boundary_z_high : 0u;
+
+    if (xLow >= gx) {
+        xLow = 0u;
+    }
+
+    if (xHigh >= gx) {
+        xHigh = gx - 1u;
+    }
+
+    if (yLow >= gy) {
+        yLow = 0u;
+    }
+
+    if (yHigh >= gy) {
+        yHigh = gy - 1u;
+    }
+
+    if (zLow >= gz) {
+        zLow = 0u;
+    }
+
+    if (zHigh >= gz) {
+        zHigh = gz - 1u;
+    }
+
+    if (xHigh < xLow) {
+        xLow = 0u;
+        xHigh = gx - 1u;
+    }
+
+    if (yHigh < yLow) {
+        yLow = 0u;
+        yHigh = gy - 1u;
+    }
+
+    if (zHigh < zLow) {
+        zLow = 0u;
+        zHigh = gz - 1u;
+    }
+
+    for (uint32_t zIndex = 0; zIndex < gz; zIndex++) {
+        for (uint32_t xIndex = 0; xIndex < gx; xIndex++) {
+            float peakMag2 = 0.0f;
+            uint32_t peakY = yLow;
+
+            for (uint32_t yIndex = yLow; yIndex <= yHigh; yIndex++) {
+                uint32_t index = manifold_cell_index(xIndex, yIndex, zIndex, gx, gy, gz);
+                float re = reData[index];
+                float im = imData[index];
+                float mag2 = re * re + im * im;
+
+                if (mag2 > peakMag2) {
+                    peakMag2 = mag2;
+                    peakY = yIndex;
+                }
+            }
+
+            uint32_t xMinus = xIndex > xLow ? xIndex - 1u : xIndex;
+            uint32_t xPlus = xIndex < xHigh ? xIndex + 1u : xIndex;
+            uint32_t zMinus = zIndex > zLow ? zIndex - 1u : zIndex;
+            uint32_t zPlus = zIndex < zHigh ? zIndex + 1u : zIndex;
+
+            uint32_t centerIndex = manifold_cell_index(xIndex, peakY, zIndex, gx, gy, gz);
+            uint32_t xPlusIndex = manifold_cell_index(xPlus, peakY, zIndex, gx, gy, gz);
+            uint32_t xMinusIndex = manifold_cell_index(xMinus, peakY, zIndex, gx, gy, gz);
+            uint32_t zPlusIndex = manifold_cell_index(xIndex, peakY, zPlus, gx, gy, gz);
+            uint32_t zMinusIndex = manifold_cell_index(xIndex, peakY, zMinus, gx, gy, gz);
+
+            float re = reData[centerIndex];
+            float im = imData[centerIndex];
+            float dReDx = (reData[xPlusIndex] - reData[xMinusIndex]) / (2.0f * cellX);
+            float dReDz = (reData[zPlusIndex] - reData[zMinusIndex]) / (2.0f * cellZ);
+            float dImDx = (imData[xPlusIndex] - imData[xMinusIndex]) / (2.0f * cellX);
+            float dImDz = (imData[zPlusIndex] - imData[zMinusIndex]) / (2.0f * cellZ);
+            float denom = re * re + im * im + massMin;
+            float currentX = 0.0f;
+            float currentZ = 0.0f;
+
+            if (isfinite(re) && isfinite(im) && isfinite(denom) && denom > 0.0f &&
+                isfinite(dReDx) && isfinite(dReDz) && isfinite(dImDx) && isfinite(dImDz)) {
+                currentX = (re * dImDx - im * dReDx) / denom;
+                currentZ = (re * dImDz - im * dReDz) / denom;
+            }
+
+            uint32_t outIndex = xIndex + zIndex * gx;
+
+            mag2Out[outIndex] = peakMag2;
+            velXOut[outIndex] = currentX * hbarEff * invMass;
+            velZOut[outIndex] = currentZ * hbarEff * invMass;
+        }
+    }
+
+    return YES;
+}
+
 - (BOOL)readRhoMaxProjection:(float *)out length:(uint32_t)length error:(NSString **)error {
     if (out == NULL) {
         if (error != NULL) {
@@ -34188,6 +34358,41 @@ int manifold_solver_read_rho_projection(
 
     if (![solver readRhoMaxProjection:out length:out_length error:&error]) {
         manifold_write_error(err_out, err_cap, error ?: @"rho projection read failed");
+        return 1;
+    }
+
+    *grid_x = solver.config.grid_x;
+    *grid_z = solver.config.grid_z;
+
+    return 0;
+}
+
+int manifold_solver_read_pilot_wave_projection(
+    void *handle,
+    float *mag2_out,
+    float *vel_x_out,
+    float *vel_z_out,
+    uint32_t out_length,
+    uint32_t *grid_x,
+    uint32_t *grid_z,
+    char *err_out,
+    int err_cap
+) {
+    if (handle == NULL || mag2_out == NULL || vel_x_out == NULL || vel_z_out == NULL ||
+        grid_x == NULL || grid_z == NULL) {
+        manifold_write_error(err_out, err_cap, @"solver handle and pilot-wave projection buffers are required");
+        return 1;
+    }
+
+    ManifoldSolver *solver = (__bridge ManifoldSolver *)handle;
+    NSString *error = nil;
+
+    if (![solver readPilotWaveProjection:mag2_out
+                                    velX:vel_x_out
+                                    velZ:vel_z_out
+                                  length:out_length
+                                   error:&error]) {
+        manifold_write_error(err_out, err_cap, error ?: @"pilot-wave projection read failed");
         return 1;
     }
 
@@ -36394,6 +36599,10 @@ func (solver *Solver) Step() (Reading, error) {
 
 func (solver *Solver) ReadRhoProjection() ([][]float64, error) {
 	return nil, fmt.Errorf("physics: Metal manifold solver unavailable on this platform")
+}
+
+func (solver *Solver) ReadPilotWaveProjection() (PilotWaveProjection, error) {
+	return PilotWaveProjection{}, fmt.Errorf("physics: Metal manifold solver unavailable on this platform")
 }
 
 func (solver *Solver) ReadProjectionReading() (Reading, error) {

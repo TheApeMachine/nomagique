@@ -535,11 +535,12 @@ static float manifold_wrap_coordinate(float value, float extent) {
 
     [self runCopyFloat:self.momRhoStage dst:self.momRho count:(self.numCells * 4)];
     [self runCopyFloat:self.eStage dst:self.eInt count:self.numCells];
-    [self resetSourcesInternal];
 
     if (self.stepDispatchActive) {
-        return YES;
+        [self flushStepDispatches];
     }
+
+    [self resetSourcesInternal];
 
     return [self conservedStateIsFinite:error];
 }

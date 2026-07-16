@@ -110,6 +110,33 @@ func TestSolverSetControls(t *testing.T) {
 	})
 }
 
+func TestSolverStepSizesTransportAfterSources(t *testing.T) {
+	convey.Convey("Given a source impulse stronger than the carrier velocity", t, func() {
+		config := smallTestConfig()
+		solver, err := NewSolver(config)
+		convey.So(err, convey.ShouldBeNil)
+		defer solver.Close()
+
+		posX, posY, posZ := config.testCellCenter(4, 0, 1)
+		convey.So(solver.SetOscillators([]Oscillator{{
+			Phase:     0.5,
+			Omega:     6.28,
+			Amplitude: 0.2,
+			PosX:      posX,
+			PosY:      posY,
+			PosZ:      posZ,
+			Heat:      0.2,
+		}}), convey.ShouldBeNil)
+		convey.So(solver.SourceCell(4, 0, 1, 5, 0, 0, 0, 0), convey.ShouldBeNil)
+
+		reading, stepErr := solver.Step()
+
+		convey.So(stepErr, convey.ShouldBeNil)
+		convey.So(math.IsNaN(reading.PressureGradNorm), convey.ShouldBeFalse)
+		convey.So(math.IsInf(reading.PressureGradNorm, 0), convey.ShouldBeFalse)
+	})
+}
+
 func TestReadProjectionReading(t *testing.T) {
 	convey.Convey("Given a deposited rho lattice", t, func() {
 		config := smallTestConfig()
@@ -429,8 +456,11 @@ func TestSolverCarrierThreshold(t *testing.T) {
 	for _, count := range []int{128} {
 		t.Run(fmt.Sprintf("count=%d", count), func(t *testing.T) {
 			solver, err := NewSolver(config)
-			convey.So(err, convey.ShouldBeNil)
-			convey.So(solver, convey.ShouldNotBeNil)
+
+			if err != nil {
+				t.Fatal(err)
+			}
+
 			posX, posY, posZ := config.testCellCenter(1, 0, 1)
 
 			defer solver.Close()
@@ -537,8 +567,10 @@ func TestSolverMultiSymbolDeposits(t *testing.T) {
 	carrierCount := 128
 
 	solver, err := NewSolver(config)
-	convey.So(err, convey.ShouldBeNil)
-	convey.So(solver, convey.ShouldNotBeNil)
+
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	defer solver.Close()
 
@@ -604,8 +636,11 @@ func TestSpreadDepositOscCount(t *testing.T) {
 		t.Run(testCase.name, func(t *testing.T) {
 			config := productionTestConfig()
 			solver, err := NewSolver(config)
-			convey.So(err, convey.ShouldBeNil)
-			convey.So(solver, convey.ShouldNotBeNil)
+
+			if err != nil {
+				t.Fatal(err)
+			}
+
 			posX, posY, posZ := config.testCellCenter(1, 0, 1)
 
 			defer solver.Close()
@@ -665,8 +700,11 @@ func TestSpreadDepositOscCount(t *testing.T) {
 func TestSingleCarrierDepositMagnitude(t *testing.T) {
 	config := productionTestConfig()
 	solver, err := NewSolver(config)
-	convey.So(err, convey.ShouldBeNil)
-	convey.So(solver, convey.ShouldNotBeNil)
+
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	posX, posY, posZ := config.testCellCenter(1, 0, 1)
 
 	defer solver.Close()
@@ -714,8 +752,10 @@ func BenchmarkSolverStep(b *testing.B) {
 	config = config.stableGasTestConfig(0, 1)
 
 	solver, err := NewSolver(config)
-	convey.So(err, convey.ShouldBeNil)
-	convey.So(solver, convey.ShouldNotBeNil)
+
+	if err != nil {
+		b.Fatal(err)
+	}
 
 	defer solver.Close()
 
@@ -778,8 +818,10 @@ func TestMaxModesVsOscCount(t *testing.T) {
 			posX, posY, posZ := config.testCellCenter(1, 0, 1)
 
 			solver, err := NewSolver(config)
-			convey.So(err, convey.ShouldBeNil)
-			convey.So(solver, convey.ShouldNotBeNil)
+
+			if err != nil {
+				t.Fatal(err)
+			}
 
 			defer solver.Close()
 

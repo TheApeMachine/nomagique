@@ -76,9 +76,10 @@ conductivity rate, so the RK stages consume the complete requested interval.
         }
 
         float sound = sqrtf(self.config.gamma * (self.config.gamma - 1.0f) * energy / rho);
-        maxWaveX = fmaxf(maxWaveX, fabsf(momRho[base] / rho) + sound);
-        maxWaveY = fmaxf(maxWaveY, fabsf(momRho[base + 1] / rho) + sound);
-        maxWaveZ = fmaxf(maxWaveZ, fabsf(momRho[base + 2] / rho) + sound);
+        float rarefaction = 2.0f * sound / (self.config.gamma - 1.0f);
+        maxWaveX = fmaxf(maxWaveX, fabsf(momRho[base] / rho) + rarefaction);
+        maxWaveY = fmaxf(maxWaveY, fabsf(momRho[base + 1] / rho) + rarefaction);
+        maxWaveZ = fmaxf(maxWaveZ, fabsf(momRho[base + 2] / rho) + rarefaction);
     }
 
     *rate = maxWaveX * (float)self.config.grid_x / self.config.domain_x +

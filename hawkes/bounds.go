@@ -3,12 +3,12 @@ package hawkes
 import (
 	"math"
 
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/decay"
 )
 
 const (
 	softplusLinearAt = 20
-	softplusFloor    = 1e-12
 	paramRatioFloor  = 1e-9
 )
 
@@ -22,12 +22,25 @@ type logParamBounds struct {
 	upper [bivariateParamCount]float64
 }
 
-func (context FitContext) logParamBounds() logParamBounds {
+func (context FitContext) logParamBounds() (logParamBounds, error) {
 	betaMin := context.BetaCandidates[0]
 	betaMax := context.BetaCandidates[len(context.BetaCandidates)-1]
 	selfMax := context.BranchCeiling * selfBranchShareFromContext(context)
 	crossMax := context.BranchCeiling
-	crossMin := crossBranchFloorFromContext(context)
+	crossMin, err := crossBranchFloorFromContext(context)
+
+	if err != nil {
+		return logParamBounds{}, err
+	}
+
+	if !(context.SpanSec > 0) {
+		return logParamBounds{}, errnie.Err(
+			errnie.Validation,
+			"hawkes: log param bounds require positive span",
+			nil,
+		)
+	}
+
 	minRate := 1 / context.SpanSec
 	maxRate := float64(context.TotalEvents) / context.SpanSec
 
@@ -50,7 +63,7 @@ func (context FitContext) logParamBounds() logParamBounds {
 			math.Log(crossMax),
 			math.Log(selfMax),
 		},
-	}
+	}, nil
 }
 
 func (bounds logParamBounds) decode(
@@ -113,12 +126,34 @@ func (bounds logParamBounds) softplusJacobian(
 	return jacobian
 }
 
-func crossBranchFloorFromContext(context FitContext) float64 {
-	if context.BranchFloor > 0 {
-		return context.BranchFloor * math.Sqrt(math.Nextafter(1, 2)-1)
+func crossBranchFloorFromContext(context FitContext) (float64, error) {
+	radicand := math.Nextafter(1, 2) - 1
+	scale := math.Max(1, math.Abs(radicand))
+	tolerance := 32 * radicand * scale
+
+	if radicand < -tolerance {
+		return 0, errnie.Err(
+			errnie.Validation,
+			"hawkes: machine-epsilon radicand is negative beyond tolerance",
+			nil,
+		)
 	}
 
-	return 1 / context.SpanSec / float64(context.TotalEvents)
+	machineSqrt := math.Sqrt(math.Max(0, radicand))
+
+	if context.BranchFloor > 0 {
+		return context.BranchFloor * machineSqrt, nil
+	}
+
+	if !(context.SpanSec > 0) || context.TotalEvents <= 0 {
+		return 0, errnie.Err(
+			errnie.Validation,
+			"hawkes: cross-branch floor requires positive span and event mass",
+			nil,
+		)
+	}
+
+	return 1 / context.SpanSec / float64(context.TotalEvents), nil
 }
 
 func selfBranchShareFromContext(context FitContext) float64 {
@@ -134,7 +169,17 @@ func softplus(value float64) float64 {
 		return value
 	}
 
-	return math.Log1p(math.Exp(value))
+	argument := math.Exp(value)
+
+	if !(argument > -1) {
+		panic(errnie.Err(
+			errnie.Validation,
+			"hawkes: softplus Log1p argument must be greater than -1",
+			nil,
+		))
+	}
+
+	return math.Log1p(argument)
 }
 
 func inverseSoftplus(value float64) float64 {
@@ -142,11 +187,25 @@ func inverseSoftplus(value float64) float64 {
 		return value
 	}
 
-	if value <= softplusFloor {
-		value = softplusFloor
+	if !(value > 0) {
+		panic(errnie.Err(
+			errnie.Validation,
+			"hawkes: inverseSoftplus argument must be strictly positive",
+			nil,
+		))
 	}
 
-	return math.Log(math.Expm1(value))
+	expm1 := math.Expm1(value)
+
+	if !(expm1 > 0) {
+		panic(errnie.Err(
+			errnie.Validation,
+			"hawkes: inverseSoftplus log argument must be strictly positive",
+			nil,
+		))
+	}
+
+	return math.Log(expm1)
 }
 
 func softplusDerivative(value float64) float64 {

@@ -138,7 +138,11 @@ func (flow *Flow) Measure(input FlowInput) (FlowOutput, error) {
 	starvation := 0.0
 
 	if hiddenAbsorption {
-		absorption = netFraction * (1 / (1 + impactEfficiency))
+		impactScale := impactEfficiencyScale(flatThreshold, firstPrice, flowPressure, impactEfficiency)
+
+		if impactScale > 0 {
+			absorption = netFraction * inverseSquash(impactEfficiency, impactScale)
+		}
 	}
 
 	if highNet && flowAligned && !flatPrice {
@@ -174,6 +178,23 @@ const (
 	flowCategoryStarvation = 4
 	basisPointsPerUnit     = 10000
 )
+
+func impactEfficiencyScale(
+	flatThreshold float64,
+	firstPrice float64,
+	flowPressure float64,
+	impactEfficiency float64,
+) float64 {
+	if flatThreshold > 0 && firstPrice > 0 && flowPressure > 0 {
+		expectedBps := math.Abs(flatThreshold) / firstPrice * basisPointsPerUnit
+
+		if expectedBps > 0 && !math.IsNaN(expectedBps) && !math.IsInf(expectedBps, 0) {
+			return expectedBps / flowPressure
+		}
+	}
+
+	return magnitudeScale(impactEfficiency)
+}
 
 func medianAbsoluteMove(prices []float64) float64 {
 	moves := priceMoves(prices)

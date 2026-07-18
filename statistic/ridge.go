@@ -174,7 +174,15 @@ func (solver *RidgeSolver) ridgeLambda(normal [][]float64) float64 {
 }
 
 func machineSqrtEpsilon() float64 {
-	return math.Sqrt(math.Nextafter(1, 2) - 1)
+	radicand := math.Nextafter(1, 2) - 1
+	scale := math.Max(1, math.Abs(radicand))
+	tolerance := 32 * radicand * scale
+
+	if radicand < -tolerance {
+		panic("statistic: machine-epsilon radicand is negative beyond tolerance")
+	}
+
+	return math.Sqrt(math.Max(0, radicand))
 }
 
 func (solver *RidgeSolver) conditionEstimate(normal [][]float64) float64 {

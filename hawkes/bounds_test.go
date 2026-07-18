@@ -30,7 +30,8 @@ func TestLogParamBounds_encodeDecode(t *testing.T) {
 			BranchCeiling:  0.9,
 			LocalScales:    []float64{0.5},
 		}
-		bounds := context.logParamBounds()
+		bounds, err := context.logParamBounds()
+		So(err, ShouldBeNil)
 		start := bounds.encode([bivariateParamCount]float64{
 			0, 0, 0, -2, -3, -3, -2,
 		})

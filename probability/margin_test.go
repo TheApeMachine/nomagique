@@ -45,3 +45,11 @@ func TestMagnitudeMargin(testingTB *testing.T) {
 		})
 	})
 }
+
+func BenchmarkMagnitudeMargin(b *testing.B) {
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_, _ = MagnitudeMargin(12.0)
+	}
+}

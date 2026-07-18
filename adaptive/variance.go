@@ -6,12 +6,9 @@ import "math"
 Variance tracks an adaptive mean and variance from the observed sample stream.
 */
 type Variance struct {
-	mean     float64
-	variance float64
-	prev     float64
-	min      float64
-	max      float64
-	count    int
+	mean  float64
+	m2    float64
+	count int
 }
 
 /*
@@ -39,16 +36,12 @@ func (variance *Variance) Measure(sample float64) (VarianceOutput, error) {
 		return VarianceOutput{}, err
 	}
 
-	if variance.count == 0 {
-		variance.mean = sample
-		variance.variance = 0
-		variance.prev = sample
-		variance.min = sample
-		variance.max = sample
-		variance.count = 1
+	variance.count++
 
-		// A single observation has exactly zero variance around itself.
-		// That is a defined answer, not a missing one.
+	if variance.count == 1 {
+		variance.mean = sample
+		variance.m2 = 0
+
 		return VarianceOutput{
 			Value: 0,
 			Mean:  variance.mean,
@@ -57,35 +50,19 @@ func (variance *Variance) Measure(sample float64) (VarianceOutput, error) {
 		}, nil
 	}
 
-	variance.min = math.Min(variance.min, sample)
-	variance.max = math.Max(variance.max, sample)
-	variance.count++
-	span := variance.max - variance.min
+	delta := sample - variance.mean
+	variance.mean += delta / float64(variance.count)
+	delta2 := sample - variance.mean
+	variance.m2 += delta * delta2
 
-	if span == 0 {
-		variance.prev = sample
+	value := variance.m2 / float64(variance.count-1)
 
-		// Every sample observed so far is identical, so the mean is
-		// exactly that value even though the variance rate is
-		// indeterminate without any observed spread.
-		return VarianceOutput{
-			Mean:  variance.mean,
-			Ready: false,
-			Count: variance.count,
-		}, nil
+	if value < 0 || math.IsNaN(value) || math.IsInf(value, 0) {
+		value = 0
 	}
 
-	rate := math.Abs(sample-variance.prev) / span
-	deviation := sample - variance.mean
-	variance.mean += rate * (sample - variance.mean)
-	variance.variance += rate * (deviation*deviation - variance.variance)
-	variance.prev = sample
-
-	// rate and deviation are both well-defined once span > 0, so the
-	// resulting variance is a defined value even when it lands exactly
-	// on zero (e.g. the sample landed back on the running mean).
 	return VarianceOutput{
-		Value: variance.variance,
+		Value: value,
 		Mean:  variance.mean,
 		Ready: true,
 		Count: variance.count,

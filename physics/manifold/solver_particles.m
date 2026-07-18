@@ -141,6 +141,8 @@ static const uint32_t kDirectInteractionLimit = 64u;
     params->inv_cell_x = 1.0f / cellX;
     params->inv_cell_y = 1.0f / cellY;
     params->inv_cell_z = 1.0f / cellZ;
+    params->domain_x = self.config.domain_x;
+    params->dt = self.controls.dt;
 }
 
 - (void)configurePilotWaveParams {
@@ -164,8 +166,12 @@ static const uint32_t kDirectInteractionLimit = 64u;
     params->domain_y = self.config.domain_y;
     params->domain_z = self.config.domain_z;
     params->hbar_eff = self.config.hbar_eff;
-    params->eps_denom = self.config.rho_min * self.config.rho_min;
-    params->mass_min = self.config.rho_min;
+    // Wave regulariser must sit far below typical |Ψ|². rho_min² is a gas
+    // floor and dominated the Bohm denominator, collapsing guidance to ~0.
+    float ampScale = 1.0f / fmaxf((float)self.numOsc, 1.0f);
+    params->eps_denom = fmaxf(1e-12f, ampScale * ampScale * 1e-8f);
+    // Floor only against numerical zero; carrier mass is oscillator amplitude.
+    params->mass_min = fmaxf(ampScale * 1e-3f, 1e-6f);
     params->boundary_x_low = self.config.boundary_x_low;
     params->boundary_x_high = self.config.boundary_x_high;
     params->boundary_y_low = self.config.boundary_y_low;
@@ -199,7 +205,8 @@ static const uint32_t kDirectInteractionLimit = 64u;
     [self dispatchGridKernel:self.projectModesToSpatialPsi
                      buffers:@[
                          self.modeReal, self.modeImag, self.modeAnchorIdx, self.modeAnchorWeight,
-                         self.particlePos, self.psiReAtomic, self.psiImAtomic, self.modeProjectParams
+                         self.particlePos, self.psiReAtomic, self.psiImAtomic, self.modeProjectParams,
+                         self.modeOmega
                      ]
                  threadCount:totalAnchors];
 

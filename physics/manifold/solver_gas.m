@@ -35,7 +35,15 @@ conductivity rate, so the RK stages consume the complete requested interval.
         return YES;
     }
 
-    double stableDelta = nextafter(1.0 / combinedRate, 0.0);
+    // Size sub-steps against a target Courant number safely below 1 rather than
+    // exactly 1. gasWaveRate samples the field BEFORE transport, but forcing and
+    // advection push cells toward near-vacuum during the step, raising the true
+    // per-substep wave speed above the sampled rate. Running the sub-step at
+    // CFL=1 then overshoots (observed courant ~1.16) and the gas kernel NaNs the
+    // cell (tag 0x21). The safety factor gives the sub-step count margin for that
+    // intra-step speed growth. 0.8 covers the observed overshoot with headroom.
+    const double kGasCFLSafety = 0.8;
+    double stableDelta = nextafter(kGasCFLSafety / combinedRate, 0.0);
     double required = ceil((double)self.controls.dt / stableDelta);
 
     if (!isfinite(required) || required > (double)UINT32_MAX) {

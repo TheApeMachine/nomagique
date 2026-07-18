@@ -1558,12 +1558,9 @@ import "math"
 Variance tracks an adaptive mean and variance from the observed sample stream.
 */
 type Variance struct {
-	mean     float64
-	variance float64
-	prev     float64
-	min      float64
-	max      float64
-	count    int
+	mean  float64
+	m2    float64
+	count int
 }
 
 /*
@@ -1591,16 +1588,12 @@ func (variance *Variance) Measure(sample float64) (VarianceOutput, error) {
 		return VarianceOutput{}, err
 	}
 
-	if variance.count == 0 {
-		variance.mean = sample
-		variance.variance = 0
-		variance.prev = sample
-		variance.min = sample
-		variance.max = sample
-		variance.count = 1
+	variance.count++
 
-		// A single observation has exactly zero variance around itself.
-		// That is a defined answer, not a missing one.
+	if variance.count == 1 {
+		variance.mean = sample
+		variance.m2 = 0
+
 		return VarianceOutput{
 			Value: 0,
 			Mean:  variance.mean,
@@ -1609,35 +1602,19 @@ func (variance *Variance) Measure(sample float64) (VarianceOutput, error) {
 		}, nil
 	}
 
-	variance.min = math.Min(variance.min, sample)
-	variance.max = math.Max(variance.max, sample)
-	variance.count++
-	span := variance.max - variance.min
+	delta := sample - variance.mean
+	variance.mean += delta / float64(variance.count)
+	delta2 := sample - variance.mean
+	variance.m2 += delta * delta2
 
-	if span == 0 {
-		variance.prev = sample
+	value := variance.m2 / float64(variance.count-1)
 
-		// Every sample observed so far is identical, so the mean is
-		// exactly that value even though the variance rate is
-		// indeterminate without any observed spread.
-		return VarianceOutput{
-			Mean:  variance.mean,
-			Ready: false,
-			Count: variance.count,
-		}, nil
+	if value < 0 || math.IsNaN(value) || math.IsInf(value, 0) {
+		value = 0
 	}
 
-	rate := math.Abs(sample-variance.prev) / span
-	deviation := sample - variance.mean
-	variance.mean += rate * (sample - variance.mean)
-	variance.variance += rate * (deviation*deviation - variance.variance)
-	variance.prev = sample
-
-	// rate and deviation are both well-defined once span > 0, so the
-	// resulting variance is a defined value even when it lands exactly
-	// on zero (e.g. the sample landed back on the running mean).
 	return VarianceOutput{
-		Value: variance.variance,
+		Value: value,
 		Mean:  variance.mean,
 		Ready: true,
 		Count: variance.count,
@@ -10197,8 +10174,6 @@ File: /equation/batch.go
 package equation
 
 import (
-	"sort"
-
 	"github.com/bytedance/sonic"
 	"github.com/theapemachine/errnie"
 )
@@ -10306,24 +10281,6 @@ func MarshalFeatureSchema(inputs []string, values []float64) []byte {
 	return json
 }
 
-func outputKeys(fields map[string]float64) []string {
-	keys := make([]string, 0, len(fields)+1)
-
-	for key := range fields {
-		keys = append(keys, key)
-	}
-
-	if _, hasStrength := fields["strength"]; !hasStrength {
-		if _, hasValue := fields["value"]; hasValue {
-			keys = append(keys, "strength")
-		}
-	}
-
-	sort.Strings(keys)
-
-	return keys
-}
-
 ---
 
 ---
@@ -10408,11 +10365,23 @@ func NewBookflow() *Bookflow {
 Measure calculates book-flow scores from floats without artifact transport.
 */
 func (bookflow *Bookflow) Measure(input BookflowInput) (BookflowOutput, error) {
-	if input.Mid <= 0 ||
-		input.Spread <= 0 ||
-		len(input.WeightedHistory) == 0 ||
-		len(input.Level1History) == 0 {
+	if input.Mid <= 0 || input.Spread <= 0 {
 		return BookflowOutput{}, nil
+	}
+
+	// First observation: history-derived thresholds have nothing to contrast
+	// against, so the baseline is nothing and the measurement is the current
+	// weighted imbalance itself with zero spoof/thin contrast.
+	if len(input.WeightedHistory) == 0 || len(input.Level1History) == 0 {
+		strength := math.Abs(input.Weighted)
+
+		return BookflowOutput{
+			Value:       strength,
+			Strength:    strength,
+			LoadedScore: strength,
+			Category:    float64(bookflowClassify(false, false, strength > 0)),
+			Ready:       true,
+		}, nil
 	}
 
 	weightedThreshold := bookflowMedianAbsolute(input.WeightedHistory)
@@ -12326,7 +12295,11 @@ func (flow *Flow) Measure(input FlowInput) (FlowOutput, error) {
 	starvation := 0.0
 
 	if hiddenAbsorption {
-		absorption = netFraction * (1 / (1 + impactEfficiency))
+		impactScale := impactEfficiencyScale(flatThreshold, firstPrice, flowPressure, impactEfficiency)
+
+		if impactScale > 0 {
+			absorption = netFraction * inverseSquash(impactEfficiency, impactScale)
+		}
 	}
 
 	if highNet && flowAligned && !flatPrice {
@@ -12362,6 +12335,23 @@ const (
 	flowCategoryStarvation = 4
 	basisPointsPerUnit     = 10000
 )
+
+func impactEfficiencyScale(
+	flatThreshold float64,
+	firstPrice float64,
+	flowPressure float64,
+	impactEfficiency float64,
+) float64 {
+	if flatThreshold > 0 && firstPrice > 0 && flowPressure > 0 {
+		expectedBps := math.Abs(flatThreshold) / firstPrice * basisPointsPerUnit
+
+		if expectedBps > 0 && !math.IsNaN(expectedBps) && !math.IsInf(expectedBps, 0) {
+			return expectedBps / flowPressure
+		}
+	}
+
+	return magnitudeScale(impactEfficiency)
+}
 
 func medianAbsoluteMove(prices []float64) float64 {
 	moves := priceMoves(prices)
@@ -12681,6 +12671,7 @@ type ignitionWindow struct {
 	lastRVOL     float64
 	volumeLift   []float64
 	precursors   []float64
+	moves        []float64
 	spreads      []float64
 	initialized  bool
 	observations int
@@ -12735,8 +12726,10 @@ func (ignition *Ignition) Measure(
 	volumeLift := math.Max(0, input.Volume-window.lastVolume)
 	priceMove := math.Log(input.Last / window.lastPrice)
 	precursor := math.Max(0, priceMove)
-	window.volumeLift = appendPositive(window.volumeLift, volumeLift)
-	window.precursors = appendPositive(window.precursors, precursor)
+	move := math.Abs(priceMove)
+	window.volumeLift = appendNonNegative(window.volumeLift, volumeLift)
+	window.precursors = appendNonNegative(window.precursors, precursor)
+	window.moves = appendNonNegative(window.moves, move)
 	window.spreads = appendPositive(window.spreads, spread)
 
 	output, ready, err := window.measure(volumeLift, priceMove, spread)
@@ -12767,18 +12760,25 @@ func (window *ignitionWindow) measure(
 	volumeBaseline, volumeReady := statistic.MedianOf(window.volumeLift)
 	spreadBaseline, spreadReady := statistic.MedianOf(window.spreads)
 	precursorBaseline, precursorReady := statistic.MedianOf(window.precursors)
+	moveBaseline, moveReady := statistic.MedianOf(window.moves)
 
-	if !volumeReady || !spreadReady || !precursorReady {
+	if !volumeReady || !spreadReady || !precursorReady || !moveReady {
 		return IgnitionOutput{}, false, nil
 	}
 
-	if volumeBaseline <= 0 || spreadBaseline <= 0 || precursorBaseline <= 0 {
+	if volumeBaseline <= 0 || spreadBaseline <= 0 || precursorBaseline <= 0 || moveBaseline <= 0 {
 		return IgnitionOutput{}, false, nil
 	}
 
 	rvol := volumeLift / volumeBaseline
 	precursor := math.Max(0, precursorMove) / precursorBaseline
 	compression := math.Max(0, 1-spread/spreadBaseline)
+	rejection := math.Max(0, -precursorMove) / moveBaseline
+
+	rvolScale := ratioScale(window.volumeLift, volumeBaseline)
+	precursorScale := ratioScale(window.precursors, precursorBaseline)
+	moveScale := ratioScale(window.moves, moveBaseline)
+	compressionScale := compressionRatioScale(window.spreads, spreadBaseline)
 	ignitionScore := 0.0
 
 	if rvol > 0 && precursor > 0 {
@@ -12796,8 +12796,8 @@ func (window *ignitionWindow) measure(
 	if rvol > 0 && precursor > 0 {
 		score, err := probability.EvidenceGeomean(
 			precursor,
-			rvol/(1+rvol),
-			1/(1+compression),
+			squashPositive(rvol, rvolScale),
+			inverseSquash(compression, compressionScale),
 		)
 
 		if err != nil {
@@ -12812,8 +12812,8 @@ func (window *ignitionWindow) measure(
 	if compression > 0 && rvol > 0 {
 		score, err := probability.EvidenceGeomean(
 			compression,
-			rvol/(1+rvol),
-			1/(1+precursor),
+			squashPositive(rvol, rvolScale),
+			inverseSquash(precursor, precursorScale),
 		)
 
 		if err != nil {
@@ -12825,11 +12825,9 @@ func (window *ignitionWindow) measure(
 
 	rvolDecline := math.Max(0, window.lastRVOL-rvol)
 	exhaustionScore := 0.0
-	rejection := math.Max(0, -precursorMove) / precursorBaseline
 
 	if window.lastRVOL > 0 && rejection > 0 {
-		exhaustionScore = (rvolDecline / window.lastRVOL) *
-			(rejection / (1 + rejection))
+		exhaustionScore = (rvolDecline / window.lastRVOL) * squashPositive(rejection, moveScale)
 	}
 
 	window.lastRVOL = rvol
@@ -12861,6 +12859,116 @@ func appendPositive(values []float64, value float64) []float64 {
 	}
 
 	return append(values, value)
+}
+
+func appendNonNegative(values []float64, value float64) []float64 {
+	if value < 0 || math.IsNaN(value) || math.IsInf(value, 0) {
+		return values
+	}
+
+	return append(values, value)
+}
+
+func squashPositive(value float64, scale float64) float64 {
+	if value <= 0 {
+		return 0
+	}
+
+	resolved := resolveScale(value, scale)
+
+	if resolved <= 0 {
+		return 0
+	}
+
+	return value / (resolved + value)
+}
+
+func inverseSquash(value float64, scale float64) float64 {
+	if value < 0 {
+		return 0
+	}
+
+	if value == 0 {
+		return 1
+	}
+
+	resolved := resolveScale(value, scale)
+
+	if resolved <= 0 {
+		return 0
+	}
+
+	return resolved / (resolved + value)
+}
+
+func resolveScale(value float64, scale float64) float64 {
+	if scale > 0 && !math.IsNaN(scale) && !math.IsInf(scale, 0) {
+		return scale
+	}
+
+	return magnitudeScale(value)
+}
+
+func magnitudeScale(value float64) float64 {
+	if value <= 0 || math.IsNaN(value) || math.IsInf(value, 0) {
+		return 0
+	}
+
+	normalized, exponent := math.Frexp(value)
+
+	if normalized == 0 {
+		return 0
+	}
+
+	return math.Ldexp(1, exponent-1)
+}
+
+func ratioScale(values []float64, baseline float64) float64 {
+	if baseline <= 0 || len(values) == 0 {
+		return 0
+	}
+
+	ratios := make([]float64, 0, len(values))
+
+	for _, sample := range values {
+		if sample < 0 || math.IsNaN(sample) || math.IsInf(sample, 0) {
+			continue
+		}
+
+		ratios = append(ratios, sample/baseline)
+	}
+
+	median, ok := statistic.MedianOf(ratios)
+
+	if !ok || median <= 0 || math.IsNaN(median) || math.IsInf(median, 0) {
+		return 0
+	}
+
+	return median
+}
+
+func compressionRatioScale(spreads []float64, baseline float64) float64 {
+	if baseline <= 0 || len(spreads) == 0 {
+		return 0
+	}
+
+	compressions := make([]float64, 0, len(spreads))
+
+	for _, spread := range spreads {
+		if spread <= 0 || math.IsNaN(spread) || math.IsInf(spread, 0) {
+			continue
+		}
+
+		compressions = append(compressions, math.Max(0, 1-spread/baseline))
+	}
+
+	median, ok := statistic.MedianOf(compressions)
+
+	if !ok || median <= 0 || math.IsNaN(median) || math.IsInf(median, 0) {
+		return 0
+	}
+
+	return median
 }
 
 ---
@@ -13602,16 +13710,6 @@ Compose chains two rotors: result = other · multivector.
 */
 func (multivector Multivector) Compose(other Multivector) Multivector {
 	return other.GeometricProduct(multivector)
-}
-
-func multivectorSlice(multivector Multivector) []float64 {
-	slice := make([]float64, multivectorComponentCount)
-
-	for index := range slice {
-		slice[index] = multivector[index]
-	}
-
-	return slice
 }
 
 ---
@@ -18391,39 +18489,9 @@ package hawkes
 
 import (
 	"math"
-	"sort"
 
 	"github.com/theapemachine/errnie"
-	"gonum.org/v1/gonum/stat"
 )
-
-func quartiles(values []float64) (lower float64, upper float64, err error) {
-	if len(values) == 0 {
-		return 0, 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"hawkes grid: quartiles require values",
-			nil,
-		))
-	}
-
-	sorted := append([]float64(nil), values...)
-	sort.Float64s(sorted)
-
-	for _, value := range sorted {
-		if math.IsNaN(value) || math.IsInf(value, 0) {
-			return 0, 0, errnie.Error(errnie.Err(
-				errnie.Validation,
-				"hawkes grid: quartiles sample is non-finite",
-				nil,
-			))
-		}
-	}
-
-	lower = stat.Quantile(0.25, stat.LinInterp, sorted, nil)
-	upper = stat.Quantile(0.75, stat.LinInterp, sorted, nil)
-
-	return lower, upper, nil
-}
 
 func linspace(start, end float64, count int) ([]float64, error) {
 	if count <= 0 {
@@ -18799,21 +18867,6 @@ const (
 	lbfgsMajorIterations = 80
 )
 
-func (estimator *BivariateEstimator) maximizeLikelihood(
-	stream ArrivalStream,
-	horizon time.Time,
-	context FitContext,
-	start [bivariateParamCount]float64,
-) BivariateFit {
-	return estimator.maximizeLikelihoodRestricted(
-		stream,
-		horizon,
-		context,
-		start,
-		fitUnrestricted,
-	)
-}
-
 func (estimator *BivariateEstimator) maximizeLikelihoodRestricted(
 	stream ArrivalStream,
 	horizon time.Time,
@@ -18878,18 +18931,6 @@ func (estimator *BivariateEstimator) maximizeLikelihoodRestricted(
 	return fit.WithIntensitiesAt(stream, horizon)
 }
 
-func (estimator *BivariateEstimator) negLogLikelihood(
-	free []float64,
-	bounds logParamBounds,
-	stream ArrivalStream,
-	horizon time.Time,
-	context FitContext,
-) (float64, BivariateFit, bool) {
-	return estimator.negLogLikelihoodRestricted(
-		free, bounds, stream, horizon, context, fitUnrestricted,
-	)
-}
-
 func (estimator *BivariateEstimator) negLogLikelihoodRestricted(
 	free []float64,
 	bounds logParamBounds,
@@ -18911,18 +18952,6 @@ func (estimator *BivariateEstimator) negLogLikelihoodRestricted(
 	}
 
 	return -logLikelihood, fit, true
-}
-
-func (estimator *BivariateEstimator) negLogLikelihoodGrad(
-	free []float64,
-	bounds logParamBounds,
-	stream ArrivalStream,
-	horizon time.Time,
-	context FitContext,
-) (float64, [bivariateParamCount]float64, bool) {
-	return estimator.negLogLikelihoodGradRestricted(
-		free, bounds, stream, horizon, context, fitUnrestricted,
-	)
 }
 
 func (estimator *BivariateEstimator) negLogLikelihoodGradRestricted(
@@ -19094,20 +19123,6 @@ File: /hawkes/stage_wire.go
 ---
 
 package hawkes
-
-import (
-	"time"
-)
-
-func fitTimesToTime(samples []float64) []time.Time {
-	times := make([]time.Time, len(samples))
-
-	for index, sample := range samples {
-		times[index] = time.Unix(0, int64(sample))
-	}
-
-	return times
-}
 
 func EncodeMomentBatch(xStream, yStream []float64) []float64 {
 	if len(xStream) != len(yStream) || len(xStream) < 2 {
@@ -28852,6 +28867,8 @@ struct ModeProjectParams {
     float inv_cell_x;
     float inv_cell_y;
     float inv_cell_z;
+    float domain_x;
+    float dt;
 };
 
 struct PilotWaveParams {
@@ -29293,6 +29310,17 @@ inline float gas_internal_energy(
 
     if (entropy_internal >= -resolution && correction <= resolution) {
         return max(entropy_internal, 0.0f);
+    }
+
+    // Fallthrough: neither the total-energy nor the entropy estimate resolved a
+    // pressure. If E-K is negative only within one resolution band it is pure
+    // finite-precision cancellation on a near-vacuum cell (observed e_int ~
+    // -9e-10 with rho ~ 1e-6); floor it to zero so admissible_U5 accepts a
+    // clean cold cell instead of NaN-poisoning the field. A negative larger
+    // than the resolution band is a genuine conservation fault and is returned
+    // unchanged so the fail-fast admissibility check still catches it.
+    if (internal_energy < 0.0f && internal_energy >= -resolution) {
+        return 0.0f;
     }
 
     return internal_energy;
@@ -29866,11 +29894,26 @@ inline void gas_rhs_cell(
         cfl_speed_z * p.inv_dz);
 
     if (!gas_advective_cfl_admissible(cfl_speed_x, cfl_speed_y, cfl_speed_z, p)) {
-        float qn = qnan_f();
-        drho = qn;
-        dmom = float3(qn);
-        denergy = qn;
-        dentropy = qn;
+        // A near-vacuum cell can thin during the step until its local |u|+c
+        // exceeds the CFL bound the host sub-stepping sized against (the global
+        // pre-step wave rate cannot see a cell that only becomes fast mid-step).
+        // Poisoning it with NaN cascades to the whole field; instead freeze this
+        // cell for the substep (zero RHS is conservative — no flux, no spurious
+        // mass/energy). Neighbours relax it and it re-enters transport next
+        // substep. Only p.dt<=0 / non-finite dt (a real config fault) still NaNs.
+        if (!(p.dt > 0.0f) || !isfinite(p.dt)) {
+            float qn = qnan_f();
+            drho = qn;
+            dmom = float3(qn);
+            denergy = qn;
+            dentropy = qn;
+            return;
+        }
+
+        drho = 0.0f;
+        dmom = float3(0.0f);
+        denergy = 0.0f;
+        dentropy = 0.0f;
         return;
     }
 
@@ -30511,6 +30554,7 @@ kernel void project_modes_to_spatial_psi(
     device atomic_uint* psi_re_field            [[buffer(5)]],   // grid_numel (float bits)
     device atomic_uint* psi_im_field            [[buffer(6)]],   // grid_numel (float bits)
     constant ModeProjectParams& p               [[buffer(7)]],
+    device const float* mode_omega              [[buffer(8)]],   // num_modes
     uint gid                                    [[thread_position_in_grid]]
 ) {
     uint total = p.num_modes * p.anchors_per_mode;
@@ -30525,21 +30569,28 @@ kernel void project_modes_to_spatial_psi(
     float w = mode_anchor_weight[mode * p.anchors_per_mode + a];
     if (!(w > 0.0f)) return;
 
-    float re = mode_psi_real[mode] * w;
-    float im = mode_psi_imag[mode] * w;
-
     float3 pos = float3(
         particle_pos[anchor * 3 + 0],
         particle_pos[anchor * 3 + 1],
         particle_pos[anchor * 3 + 2]
     );
 
-    if (!isfinite(re) || !isfinite(im) ||
-        !isfinite(pos.x) || !isfinite(pos.y) || !isfinite(pos.z)) {
+    if (!isfinite(pos.x) || !isfinite(pos.y) || !isfinite(pos.z) ||
+        !(p.domain_x > 0.0f) || !(p.dt > 0.0f)) {
         return;
     }
 
-    // CIC splat onto the spatial grid (periodic).
+    // Real CIC envelopes alone make Im(conj(Ψ)∇Ψ)=0 for an isolated mode.
+    // Apply the price-axis plane wave at each destination cell (not the particle
+    // center) so neighbouring CIC corners carry a phase gradient.
+    float omega = mode_omega[mode];
+    float re0 = mode_psi_real[mode] * w;
+    float im0 = mode_psi_imag[mode] * w;
+
+    if (!isfinite(re0) || !isfinite(im0) || !isfinite(omega)) {
+        return;
+    }
+
     float3 inv_cell = float3(p.inv_cell_x, p.inv_cell_y, p.inv_cell_z);
     float3 g = pos * inv_cell;
 
@@ -30555,67 +30606,56 @@ kernel void project_modes_to_spatial_psi(
     int iy1 = iy0 + 1;
     int iz1 = iz0 + 1;
 
-    ix0 = wrap_i32(ix0, (int)p.grid_x);
-    iy0 = wrap_i32(iy0, (int)p.grid_y);
-    iz0 = wrap_i32(iz0, (int)p.grid_z);
-
-    ix1 = wrap_i32(ix1, (int)p.grid_x);
-    iy1 = wrap_i32(iy1, (int)p.grid_y);
-    iz1 = wrap_i32(iz1, (int)p.grid_z);
+    int ix0w = wrap_i32(ix0, (int)p.grid_x);
+    int iy0w = wrap_i32(iy0, (int)p.grid_y);
+    int iz0w = wrap_i32(iz0, (int)p.grid_z);
+    int ix1w = wrap_i32(ix1, (int)p.grid_x);
+    int iy1w = wrap_i32(iy1, (int)p.grid_y);
+    int iz1w = wrap_i32(iz1, (int)p.grid_z);
 
     float wx0 = 1.0f - fx;
     float wy0 = 1.0f - fy;
     float wz0 = 1.0f - fz;
-
     float wx1 = fx;
     float wy1 = fy;
     float wz1 = fz;
 
     uint stride_x = p.grid_y * p.grid_z;
     uint stride_y = p.grid_z;
+    float k_phase = omega * p.dt / p.domain_x;
 
-    uint i000 = (uint)ix0 * stride_x + (uint)iy0 * stride_y + (uint)iz0;
-    uint i100 = (uint)ix1 * stride_x + (uint)iy0 * stride_y + (uint)iz0;
-    uint i010 = (uint)ix0 * stride_x + (uint)iy1 * stride_y + (uint)iz0;
-    uint i110 = (uint)ix1 * stride_x + (uint)iy1 * stride_y + (uint)iz0;
-    uint i001 = (uint)ix0 * stride_x + (uint)iy0 * stride_y + (uint)iz1;
-    uint i101 = (uint)ix1 * stride_x + (uint)iy0 * stride_y + (uint)iz1;
-    uint i011 = (uint)ix0 * stride_x + (uint)iy1 * stride_y + (uint)iz1;
-    uint i111 = (uint)ix1 * stride_x + (uint)iy1 * stride_y + (uint)iz1;
+    // Deposit rotated amplitude at each CIC corner using that cell's x-phase.
+    int xs[2] = { ix0w, ix1w };
+    int ys[2] = { iy0w, iy1w };
+    int zs[2] = { iz0w, iz1w };
+    float wx[2] = { wx0, wx1 };
+    float wy[2] = { wy0, wy1 };
+    float wz[2] = { wz0, wz1 };
 
-    float w000 = wx0 * wy0 * wz0;
-    float w100 = wx1 * wy0 * wz0;
-    float w010 = wx0 * wy1 * wz0;
-    float w110 = wx1 * wy1 * wz0;
-    float w001 = wx0 * wy0 * wz1;
-    float w101 = wx1 * wy0 * wz1;
-    float w011 = wx0 * wy1 * wz1;
-    float w111 = wx1 * wy1 * wz1;
+    for (int dx = 0; dx < 2; dx++) {
+        float phase = k_phase * ((float)xs[dx] + 0.5f) * p.cell_x;
+        float c = cos(phase);
+        float s = sin(phase);
+        float re = re0 * c - im0 * s;
+        float im = re0 * s + im0 * c;
 
-    atomic_add_float_device(&psi_re_field[i000], re * w000);
-    atomic_add_float_device(&psi_im_field[i000], im * w000);
+        if (!isfinite(re) || !isfinite(im)) {
+            continue;
+        }
 
-    atomic_add_float_device(&psi_re_field[i100], re * w100);
-    atomic_add_float_device(&psi_im_field[i100], im * w100);
+        for (int dy = 0; dy < 2; dy++) {
+            for (int dz = 0; dz < 2; dz++) {
+                float weight = wx[dx] * wy[dy] * wz[dz];
+                if (!(weight > 0.0f)) {
+                    continue;
+                }
 
-    atomic_add_float_device(&psi_re_field[i010], re * w010);
-    atomic_add_float_device(&psi_im_field[i010], im * w010);
-
-    atomic_add_float_device(&psi_re_field[i110], re * w110);
-    atomic_add_float_device(&psi_im_field[i110], im * w110);
-
-    atomic_add_float_device(&psi_re_field[i001], re * w001);
-    atomic_add_float_device(&psi_im_field[i001], im * w001);
-
-    atomic_add_float_device(&psi_re_field[i101], re * w101);
-    atomic_add_float_device(&psi_im_field[i101], im * w101);
-
-    atomic_add_float_device(&psi_re_field[i011], re * w011);
-    atomic_add_float_device(&psi_im_field[i011], im * w011);
-
-    atomic_add_float_device(&psi_re_field[i111], re * w111);
-    atomic_add_float_device(&psi_im_field[i111], im * w111);
-
+                uint index = (uint)xs[dx] * stride_x + (uint)ys[dy] * stride_y + (uint)zs[dz];
+                atomic_add_float_device(&psi_re_field[index], re * weight);
+                atomic_add_float_device(&psi_im_field[index], im * weight);
+            }
+        }
+    }
 }
 
 // -----------------------------------------------------------------------------
@@ -31939,7 +31979,7 @@ Reading is the post-step observable bundle read back from the GPU manifold solve
 
 PressureGrad* are finite-difference estimates of ∇p on the torus.
 CoherenceMag2 is the mean |Ψ|² across active ω-modes.
-GuidanceSpeed is the mean pilot-wave velocity magnitude from the coherence field.
+GuidanceSpeed is the mean |v| of carriers after pilot-wave gather — the Bohm current actually applied, not a mode-coefficient proxy.
 ViscosityProxy is |∇·u|⁻¹ when divergence is non-zero — large when flow is laminar.
 */
 type Reading struct {
@@ -33368,11 +33408,12 @@ static float manifold_wrap_coordinate(float value, float extent) {
 
     [self runCopyFloat:self.momRhoStage dst:self.momRho count:(self.numCells * 4)];
     [self runCopyFloat:self.eStage dst:self.eInt count:self.numCells];
-    [self resetSourcesInternal];
 
     if (self.stepDispatchActive) {
-        return YES;
+        [self flushStepDispatches];
     }
+
+    [self resetSourcesInternal];
 
     return [self conservedStateIsFinite:error];
 }
@@ -33661,17 +33702,30 @@ static float manifold_wrap_coordinate(float value, float extent) {
         (uy_yp - uy_ym) / (2.0f * dy) +
         (uz_zp - uz_zm) / (2.0f * dz);
     float coherenceMag2 = 0.0f;
-    float guidanceSpeed = 0.0f;
 
     for (uint32_t index = 0; index < self.numOsc; index++) {
         float re = modeRealData[index];
         float im = modeImagData[index];
         coherenceMag2 += re * re + im * im;
-        guidanceSpeed += fabsf(re * im);
     }
 
     if (self.numOsc > 0) {
         coherenceMag2 /= (float)self.numOsc;
+    }
+
+    // GuidanceSpeed is the mean |v| after pilot-wave gather — the Bohm current
+    // actually applied to carriers — not the |Re·Im|·ħ mode proxy.
+    float guidanceSpeed = 0.0f;
+    float *velData = (float *)self.particleVel.contents;
+
+    for (uint32_t index = 0; index < self.numOsc; index++) {
+        float vx = velData[index * 3 + 0];
+        float vy = velData[index * 3 + 1];
+        float vz = velData[index * 3 + 2];
+        guidanceSpeed += sqrtf(vx * vx + vy * vy + vz * vz);
+    }
+
+    if (self.numOsc > 0) {
         guidanceSpeed /= (float)self.numOsc;
     }
 
@@ -33681,7 +33735,7 @@ static float manifold_wrap_coordinate(float value, float extent) {
     reading->pressure_grad_norm = sqrtf(dpx * dpx + dpy * dpy + dpz * dpz);
     reading->divergence = divergence;
     reading->coherence_mag2 = coherenceMag2;
-    reading->guidance_speed = guidanceSpeed * self.config.hbar_eff;
+    reading->guidance_speed = guidanceSpeed;
     reading->viscosity_proxy = (fabsf(divergence) > 1e-8f) ? (1.0f / fabsf(divergence)) : 0.0f;
 
     if (!isfinite(reading->pressure_grad_x) || !isfinite(reading->pressure_grad_y) ||
@@ -33870,9 +33924,22 @@ static float manifold_wrap_coordinate(float value, float extent) {
     float cellX = self.config.domain_x / (float)gx;
     float cellZ = self.config.domain_z / (float)gz;
     float hbarEff = self.config.hbar_eff;
-    float massMin = self.config.rho_min;
+    float ampScale = 1.0f / fmaxf((float)self.numOsc, 1.0f);
+    float massFloor = fmaxf(ampScale * 1e-3f, 1e-6f);
+    float massScale = 0.0f;
+    float *massData = (float *)self.particleMass.contents;
 
-    if (!(cellX > 0.0f) || !(cellZ > 0.0f) || !(hbarEff > 0.0f) || !(massMin > 0.0f)) {
+    for (uint32_t index = 0; index < self.numOsc; index++) {
+        massScale += fmaxf(massData[index], massFloor);
+    }
+
+    if (self.numOsc > 0) {
+        massScale /= (float)self.numOsc;
+    }
+
+    massScale = fmaxf(massScale, massFloor);
+
+    if (!(cellX > 0.0f) || !(cellZ > 0.0f) || !(hbarEff > 0.0f) || !(massScale > 0.0f)) {
         if (error != NULL) {
             *error = @"pilot-wave projection requires positive cell scale and mass floor";
         }
@@ -33880,7 +33947,8 @@ static float manifold_wrap_coordinate(float value, float extent) {
         return NO;
     }
 
-    float invMass = 1.0f / massMin;
+    // Mirror configurePilotWaveParams: wave ε << typical |Ψ|², not rho_min².
+    float epsDenom = fmaxf(1e-12f, ampScale * ampScale * 1e-8f);
     uint32_t xLow = self.config.boundary_x_low;
     uint32_t xHigh = gx > 0u ? gx - 1u - self.config.boundary_x_high : 0u;
     uint32_t yLow = self.config.boundary_y_low;
@@ -33961,7 +34029,9 @@ static float manifold_wrap_coordinate(float value, float extent) {
             float dReDz = (reData[zPlusIndex] - reData[zMinusIndex]) / (2.0f * cellZ);
             float dImDx = (imData[xPlusIndex] - imData[xMinusIndex]) / (2.0f * cellX);
             float dImDz = (imData[zPlusIndex] - imData[zMinusIndex]) / (2.0f * cellZ);
-            float denom = re * re + im * im + massMin;
+            // Match the pilot-wave advection kernel: Bohmian denominator is
+            // |psi|^2 + eps_denom, and velocity scaling is hbar_eff / mass_min.
+            float denom = re * re + im * im + epsDenom;
             float currentX = 0.0f;
             float currentZ = 0.0f;
 
@@ -33974,6 +34044,9 @@ static float manifold_wrap_coordinate(float value, float extent) {
             uint32_t outIndex = xIndex + zIndex * gx;
 
             mag2Out[outIndex] = peakMag2;
+            // Match pic_gather_update_particles_pilot_wave: v = (ħ/m) · j
+            // with the same mass floor the gather kernel uses.
+            float invMass = 1.0f / massScale;
             velXOut[outIndex] = currentX * hbarEff * invMass;
             velZOut[outIndex] = currentZ * hbarEff * invMass;
         }
@@ -34794,7 +34867,15 @@ conductivity rate, so the RK stages consume the complete requested interval.
         return YES;
     }
 
-    double stableDelta = nextafter(1.0 / combinedRate, 0.0);
+    // Size sub-steps against a target Courant number safely below 1 rather than
+    // exactly 1. gasWaveRate samples the field BEFORE transport, but forcing and
+    // advection push cells toward near-vacuum during the step, raising the true
+    // per-substep wave speed above the sampled rate. Running the sub-step at
+    // CFL=1 then overshoots (observed courant ~1.16) and the gas kernel NaNs the
+    // cell (tag 0x21). The safety factor gives the sub-step count margin for that
+    // intra-step speed growth. 0.8 covers the observed overshoot with headroom.
+    const double kGasCFLSafety = 0.8;
+    double stableDelta = nextafter(kGasCFLSafety / combinedRate, 0.0);
     double required = ceil((double)self.controls.dt / stableDelta);
 
     if (!isfinite(required) || required > (double)UINT32_MAX) {
@@ -34835,9 +34916,10 @@ conductivity rate, so the RK stages consume the complete requested interval.
         }
 
         float sound = sqrtf(self.config.gamma * (self.config.gamma - 1.0f) * energy / rho);
-        maxWaveX = fmaxf(maxWaveX, fabsf(momRho[base] / rho) + sound);
-        maxWaveY = fmaxf(maxWaveY, fabsf(momRho[base + 1] / rho) + sound);
-        maxWaveZ = fmaxf(maxWaveZ, fabsf(momRho[base + 2] / rho) + sound);
+        float rarefaction = 2.0f * sound / (self.config.gamma - 1.0f);
+        maxWaveX = fmaxf(maxWaveX, fabsf(momRho[base] / rho) + rarefaction);
+        maxWaveY = fmaxf(maxWaveY, fabsf(momRho[base + 1] / rho) + rarefaction);
+        maxWaveZ = fmaxf(maxWaveZ, fabsf(momRho[base + 2] / rho) + rarefaction);
     }
 
     *rate = maxWaveX * (float)self.config.grid_x / self.config.domain_x +
@@ -35525,6 +35607,8 @@ static const uint32_t kDirectInteractionLimit = 64u;
     params->inv_cell_x = 1.0f / cellX;
     params->inv_cell_y = 1.0f / cellY;
     params->inv_cell_z = 1.0f / cellZ;
+    params->domain_x = self.config.domain_x;
+    params->dt = self.controls.dt;
 }
 
 - (void)configurePilotWaveParams {
@@ -35548,8 +35632,12 @@ static const uint32_t kDirectInteractionLimit = 64u;
     params->domain_y = self.config.domain_y;
     params->domain_z = self.config.domain_z;
     params->hbar_eff = self.config.hbar_eff;
-    params->eps_denom = self.config.rho_min * self.config.rho_min;
-    params->mass_min = self.config.rho_min;
+    // Wave regulariser must sit far below typical |Ψ|². rho_min² is a gas
+    // floor and dominated the Bohm denominator, collapsing guidance to ~0.
+    float ampScale = 1.0f / fmaxf((float)self.numOsc, 1.0f);
+    params->eps_denom = fmaxf(1e-12f, ampScale * ampScale * 1e-8f);
+    // Floor only against numerical zero; carrier mass is oscillator amplitude.
+    params->mass_min = fmaxf(ampScale * 1e-3f, 1e-6f);
     params->boundary_x_low = self.config.boundary_x_low;
     params->boundary_x_high = self.config.boundary_x_high;
     params->boundary_y_low = self.config.boundary_y_low;
@@ -35583,7 +35671,8 @@ static const uint32_t kDirectInteractionLimit = 64u;
     [self dispatchGridKernel:self.projectModesToSpatialPsi
                      buffers:@[
                          self.modeReal, self.modeImag, self.modeAnchorIdx, self.modeAnchorWeight,
-                         self.particlePos, self.psiReAtomic, self.psiImAtomic, self.modeProjectParams
+                         self.particlePos, self.psiReAtomic, self.psiImAtomic, self.modeProjectParams,
+                         self.modeOmega
                      ]
                  threadCount:totalAnchors];
 
@@ -36114,6 +36203,8 @@ typedef struct ModeProjectParamsHost {
     float inv_cell_x;
     float inv_cell_y;
     float inv_cell_z;
+    float domain_x;
+    float dt;
 } ModeProjectParamsHost;
 
 typedef struct PilotWaveParamsHost {
@@ -36144,7 +36235,7 @@ typedef struct PilotWaveParamsHost {
 
 _Static_assert(sizeof(SortScatterParamsHost) == 68, "SortScatterParamsHost ABI mismatch");
 _Static_assert(sizeof(PicGatherParamsHost) == 104, "PicGatherParamsHost ABI mismatch");
-_Static_assert(sizeof(ModeProjectParamsHost) == 48, "ModeProjectParamsHost ABI mismatch");
+_Static_assert(sizeof(ModeProjectParamsHost) == 56, "ModeProjectParamsHost ABI mismatch");
 _Static_assert(sizeof(PilotWaveParamsHost) == 92, "PilotWaveParamsHost ABI mismatch");
 _Static_assert(offsetof(PilotWaveParamsHost, mass_min) == 64, "PilotWaveParamsHost field mismatch");
 
@@ -37447,7 +37538,9 @@ func MagnitudeMargin(value float64) (float64, error) {
 		return 0, fmt.Errorf("probability: magnitude margin requires positive value")
 	}
 
-	return value / (1 + value), nil
+	scale := math.Sqrt(value)
+
+	return value / (scale + value), nil
 }
 
 /*
@@ -39204,7 +39297,6 @@ package statistic
 
 import (
 	"math"
-	"time"
 
 	"github.com/theapemachine/errnie"
 	"gonum.org/v1/gonum/stat"
@@ -39456,10 +39548,6 @@ func positiveValues(values []float64) []float64 {
 	}
 
 	return positive
-}
-
-func timestamp(seconds int64) time.Time {
-	return time.Unix(seconds, 0)
 }
 
 ---

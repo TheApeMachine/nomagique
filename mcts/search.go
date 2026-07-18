@@ -17,6 +17,8 @@ type CausalMCTS struct {
 	ControlCols  []int   // Confounding feature indices
 	Features     []int   // Global SCM features
 	LinearFit    bool    // Toggle for SCM linearity
+	Seed         int64
+	rng          *rand.Rand
 }
 
 func NewCausalMCTS(
@@ -26,6 +28,8 @@ func NewCausalMCTS(
 	controls, features []int,
 	linear bool,
 ) *CausalMCTS {
+	seed := time.Now().UnixNano()
+
 	return &CausalMCTS{
 		CausalEngine: engine,
 		C:            c,
@@ -36,13 +40,13 @@ func NewCausalMCTS(
 		ControlCols:  controls,
 		Features:     features,
 		LinearFit:    linear,
+		Seed:         seed,
+		rng:          rand.New(rand.NewSource(seed)),
 	}
 }
 
 // Search executes MCTS iterations and returns the recommended best action.
 func (mcts *CausalMCTS) Search(rootState State, iterations int, historicalData [][]float64) (float64, error) {
-	rand.Seed(time.Now().UnixNano())
-
 	root := &Node{
 		State:          rootState,
 		UntakenActions: rootState.GetPossibleActions(),
@@ -107,6 +111,10 @@ func (mcts *CausalMCTS) bestChild(node *Node, history [][]float64) *Node {
 	for _, child := range node.Children {
 		if child.Visits == 0 {
 			return child
+		}
+
+		if node.Visits <= 0 || child.Visits <= 0 {
+			continue
 		}
 
 		exploitation := child.TotalReward / float64(child.Visits)
@@ -176,7 +184,7 @@ func (mcts *CausalMCTS) simulate(node *Node) (float64, [][]float64) {
 		}
 
 		// Random rollout policy
-		action := actions[rand.Intn(len(actions))]
+		action := actions[mcts.rng.Intn(len(actions))]
 		currState = currState.ApplyAction(action)
 		trajectory = append(trajectory, currState.ToVector())
 		depth++

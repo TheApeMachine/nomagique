@@ -7,7 +7,7 @@ Reading is the post-step observable bundle read back from the GPU manifold solve
 
 PressureGrad* are finite-difference estimates of ∇p on the torus.
 CoherenceMag2 is the mean |Ψ|² across active ω-modes.
-GuidanceSpeed is the mean pilot-wave velocity magnitude from the coherence field.
+GuidanceSpeed is the mean |v| of carriers after pilot-wave gather — the Bohm current actually applied, not a mode-coefficient proxy.
 ViscosityProxy is |∇·u|⁻¹ when divergence is non-zero — large when flow is laminar.
 */
 type Reading struct {

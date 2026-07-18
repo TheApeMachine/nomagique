@@ -247,6 +247,14 @@ func (nodeTable nodeTable) percentile(node int, percentile float64) (float64, er
 		))
 	}
 
+	if percentile < 0 || percentile > 1 || math.IsNaN(percentile) {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"causal: percentile must lie in [0, 1]",
+			nil,
+		))
+	}
+
 	sorted := append([]float64(nil), values...)
 	sort.Float64s(sorted)
 
@@ -260,7 +268,16 @@ func (nodeTable nodeTable) percentile(node int, percentile float64) (float64, er
 		}
 	}
 
-	return stat.Quantile(percentile, stat.LinInterp, sorted, nil), nil
+	n := len(sorted)
+	h := float64(n-1) * percentile
+	j := int(math.Floor(h))
+	g := h - float64(j)
+
+	if j >= n-1 {
+		return sorted[n-1], nil
+	}
+
+	return sorted[j] + g*(sorted[j+1]-sorted[j]), nil
 }
 
 func (nodeTable nodeTable) kernelBackdoorEffect(

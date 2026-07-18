@@ -288,7 +288,9 @@ func (rm *ResonanceManifold) SettleFromBatchOptions(
 	}
 
 	if learn {
-		rm.Learn(target)
+		if err := rm.Learn(target); err != nil {
+			return 0, err
+		}
 	}
 
 	reconstruction := rm.ReconstructionError()
@@ -371,7 +373,7 @@ func (rm *ResonanceManifold) Settle(input []float64, advanceTemporal bool) error
 	return nil
 }
 
-func (rm *ResonanceManifold) Learn(target []float64) {
+func (rm *ResonanceManifold) Learn(target []float64) error {
 	predictions, layerErrors := rm.predictAdjacentLayers()
 	topIndex := len(rm.z) - 1
 
@@ -396,7 +398,7 @@ func (rm *ResonanceManifold) Learn(target []float64) {
 
 		norm := mat.Norm(update, 2)
 		if norm > rm.cfg.GradClip {
-			update.Scale(rm.cfg.GradClip/(norm+1e-12), update)
+			update.Scale(rm.cfg.GradClip/norm, update)
 		}
 
 		update.Scale(rm.cfg.LrGenerative, update)
@@ -424,7 +426,7 @@ func (rm *ResonanceManifold) Learn(target []float64) {
 
 		norm := mat.Norm(update, 2)
 		if norm > rm.cfg.GradClip {
-			update.Scale(rm.cfg.GradClip/(norm+1e-12), update)
+			update.Scale(rm.cfg.GradClip/norm, update)
 		}
 
 		update.Scale(rm.cfg.LrRecognition, update)
@@ -455,7 +457,7 @@ func (rm *ResonanceManifold) Learn(target []float64) {
 
 		norm := mat.Norm(update, 2)
 		if norm > rm.cfg.GradClip {
-			update.Scale(rm.cfg.GradClip/(norm+1e-12), update)
+			update.Scale(rm.cfg.GradClip/norm, update)
 		}
 
 		update.Scale(rm.cfg.LrGenerative, update)
@@ -487,7 +489,7 @@ func (rm *ResonanceManifold) Learn(target []float64) {
 
 		norm := mat.Norm(update, 2)
 		if norm > rm.cfg.GradClip {
-			update.Scale(rm.cfg.GradClip/(norm+1e-12), update)
+			update.Scale(rm.cfg.GradClip/norm, update)
 		}
 
 		update.Scale(rm.cfg.LrTemporal, update)
@@ -498,8 +500,12 @@ func (rm *ResonanceManifold) Learn(target []float64) {
 		}
 	}
 
-	rm.updatePrecision(layerErrors, targetCol)
+	if err := rm.updatePrecision(layerErrors, targetCol); err != nil {
+		return err
+	}
+
 	rm.advanceTemporalState()
+	return nil
 }
 
 func (rm *ResonanceManifold) Energy() float64 {
@@ -799,7 +805,7 @@ func (rm *ResonanceManifold) stateGradients(
 
 		gradientNorm := denseColNorm(gradient)
 		if gradientNorm > rm.cfg.GradClip {
-			gradient.Scale(rm.cfg.GradClip/(gradientNorm+1e-12), gradient)
+			gradient.Scale(rm.cfg.GradClip/gradientNorm, gradient)
 		}
 	}
 
@@ -829,9 +835,9 @@ func (rm *ResonanceManifold) tryStateUpdate(gradients []*mat.Dense, stepSize flo
 	}
 }
 
-func (rm *ResonanceManifold) updatePrecision(layerErrors []*mat.Dense, targetCol *mat.Dense) {
+func (rm *ResonanceManifold) updatePrecision(layerErrors []*mat.Dense, targetCol *mat.Dense) error {
 	if !rm.cfg.UsePrecision {
-		return
+		return nil
 	}
 
 	beta := rm.cfg.PrecisionBeta
@@ -846,7 +852,15 @@ func (rm *ResonanceManifold) updatePrecision(layerErrors []*mat.Dense, targetCol
 			variance = (1.0-beta)*variance + beta*(errorValue*errorValue)
 			rm.errorVar[layerIndex].Set(rowIndex, 0, variance)
 
-			rawPrecision := 1.0 / (variance + rm.cfg.PrecisionEps)
+			if !(variance > 0) {
+				return errnie.Err(
+					errnie.Validation,
+					"resonance: precision variance must be strictly positive",
+					nil,
+				)
+			}
+
+			rawPrecision := 1.0 / variance
 			precisionValue := math.Min(rm.cfg.PrecisionMax, math.Max(rm.cfg.PrecisionMin, rawPrecision))
 			rm.precision[layerIndex].Set(rowIndex, 0, precisionValue)
 		}
@@ -868,7 +882,15 @@ func (rm *ResonanceManifold) updatePrecision(layerErrors []*mat.Dense, targetCol
 			variance = (1.0-beta)*variance + beta*(errorValue*errorValue)
 			rm.temporalVar.Set(rowIndex, 0, variance)
 
-			rawPrecision := 1.0 / (variance + rm.cfg.PrecisionEps)
+			if !(variance > 0) {
+				return errnie.Err(
+					errnie.Validation,
+					"resonance: temporal precision variance must be strictly positive",
+					nil,
+				)
+			}
+
+			rawPrecision := 1.0 / variance
 			precisionValue := math.Min(rm.cfg.PrecisionMax, math.Max(rm.cfg.PrecisionMin, rawPrecision))
 			rm.temporalPrecision.Set(rowIndex, 0, precisionValue)
 		}
@@ -890,9 +912,19 @@ func (rm *ResonanceManifold) updatePrecision(layerErrors []*mat.Dense, targetCol
 			variance = (1.0-beta)*variance + beta*(errorValue*errorValue)
 			rm.taskVar.Set(rowIndex, 0, variance)
 
-			rawPrecision := 1.0 / (variance + rm.cfg.PrecisionEps)
+			if !(variance > 0) {
+				return errnie.Err(
+					errnie.Validation,
+					"resonance: task precision variance must be strictly positive",
+					nil,
+				)
+			}
+
+			rawPrecision := 1.0 / variance
 			precisionValue := math.Min(rm.cfg.PrecisionMax, math.Max(rm.cfg.PrecisionMin, rawPrecision))
 			rm.taskPrecision.Set(rowIndex, 0, precisionValue)
 		}
 	}
+
+	return nil
 }

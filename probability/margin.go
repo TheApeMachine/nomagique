@@ -45,7 +45,9 @@ func MagnitudeMargin(value float64) (float64, error) {
 		return 0, fmt.Errorf("probability: magnitude margin requires positive value")
 	}
 
-	return value / (1 + value), nil
+	scale := math.Sqrt(value)
+
+	return value / (scale + value), nil
 }
 
 /*

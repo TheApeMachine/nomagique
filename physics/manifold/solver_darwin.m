@@ -829,17 +829,30 @@ static float manifold_wrap_coordinate(float value, float extent) {
         (uy_yp - uy_ym) / (2.0f * dy) +
         (uz_zp - uz_zm) / (2.0f * dz);
     float coherenceMag2 = 0.0f;
-    float guidanceSpeed = 0.0f;
 
     for (uint32_t index = 0; index < self.numOsc; index++) {
         float re = modeRealData[index];
         float im = modeImagData[index];
         coherenceMag2 += re * re + im * im;
-        guidanceSpeed += fabsf(re * im);
     }
 
     if (self.numOsc > 0) {
         coherenceMag2 /= (float)self.numOsc;
+    }
+
+    // GuidanceSpeed is the mean |v| after pilot-wave gather — the Bohm current
+    // actually applied to carriers — not the |Re·Im|·ħ mode proxy.
+    float guidanceSpeed = 0.0f;
+    float *velData = (float *)self.particleVel.contents;
+
+    for (uint32_t index = 0; index < self.numOsc; index++) {
+        float vx = velData[index * 3 + 0];
+        float vy = velData[index * 3 + 1];
+        float vz = velData[index * 3 + 2];
+        guidanceSpeed += sqrtf(vx * vx + vy * vy + vz * vz);
+    }
+
+    if (self.numOsc > 0) {
         guidanceSpeed /= (float)self.numOsc;
     }
 
@@ -849,7 +862,7 @@ static float manifold_wrap_coordinate(float value, float extent) {
     reading->pressure_grad_norm = sqrtf(dpx * dpx + dpy * dpy + dpz * dpz);
     reading->divergence = divergence;
     reading->coherence_mag2 = coherenceMag2;
-    reading->guidance_speed = guidanceSpeed * self.config.hbar_eff;
+    reading->guidance_speed = guidanceSpeed;
     reading->viscosity_proxy = (fabsf(divergence) > 1e-8f) ? (1.0f / fabsf(divergence)) : 0.0f;
 
     if (!isfinite(reading->pressure_grad_x) || !isfinite(reading->pressure_grad_y) ||
@@ -1038,9 +1051,22 @@ static float manifold_wrap_coordinate(float value, float extent) {
     float cellX = self.config.domain_x / (float)gx;
     float cellZ = self.config.domain_z / (float)gz;
     float hbarEff = self.config.hbar_eff;
-    float massMin = self.config.rho_min;
+    float ampScale = 1.0f / fmaxf((float)self.numOsc, 1.0f);
+    float massFloor = fmaxf(ampScale * 1e-3f, 1e-6f);
+    float massScale = 0.0f;
+    float *massData = (float *)self.particleMass.contents;
 
-    if (!(cellX > 0.0f) || !(cellZ > 0.0f) || !(hbarEff > 0.0f) || !(massMin > 0.0f)) {
+    for (uint32_t index = 0; index < self.numOsc; index++) {
+        massScale += fmaxf(massData[index], massFloor);
+    }
+
+    if (self.numOsc > 0) {
+        massScale /= (float)self.numOsc;
+    }
+
+    massScale = fmaxf(massScale, massFloor);
+
+    if (!(cellX > 0.0f) || !(cellZ > 0.0f) || !(hbarEff > 0.0f) || !(massScale > 0.0f)) {
         if (error != NULL) {
             *error = @"pilot-wave projection requires positive cell scale and mass floor";
         }
@@ -1048,7 +1074,8 @@ static float manifold_wrap_coordinate(float value, float extent) {
         return NO;
     }
 
-    float invMass = 1.0f / massMin;
+    // Mirror configurePilotWaveParams: wave ε << typical |Ψ|², not rho_min².
+    float epsDenom = fmaxf(1e-12f, ampScale * ampScale * 1e-8f);
     uint32_t xLow = self.config.boundary_x_low;
     uint32_t xHigh = gx > 0u ? gx - 1u - self.config.boundary_x_high : 0u;
     uint32_t yLow = self.config.boundary_y_low;
@@ -1129,7 +1156,9 @@ static float manifold_wrap_coordinate(float value, float extent) {
             float dReDz = (reData[zPlusIndex] - reData[zMinusIndex]) / (2.0f * cellZ);
             float dImDx = (imData[xPlusIndex] - imData[xMinusIndex]) / (2.0f * cellX);
             float dImDz = (imData[zPlusIndex] - imData[zMinusIndex]) / (2.0f * cellZ);
-            float denom = re * re + im * im + massMin;
+            // Match the pilot-wave advection kernel: Bohmian denominator is
+            // |psi|^2 + eps_denom, and velocity scaling is hbar_eff / mass_min.
+            float denom = re * re + im * im + epsDenom;
             float currentX = 0.0f;
             float currentZ = 0.0f;
 
@@ -1142,6 +1171,9 @@ static float manifold_wrap_coordinate(float value, float extent) {
             uint32_t outIndex = xIndex + zIndex * gx;
 
             mag2Out[outIndex] = peakMag2;
+            // Match pic_gather_update_particles_pilot_wave: v = (ħ/m) · j
+            // with the same mass floor the gather kernel uses.
+            float invMass = 1.0f / massScale;
             velXOut[outIndex] = currentX * hbarEff * invMass;
             velZOut[outIndex] = currentZ * hbarEff * invMass;
         }

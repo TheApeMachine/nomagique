@@ -159,5 +159,13 @@ func logLikelihoodTolerance(values ...float64) float64 {
 		}
 	}
 
-	return math.Sqrt(math.Nextafter(1, 2)-1) * scale
+	radicand := math.Nextafter(1, 2) - 1
+	radicandScale := math.Max(1, math.Abs(radicand))
+	tolerance := 32 * radicand * radicandScale
+
+	if radicand < -tolerance {
+		panic("hawkes: machine-epsilon radicand is negative beyond tolerance")
+	}
+
+	return math.Sqrt(math.Max(0, radicand)) * scale
 }

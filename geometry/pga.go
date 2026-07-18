@@ -1,6 +1,10 @@
 package geometry
 
-import "math"
+import (
+	"math"
+
+	"github.com/theapemachine/errnie"
+)
 
 /*
 Motor combines rotation and translation into a single PGA versor.
@@ -26,14 +30,22 @@ MotorFromAxisAngle creates a rotation motor around an arbitrary axis.
 The axis (axisX, axisY, axisZ) is normalized internally and mapped to
 the dual bivector: x→e23, y→e31, z→e12 (Hodge dual of the rotation axis).
 */
-func MotorFromAxisAngle(axisX, axisY, axisZ, angle float64) *Motor {
+func MotorFromAxisAngle(axisX, axisY, axisZ, angle float64) (*Motor, error) {
 	norm := math.Sqrt(axisX*axisX + axisY*axisY + axisZ*axisZ)
+
+	if !(norm > 0) {
+		return nil, errnie.Err(
+			errnie.Validation,
+			"geometry: rotation axis norm must be strictly positive",
+			nil,
+		)
+	}
 
 	var rotor Multivector
 
 	rotor.FromRotation(angle, axisZ/norm, axisY/norm, axisX/norm)
 
-	return NewMotor(rotor)
+	return NewMotor(rotor), nil
 }
 
 /*
@@ -84,7 +96,7 @@ func (motor *Motor) Interpolate(t float64) *Motor {
 
 	halfAngle := math.Atan2(eucNorm, mv[MvScalar])
 
-	if eucNorm < 1e-12 {
+	if eucNorm == 0 {
 		return NewMotor(Multivector{
 			1,
 			t * mv[MvE01],

@@ -303,6 +303,10 @@ func (tune arrivalTune) branchFloor() float64 {
 }
 
 func (tune arrivalTune) branchCeiling() float64 {
+	if tune.totalEvents <= 0 {
+		panic("hawkes: branchCeiling requires positive event mass")
+	}
+
 	margin := 1 / math.Sqrt(float64(tune.totalEvents))
 
 	if margin >= criticalBranch {

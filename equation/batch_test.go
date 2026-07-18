@@ -28,25 +28,6 @@ func TestFeatureFrame_FeatureFields(testingTB *testing.T) {
 	})
 }
 
-func TestOutputKeys(testingTB *testing.T) {
-	Convey("Given output fields from a map", testingTB, func() {
-		keys := outputKeys(map[string]float64{
-			"zeta":  3,
-			"value": 2,
-			"alpha": 1,
-		})
-
-		Convey("It should stamp deterministic input order", func() {
-			So(keys, ShouldResemble, []string{
-				"alpha",
-				"strength",
-				"value",
-				"zeta",
-			})
-		})
-	})
-}
-
 func BenchmarkFeatureFrameFeatureFields(b *testing.B) {
 	frame := NewFeatureFrame(
 		[]string{"alpha", "beta", "gamma"},

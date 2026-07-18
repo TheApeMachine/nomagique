@@ -3,6 +3,7 @@ package geometry
 import (
 	"context"
 	"fmt"
+	"github.com/theapemachine/errnie"
 	"math"
 	"math/cmplx"
 	"sort"
@@ -518,8 +519,12 @@ func SeqCircularMeanPhaseFromPhases(phase *[512]float64, seq []byte) (float64, e
 func (emt *EigenModeToroidal) normalizeVec(v *[512]float64) {
 	normSq := vecSumOfSquares(v[:])
 
-	if normSq < 1e-10 {
-		return
+	if !(normSq > 0) {
+		panic(errnie.Err(
+			errnie.Validation,
+			"geometry: cannot normalize a zero vector",
+			nil,
+		))
 	}
 
 	norm := math.Sqrt(normSq)

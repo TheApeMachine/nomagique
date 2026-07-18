@@ -42,6 +42,10 @@ func (n *CausalMCTSNode) SelectBestChild(c float64, table causal.NodeTable) (*Ca
 		}
 
 		// 1. Classical Exploitation/Exploration
+		if n.Visits <= 0 {
+			return nil, errors.New("mcts: parent visits must be strictly positive for UCT log")
+		}
+
 		exploitation := child.TotalReward / float64(child.Visits)
 		exploration := c * math.Sqrt(math.Log(float64(n.Visits))/float64(child.Visits))
 		uct := exploitation + exploration

@@ -318,6 +318,8 @@ typedef struct ModeProjectParamsHost {
     float inv_cell_x;
     float inv_cell_y;
     float inv_cell_z;
+    float domain_x;
+    float dt;
 } ModeProjectParamsHost;
 
 typedef struct PilotWaveParamsHost {
@@ -348,7 +350,7 @@ typedef struct PilotWaveParamsHost {
 
 _Static_assert(sizeof(SortScatterParamsHost) == 68, "SortScatterParamsHost ABI mismatch");
 _Static_assert(sizeof(PicGatherParamsHost) == 104, "PicGatherParamsHost ABI mismatch");
-_Static_assert(sizeof(ModeProjectParamsHost) == 48, "ModeProjectParamsHost ABI mismatch");
+_Static_assert(sizeof(ModeProjectParamsHost) == 56, "ModeProjectParamsHost ABI mismatch");
 _Static_assert(sizeof(PilotWaveParamsHost) == 92, "PilotWaveParamsHost ABI mismatch");
 _Static_assert(offsetof(PilotWaveParamsHost, mass_min) == 64, "PilotWaveParamsHost field mismatch");
 

@@ -1,9 +1,10 @@
 package statistic
 
 import (
+	"math"
 	"sort"
 
-	"gonum.org/v1/gonum/stat"
+	"github.com/theapemachine/errnie"
 )
 
 /*
@@ -11,7 +12,6 @@ QuantileConfig configures a typed quantile accumulator.
 */
 type QuantileConfig struct {
 	Percentile float64
-	Kind       stat.CumulantKind
 }
 
 /*
@@ -23,12 +23,12 @@ type Quantile struct {
 }
 
 /*
-NewQuantile returns a typed quantile accumulator.
+NewQuantile returns a typed quantile accumulator using the canonical
+(n-1)*p linear-interpolation estimator.
 */
 func NewQuantile(configs ...QuantileConfig) *Quantile {
 	config := QuantileConfig{
 		Percentile: 0.5,
-		Kind:       stat.LinInterp,
 	}
 
 	if len(configs) > 0 {
@@ -49,17 +49,11 @@ func (quantile *Quantile) Measure(sample float64) (ScalarOutput, error) {
 	}
 
 	quantile.history = append(quantile.history, sample)
-	sorted := append([]float64(nil), quantile.history...)
-	sort.Float64s(sorted)
 
-	value := sorted[0]
+	value, err := interpolateQuantile(quantile.history, quantile.config.Percentile)
 
-	if quantile.config.Percentile > 0 && quantile.config.Percentile < 1 {
-		value = stat.Quantile(quantile.config.Percentile, quantile.config.Kind, sorted, nil)
-	}
-
-	if quantile.config.Percentile >= 1 {
-		value = sorted[len(sorted)-1]
+	if err != nil {
+		return ScalarOutput{}, err
 	}
 
 	return ScalarOutput{
@@ -67,4 +61,50 @@ func (quantile *Quantile) Measure(sample float64) (ScalarOutput, error) {
 		Ready: true,
 		Count: len(quantile.history),
 	}, nil
+}
+
+/*
+interpolateQuantile evaluates Q(p) on a copy of samples with
+h = (n-1)*p linear interpolation after sorting.
+*/
+func interpolateQuantile(samples []float64, percentile float64) (float64, error) {
+	if len(samples) == 0 {
+		return 0, errnie.Err(
+			errnie.Validation,
+			"statistic: quantile sample is empty",
+			nil,
+		)
+	}
+
+	if percentile < 0 || percentile > 1 || math.IsNaN(percentile) {
+		return 0, errnie.Err(
+			errnie.Validation,
+			"statistic: quantile percentile must lie in [0, 1]",
+			nil,
+		)
+	}
+
+	sorted := append([]float64(nil), samples...)
+	sort.Float64s(sorted)
+
+	for _, value := range sorted {
+		if math.IsNaN(value) || math.IsInf(value, 0) {
+			return 0, errnie.Err(
+				errnie.Validation,
+				"statistic: quantile sample is non-finite",
+				nil,
+			)
+		}
+	}
+
+	n := len(sorted)
+	h := float64(n-1) * percentile
+	j := int(math.Floor(h))
+	g := h - float64(j)
+
+	if j >= n-1 {
+		return sorted[n-1], nil
+	}
+
+	return sorted[j] + g*(sorted[j+1]-sorted[j]), nil
 }

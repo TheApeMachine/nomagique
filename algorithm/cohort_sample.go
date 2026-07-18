@@ -161,12 +161,16 @@ func (cohortSample *CohortSample) observe(tick cohortTick) {
 	symbolState.prices = utils.AppendRingFloat(symbolState.prices, tick.price, historyCap)
 	symbolState.times = appendRingInt64(symbolState.times, tick.at, historyCap)
 
-	if symbolState.lastPrice > 0 {
-		symbolState.returns = utils.AppendRingFloat(
-			symbolState.returns,
-			math.Log(tick.price/symbolState.lastPrice),
-			historyCap,
-		)
+	if symbolState.lastPrice > 0 && tick.price > 0 {
+		ratio := tick.price / symbolState.lastPrice
+
+		if ratio > 0 {
+			symbolState.returns = utils.AppendRingFloat(
+				symbolState.returns,
+				math.Log(ratio),
+				historyCap,
+			)
+		}
 	}
 
 	symbolState.lastPrice = tick.price

@@ -20,7 +20,12 @@ func (estimator *BivariateEstimator) maximizeLikelihoodRestricted(
 	start [bivariateParamCount]float64,
 	restriction fitRestriction,
 ) BivariateFit {
-	bounds := context.logParamBounds()
+	bounds, err := context.logParamBounds()
+
+	if err != nil {
+		panic(err)
+	}
+
 	freeStart := bounds.encode(start)
 	problem := optimize.Problem{
 		Func: func(free []float64) float64 {
@@ -137,7 +142,12 @@ func (estimator *BivariateEstimator) multiStartSeeds(
 	muYStart := context.MuYStart()
 	betaStart := 1 / context.MedianGapSec
 	selfBranchSeed := math.Max(context.BranchFloor, selfBranchShareFromContext(context)*context.BranchCeiling)
-	crossBranchSeed := crossBranchFloorFromContext(context)
+	crossBranchSeed, err := crossBranchFloorFromContext(context)
+
+	if err != nil {
+		panic(err)
+	}
+
 	baseLog := [bivariateParamCount]float64{
 		decay.LogPositive(muXStart),
 		decay.LogPositive(muYStart),

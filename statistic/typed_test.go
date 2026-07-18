@@ -4,8 +4,6 @@ import (
 	"math"
 	"testing"
 	"time"
-
-	"gonum.org/v1/gonum/stat"
 )
 
 func TestTypedScalarStatistics(t *testing.T) {
@@ -57,7 +55,7 @@ func TestTypedScalarStatistics(t *testing.T) {
 func TestTypedHistoryStatistics(t *testing.T) {
 	stdDev := NewStdDev()
 	medianAbsolute := NewMedianAbsolute()
-	quantile := NewQuantile(QuantileConfig{Percentile: 0.75, Kind: stat.LinInterp})
+	quantile := NewQuantile(QuantileConfig{Percentile: 0.75})
 
 	for _, sample := range []float64{-1, 2, -3, 4} {
 		if _, err := stdDev.Measure(sample); err != nil {

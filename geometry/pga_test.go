@@ -10,7 +10,8 @@ import (
 func TestMotorFromAxisAngle(t *testing.T) {
 	gc.Convey("Given MotorFromAxisAngle", t, func() {
 		gc.Convey("When creating a 90° rotation around the Z axis", func() {
-			motor := MotorFromAxisAngle(0, 0, 1, math.Pi/2)
+			motor, err := MotorFromAxisAngle(0, 0, 1, math.Pi/2)
+			gc.So(err, gc.ShouldBeNil)
 			mv := motor.Rotor()
 
 			gc.Convey("It should encode cos(π/4) scalar and sin(π/4) in e12", func() {
@@ -22,7 +23,8 @@ func TestMotorFromAxisAngle(t *testing.T) {
 		})
 
 		gc.Convey("When creating a 90° rotation around the X axis", func() {
-			motor := MotorFromAxisAngle(1, 0, 0, math.Pi/2)
+			motor, err := MotorFromAxisAngle(1, 0, 0, math.Pi/2)
+			gc.So(err, gc.ShouldBeNil)
 			mv := motor.Rotor()
 
 			gc.Convey("It should place sin(π/4) in e23 (Hodge dual of X)", func() {
@@ -34,7 +36,8 @@ func TestMotorFromAxisAngle(t *testing.T) {
 		})
 
 		gc.Convey("When creating a 90° rotation around the Y axis", func() {
-			motor := MotorFromAxisAngle(0, 1, 0, math.Pi/2)
+			motor, err := MotorFromAxisAngle(0, 1, 0, math.Pi/2)
+			gc.So(err, gc.ShouldBeNil)
 			mv := motor.Rotor()
 
 			gc.Convey("It should place sin(π/4) in e31 (Hodge dual of Y)", func() {
@@ -72,9 +75,11 @@ func TestMotorFromTranslation(t *testing.T) {
 func TestMotorCompose(t *testing.T) {
 	gc.Convey("Given two rotation motors", t, func() {
 		gc.Convey("When composing two 90° Z-rotations", func() {
-			rot90 := MotorFromAxisAngle(0, 0, 1, math.Pi/2)
+			rot90, err := MotorFromAxisAngle(0, 0, 1, math.Pi/2)
+			gc.So(err, gc.ShouldBeNil)
 			composed := rot90.Compose(rot90)
-			direct180 := MotorFromAxisAngle(0, 0, 1, math.Pi)
+			direct180, err := MotorFromAxisAngle(0, 0, 1, math.Pi)
+			gc.So(err, gc.ShouldBeNil)
 
 			gc.Convey("It should equal a single 180° rotation", func() {
 				composedMv := composed.Rotor()
@@ -87,7 +92,8 @@ func TestMotorCompose(t *testing.T) {
 		})
 
 		gc.Convey("When composing rotation with identity", func() {
-			rot := MotorFromAxisAngle(1, 0, 0, 1.23)
+			rot, err := MotorFromAxisAngle(1, 0, 0, 1.23)
+			gc.So(err, gc.ShouldBeNil)
 			identity := NewMotor(Multivector{1, 0, 0, 0, 0, 0, 0, 0})
 			composed := rot.Compose(identity)
 
@@ -105,7 +111,8 @@ func TestMotorCompose(t *testing.T) {
 
 func TestMotorInterpolate(t *testing.T) {
 	gc.Convey("Given a 90° rotation motor around Z", t, func() {
-		motor := MotorFromAxisAngle(0, 0, 1, math.Pi/2)
+		motor, err := MotorFromAxisAngle(0, 0, 1, math.Pi/2)
+		gc.So(err, gc.ShouldBeNil)
 
 		gc.Convey("When interpolated at t=0", func() {
 			interp := motor.Interpolate(0)
@@ -161,7 +168,8 @@ func TestMotorInterpolate(t *testing.T) {
 
 func TestMotorApply(t *testing.T) {
 	gc.Convey("Given a 90° Z-rotation motor", t, func() {
-		motor := MotorFromAxisAngle(0, 0, 1, math.Pi/2)
+		motor, err := MotorFromAxisAngle(0, 0, 1, math.Pi/2)
+		gc.So(err, gc.ShouldBeNil)
 		target := Multivector{0, 0, 0, 0, 0, 1, 0, 0}
 
 		gc.Convey("When applying to e31 bivector", func() {
@@ -206,12 +214,17 @@ func BenchmarkMotorFromAxisAngle(b *testing.B) {
 	b.ReportAllocs()
 
 	for range b.N {
-		_ = MotorFromAxisAngle(0.577, 0.577, 0.577, 1.23)
+		_, _ = MotorFromAxisAngle(0.577, 0.577, 0.577, 1.23)
 	}
 }
 
 func BenchmarkMotorApply(b *testing.B) {
-	motor := MotorFromAxisAngle(0.577, 0.577, 0.577, 1.23)
+	motor, err := MotorFromAxisAngle(0.577, 0.577, 0.577, 1.23)
+
+	if err != nil {
+		b.Fatal(err)
+	}
+
 	target := Multivector{0, 0, 0, 0, 1, 0, 0, 0}
 
 	b.ReportAllocs()
@@ -223,7 +236,11 @@ func BenchmarkMotorApply(b *testing.B) {
 }
 
 func BenchmarkMotorInterpolate(b *testing.B) {
-	motor := MotorFromAxisAngle(0, 0, 1, math.Pi/2)
+	motor, err := MotorFromAxisAngle(0, 0, 1, math.Pi/2)
+
+	if err != nil {
+		b.Fatal(err)
+	}
 
 	b.ReportAllocs()
 	b.ResetTimer()

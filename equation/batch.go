@@ -1,8 +1,6 @@
 package equation
 
 import (
-	"sort"
-
 	"github.com/bytedance/sonic"
 	"github.com/theapemachine/errnie"
 )
@@ -108,22 +106,4 @@ func MarshalFeatureSchema(inputs []string, values []float64) []byte {
 		return nil
 	}
 	return json
-}
-
-func outputKeys(fields map[string]float64) []string {
-	keys := make([]string, 0, len(fields)+1)
-
-	for key := range fields {
-		keys = append(keys, key)
-	}
-
-	if _, hasStrength := fields["strength"]; !hasStrength {
-		if _, hasValue := fields["value"]; hasValue {
-			keys = append(keys, "strength")
-		}
-	}
-
-	sort.Strings(keys)
-
-	return keys
 }

@@ -48,6 +48,7 @@ type ignitionWindow struct {
 	lastRVOL     float64
 	volumeLift   []float64
 	precursors   []float64
+	moves        []float64
 	spreads      []float64
 	initialized  bool
 	observations int
@@ -102,8 +103,10 @@ func (ignition *Ignition) Measure(
 	volumeLift := math.Max(0, input.Volume-window.lastVolume)
 	priceMove := math.Log(input.Last / window.lastPrice)
 	precursor := math.Max(0, priceMove)
-	window.volumeLift = appendPositive(window.volumeLift, volumeLift)
-	window.precursors = appendPositive(window.precursors, precursor)
+	move := math.Abs(priceMove)
+	window.volumeLift = appendNonNegative(window.volumeLift, volumeLift)
+	window.precursors = appendNonNegative(window.precursors, precursor)
+	window.moves = appendNonNegative(window.moves, move)
 	window.spreads = appendPositive(window.spreads, spread)
 
 	output, ready, err := window.measure(volumeLift, priceMove, spread)
@@ -134,18 +137,25 @@ func (window *ignitionWindow) measure(
 	volumeBaseline, volumeReady := statistic.MedianOf(window.volumeLift)
 	spreadBaseline, spreadReady := statistic.MedianOf(window.spreads)
 	precursorBaseline, precursorReady := statistic.MedianOf(window.precursors)
+	moveBaseline, moveReady := statistic.MedianOf(window.moves)
 
-	if !volumeReady || !spreadReady || !precursorReady {
+	if !volumeReady || !spreadReady || !precursorReady || !moveReady {
 		return IgnitionOutput{}, false, nil
 	}
 
-	if volumeBaseline <= 0 || spreadBaseline <= 0 || precursorBaseline <= 0 {
+	if volumeBaseline <= 0 || spreadBaseline <= 0 || precursorBaseline <= 0 || moveBaseline <= 0 {
 		return IgnitionOutput{}, false, nil
 	}
 
 	rvol := volumeLift / volumeBaseline
 	precursor := math.Max(0, precursorMove) / precursorBaseline
 	compression := math.Max(0, 1-spread/spreadBaseline)
+	rejection := math.Max(0, -precursorMove) / moveBaseline
+
+	rvolScale := ratioScale(window.volumeLift, volumeBaseline)
+	precursorScale := ratioScale(window.precursors, precursorBaseline)
+	moveScale := ratioScale(window.moves, moveBaseline)
+	compressionScale := compressionRatioScale(window.spreads, spreadBaseline)
 	ignitionScore := 0.0
 
 	if rvol > 0 && precursor > 0 {
@@ -163,8 +173,8 @@ func (window *ignitionWindow) measure(
 	if rvol > 0 && precursor > 0 {
 		score, err := probability.EvidenceGeomean(
 			precursor,
-			rvol/(1+rvol),
-			1/(1+compression),
+			squashPositive(rvol, rvolScale),
+			inverseSquash(compression, compressionScale),
 		)
 
 		if err != nil {
@@ -179,8 +189,8 @@ func (window *ignitionWindow) measure(
 	if compression > 0 && rvol > 0 {
 		score, err := probability.EvidenceGeomean(
 			compression,
-			rvol/(1+rvol),
-			1/(1+precursor),
+			squashPositive(rvol, rvolScale),
+			inverseSquash(precursor, precursorScale),
 		)
 
 		if err != nil {
@@ -192,11 +202,9 @@ func (window *ignitionWindow) measure(
 
 	rvolDecline := math.Max(0, window.lastRVOL-rvol)
 	exhaustionScore := 0.0
-	rejection := math.Max(0, -precursorMove) / precursorBaseline
 
 	if window.lastRVOL > 0 && rejection > 0 {
-		exhaustionScore = (rvolDecline / window.lastRVOL) *
-			(rejection / (1 + rejection))
+		exhaustionScore = (rvolDecline / window.lastRVOL) * squashPositive(rejection, moveScale)
 	}
 
 	window.lastRVOL = rvol
@@ -228,4 +236,114 @@ func appendPositive(values []float64, value float64) []float64 {
 	}
 
 	return append(values, value)
+}
+
+func appendNonNegative(values []float64, value float64) []float64 {
+	if value < 0 || math.IsNaN(value) || math.IsInf(value, 0) {
+		return values
+	}
+
+	return append(values, value)
+}
+
+func squashPositive(value float64, scale float64) float64 {
+	if value <= 0 {
+		return 0
+	}
+
+	resolved := resolveScale(value, scale)
+
+	if resolved <= 0 {
+		return 0
+	}
+
+	return value / (resolved + value)
+}
+
+func inverseSquash(value float64, scale float64) float64 {
+	if value < 0 {
+		return 0
+	}
+
+	if value == 0 {
+		return 1
+	}
+
+	resolved := resolveScale(value, scale)
+
+	if resolved <= 0 {
+		return 0
+	}
+
+	return resolved / (resolved + value)
+}
+
+func resolveScale(value float64, scale float64) float64 {
+	if scale > 0 && !math.IsNaN(scale) && !math.IsInf(scale, 0) {
+		return scale
+	}
+
+	return magnitudeScale(value)
+}
+
+func magnitudeScale(value float64) float64 {
+	if value <= 0 || math.IsNaN(value) || math.IsInf(value, 0) {
+		return 0
+	}
+
+	normalized, exponent := math.Frexp(value)
+
+	if normalized == 0 {
+		return 0
+	}
+
+	return math.Ldexp(1, exponent-1)
+}
+
+func ratioScale(values []float64, baseline float64) float64 {
+	if baseline <= 0 || len(values) == 0 {
+		return 0
+	}
+
+	ratios := make([]float64, 0, len(values))
+
+	for _, sample := range values {
+		if sample < 0 || math.IsNaN(sample) || math.IsInf(sample, 0) {
+			continue
+		}
+
+		ratios = append(ratios, sample/baseline)
+	}
+
+	median, ok := statistic.MedianOf(ratios)
+
+	if !ok || median <= 0 || math.IsNaN(median) || math.IsInf(median, 0) {
+		return 0
+	}
+
+	return median
+}
+
+func compressionRatioScale(spreads []float64, baseline float64) float64 {
+	if baseline <= 0 || len(spreads) == 0 {
+		return 0
+	}
+
+	compressions := make([]float64, 0, len(spreads))
+
+	for _, spread := range spreads {
+		if spread <= 0 || math.IsNaN(spread) || math.IsInf(spread, 0) {
+			continue
+		}
+
+		compressions = append(compressions, math.Max(0, 1-spread/baseline))
+	}
+
+	median, ok := statistic.MedianOf(compressions)
+
+	if !ok || median <= 0 || math.IsNaN(median) || math.IsInf(median, 0) {
+		return 0
+	}
+
+	return median
 }

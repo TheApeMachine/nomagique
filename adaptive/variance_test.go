@@ -27,9 +27,10 @@ func TestVariance_Measure(t *testing.T) {
 
 			flat, err := variance.Measure(10)
 
-			Convey("Then it reports not ready, since the range is indeterminate", func() {
+			Convey("Then it reports defined, ready zero variance", func() {
 				So(err, ShouldBeNil)
-				So(flat.Ready, ShouldBeFalse)
+				So(flat.Ready, ShouldBeTrue)
+				So(flat.Value, ShouldEqual, 0)
 			})
 		})
 

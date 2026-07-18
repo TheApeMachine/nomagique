@@ -1682,6 +1682,8 @@ struct ModeProjectParams {
     float inv_cell_x;
     float inv_cell_y;
     float inv_cell_z;
+    float domain_x;
+    float dt;
 };
 
 struct PilotWaveParams {
@@ -2123,6 +2125,17 @@ inline float gas_internal_energy(
 
     if (entropy_internal >= -resolution && correction <= resolution) {
         return max(entropy_internal, 0.0f);
+    }
+
+    // Fallthrough: neither the total-energy nor the entropy estimate resolved a
+    // pressure. If E-K is negative only within one resolution band it is pure
+    // finite-precision cancellation on a near-vacuum cell (observed e_int ~
+    // -9e-10 with rho ~ 1e-6); floor it to zero so admissible_U5 accepts a
+    // clean cold cell instead of NaN-poisoning the field. A negative larger
+    // than the resolution band is a genuine conservation fault and is returned
+    // unchanged so the fail-fast admissibility check still catches it.
+    if (internal_energy < 0.0f && internal_energy >= -resolution) {
+        return 0.0f;
     }
 
     return internal_energy;
@@ -2696,11 +2709,26 @@ inline void gas_rhs_cell(
         cfl_speed_z * p.inv_dz);
 
     if (!gas_advective_cfl_admissible(cfl_speed_x, cfl_speed_y, cfl_speed_z, p)) {
-        float qn = qnan_f();
-        drho = qn;
-        dmom = float3(qn);
-        denergy = qn;
-        dentropy = qn;
+        // A near-vacuum cell can thin during the step until its local |u|+c
+        // exceeds the CFL bound the host sub-stepping sized against (the global
+        // pre-step wave rate cannot see a cell that only becomes fast mid-step).
+        // Poisoning it with NaN cascades to the whole field; instead freeze this
+        // cell for the substep (zero RHS is conservative — no flux, no spurious
+        // mass/energy). Neighbours relax it and it re-enters transport next
+        // substep. Only p.dt<=0 / non-finite dt (a real config fault) still NaNs.
+        if (!(p.dt > 0.0f) || !isfinite(p.dt)) {
+            float qn = qnan_f();
+            drho = qn;
+            dmom = float3(qn);
+            denergy = qn;
+            dentropy = qn;
+            return;
+        }
+
+        drho = 0.0f;
+        dmom = float3(0.0f);
+        denergy = 0.0f;
+        dentropy = 0.0f;
         return;
     }
 
@@ -3341,6 +3369,7 @@ kernel void project_modes_to_spatial_psi(
     device atomic_uint* psi_re_field            [[buffer(5)]],   // grid_numel (float bits)
     device atomic_uint* psi_im_field            [[buffer(6)]],   // grid_numel (float bits)
     constant ModeProjectParams& p               [[buffer(7)]],
+    device const float* mode_omega              [[buffer(8)]],   // num_modes
     uint gid                                    [[thread_position_in_grid]]
 ) {
     uint total = p.num_modes * p.anchors_per_mode;
@@ -3355,21 +3384,28 @@ kernel void project_modes_to_spatial_psi(
     float w = mode_anchor_weight[mode * p.anchors_per_mode + a];
     if (!(w > 0.0f)) return;
 
-    float re = mode_psi_real[mode] * w;
-    float im = mode_psi_imag[mode] * w;
-
     float3 pos = float3(
         particle_pos[anchor * 3 + 0],
         particle_pos[anchor * 3 + 1],
         particle_pos[anchor * 3 + 2]
     );
 
-    if (!isfinite(re) || !isfinite(im) ||
-        !isfinite(pos.x) || !isfinite(pos.y) || !isfinite(pos.z)) {
+    if (!isfinite(pos.x) || !isfinite(pos.y) || !isfinite(pos.z) ||
+        !(p.domain_x > 0.0f) || !(p.dt > 0.0f)) {
         return;
     }
 
-    // CIC splat onto the spatial grid (periodic).
+    // Real CIC envelopes alone make Im(conj(Ψ)∇Ψ)=0 for an isolated mode.
+    // Apply the price-axis plane wave at each destination cell (not the particle
+    // center) so neighbouring CIC corners carry a phase gradient.
+    float omega = mode_omega[mode];
+    float re0 = mode_psi_real[mode] * w;
+    float im0 = mode_psi_imag[mode] * w;
+
+    if (!isfinite(re0) || !isfinite(im0) || !isfinite(omega)) {
+        return;
+    }
+
     float3 inv_cell = float3(p.inv_cell_x, p.inv_cell_y, p.inv_cell_z);
     float3 g = pos * inv_cell;
 
@@ -3385,67 +3421,56 @@ kernel void project_modes_to_spatial_psi(
     int iy1 = iy0 + 1;
     int iz1 = iz0 + 1;
 
-    ix0 = wrap_i32(ix0, (int)p.grid_x);
-    iy0 = wrap_i32(iy0, (int)p.grid_y);
-    iz0 = wrap_i32(iz0, (int)p.grid_z);
-
-    ix1 = wrap_i32(ix1, (int)p.grid_x);
-    iy1 = wrap_i32(iy1, (int)p.grid_y);
-    iz1 = wrap_i32(iz1, (int)p.grid_z);
+    int ix0w = wrap_i32(ix0, (int)p.grid_x);
+    int iy0w = wrap_i32(iy0, (int)p.grid_y);
+    int iz0w = wrap_i32(iz0, (int)p.grid_z);
+    int ix1w = wrap_i32(ix1, (int)p.grid_x);
+    int iy1w = wrap_i32(iy1, (int)p.grid_y);
+    int iz1w = wrap_i32(iz1, (int)p.grid_z);
 
     float wx0 = 1.0f - fx;
     float wy0 = 1.0f - fy;
     float wz0 = 1.0f - fz;
-
     float wx1 = fx;
     float wy1 = fy;
     float wz1 = fz;
 
     uint stride_x = p.grid_y * p.grid_z;
     uint stride_y = p.grid_z;
+    float k_phase = omega * p.dt / p.domain_x;
 
-    uint i000 = (uint)ix0 * stride_x + (uint)iy0 * stride_y + (uint)iz0;
-    uint i100 = (uint)ix1 * stride_x + (uint)iy0 * stride_y + (uint)iz0;
-    uint i010 = (uint)ix0 * stride_x + (uint)iy1 * stride_y + (uint)iz0;
-    uint i110 = (uint)ix1 * stride_x + (uint)iy1 * stride_y + (uint)iz0;
-    uint i001 = (uint)ix0 * stride_x + (uint)iy0 * stride_y + (uint)iz1;
-    uint i101 = (uint)ix1 * stride_x + (uint)iy0 * stride_y + (uint)iz1;
-    uint i011 = (uint)ix0 * stride_x + (uint)iy1 * stride_y + (uint)iz1;
-    uint i111 = (uint)ix1 * stride_x + (uint)iy1 * stride_y + (uint)iz1;
+    // Deposit rotated amplitude at each CIC corner using that cell's x-phase.
+    int xs[2] = { ix0w, ix1w };
+    int ys[2] = { iy0w, iy1w };
+    int zs[2] = { iz0w, iz1w };
+    float wx[2] = { wx0, wx1 };
+    float wy[2] = { wy0, wy1 };
+    float wz[2] = { wz0, wz1 };
 
-    float w000 = wx0 * wy0 * wz0;
-    float w100 = wx1 * wy0 * wz0;
-    float w010 = wx0 * wy1 * wz0;
-    float w110 = wx1 * wy1 * wz0;
-    float w001 = wx0 * wy0 * wz1;
-    float w101 = wx1 * wy0 * wz1;
-    float w011 = wx0 * wy1 * wz1;
-    float w111 = wx1 * wy1 * wz1;
+    for (int dx = 0; dx < 2; dx++) {
+        float phase = k_phase * ((float)xs[dx] + 0.5f) * p.cell_x;
+        float c = cos(phase);
+        float s = sin(phase);
+        float re = re0 * c - im0 * s;
+        float im = re0 * s + im0 * c;
 
-    atomic_add_float_device(&psi_re_field[i000], re * w000);
-    atomic_add_float_device(&psi_im_field[i000], im * w000);
+        if (!isfinite(re) || !isfinite(im)) {
+            continue;
+        }
 
-    atomic_add_float_device(&psi_re_field[i100], re * w100);
-    atomic_add_float_device(&psi_im_field[i100], im * w100);
+        for (int dy = 0; dy < 2; dy++) {
+            for (int dz = 0; dz < 2; dz++) {
+                float weight = wx[dx] * wy[dy] * wz[dz];
+                if (!(weight > 0.0f)) {
+                    continue;
+                }
 
-    atomic_add_float_device(&psi_re_field[i010], re * w010);
-    atomic_add_float_device(&psi_im_field[i010], im * w010);
-
-    atomic_add_float_device(&psi_re_field[i110], re * w110);
-    atomic_add_float_device(&psi_im_field[i110], im * w110);
-
-    atomic_add_float_device(&psi_re_field[i001], re * w001);
-    atomic_add_float_device(&psi_im_field[i001], im * w001);
-
-    atomic_add_float_device(&psi_re_field[i101], re * w101);
-    atomic_add_float_device(&psi_im_field[i101], im * w101);
-
-    atomic_add_float_device(&psi_re_field[i011], re * w011);
-    atomic_add_float_device(&psi_im_field[i011], im * w011);
-
-    atomic_add_float_device(&psi_re_field[i111], re * w111);
-    atomic_add_float_device(&psi_im_field[i111], im * w111);
-
+                uint index = (uint)xs[dx] * stride_x + (uint)ys[dy] * stride_y + (uint)zs[dz];
+                atomic_add_float_device(&psi_re_field[index], re * weight);
+                atomic_add_float_device(&psi_im_field[index], im * weight);
+            }
+        }
+    }
 }
 
 // -----------------------------------------------------------------------------

@@ -85,6 +85,51 @@ func TestSolverStep(t *testing.T) {
 	})
 }
 
+
+func TestPilotWaveGuidanceCurrentIsMarketScale(t *testing.T) {
+	convey.Convey("Given two L3 carriers with distinct omega on the price axis", t, func() {
+		config := smallTestConfig()
+		solver, err := NewSolver(config)
+		convey.So(err, convey.ShouldBeNil)
+		defer solver.Close()
+
+		leftX, leftY, leftZ := config.testCellCenter(2, 0, 3)
+		rightX, rightY, rightZ := config.testCellCenter(5, 0, 4)
+		omega := config.GateWidthMax() * 0.5
+
+		convey.So(solver.SetOscillators([]Oscillator{
+			{
+				Phase: 0.0, Omega: omega, Amplitude: 0.4,
+				PosX: leftX, PosY: leftY, PosZ: leftZ, Heat: 0.4,
+			},
+			{
+				Phase: math.Pi / 2, Omega: omega * 0.75, Amplitude: 0.6,
+				PosX: rightX, PosY: rightY, PosZ: rightZ, Heat: 0.6,
+			},
+		}), convey.ShouldBeNil)
+
+		reading, stepErr := solver.Step()
+		convey.So(stepErr, convey.ShouldBeNil)
+
+		pilotWave, pilotErr := solver.ReadPilotWaveProjection()
+		convey.So(pilotErr, convey.ShouldBeNil)
+
+		peak := 0.0
+		for row := range pilotWave.VelX {
+			for col := range pilotWave.VelX[row] {
+				speed := math.Hypot(pilotWave.VelX[row][col], pilotWave.VelZ[row][col])
+				if speed > peak {
+					peak = speed
+				}
+			}
+		}
+
+		convey.So(peak, convey.ShouldBeGreaterThan, 1e-4)
+		convey.So(reading.GuidanceSpeed, convey.ShouldBeGreaterThan, 1e-4)
+		convey.So(math.IsInf(reading.GuidanceSpeed, 0), convey.ShouldBeFalse)
+	})
+}
+
 func TestSolverSetControls(t *testing.T) {
 	convey.Convey("Given a Metal manifold solver", t, func() {
 		config := smallTestConfig()

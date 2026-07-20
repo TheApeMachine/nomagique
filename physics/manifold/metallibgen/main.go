@@ -215,7 +215,7 @@ func (generator *Generator) needsStrictFP(source string) bool {
 	}
 
 	switch baseName {
-	case "manifold.metal":
+	case "fluid.metal", "manifold.metal":
 		return true
 	default:
 		return false

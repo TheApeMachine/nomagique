@@ -138,10 +138,18 @@ func (flow *Flow) Measure(input FlowInput) (FlowOutput, error) {
 	starvation := 0.0
 
 	if hiddenAbsorption {
-		impactScale := impactEfficiencyScale(flatThreshold, firstPrice, flowPressure, impactEfficiency)
+		// Zero impact under aggressive pressure is full absorption of that net.
+		// A positive but small impact is scored against the local efficiency scale.
+		if impactEfficiency <= 0 {
+			absorption = netFraction
+		} else {
+			impactScale := impactEfficiencyScale(
+				flatThreshold, firstPrice, flowPressure, impactEfficiency,
+			)
 
-		if impactScale > 0 {
-			absorption = netFraction * inverseSquash(impactEfficiency, impactScale)
+			if impactScale > 0 {
+				absorption = netFraction * inverseSquash(impactEfficiency, impactScale)
+			}
 		}
 	}
 

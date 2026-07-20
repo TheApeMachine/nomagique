@@ -140,8 +140,11 @@ err := nomagique.RoundTripArtifact(wire, pipeline)
 | `decay`       | Exponential kernel and intensity support                                                                                                                           |
 | `timeline`    | Sorted event timestamps, gaps, and span utilities                                                                                                                  |
 | `algorithm`   | `Pearl`, `Hawkes`, `HawkesFit`, `Shift`, `Correlate`, `Backdoor`, `Calibrate`, `Trust`                                                                             |
-| `geometry`    | Phase dials, eigenmodes, PGA, Procrustes; pipeline stages `Velocity`, `Coupling`, `ModePartition`, `Rotor`, `Translator`, `Sandwich`                               |
+| `equation`    | Market equations, including capacity-bounded per-symbol ignition baselines                                                                                         |
+| `geometry`    | Complex phase dials and controlled corpus phase scans; eigenmodes, PGA, Procrustes; pipeline stages `Velocity`, `Coupling`, `ModePartition`, `Rotor`, `Translator`, `Sandwich` |
 | `logic`       | `Circuit`, `Rules`, `Condition`, `True`, `And`, `Or`, `Not`, `Xor`, `GreaterThan`, `LessThan`, `Equal`                                                             |
+| `physics/fluid` | Standalone Sensorium periodic PIC, total-energy CPU gas reference, and coupled internal-energy Metal gas/omega-wave domain                                   |
+| `physics/manifold` | A shared Metal device/library `Engine` with independently resident per-symbol `Field` solvers and measured working-set capacity                              |
 | `transport`   | `FlipFlop`, `Pipeline`, `Graph`, `Feedback` (in `datura/transport`)                                                                                                |
 | `nomagique`   | `Number` entry point                                                                                                                                               |
 

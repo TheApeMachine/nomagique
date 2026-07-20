@@ -1,9 +1,5 @@
 #include <metal_stdlib>
 using namespace metal;
- 
-constant uint kGridX [[function_constant(0)]];
-constant uint kGridY [[function_constant(1)]];
-constant uint kGridZ [[function_constant(2)]];
 
 // =============================================================================
 // Manifold Physics Kernels
@@ -105,28 +101,13 @@ kernel void reduce_float_stats_pass1(
     scratch[tid] = acc;
     threadgroup_barrier(mem_flags::mem_threadgroup);
 
-    for (uint offset = kReduceThreads / 2; offset > 32; offset >>= 1) {
+    // Parallel reduction in shared memory.
+    for (uint offset = kReduceThreads / 2; offset > 0; offset >>= 1) {
         if (tid < offset) {
             scratch[tid] += scratch[tid + offset];
         }
         threadgroup_barrier(mem_flags::mem_threadgroup);
     }
-
-    float4 lane_acc = scratch[tid];
-    lane_acc += simd_shuffle_down(lane_acc, 16);
-    lane_acc += simd_shuffle_down(lane_acc, 8);
-    lane_acc += simd_shuffle_down(lane_acc, 4);
-    lane_acc += simd_shuffle_down(lane_acc, 2);
-    lane_acc += simd_shuffle_down(lane_acc, 1);
-    if ((tid & 31u) == 0u) {
-        scratch[tid] = lane_acc;
-    }
-    threadgroup_barrier(mem_flags::mem_threadgroup);
-
-    if (tid < 8u) {
-        scratch[tid] += scratch[tid + 32u];
-    }
-    threadgroup_barrier(mem_flags::mem_threadgroup);
 
     if (tid == 0) {
         group_stats[tg_id * 4 + 0] = scratch[0].x;
@@ -156,28 +137,12 @@ kernel void reduce_float_stats_finalize(
     scratch[tid] = acc;
     threadgroup_barrier(mem_flags::mem_threadgroup);
 
-    for (uint offset = kReduceThreads / 2; offset > 32; offset >>= 1) {
+    for (uint offset = kReduceThreads / 2; offset > 0; offset >>= 1) {
         if (tid < offset) {
             scratch[tid] += scratch[tid + offset];
         }
         threadgroup_barrier(mem_flags::mem_threadgroup);
     }
-
-    float4 lane_acc = scratch[tid];
-    lane_acc += simd_shuffle_down(lane_acc, 16);
-    lane_acc += simd_shuffle_down(lane_acc, 8);
-    lane_acc += simd_shuffle_down(lane_acc, 4);
-    lane_acc += simd_shuffle_down(lane_acc, 2);
-    lane_acc += simd_shuffle_down(lane_acc, 1);
-    if ((tid & 31u) == 0u) {
-        scratch[tid] = lane_acc;
-    }
-    threadgroup_barrier(mem_flags::mem_threadgroup);
-
-    if (tid < 8u) {
-        scratch[tid] += scratch[tid + 32u];
-    }
-    threadgroup_barrier(mem_flags::mem_threadgroup);
 
     if (tid == 0) {
         float sum_abs = scratch[0].x;
@@ -201,7 +166,7 @@ kernel void reduce_float_stats_finalize(
         // [CHOICE] non-negative variance
         // [FORMULA] var = max(E[x^2] - E[x]^2, 0)
         // [REASON] rounding can produce tiny negative; project back to ℝ_{\ge 0}
-        float var = max((sum_sq / count) - mean * mean, 0.0f);
+        float var = (sum_sq / count) - mean * mean;
         float std = sqrt(var);
 
         out_stats[0] = mean_abs;
@@ -302,174 +267,6 @@ struct SpatialCollisionParams {
     float restitution;
 };
 
-constant uint32_t gas_boundary_periodic = 0u;
-constant uint32_t gas_boundary_outflow = 1u;
-constant uint32_t gas_boundary_reflecting = 2u;
-
-inline bool pic_axis_periodic(uint32_t low, uint32_t high) {
-    return low == gas_boundary_periodic && high == gas_boundary_periodic;
-}
-
-inline float pic_axis_coord(
-    float g,
-    uint extent,
-    uint32_t low,
-    uint32_t high
-) {
-    if (pic_axis_periodic(low, high)) {
-        float gd = (float)extent;
-        return g - gd * floor(g / gd);
-    }
-
-    float max_g = (float)(extent - 1u);
-
-    if (g < 0.0f) {
-        return 0.0f;
-    }
-
-    if (g > max_g) {
-        return max_g;
-    }
-
-    return g;
-}
-
-inline uint pic_axis_corner(uint base, uint extent, uint32_t low, uint32_t high) {
-    if (pic_axis_periodic(low, high)) {
-        return (base + 1u) % extent;
-    }
-
-    return min(base + 1u, extent - 1u);
-}
-
-inline void pic_trilinear_coords(
-    float3 pos,
-    float3 inv_spacing,
-    uint3 grid_dims,
-    uint3 boundary_low,
-    uint3 boundary_high,
-    thread uint3& base_idx,
-    thread float3& frac
-) {
-    float3 g = pos * inv_spacing;
-    g.x = pic_axis_coord(g.x, grid_dims.x, boundary_low.x, boundary_high.x);
-    g.y = pic_axis_coord(g.y, grid_dims.y, boundary_low.y, boundary_high.y);
-    g.z = pic_axis_coord(g.z, grid_dims.z, boundary_low.z, boundary_high.z);
-    base_idx = uint3(floor(g));
-    frac = g - float3(base_idx);
-}
-
-inline float3 pic_advect_position(
-    float3 pos,
-    float3 velocity,
-    float dt,
-    float3 domain,
-    uint3 boundary_low,
-    uint3 boundary_high
-) {
-    float3 next = pos + velocity * dt;
-
-    if (pic_axis_periodic(boundary_low.x, boundary_high.x)) {
-        next.x = next.x - floor(next.x / domain.x) * domain.x;
-    } else {
-        next.x = clamp(next.x, 0.0f, nextafter(domain.x, 0.0f));
-    }
-
-    if (pic_axis_periodic(boundary_low.y, boundary_high.y)) {
-        next.y = next.y - floor(next.y / domain.y) * domain.y;
-    } else {
-        next.y = clamp(next.y, 0.0f, nextafter(domain.y, 0.0f));
-    }
-
-    if (pic_axis_periodic(boundary_low.z, boundary_high.z)) {
-        next.z = next.z - floor(next.z / domain.z) * domain.z;
-    } else {
-        next.z = clamp(next.z, 0.0f, nextafter(domain.z, 0.0f));
-    }
-
-    return next;
-}
-
-inline uint pic_primary_cell_axis(float scaled, uint extent, uint32_t low, uint32_t high) {
-    if (pic_axis_periodic(low, high)) {
-        return uint(scaled) % extent;
-    }
-
-    int cell = (int)floor(scaled);
-
-    if (cell < 0) {
-        cell = 0;
-    }
-
-    if ((uint)cell >= extent) {
-        cell = (int)extent - 1;
-    }
-
-    return (uint)cell;
-}
-
-inline float4 pic_sample_value_and_gradient_trilinear(
-    device const float* field,
-    uint3 base_idx,
-    float3 frac,
-    uint3 grid_dims,
-    float3 inv_spacing,
-    uint3 boundary_low,
-    uint3 boundary_high
-) {
-    uint stride_z = 1;
-    uint stride_y = grid_dims.z;
-    uint stride_x = grid_dims.y * grid_dims.z;
-
-    uint x0 = base_idx.x;
-    uint y0 = base_idx.y;
-    uint z0 = base_idx.z;
-    uint x1 = pic_axis_corner(x0, grid_dims.x, boundary_low.x, boundary_high.x);
-    uint y1 = pic_axis_corner(y0, grid_dims.y, boundary_low.y, boundary_high.y);
-    uint z1 = pic_axis_corner(z0, grid_dims.z, boundary_low.z, boundary_high.z);
-
-    float c000 = field[x0 * stride_x + y0 * stride_y + z0 * stride_z];
-    float c001 = field[x0 * stride_x + y0 * stride_y + z1 * stride_z];
-    float c010 = field[x0 * stride_x + y1 * stride_y + z0 * stride_z];
-    float c011 = field[x0 * stride_x + y1 * stride_y + z1 * stride_z];
-    float c100 = field[x1 * stride_x + y0 * stride_y + z0 * stride_z];
-    float c101 = field[x1 * stride_x + y0 * stride_y + z1 * stride_z];
-    float c110 = field[x1 * stride_x + y1 * stride_y + z0 * stride_z];
-    float c111 = field[x1 * stride_x + y1 * stride_y + z1 * stride_z];
-
-    float fx = frac.x;
-    float fy = frac.y;
-    float fz = frac.z;
-
-    float c00 = c000 * (1.0f - fz) + c001 * fz;
-    float c01 = c010 * (1.0f - fz) + c011 * fz;
-    float c10 = c100 * (1.0f - fz) + c101 * fz;
-    float c11 = c110 * (1.0f - fz) + c111 * fz;
-    float c0 = c00 * (1.0f - fy) + c01 * fy;
-    float c1 = c10 * (1.0f - fy) + c11 * fy;
-    float value = c0 * (1.0f - fx) + c1 * fx;
-
-    float face_x0 = c000 * (1.0f - fy) * (1.0f - fz) + c010 * fy * (1.0f - fz) +
-        c001 * (1.0f - fy) * fz + c011 * fy * fz;
-    float face_x1 = c100 * (1.0f - fy) * (1.0f - fz) + c110 * fy * (1.0f - fz) +
-        c101 * (1.0f - fy) * fz + c111 * fy * fz;
-    float face_y0 = c000 * (1.0f - fx) * (1.0f - fz) + c100 * fx * (1.0f - fz) +
-        c001 * (1.0f - fx) * fz + c101 * fx * fz;
-    float face_y1 = c010 * (1.0f - fx) * (1.0f - fz) + c110 * fx * (1.0f - fz) +
-        c011 * (1.0f - fx) * fz + c111 * fx * fz;
-    float face_z0 = c000 * (1.0f - fx) * (1.0f - fy) + c100 * fx * (1.0f - fy) +
-        c010 * (1.0f - fx) * fy + c110 * fx * fy;
-    float face_z1 = c001 * (1.0f - fx) * (1.0f - fy) + c101 * fx * (1.0f - fy) +
-        c011 * (1.0f - fx) * fy + c111 * fx * fy;
-
-    return float4(
-        (face_x1 - face_x0) * inv_spacing.x,
-        (face_y1 - face_y0) * inv_spacing.y,
-        (face_z1 - face_z0) * inv_spacing.z,
-        value
-    );
-}
-
 // -----------------------------------------------------------------------------
 // Utility: Trilinear Interpolation
 // -----------------------------------------------------------------------------
@@ -477,7 +274,7 @@ inline float4 pic_sample_value_and_gradient_trilinear(
 // Compute trilinear weights and grid indices for a position
 inline void trilinear_coords(
     float3 pos,
-    float3 inv_spacing,
+    float inv_spacing,
     uint3 grid_dims,
     thread uint3& base_idx,
     thread float3& frac
@@ -517,14 +314,18 @@ inline float sample_field_trilinear(
     uint y1 = (y0 + 1) % grid_dims.y;
     uint z1 = (z0 + 1) % grid_dims.z;
 
-    float c000 = field[x0 * stride_x + y0 * stride_y + z0 * stride_z];
-    float c001 = field[x0 * stride_x + y0 * stride_y + z1 * stride_z];
-    float c010 = field[x0 * stride_x + y1 * stride_y + z0 * stride_z];
-    float c011 = field[x0 * stride_x + y1 * stride_y + z1 * stride_z];
-    float c100 = field[x1 * stride_x + y0 * stride_y + z0 * stride_z];
-    float c101 = field[x1 * stride_x + y0 * stride_y + z1 * stride_z];
-    float c110 = field[x1 * stride_x + y1 * stride_y + z0 * stride_z];
-    float c111 = field[x1 * stride_x + y1 * stride_y + z1 * stride_z];
+    auto idx3 = [&](uint x, uint y, uint z) -> uint {
+        return x * stride_x + y * stride_y + z * stride_z;
+    };
+
+    float c000 = field[idx3(x0, y0, z0)];
+    float c001 = field[idx3(x0, y0, z1)];
+    float c010 = field[idx3(x0, y1, z0)];
+    float c011 = field[idx3(x0, y1, z1)];
+    float c100 = field[idx3(x1, y0, z0)];
+    float c101 = field[idx3(x1, y0, z1)];
+    float c110 = field[idx3(x1, y1, z0)];
+    float c111 = field[idx3(x1, y1, z1)];
     
     // Trilinear interpolation
     float fx = frac.x;
@@ -548,7 +349,7 @@ inline float3 sample_gradient_trilinear(
     uint3 base_idx,
     float3 frac,
     uint3 grid_dims,
-    float3 inv_spacing
+    float inv_spacing
 ) {
     uint stride_z = 1;
     uint stride_y = grid_dims.z;
@@ -566,14 +367,18 @@ inline float3 sample_gradient_trilinear(
     uint y1 = (y0 + 1) % grid_dims.y;
     uint z1 = (z0 + 1) % grid_dims.z;
 
-    float c000 = field[x0 * stride_x + y0 * stride_y + z0 * stride_z];
-    float c001 = field[x0 * stride_x + y0 * stride_y + z1 * stride_z];
-    float c010 = field[x0 * stride_x + y1 * stride_y + z0 * stride_z];
-    float c011 = field[x0 * stride_x + y1 * stride_y + z1 * stride_z];
-    float c100 = field[x1 * stride_x + y0 * stride_y + z0 * stride_z];
-    float c101 = field[x1 * stride_x + y0 * stride_y + z1 * stride_z];
-    float c110 = field[x1 * stride_x + y1 * stride_y + z0 * stride_z];
-    float c111 = field[x1 * stride_x + y1 * stride_y + z1 * stride_z];
+    auto idx3 = [&](uint x, uint y, uint z) -> uint {
+        return x * stride_x + y * stride_y + z * stride_z;
+    };
+
+    float c000 = field[idx3(x0, y0, z0)];
+    float c001 = field[idx3(x0, y0, z1)];
+    float c010 = field[idx3(x0, y1, z0)];
+    float c011 = field[idx3(x0, y1, z1)];
+    float c100 = field[idx3(x1, y0, z0)];
+    float c101 = field[idx3(x1, y0, z1)];
+    float c110 = field[idx3(x1, y1, z0)];
+    float c111 = field[idx3(x1, y1, z1)];
     
     // Gradient in each direction (using trilinear interpolation of face values)
     float fy = frac.y;
@@ -582,74 +387,20 @@ inline float3 sample_gradient_trilinear(
     // dF/dx: difference between x=1 and x=0 faces
     float face_x0 = c000 * (1-fy) * (1-fz) + c010 * fy * (1-fz) + c001 * (1-fy) * fz + c011 * fy * fz;
     float face_x1 = c100 * (1-fy) * (1-fz) + c110 * fy * (1-fz) + c101 * (1-fy) * fz + c111 * fy * fz;
-    float grad_x = (face_x1 - face_x0) * inv_spacing.x;
+    float grad_x = (face_x1 - face_x0) * inv_spacing;
     
     float fx = frac.x;
     // dF/dy
     float face_y0 = c000 * (1-fx) * (1-fz) + c100 * fx * (1-fz) + c001 * (1-fx) * fz + c101 * fx * fz;
     float face_y1 = c010 * (1-fx) * (1-fz) + c110 * fx * (1-fz) + c011 * (1-fx) * fz + c111 * fx * fz;
-    float grad_y = (face_y1 - face_y0) * inv_spacing.y;
+    float grad_y = (face_y1 - face_y0) * inv_spacing;
     
     // dF/dz
     float face_z0 = c000 * (1-fx) * (1-fy) + c100 * fx * (1-fy) + c010 * (1-fx) * fy + c110 * fx * fy;
     float face_z1 = c001 * (1-fx) * (1-fy) + c101 * fx * (1-fy) + c011 * (1-fx) * fy + c111 * fx * fy;
-    float grad_z = (face_z1 - face_z0) * inv_spacing.z;
+    float grad_z = (face_z1 - face_z0) * inv_spacing;
     
     return float3(grad_x, grad_y, grad_z);
-}
-
-inline float4 sample_value_and_gradient_trilinear(
-    device const float* field,
-    uint3 base_idx,
-    float3 frac,
-    uint3 grid_dims,
-    float3 inv_spacing
-) {
-    uint stride_z = 1;
-    uint stride_y = grid_dims.z;
-    uint stride_x = grid_dims.y * grid_dims.z;
-
-    uint x0 = base_idx.x;
-    uint y0 = base_idx.y;
-    uint z0 = base_idx.z;
-    uint x1 = (x0 + 1) % grid_dims.x;
-    uint y1 = (y0 + 1) % grid_dims.y;
-    uint z1 = (z0 + 1) % grid_dims.z;
-
-    float c000 = field[x0 * stride_x + y0 * stride_y + z0 * stride_z];
-    float c001 = field[x0 * stride_x + y0 * stride_y + z1 * stride_z];
-    float c010 = field[x0 * stride_x + y1 * stride_y + z0 * stride_z];
-    float c011 = field[x0 * stride_x + y1 * stride_y + z1 * stride_z];
-    float c100 = field[x1 * stride_x + y0 * stride_y + z0 * stride_z];
-    float c101 = field[x1 * stride_x + y0 * stride_y + z1 * stride_z];
-    float c110 = field[x1 * stride_x + y1 * stride_y + z0 * stride_z];
-    float c111 = field[x1 * stride_x + y1 * stride_y + z1 * stride_z];
-
-    float fx = frac.x;
-    float fy = frac.y;
-    float fz = frac.z;
-
-    float c00 = c000 * (1.0f - fz) + c001 * fz;
-    float c01 = c010 * (1.0f - fz) + c011 * fz;
-    float c10 = c100 * (1.0f - fz) + c101 * fz;
-    float c11 = c110 * (1.0f - fz) + c111 * fz;
-    float c0 = c00 * (1.0f - fy) + c01 * fy;
-    float c1 = c10 * (1.0f - fy) + c11 * fy;
-    float value = c0 * (1.0f - fx) + c1 * fx;
-
-    float face_x0 = c000 * (1.0f - fy) * (1.0f - fz) + c010 * fy * (1.0f - fz) + c001 * (1.0f - fy) * fz + c011 * fy * fz;
-    float face_x1 = c100 * (1.0f - fy) * (1.0f - fz) + c110 * fy * (1.0f - fz) + c101 * (1.0f - fy) * fz + c111 * fy * fz;
-    float face_y0 = c000 * (1.0f - fx) * (1.0f - fz) + c100 * fx * (1.0f - fz) + c001 * (1.0f - fx) * fz + c101 * fx * fz;
-    float face_y1 = c010 * (1.0f - fx) * (1.0f - fz) + c110 * fx * (1.0f - fz) + c011 * (1.0f - fx) * fz + c111 * fx * fz;
-    float face_z0 = c000 * (1.0f - fx) * (1.0f - fy) + c100 * fx * (1.0f - fy) + c010 * (1.0f - fx) * fy + c110 * fx * fy;
-    float face_z1 = c001 * (1.0f - fx) * (1.0f - fy) + c101 * fx * (1.0f - fy) + c011 * (1.0f - fx) * fy + c111 * fx * fy;
-
-    return float4(
-        (face_x1 - face_x0) * inv_spacing.x,
-        (face_y1 - face_y0) * inv_spacing.y,
-        (face_z1 - face_z0) * inv_spacing.z,
-        value
-    );
 }
 
 // -----------------------------------------------------------------------------
@@ -665,8 +416,8 @@ inline float sample_trilinear(
     device const float* field,
     float3 pos,
     uint gx, uint gy, uint gz,
-    float3 spacing,
-    float3 inv_spacing
+    float spacing,
+    float inv_spacing
 ) {
     uint3 base_idx; float3 frac;
     trilinear_coords(pos, inv_spacing, uint3(gx, gy, gz), base_idx, frac);
@@ -677,8 +428,8 @@ inline float3 sample_gradient_trilinear(
     device const float* field,
     float3 pos,
     uint gx, uint gy, uint gz,
-    float3 spacing,
-    float3 inv_spacing
+    float spacing,
+    float inv_spacing
 ) {
     uint3 base_idx; float3 frac;
     trilinear_coords(pos, inv_spacing, uint3(gx, gy, gz), base_idx, frac);
@@ -700,64 +451,6 @@ kernel void clear_field(
 ) {
     if (gid >= num_elements) return;
     field[gid] = 0.0f;
-}
-
-kernel void clear_buffer_u32(
-    device uint* data                [[buffer(0)]],
-    constant uint& num_elements      [[buffer(1)]],
-    uint gid [[thread_position_in_grid]]
-) {
-    if (gid >= num_elements) return;
-    data[gid] = 0u;
-}
-
-kernel void init_omega_scan_keys(
-    device atomic_uint* omega_min_key [[buffer(0)]],
-    device atomic_uint* omega_max_key [[buffer(1)]],
-    uint gid [[thread_position_in_grid]]
-) {
-    if (gid != 0u) return;
-    atomic_store_explicit(omega_min_key, 0xFFFFFFFFu, memory_order_relaxed);
-    atomic_store_explicit(omega_max_key, 0u, memory_order_relaxed);
-}
-
-kernel void copy_buffer_u32(
-    device const uint* src           [[buffer(0)]],
-    device uint* dst                 [[buffer(1)]],
-    constant uint& num_elements      [[buffer(2)]],
-    uint gid [[thread_position_in_grid]]
-) {
-    if (gid >= num_elements) return;
-    dst[gid] = src[gid];
-}
-
-kernel void copy_buffer_float(
-    device const float* src          [[buffer(0)]],
-    device float* dst                [[buffer(1)]],
-    constant uint& num_elements      [[buffer(2)]],
-    uint gid [[thread_position_in_grid]]
-) {
-    if (gid >= num_elements) return;
-    dst[gid] = src[gid];
-}
-
-kernel void scatter_prefix_sum_seed_last(
-    device uint* data                [[buffer(0)]],
-    constant uint& num_elements      [[buffer(1)]],
-    uint gid [[thread_position_in_grid]]
-) {
-    if (gid != 0u || num_elements == 0u) return;
-    data[num_elements - 1u] = 0u;
-}
-
-kernel void copy_bits_to_float(
-    device const uint* src_bits       [[buffer(0)]],
-    device float* dst                [[buffer(1)]],
-    constant uint& num_elements      [[buffer(2)]],
-    uint gid [[thread_position_in_grid]]
-) {
-    if (gid >= num_elements) return;
-    dst[gid] = as_type<float>(src_bits[gid]);
 }
 
 // =============================================================================
@@ -821,44 +514,29 @@ kernel void particle_interactions(
         return;
     }
     
-    float particle_radius = p.particle_radius;
-    float combined_radius = particle_radius + particle_radius;
-    float combined_radius_sq = combined_radius * combined_radius;
-    float inv_mass_i = 1.0f / mass_i;
-    float cv = p.specific_heat;
-    float temperature_i = heat_i / (mass_i * cv);
-    float restitution = p.restitution;
-    float timestep = p.dt;
-    float young_modulus = p.young_modulus;
-    float thermal_conductivity = p.thermal_conductivity;
-
+    // Particle radius (from material property)
+    float r_i = p.particle_radius;
+    
+    // Accumulate impulses and heat changes
     float3 impulse_total = float3(0.0f);
     float heat_delta = 0.0f;
-
-    for (uint neighbor_idx = 0; neighbor_idx < p.num_particles; neighbor_idx++) {
-        if (neighbor_idx == gid) continue;
-
+    
+    // Loop over all other particles
+    for (uint j = 0; j < p.num_particles; j++) {
+        if (j == gid) continue;
+        
         float3 pos_j = float3(
-            particle_pos[neighbor_idx * 3 + 0],
-            particle_pos[neighbor_idx * 3 + 1],
-            particle_pos[neighbor_idx * 3 + 2]
+            particle_pos[j * 3 + 0],
+            particle_pos[j * 3 + 1],
+            particle_pos[j * 3 + 2]
         );
-
-        float3 delta = pos_i - pos_j;
-        float dist_sq = dot(delta, delta);
-
-        if (dist_sq >= combined_radius_sq || dist_sq < 1e-12f) {
-            continue;
-        }
-
-        float dist = sqrt(dist_sq);
         float3 vel_j = float3(
-            particle_vel_in[neighbor_idx * 3 + 0],
-            particle_vel_in[neighbor_idx * 3 + 1],
-            particle_vel_in[neighbor_idx * 3 + 2]
+            particle_vel_in[j * 3 + 0],
+            particle_vel_in[j * 3 + 1],
+            particle_vel_in[j * 3 + 2]
         );
-        float mass_j = particle_mass[neighbor_idx];
-        float heat_j = particle_heat_in[neighbor_idx];
+        float mass_j = particle_mass[j];
+        float heat_j = particle_heat_in[j];
 
         if (!(mass_j > 0.0f)) {
             float qn = qnan_f();
@@ -868,31 +546,80 @@ kernel void particle_interactions(
             particle_heat[gid] = qn;
             return;
         }
-
-        {
+        
+        float r_j = p.particle_radius;
+        float combined_radius = r_i + r_j;
+        
+        // Distance vector from j to i
+        float3 delta = pos_i - pos_j;
+        float dist = length(delta);
+        
+        if (dist < combined_radius && dist > 1e-6f) {
             // =====================================================
             // COLLISION DETECTED
             // =====================================================
-            float3 normal = delta / dist;
+            float3 n = delta / dist;  // Normal from j to i
             float overlap = combined_radius - dist;
-            float3 relative_velocity = vel_i - vel_j;
-            float normal_velocity = dot(relative_velocity, normal);
-
-            if (normal_velocity < 0.0f) {
-                float reduced_mass = (mass_i * mass_j) / (mass_i + mass_j);
-                float impulse_magnitude = (1.0f + restitution) * reduced_mass * (-normal_velocity);
-                impulse_total += (normal * impulse_magnitude * inv_mass_i) * 0.5f;
-                float kinetic_energy_lost = 0.5f * reduced_mass * normal_velocity * normal_velocity * (1.0f - restitution * restitution);
-                heat_delta += kinetic_energy_lost * 0.5f;
+            
+            // Relative velocity (i relative to j)
+            float3 v_rel = vel_i - vel_j;
+            float v_n = dot(v_rel, n);  // Normal component
+            
+            // -------------------------------------------------
+            // IMPULSE-BASED COLLISION (momentum conservation)
+            // -------------------------------------------------
+            if (v_n < 0.0f) {  // Only if approaching
+                // Coefficient of restitution e: v'_rel = -e * v_rel
+                float e = p.restitution;
+                
+                // Reduced mass: m_eff = m_i * m_j / (m_i + m_j)
+                float m_eff = (mass_i * mass_j) / (mass_i + mass_j);
+                
+                // Impulse magnitude: J = (1 + e) * m_eff * |v_n|
+                float J = (1.0f + e) * m_eff * (-v_n);
+                
+                // Impulse on particle i: Δv_i = J/m_i * n
+                // We divide by 2 because we process each pair twice (once for i, once for j)
+                impulse_total += (n * J / mass_i) * 0.5f;
+                
+                // -------------------------------------------------
+                // ENERGY CONSERVATION: KE_lost becomes heat
+                // -------------------------------------------------
+                // KE_before = 0.5 * m_eff * v_n^2
+                // KE_after  = 0.5 * m_eff * (e * v_n)^2
+                // ΔKE = 0.5 * m_eff * v_n^2 * (1 - e^2)
+                float ke_lost = 0.5f * m_eff * v_n * v_n * (1.0f - e * e);
+                heat_delta += ke_lost * 0.5f;  // Half to each particle
             }
-
-            float contact_force = young_modulus * overlap;
-            impulse_total += normal * contact_force * timestep * inv_mass_i;
-
-            float temperature_j = heat_j / (mass_j * cv);
-            float contact_area = overlap * overlap;
-            float heat_conduction = thermal_conductivity * contact_area * (temperature_j - temperature_i) * timestep;
-            heat_delta += heat_conduction;
+            
+            // -------------------------------------------------
+            // HERTZIAN CONTACT FORCE (prevents interpenetration)
+            // -------------------------------------------------
+            // F = (4/3) * E* * sqrt(R*) * δ^(3/2) for Hertzian contact
+            // Simplified: F ≈ E * δ for small overlaps (linear spring)
+            float contact_force = p.young_modulus * overlap;
+            impulse_total += n * contact_force * p.dt / mass_i;
+            
+            // -------------------------------------------------
+            // HEAT CONDUCTION ON CONTACT (Fourier's law)
+            // -------------------------------------------------
+            // Q = k * A * (T_j - T_i) / d, where d ≈ overlap
+            // Approximate: dQ/dt ∝ k * (T_j - T_i) * contact_area
+            // Temperature consistency: T = Q / (m * c_v)
+            // [CHOICE] contact conduction temperature mapping
+            // [FORMULA] T = Q / (m c_v)
+            // [REASON] consistent with particle internal energy definition
+            // [NOTES] invariants m>0, c_v>0 enforced above (no silent eps clamps).
+            float cv = p.specific_heat;
+            float T_i = heat_i / (mass_i * cv);
+            float T_j = heat_j / (mass_j * cv);
+            float contact_area = overlap * overlap;  // Approximate circular contact
+            float dQ_conduction = p.thermal_conductivity * contact_area * (T_j - T_i) * p.dt;
+            heat_delta += dQ_conduction;
+            
+            // Note: Excitation (oscillator frequency) is an INTRINSIC property
+            // and does NOT equilibrate on contact. Each particle maintains its
+            // unique frequency throughout the simulation.
         }
     }
     
@@ -1273,22 +1000,6 @@ kernel void coherence_bin_count_carriers(
     atomic_fetch_add_explicit(&bin_counts[(uint)bi], 1u, memory_order_relaxed);
 }
 
-kernel void derive_max_carrier_bin(
-    device const float* carrier_omega       [[buffer(0)]],
-    device const CoherenceBinParams* bin_p  [[buffer(1)]],
-    device atomic_uint* max_bin_out         [[buffer(2)]],
-    device const uint* num_carriers_in      [[buffer(3)]],
-    uint gid [[thread_position_in_grid]]
-) {
-    uint num_carriers = (num_carriers_in != nullptr) ? num_carriers_in[0] : 0u;
-    if (gid >= num_carriers) return;
-    float omega = carrier_omega[gid];
-    float fbin = (omega - bin_p[0].omega_min) * bin_p[0].inv_bin_width;
-    int bin_index = (int)floor(fbin);
-    if (bin_index < 0) return;
-    atomic_fetch_max_explicit(max_bin_out, (uint)bin_index, memory_order_relaxed);
-}
-
 kernel void coherence_bin_scatter_carriers(
     device const float* carrier_omega       [[buffer(0)]],  // maxM
     device const uint* num_carriers_in      [[buffer(1)]],  // (1,)
@@ -1307,98 +1018,6 @@ kernel void coherence_bin_scatter_carriers(
     uint slot = atomic_fetch_add_explicit(&bin_offsets[(uint)bi], 1u, memory_order_relaxed);
     carrier_binned_idx[slot] = gid;
 }
-
-kernel void coherence_fuse_binning(
-    device const float* carrier_omega       [[buffer(0)]],  // maxM
-    device const uint* num_carriers_in      [[buffer(1)]],  // (1,)
-    device uint* bin_counts                 [[buffer(2)]],  // maxM
-    device uint* bin_starts                 [[buffer(3)]],  // maxM + 1
-    device uint* bin_offsets                [[buffer(4)]],  // maxM
-    device uint* carrier_binned_idx         [[buffer(5)]],  // maxM
-    device const CoherenceBinParams* bin_p  [[buffer(6)]],  // (1,)
-    constant uint& num_bins                 [[buffer(7)]],
-    uint tid [[thread_position_in_threadgroup]],
-    uint t_dim [[threads_per_threadgroup]]
-) {
-    threadgroup atomic_uint local_counts[1025];
-    threadgroup atomic_uint local_starts[1025];
-    threadgroup uint scan_temp_a[1025];
-    threadgroup uint scan_temp_b[1025];
-
-    if (num_bins > 1024u) {
-        return;
-    }
-
-    uint n = (num_carriers_in != nullptr) ? num_carriers_in[0] : 0u;
-
-    for (uint i = tid; i < 1025; i += t_dim) {
-        atomic_store_explicit(&local_counts[i], 0u, memory_order_relaxed);
-    }
-    threadgroup_barrier(mem_flags::mem_threadgroup);
-
-    for (uint i = tid; i < n; i += t_dim) {
-        float w = carrier_omega[i];
-        float f = (w - bin_p[0].omega_min) * bin_p[0].inv_bin_width;
-        int bi = (int)floor(f);
-        if (bi >= 0 && bi < (int)num_bins) {
-            atomic_fetch_add_explicit(&local_counts[bi], 1u, memory_order_relaxed);
-        }
-    }
-    threadgroup_barrier(mem_flags::mem_threadgroup);
-
-    for (uint i = tid; i < num_bins; i += t_dim) {
-        uint val = atomic_load_explicit(&local_counts[i], memory_order_relaxed);
-        bin_counts[i] = val;
-        atomic_store_explicit(&local_starts[i], val, memory_order_relaxed);
-    }
-    if (tid == 0) {
-        atomic_store_explicit(&local_starts[num_bins], 0u, memory_order_relaxed);
-    }
-    threadgroup_barrier(mem_flags::mem_threadgroup);
-
-    for (uint i = tid; i <= num_bins; i += t_dim) {
-        uint val = (i == 0) ? 0u : atomic_load_explicit(&local_starts[i - 1], memory_order_relaxed);
-        scan_temp_a[i] = val;
-    }
-    threadgroup_barrier(mem_flags::mem_threadgroup);
-
-    threadgroup uint* src = scan_temp_a;
-    threadgroup uint* dst = scan_temp_b;
-
-    for (uint offset = 1; offset <= num_bins; offset <<= 1) {
-        for (uint i = tid; i <= num_bins; i += t_dim) {
-            if (i >= offset) {
-                dst[i] = src[i] + src[i - offset];
-            } else {
-                dst[i] = src[i];
-            }
-        }
-        threadgroup_barrier(mem_flags::mem_threadgroup);
-        threadgroup uint* tmp = src;
-        src = dst;
-        dst = tmp;
-    }
-
-    for (uint i = tid; i <= num_bins; i += t_dim) {
-        bin_starts[i] = src[i];
-        if (i < num_bins) {
-            bin_offsets[i] = src[i];
-            atomic_store_explicit(&local_starts[i], src[i], memory_order_relaxed);
-        }
-    }
-    threadgroup_barrier(mem_flags::mem_threadgroup | mem_flags::mem_device);
-
-    for (uint i = tid; i < n; i += t_dim) {
-        float w = carrier_omega[i];
-        float f = (w - bin_p[0].omega_min) * bin_p[0].inv_bin_width;
-        int bi = (int)floor(f);
-        if (bi >= 0 && bi < (int)num_bins) {
-            uint slot = atomic_fetch_add_explicit(&local_starts[bi], 1u, memory_order_relaxed);
-            carrier_binned_idx[slot] = i;
-        }
-    }
-}
-
 
 // -----------------------------------------------------------------------------
 // Kernel: Spatial hash collision detection (Phase 3)
@@ -1451,21 +1070,14 @@ kernel void spatial_hash_collisions(
         return;
     }
     
-    float particle_radius = p.particle_radius;
-    float combined_radius = particle_radius + particle_radius;
-    float combined_radius_sq = combined_radius * combined_radius;
-    float inv_mass_i = 1.0f / mass_i;
-    float cv = p.specific_heat;
-    float temperature_i = heat_i / (mass_i * cv);
-    float restitution = p.restitution;
-    float timestep = p.dt;
-    float young_modulus = p.young_modulus;
-    float thermal_conductivity = p.thermal_conductivity;
+    float r_i = p.particle_radius;
     uint3 grid_dims = uint3(p.grid_x, p.grid_y, p.grid_z);
-
+    
+    // Get this particle's cell
     float3 domain_min = float3(p.domain_min_x, p.domain_min_y, p.domain_min_z);
     uint3 cell_i = position_to_cell(pos_i, p.inv_cell_size, domain_min, grid_dims);
-
+    
+    // Accumulate impulses and changes
     float3 impulse_total = float3(0.0f);
     float heat_delta = 0.0f;
     
@@ -1498,12 +1110,22 @@ kernel void spatial_hash_collisions(
                     
                     float3 delta = pos_i - pos_j;
                     float dist_sq = dot(delta, delta);
-
-                    if (dist_sq >= combined_radius_sq || dist_sq < 1e-12f) {
+                    float r_j = p.particle_radius;
+                    float combined_radius = r_i + r_j;
+                    
+                    // Early exit with squared distance check (avoid sqrt)
+                    if (dist_sq >= combined_radius * combined_radius || dist_sq < 1e-12f) {
                         continue;
                     }
-
+                    
                     float dist = sqrt(dist_sq);
+                    
+                    // =====================================================
+                    // COLLISION DETECTED
+                    // =====================================================
+                    float3 n = delta / dist;
+                    float overlap = combined_radius - dist;
+                    
                     float3 vel_j = float3(
                         particle_vel_in[j * 3 + 0],
                         particle_vel_in[j * 3 + 1],
@@ -1521,26 +1143,33 @@ kernel void spatial_hash_collisions(
                         return;
                     }
                     
-                    float3 normal = delta / dist;
-                    float overlap = combined_radius - dist;
-                    float3 relative_velocity = vel_i - vel_j;
-                    float normal_velocity = dot(relative_velocity, normal);
-
-                    if (normal_velocity < 0.0f) {
-                        float reduced_mass = (mass_i * mass_j) / (mass_i + mass_j);
-                        float impulse_magnitude = (1.0f + restitution) * reduced_mass * (-normal_velocity);
-                        impulse_total += (normal * impulse_magnitude * inv_mass_i) * 0.5f;
-                        float kinetic_energy_lost = 0.5f * reduced_mass * normal_velocity * normal_velocity * (1.0f - restitution * restitution);
-                        heat_delta += kinetic_energy_lost * 0.5f;
+                    float3 v_rel = vel_i - vel_j;
+                    float v_n = dot(v_rel, n);
+                    
+                    // IMPULSE-BASED COLLISION
+                    if (v_n < 0.0f) {
+                        float e = p.restitution;
+                        float m_eff = (mass_i * mass_j) / (mass_i + mass_j);
+                        float J = (1.0f + e) * m_eff * (-v_n);
+                        impulse_total += (n * J / mass_i) * 0.5f;
+                        
+                        // Energy conservation
+                        float ke_lost = 0.5f * m_eff * v_n * v_n * (1.0f - e * e);
+                        heat_delta += ke_lost * 0.5f;
                     }
-
-                    float contact_force = young_modulus * overlap;
-                    impulse_total += normal * contact_force * timestep * inv_mass_i;
-
-                    float temperature_j = heat_j / (mass_j * cv);
+                    
+                    // HERTZIAN CONTACT FORCE
+                    float contact_force = p.young_modulus * overlap;
+                    impulse_total += n * contact_force * p.dt / mass_i;
+                    
+                    // HEAT CONDUCTION
+                    // Temperature consistency: T = Q / (m * c_v)
+                    float cv = p.specific_heat;
+                    float T_i = heat_i / (mass_i * cv);
+                    float T_j = heat_j / (mass_j * cv);
                     float contact_area = overlap * overlap;
-                    float heat_conduction = thermal_conductivity * contact_area * (temperature_j - temperature_i) * timestep;
-                    heat_delta += heat_conduction;
+                    float dQ_conduction = p.thermal_conductivity * contact_area * (T_j - T_i) * p.dt;
+                    heat_delta += dQ_conduction;
                     
                     // Note: Excitation (oscillator frequency) is INTRINSIC - no equilibration
                 }
@@ -1563,15 +1192,49 @@ kernel void spatial_hash_collisions(
     particle_heat[gid] = heat_i;
 }
 
+// -----------------------------------------------------------------------------
+// Helper: Atomic Float Add for Threadgroup Memory (CAS Loop)
+// -----------------------------------------------------------------------------
+// Metal doesn't have native atomic float in threadgroup memory on all hardware.
+// We emulate it using compare-and-swap on uint, interpreting the bits as float.
+
 inline void atomic_add_float_threadgroup(threadgroup atomic_uint* address, float val) {
     uint old_val = atomic_load_explicit(address, memory_order_relaxed);
     uint new_val;
+    
+    while (true) {
+        // Convert bits to float to do the math
+        float old_f = as_type<float>(old_val);
+        float new_f = old_f + val;
+        
+        // Convert result back to bits
+        new_val = as_type<uint>(new_f);
+        
+        // Try to swap: if *address == old_val, set *address = new_val and return true
+        // If *address != old_val, update old_val to current value and return false
+        if (atomic_compare_exchange_weak_explicit(
+                address, 
+                &old_val, 
+                new_val, 
+                memory_order_relaxed, 
+                memory_order_relaxed)) {
+            break;
+        }
+    }
+}
 
+// -----------------------------------------------------------------------------
+// Helper: Atomic Float Add for Device Memory (CAS Loop)
+// -----------------------------------------------------------------------------
+// Some Metal toolchains/hardware exhibit inconsistent behavior for `atomic_float`
+// in device memory. We use a CAS loop on `atomic_uint` holding float bits.
+inline void atomic_add_float_device(device atomic_uint* address, float val) {
+    uint old_val = atomic_load_explicit(address, memory_order_relaxed);
+    uint new_val;
     while (true) {
         float old_f = as_type<float>(old_val);
         float new_f = old_f + val;
         new_val = as_type<uint>(new_f);
-
         if (atomic_compare_exchange_weak_explicit(
                 address,
                 &old_val,
@@ -1583,10 +1246,8 @@ inline void atomic_add_float_threadgroup(threadgroup atomic_uint* address, float
     }
 }
 
-inline void atomic_add_float_device(device atomic_uint* address, float val) {
-    device atomic_float* floatAddress = reinterpret_cast<device atomic_float*>(address);
-    atomic_fetch_add_explicit(floatAddress, val, memory_order_relaxed);
-}
+// Note: atomic_float in threadgroup memory has inconsistent toolchain support.
+// Use atomic_add_float_threadgroup (with atomic_uint and bitcasting) instead.
 
 // =============================================================================
 // SORT-BASED SCATTER (Deterministic, No Hash Collisions)
@@ -1603,7 +1264,7 @@ inline void atomic_add_float_device(device atomic_uint* address, float val) {
 // 2. scatter_count_cells: Count particles per cell (atomic)
 // 3. scatter_prefix_sum: Compute cell_starts from cell_counts
 // 4. scatter_reorder: Move particles to sorted positions
-// 5. scatter_gather_cells: Inverted PIC scatter (one thread per grid cell)
+// 5. scatter_sorted: Process sorted particles (main scatter)
 
 struct SortScatterParams {
     uint32_t num_particles;
@@ -1611,18 +1272,8 @@ struct SortScatterParams {
     uint32_t grid_x;
     uint32_t grid_y;
     uint32_t grid_z;
-    float cell_x;
-    float cell_y;
-    float cell_z;
-    float inv_cell_x;
-    float inv_cell_y;
-    float inv_cell_z;
-    uint32_t boundary_x_low;
-    uint32_t boundary_x_high;
-    uint32_t boundary_y_low;
-    uint32_t boundary_y_high;
-    uint32_t boundary_z_low;
-    uint32_t boundary_z_high;
+    float grid_spacing;
+    float inv_grid_spacing;
 };
 
 struct PicGatherParams {
@@ -1630,12 +1281,8 @@ struct PicGatherParams {
     uint32_t grid_x;
     uint32_t grid_y;
     uint32_t grid_z;
-    float cell_x;
-    float cell_y;
-    float cell_z;
-    float inv_cell_x;
-    float inv_cell_y;
-    float inv_cell_z;
+    float grid_spacing;
+    float inv_grid_spacing;
     float dt;
     float domain_x;
     float domain_y;
@@ -1646,12 +1293,6 @@ struct PicGatherParams {
     float rho_min;
     float p_min;
     float gravity_enabled;  // 1.0 if gravity field is valid, 0.0 otherwise
-    uint32_t boundary_x_low;
-    uint32_t boundary_x_high;
-    uint32_t boundary_y_low;
-    uint32_t boundary_y_high;
-    uint32_t boundary_z_low;
-    uint32_t boundary_z_high;
 };
 
 // -----------------------------------------------------------------------------
@@ -1676,14 +1317,8 @@ struct ModeProjectParams {
     uint32_t grid_x;
     uint32_t grid_y;
     uint32_t grid_z;
-    float cell_x;
-    float cell_y;
-    float cell_z;
-    float inv_cell_x;
-    float inv_cell_y;
-    float inv_cell_z;
-    float domain_x;
-    float dt;
+    float grid_spacing;
+    float inv_grid_spacing;
 };
 
 struct PilotWaveParams {
@@ -1691,12 +1326,8 @@ struct PilotWaveParams {
     uint32_t grid_x;
     uint32_t grid_y;
     uint32_t grid_z;
-    float cell_x;
-    float cell_y;
-    float cell_z;
-    float inv_cell_x;
-    float inv_cell_y;
-    float inv_cell_z;
+    float grid_spacing;
+    float inv_grid_spacing;
     float dt;
     float domain_x;
     float domain_y;
@@ -1704,12 +1335,6 @@ struct PilotWaveParams {
     float hbar_eff;
     float eps_denom;
     float mass_min;
-    uint32_t boundary_x_low;
-    uint32_t boundary_x_high;
-    uint32_t boundary_y_low;
-    uint32_t boundary_y_high;
-    uint32_t boundary_z_low;
-    uint32_t boundary_z_high;
 };
 
 
@@ -1728,19 +1353,13 @@ kernel void scatter_compute_cell_idx(
         particle_pos[gid * 3 + 2]
     );
 
-    // Primary cell for sort binning. Positions are host-wrapped into [0,domain);
-    // non-periodic faces clamp into the boundary cell instead of wrapping.
+    // Compute base cell (floor of position / grid_spacing, with periodic wrap)
     uint3 grid_dims = uint3(p.grid_x, p.grid_y, p.grid_z);
-    float3 inv_cell = float3(p.inv_cell_x, p.inv_cell_y, p.inv_cell_z);
-    float3 scaled = pos * inv_cell;
-    uint3 boundary_low = uint3(
-        p.boundary_x_low, p.boundary_y_low, p.boundary_z_low);
-    uint3 boundary_high = uint3(
-        p.boundary_x_high, p.boundary_y_high, p.boundary_z_high);
+    float3 scaled = pos * p.inv_grid_spacing;
     uint3 cell = uint3(
-        pic_primary_cell_axis(scaled.x, grid_dims.x, boundary_low.x, boundary_high.x),
-        pic_primary_cell_axis(scaled.y, grid_dims.y, boundary_low.y, boundary_high.y),
-        pic_primary_cell_axis(scaled.z, grid_dims.z, boundary_low.z, boundary_high.z)
+        uint(scaled.x) % grid_dims.x,
+        uint(scaled.y) % grid_dims.y,
+        uint(scaled.z) % grid_dims.z
     );
 
     // Linear cell index (x-major order)
@@ -1806,167 +1425,149 @@ kernel void scatter_reorder_particles(
     device float* particle_mass_out       [[buffer(10)]], // N
     device float* particle_heat_out       [[buffer(11)]], // N
     device float* particle_energy_out     [[buffer(12)]], // N
-    device uint* sorted_original_idx      [[buffer(13)]], // N
+    device uint* sorted_original_idx      [[buffer(13)]], // N (optional: track original indices)
     constant SortScatterParams& p         [[buffer(14)]],
-    device float4* particle_cic_a         [[buffer(15)]], // N * 4
-    device float4* particle_cic_b         [[buffer(16)]], // N * 4
     uint gid [[thread_position_in_grid]]
 ) {
     if (gid >= p.num_particles) return;
 
     uint cell = particle_cell_idx[gid];
-    uint dest = atomic_fetch_add_explicit(&cell_offsets[cell], 1u, memory_order_relaxed);
+    uint base = cell_starts[cell];
+    uint offset = atomic_fetch_add_explicit(&cell_offsets[cell], 1u, memory_order_relaxed);
+    uint dest = base + offset;
 
     // Copy particle data to sorted position
-    float3 pos = float3(
-        particle_pos_in[gid * 3 + 0],
-        particle_pos_in[gid * 3 + 1],
-        particle_pos_in[gid * 3 + 2]
-    );
-    particle_pos_out[dest * 3 + 0] = pos.x;
-    particle_pos_out[dest * 3 + 1] = pos.y;
-    particle_pos_out[dest * 3 + 2] = pos.z;
-    
-    float3 vel = float3(
-        particle_vel_in[gid * 3 + 0],
-        particle_vel_in[gid * 3 + 1],
-        particle_vel_in[gid * 3 + 2]
-    );
-    particle_vel_out[dest * 3 + 0] = vel.x;
-    particle_vel_out[dest * 3 + 1] = vel.y;
-    particle_vel_out[dest * 3 + 2] = vel.z;
-    
-    float mass = particle_mass_in[gid];
-    float heat = particle_heat_in[gid];
-    
-    particle_mass_out[dest] = mass;
-    particle_heat_out[dest] = heat;
+    particle_pos_out[dest * 3 + 0] = particle_pos_in[gid * 3 + 0];
+    particle_pos_out[dest * 3 + 1] = particle_pos_in[gid * 3 + 1];
+    particle_pos_out[dest * 3 + 2] = particle_pos_in[gid * 3 + 2];
+    particle_vel_out[dest * 3 + 0] = particle_vel_in[gid * 3 + 0];
+    particle_vel_out[dest * 3 + 1] = particle_vel_in[gid * 3 + 1];
+    particle_vel_out[dest * 3 + 2] = particle_vel_in[gid * 3 + 2];
+    particle_mass_out[dest] = particle_mass_in[gid];
+    particle_heat_out[dest] = particle_heat_in[gid];
     particle_energy_out[dest] = particle_energy_in[gid];
     sorted_original_idx[dest] = gid;
-
-    // Precompute CIC fractions/weights at sorted destination index
-    uint3 base_idx;
-    float3 frac;
-    float3 inv_cell = float3(p.inv_cell_x, p.inv_cell_y, p.inv_cell_z);
-    uint3 grid_dims = uint3(p.grid_x, p.grid_y, p.grid_z);
-    uint3 boundary_low = uint3(
-        p.boundary_x_low, p.boundary_y_low, p.boundary_z_low);
-    uint3 boundary_high = uint3(
-        p.boundary_x_high, p.boundary_y_high, p.boundary_z_high);
-    pic_trilinear_coords(
-        pos, inv_cell, grid_dims, boundary_low, boundary_high, base_idx, frac);
-    float iv = inv_cell.x * inv_cell.y * inv_cell.z;
-    particle_cic_a[dest] = float4(frac, mass * iv);
-    particle_cic_b[dest] = float4(mass * vel * iv, heat * iv);
 }
 
-inline uint scatter_cell_range_end(
-    uint base_cell,
-    device const uint* cell_starts,
-    constant SortScatterParams& scatter_params
-) {
-    uint next_cell = base_cell + 1u;
-
-    if (next_cell < scatter_params.num_cells) {
-        return cell_starts[next_cell];
-    }
-
-    return scatter_params.num_particles;
-}
-
-// Step 5: Gather particle deposits into each grid cell (deterministic, zero atomics).
-kernel void scatter_gather_cells(
-    device const float4* particle_cic_a   [[buffer(0)]],
-    device const float4* particle_cic_b   [[buffer(1)]],
-    device const uint* cell_starts        [[buffer(2)]],
-    device float4* mom_rho_field          [[buffer(3)]],
-    device float* E_field                 [[buffer(4)]],
-    constant SortScatterParams& p         [[buffer(5)]],
+// Step 5: Scatter from sorted particles (main kernel)
+// Each particle writes to 8 neighboring cells via trilinear interpolation.
+// Because particles are sorted by primary cell, nearby threads tend to write
+// to nearby cells, improving cache behavior even with global atomics.
+kernel void scatter_sorted(
+    device const float* particle_pos      [[buffer(0)]],  // N * 3 (sorted)
+    device const float* particle_vel      [[buffer(1)]],  // N * 3 (sorted)
+    device const float* particle_mass     [[buffer(2)]],  // N (sorted)
+    device const float* particle_heat     [[buffer(3)]],  // N (sorted)
+    device const float* particle_energy   [[buffer(4)]],  // N (sorted)
+    device atomic_uint* rho_field         [[buffer(5)]],  // gx * gy * gz (float bits)
+    device atomic_uint* mom_field         [[buffer(6)]],  // gx * gy * gz * 3 (float bits)
+    device atomic_uint* E_field           [[buffer(7)]],  // gx * gy * gz (float bits)
+    constant SortScatterParams& p         [[buffer(8)]],
     uint gid [[thread_position_in_grid]]
 ) {
-    if (gid >= p.num_cells) {
-        return;
+    if (gid >= p.num_particles) return;
+
+    float3 pos = float3(
+        particle_pos[gid * 3 + 0],
+        particle_pos[gid * 3 + 1],
+        particle_pos[gid * 3 + 2]
+    );
+    float3 vel = float3(
+        particle_vel[gid * 3 + 0],
+        particle_vel[gid * 3 + 1],
+        particle_vel[gid * 3 + 2]
+    );
+    float mass = particle_mass[gid];
+    float heat = particle_heat[gid];
+    // [CHOICE] dual-energy PIC scatter (thermal energy only)
+    // [FORMULA] u_int := Q  (no kinetic energy; oscillator energy not deposited)
+    // [REASON] prevents positive feedback where a constant oscillator store is
+    //          repeatedly re-deposited into the thermal field each step.
+    // [NOTES] If/when we model oscillator↔thermal exchange, it must be explicit
+    //         and locally energy-conserving (not implicit re-scatter).
+    float e_int = heat;
+
+    // Trilinear interpolation weights
+    uint3 grid_dims = uint3(p.grid_x, p.grid_y, p.grid_z);
+    uint3 base_idx;
+    float3 frac;
+    trilinear_coords(pos, p.inv_grid_spacing, grid_dims, base_idx, frac);
+
+    float wx0 = 1.0f - frac.x, wx1 = frac.x;
+    float wy0 = 1.0f - frac.y, wy1 = frac.y;
+    float wz0 = 1.0f - frac.z, wz1 = frac.z;
+
+    float weights[8] = {
+        wx0 * wy0 * wz0,
+        wx0 * wy0 * wz1,
+        wx0 * wy1 * wz0,
+        wx0 * wy1 * wz1,
+        wx1 * wy0 * wz0,
+        wx1 * wy0 * wz1,
+        wx1 * wy1 * wz0,
+        wx1 * wy1 * wz1
+    };
+
+    uint gx = p.grid_x, gy = p.grid_y, gz = p.grid_z;
+    uint x0 = base_idx.x, y0 = base_idx.y, z0 = base_idx.z;
+    uint x1 = (x0 + 1) % gx;
+    uint y1 = (y0 + 1) % gy;
+    uint z1 = (z0 + 1) % gz;
+
+    uint stride_z = 1;
+    uint stride_y = gz;
+    uint stride_x = gy * gz;
+
+    uint idxs[8] = {
+        x0 * stride_x + y0 * stride_y + z0 * stride_z,
+        x0 * stride_x + y0 * stride_y + z1 * stride_z,
+        x0 * stride_x + y1 * stride_y + z0 * stride_z,
+        x0 * stride_x + y1 * stride_y + z1 * stride_z,
+        x1 * stride_x + y0 * stride_y + z0 * stride_z,
+        x1 * stride_x + y0 * stride_y + z1 * stride_z,
+        x1 * stride_x + y1 * stride_y + z0 * stride_z,
+        x1 * stride_x + y1 * stride_y + z1 * stride_z
+    };
+
+    // Deposit to all 8 corners (global atomics, but with good locality)
+    float inv_vol = p.inv_grid_spacing * p.inv_grid_spacing * p.inv_grid_spacing;
+    for (uint c = 0; c < 8; c++) {
+        float w = weights[c] * inv_vol;
+        uint idx = idxs[c];
+        atomic_add_float_device(&rho_field[idx], mass * w);
+        atomic_add_float_device(&E_field[idx], e_int * w);
+        uint mbase = idx * 3u;
+        atomic_add_float_device(&mom_field[mbase + 0u], (mass * vel.x) * w);
+        atomic_add_float_device(&mom_field[mbase + 1u], (mass * vel.y) * w);
+        atomic_add_float_device(&mom_field[mbase + 2u], (mass * vel.z) * w);
     }
-
-    uint stride_y = kGridZ;
-    uint stride_x = kGridY * kGridZ;
-    uint cx = gid / stride_x;
-    uint rem = gid % stride_x;
-    uint cy = rem / stride_y;
-    uint cz = rem - cy * stride_y;
-
-    float4 mr_base = mom_rho_field[gid];
-    float e_base = E_field[gid];
-
-    float rho_dep = 0.0f;
-    float e_dep = 0.0f;
-    float mx_dep = 0.0f;
-    float my_dep = 0.0f;
-    float mz_dep = 0.0f;
-
-    uint sx_vals[2] = {(cx + kGridX - 1u) % kGridX, cx};
-    uint sy_vals[2] = {(cy + kGridY - 1u) % kGridY, cy};
-    uint sz_vals[2] = {(cz + kGridZ - 1u) % kGridZ, cz};
-
-    for (uint ix = 0; ix < 2u; ix++) {
-        for (uint iy = 0; iy < 2u; iy++) {
-            for (uint iz = 0; iz < 2u; iz++) {
-                uint sbx = sx_vals[ix];
-                uint sby = sy_vals[iy];
-                uint sbz = sz_vals[iz];
-                uint base_cell = sbx * stride_x + sby * stride_y + sbz;
-                uint start = cell_starts[base_cell];
-                uint end = scatter_cell_range_end(base_cell, cell_starts, p);
-
-                for (uint particle_idx = start; particle_idx < end; particle_idx++) {
-                    float4 a = particle_cic_a[particle_idx];   // frac.xyz, rho_q
-                    float4 b = particle_cic_b[particle_idx];   // mom_q.xyz, e_q
-                    
-                    float wx = (ix == 1u) ? (1.0f - a.x) : a.x;
-                    float wy = (iy == 1u) ? (1.0f - a.y) : a.y;
-                    float wz = (iz == 1u) ? (1.0f - a.z) : a.z;
-                    float w = wx * wy * wz;
-
-                    rho_dep += a.w * w;
-                    mx_dep  += b.x * w;
-                    my_dep  += b.y * w;
-                    mz_dep  += b.z * w;
-                    e_dep   += b.w * w;
-                }
-            }
-        }
-    }
-
-    mom_rho_field[gid] = float4(mr_base.xyz + float3(mx_dep, my_dep, mz_dep), mr_base.w + rho_dep);
-    E_field[gid] = e_base + e_dep;
 }
 
 // =============================================================================
 // Compressible Ideal-Gas Dynamics (Eulerian grid update)
 // =============================================================================
 // Port of the correctness-first reference in `sensorium/kernels/gas_dynamics.py`,
-// adapted to this project's grid/PIC boundary semantics:
+// adapted to this project’s **dual-energy** grid semantics:
 //
 //   - grid carries (rho, mom, e_int) where e_int is INTERNAL energy density
-//     at the API and PIC boundaries.
+//     (no kinetic energy term stored in the grid scalar channel).
 //   - pressure uses ideal-gas closure with constant γ:
 //         p = (γ - 1) * e_int
 //
-// Hyperbolic transport is evolved in conservative total-energy form, recovering
-// internal energy after every RK stage:
+// Unlike total-energy formulations, the internal-energy equation contains a
+// non-conservative pressure-work term. We therefore evolve:
 //
 //   ∂t rho  + ∇·(rho u)           = 0
 //   ∂t mom  + ∇·(mom ⊗ u + p I)   = 0
-//   E = e_int + |mom|²/(2 rho)
-//   ∂t E + ∇·((E + p)u)          = ∇·(k ∇T)
+//   ∂t e_int + ∇·(e_int u)        = - p (∇·u)  + ∇·(k ∇T)
 //
 // Numerics:
-//   - Inviscid fluxes: positivity-preserving HLL at faces.
+//   - Inviscid fluxes: Rusanov/LLF at faces (robust, diffusive).
 //   - Time stepping: RK2 (Heun): U1 = U0 + dt*k1 ; U2 = U0 + 0.5*dt*(k1+k2)
-//   - Spatial derivatives: axis-specific finite-volume differences.
+//   - Spatial derivatives: second-order central differences via periodic indexing.
 //
 // Notes:
-//   - Gas boundary topology is independent of the GPE frequency lattice.
+//   - This intentionally matches the periodic torus domain used elsewhere.
 //   - Viscosity terms are not included yet (mu parameter reserved).
 // =============================================================================
 
@@ -1976,14 +1577,6 @@ struct GasGridParams {
     uint32_t grid_y;
     uint32_t grid_z;
     float dx;
-    float dy;
-    float dz;
-    float inv_dx;
-    float inv_dy;
-    float inv_dz;
-    float inv_dx2;
-    float inv_dy2;
-    float inv_dz2;
     float dt;
     float gamma;
     float c_v;
@@ -1991,12 +1584,6 @@ struct GasGridParams {
     float p_min;
     float mu;        // reserved (viscosity) – not used yet
     float k_thermal; // thermal conductivity (constant)
-    uint32_t boundary_x_low;
-    uint32_t boundary_x_high;
-    uint32_t boundary_y_low;
-    uint32_t boundary_y_high;
-    uint32_t boundary_z_low;
-    uint32_t boundary_z_high;
 };
 
 struct U5 {
@@ -2008,8 +1595,7 @@ struct U5 {
 struct F5 {
     float frho;
     float3 fmom;
-    float fenergy;
-    float fentropy;
+    float fe_int;
 };
 
 inline uint idx3_periodic(uint x, uint y, uint z, uint gx, uint gy, uint gz) {
@@ -2030,148 +1616,32 @@ inline uint wrap_minus_one(uint i, uint n) { return (i == 0u) ? (n - 1u) : (i - 
 inline uint wrap_plus_one(uint i, uint n) { return (i + 1u == n) ? 0u : (i + 1u); }
 
 inline U5 load_U5(
-    device const float4* mom_rho,
+    device const float* rho,
+    device const float* mom,
     device const float* e_int,
     uint idx
 ) {
     U5 U;
-    float4 mr = mom_rho[idx];
-    U.mom = mr.xyz;
-    U.rho = mr.w;
+    U.rho = rho[idx];
+    uint m = idx * 3u;
+    U.mom = float3(mom[m + 0u], mom[m + 1u], mom[m + 2u]);
     U.e_int = e_int[idx];
     return U;
 }
 
 inline void store_U5(
-    device float4* mom_rho,
+    device float* rho,
+    device float* mom,
     device float* e_int,
     uint idx,
     U5 U
 ) {
-    mom_rho[idx] = float4(U.mom, U.rho);
+    rho[idx] = U.rho;
+    uint m = idx * 3u;
+    mom[m + 0u] = U.mom.x;
+    mom[m + 1u] = U.mom.y;
+    mom[m + 2u] = U.mom.z;
     e_int[idx] = U.e_int;
-}
-
-inline float gas_kinetic_energy(U5 U) {
-    if (U.rho == 0.0f) {
-        return 0.0f;
-    }
-
-    return 0.5f * dot(U.mom, U.mom) / U.rho;
-}
-
-inline float gas_total_energy(U5 U) {
-    return U.e_int + gas_kinetic_energy(U);
-}
-
-inline float gas_entropy_density(U5 state, float gamma) {
-    if (state.rho == 0.0f) {
-        return 0.0f;
-    }
-
-    return (gamma - 1.0f) * state.e_int * pow(state.rho, 1.0f - gamma);
-}
-
-inline float gas_entropy_internal(float entropy, float rho, float gamma) {
-    if (rho == 0.0f) {
-        return 0.0f;
-    }
-
-    return entropy * pow(rho, gamma - 1.0f) / (gamma - 1.0f);
-}
-
-inline float gas_internal_energy(
-    float total_energy,
-    float entropy,
-    U5 state,
-    float gamma,
-    float rho_resolution,
-    float pressure_resolution
-) {
-    float kinetic_energy = gas_kinetic_energy(state);
-    float internal_energy = total_energy - kinetic_energy;
-    const float dual_energy_resolution = 0.000244140625f; // sqrt(2^-24) = 2^-12
-    float reference_specific_internal = pressure_resolution /
-        ((gamma - 1.0f) * rho_resolution);
-    float reference_internal = reference_specific_internal * state.rho;
-    float energy_scale = max(
-        fabs(total_energy) + fabs(kinetic_energy),
-        reference_internal);
-
-    if (internal_energy > dual_energy_resolution * energy_scale) {
-        return internal_energy;
-    }
-
-    // For binary32 unit roundoff u=2^-24, accepting E-K only above sqrt(u)
-    // bounds cancellation amplification by sqrt(u). Below that conditioning
-    // gate, the independently transported entropy density supplies pressure.
-    // Its correction is accepted only inside the same derived resolution band;
-    // larger disagreement remains a fail-fast conservation error.
-    float entropy_internal = gas_entropy_internal(entropy, state.rho, gamma);
-    float correction = fabs(entropy_internal - internal_energy);
-
-    float resolution = dual_energy_resolution * energy_scale;
-
-    // rho_resolution is the configured single-carrier density. Below one
-    // binary32 unit roundoff of that reference, total-energy flux arithmetic
-    // cannot retain a thermodynamic residual reliably. The separately evolved
-    // entropy remains the resolved pressure variable without discarding mass.
-    const float fp32_unit_roundoff = 5.9604644775390625e-8f; // 2^-24
-    float density_resolution = fp32_unit_roundoff * rho_resolution;
-
-    if (state.rho > 0.0f && state.rho <= density_resolution && entropy_internal >= 0.0f) {
-        return entropy_internal;
-    }
-
-    if (entropy_internal >= -resolution && correction <= resolution) {
-        return max(entropy_internal, 0.0f);
-    }
-
-    // Fallthrough: neither the total-energy nor the entropy estimate resolved a
-    // pressure. If E-K is negative only within one resolution band it is pure
-    // finite-precision cancellation on a near-vacuum cell (observed e_int ~
-    // -9e-10 with rho ~ 1e-6); floor it to zero so admissible_U5 accepts a
-    // clean cold cell instead of NaN-poisoning the field. A negative larger
-    // than the resolution band is a genuine conservation fault and is returned
-    // unchanged so the fail-fast admissibility check still catches it.
-    if (internal_energy < 0.0f && internal_energy >= -resolution) {
-        return 0.0f;
-    }
-
-    return internal_energy;
-}
-
-inline bool gas_reconcile_vacuum(
-    thread U5& state,
-    float total_energy,
-    thread float& entropy,
-    constant GasGridParams& p
-) {
-    const float fp32_unit_roundoff = 5.9604644775390625e-8f; // 2^-24
-    float density_resolution = fp32_unit_roundoff * p.rho_min;
-
-    if (fabs(state.rho) > density_resolution) {
-        return false;
-    }
-
-    float reference_sound = sqrt(p.gamma * p.p_min / p.rho_min);
-    float reference_wave = 2.0f * reference_sound / (p.gamma - 1.0f);
-    float momentum_resolution = density_resolution * reference_wave;
-    float specific_internal = p.p_min / ((p.gamma - 1.0f) * p.rho_min);
-    float energy_resolution = density_resolution * (
-        specific_internal + 0.5f * reference_wave * reference_wave);
-
-    if (length(state.mom) > momentum_resolution || fabs(total_energy) > energy_resolution) {
-        return false;
-    }
-
-    // A state smaller than one binary32 unit of a configured carrier in mass,
-    // momentum, and total energy is indistinguishable from exact grid vacuum.
-    state.rho = 0.0f;
-    state.mom = float3(0.0f);
-    state.e_int = 0.0f;
-    entropy = 0.0f;
-    return true;
 }
 
 // NOTE: `clamp_pos` was used for silent positivity floors.
@@ -2216,11 +1686,20 @@ inline void primitives_from_U(
         return;
     }
 
-    // Exact vacuum is the only state without defined primitives. A positive
-    // conserved density, however small, still carries well-defined velocity and
-    // thermodynamic state and must not be reclassified by a numerical envelope.
-    if (U.rho == 0.0f) {
-        if (U.mom.x != 0.0f || U.mom.y != 0.0f || U.mom.z != 0.0f || U.e_int != 0.0f) {
+    // Numerical low-density envelope:
+    // For very-low density cells we regularize primitive recovery to avoid division
+    // blow-ups, without projecting or clamping the *conserved* state.
+    //
+    // Key idea: when |rho| is below a resolution-scale threshold, treat rho as
+    // `rho_eps` for primitive *computation* (u, T, c). The resulting characteristic
+    // speed is included in the host CFL bound; no universal velocity or temperature
+    // ceiling is part of the physical admissibility contract.
+    float rho_eps = max(rho_min, 0.0f);
+    const float f32_eps = 1.1920929e-7f;
+    float e_eps = 4.0f * rho_eps * f32_eps;
+    if (fabs(U.rho) <= rho_eps) {
+        // Low-density: allow only fp32-scale signed internal-energy noise.
+        if (U.e_int < -e_eps) {
             float qn = qnan_f();
             rho_safe = qn;
             u = float3(qn);
@@ -2230,17 +1709,19 @@ inline void primitives_from_U(
             speed = qn;
             return;
         }
-
-        rho_safe = max(rho_min, 0.0f);
-        u = float3(0.0f);
-        p = 0.0f;
-        T = 0.0f;
-        c = 0.0f;
-        speed = 0.0f;
+        // Regularize primitive recovery using rho_eps (not U.rho).
+        rho_safe = rho_eps;
+        u = U.mom / rho_safe;
+        float e_used = (U.e_int < 0.0f) ? 0.0f : U.e_int; // only affects primitives
+        p = (gamma - 1.0f) * e_used;
+        T = e_used / (rho_safe * c_v);
+        c = sqrt((gamma * p) / rho_safe);
+        speed = length(u) + c;
         return;
     }
 
-    if (!(U.rho > 0.0f) || U.e_int < 0.0f) {
+    // Positive-density state.
+    if (!(U.rho > 0.0f) || !(U.e_int >= 0.0f)) {
         float qn = qnan_f();
         rho_safe = qn;
         u = float3(qn);
@@ -2251,21 +1732,16 @@ inline void primitives_from_U(
         return;
     }
 
-    // A positive conserved density must recover velocity from that same density.
-    // Using the resolution density here would make rho*u differ from conserved
-    // momentum, while the mass flux below transports the conserved momentum.
-    // That mismatch can move more mass through a face than the wave speed used by
-    // the CFL condition permits. Sub-resolution states therefore retain their
-    // exact primitive velocity; the CFL check remains the stability authority.
     rho_safe = U.rho;
     u = U.mom / rho_safe;
     p = (gamma - 1.0f) * U.e_int;
+    // (gamma>1 and e_int>=0) => p>=0
     T = U.e_int / (rho_safe * c_v);
     c = sqrt((gamma * p) / rho_safe);
     speed = length(u) + c;
 }
 
-inline F5 inviscid_flux_dir(uint dir, U5 U, float3 u, float p, float gamma) {
+inline F5 inviscid_flux_dir(uint dir, U5 U, float3 u, float p) {
     F5 F;
     float u_d = (dir == 0u) ? u.x : ((dir == 1u) ? u.y : u.z);
     // rho flux = rho * u_d = mom_d (exact for conserved momentum density)
@@ -2275,154 +1751,22 @@ inline F5 inviscid_flux_dir(uint dir, U5 U, float3 u, float p, float gamma) {
     if (dir == 0u) F.fmom.x += p;
     if (dir == 1u) F.fmom.y += p;
     if (dir == 2u) F.fmom.z += p;
-    F.fenergy = (gas_total_energy(U) + p) * u_d;
-    F.fentropy = gas_entropy_density(U, gamma) * u_d;
+    // internal-energy advective flux
+    F.fe_int = U.e_int * u_d;
     return F;
 }
 
-inline float2 gas_hlle_wave_bounds(
-    U5 left,
-    U5 right,
-    float velocity_left,
-    float sound_left,
-    float velocity_right,
-    float sound_right,
-    float gamma
-) {
-    float root_left = sqrt(left.rho);
-    float root_right = sqrt(right.rho);
-    float root_sum = root_left + root_right;
-
-    if (root_sum == 0.0f) {
-        return float2(0.0f);
-    }
-
-    float weight_left = root_left / root_sum;
-    float weight_right = root_right / root_sum;
-    float3 full_velocity_left = left.rho > 0.0f
-        ? left.mom / left.rho
-        : float3(0.0f);
-    float3 full_velocity_right = right.rho > 0.0f
-        ? right.mom / right.rho
-        : float3(0.0f);
-    float3 velocity_delta = full_velocity_right - full_velocity_left;
-    float roe_velocity = weight_left * velocity_left + weight_right * velocity_right;
-    float roe_sound_squared = weight_left * sound_left * sound_left +
-        weight_right * sound_right * sound_right +
-        0.5f * (gamma - 1.0f) * weight_left * weight_right *
-        dot(velocity_delta, velocity_delta);
-    float roe_sound = sqrt(roe_sound_squared);
-    float wave_left = min(velocity_left - sound_left, roe_velocity - roe_sound);
-    float wave_right = max(velocity_right + sound_right, roe_velocity + roe_sound);
-
-    return float2(wave_left, wave_right);
-}
-
-inline F5 hll_flux(
-    F5 FL,
-    F5 FR,
-    U5 UL,
-    U5 UR,
-    float velocity_left,
-    float sound_left,
-    float velocity_right,
-    float sound_right,
-    float gamma
-) {
-    // Einfeldt's HLLE bounds include the Roe-averaged acoustic eigenvalues.
-    // Endpoint-only Davis bounds can exclude the expansion fan and produce
-    // negative density or internal energy in strong, low-density rarefactions.
-    float2 wave_bounds = gas_hlle_wave_bounds(
-        UL,
-        UR,
-        velocity_left,
-        sound_left,
-        velocity_right,
-        sound_right,
-        gamma
-    );
-    float wave_left = wave_bounds.x;
-    float wave_right = wave_bounds.y;
-
-    if (wave_left >= 0.0f) {
-        return FL;
-    }
-
-    if (wave_right <= 0.0f) {
-        return FR;
-    }
-
-    float inverse_span = 1.0f / (wave_right - wave_left);
-    float wave_product = wave_left * wave_right;
+inline F5 rusanov_flux(F5 FL, F5 FR, U5 UL, U5 UR, float smax) {
+    // F = 0.5*(FL+FR) - 0.5*smax*(UR-UL)
     F5 F;
-    F.frho = (
-        wave_right * FL.frho - wave_left * FR.frho +
-        wave_product * (UR.rho - UL.rho)
-    ) * inverse_span;
-    F.fmom = (
-        wave_right * FL.fmom - wave_left * FR.fmom +
-        wave_product * (UR.mom - UL.mom)
-    ) * inverse_span;
-    F.fenergy = (
-        wave_right * FL.fenergy - wave_left * FR.fenergy +
-        wave_product * (gas_total_energy(UR) - gas_total_energy(UL))
-    ) * inverse_span;
-    F.fentropy = (
-        wave_right * FL.fentropy - wave_left * FR.fentropy +
-        wave_product * (
-            gas_entropy_density(UR, gamma) - gas_entropy_density(UL, gamma))
-    ) * inverse_span;
+    float a = 0.5f;
+    float d_rho = UR.rho - UL.rho;
+    float3 d_mom = UR.mom - UL.mom;
+    float d_e = UR.e_int - UL.e_int;
+    F.frho = a * (FL.frho + FR.frho) - a * smax * d_rho;
+    F.fmom = a * (FL.fmom + FR.fmom) - a * smax * d_mom;
+    F.fe_int = a * (FL.fe_int + FR.fe_int) - a * smax * d_e;
     return F;
-}
-
-inline bool gas_boundary_valid(uint32_t boundary) {
-    return boundary == gas_boundary_periodic ||
-        boundary == gas_boundary_outflow ||
-        boundary == gas_boundary_reflecting;
-}
-
-inline bool gas_geometry_admissible(constant GasGridParams& p) {
-    return p.dx > 0.0f && p.dy > 0.0f && p.dz > 0.0f &&
-        isfinite(p.dx) && isfinite(p.dy) && isfinite(p.dz) &&
-        p.inv_dx > 0.0f && p.inv_dy > 0.0f && p.inv_dz > 0.0f &&
-        isfinite(p.inv_dx) && isfinite(p.inv_dy) && isfinite(p.inv_dz) &&
-        p.inv_dx2 > 0.0f && p.inv_dy2 > 0.0f && p.inv_dz2 > 0.0f &&
-        isfinite(p.inv_dx2) && isfinite(p.inv_dy2) && isfinite(p.inv_dz2) &&
-        gas_boundary_valid(p.boundary_x_low) && gas_boundary_valid(p.boundary_x_high) &&
-        gas_boundary_valid(p.boundary_y_low) && gas_boundary_valid(p.boundary_y_high) &&
-        gas_boundary_valid(p.boundary_z_low) && gas_boundary_valid(p.boundary_z_high);
-}
-
-inline bool gas_diffusion_cfl_admissible(constant GasGridParams& p) {
-    if (!(p.rho_min > 0.0f) || !(p.c_v > 0.0f) || !(p.k_thermal >= 0.0f) || !(p.dt > 0.0f)) {
-        return false;
-    }
-
-    float inverse_spacing_sum = p.inv_dx2 + p.inv_dy2 + p.inv_dz2;
-    float diffusive_number = p.k_thermal * p.dt * inverse_spacing_sum / (p.rho_min * p.c_v);
-    const float von_neumann_limit = 0.5f;
-    const float cfl_epsilon = 1.0e-5f;
-    return diffusive_number <= von_neumann_limit + cfl_epsilon;
-}
-
-inline bool gas_advective_cfl_admissible(
-    float speed_x,
-    float speed_y,
-    float speed_z,
-    constant GasGridParams& p
-) {
-    if (!(p.dt > 0.0f) || !isfinite(p.dt)) {
-        return false;
-    }
-
-    float courant = p.dt * (
-        speed_x * p.inv_dx +
-        speed_y * p.inv_dy +
-        speed_z * p.inv_dz
-    );
-    const float cfl_limit = 1.0f;
-    const float cfl_epsilon = 1.0e-5f;
-    return isfinite(courant) && courant <= cfl_limit + cfl_epsilon;
 }
 
 inline bool admissible_U5(
@@ -2431,559 +1775,313 @@ inline bool admissible_U5(
     float rho_min,
     float p_min
 ) {
-    // FAIL-FAST admissibility: do not modify state. Positive density and
-    // non-negative internal energy are admissible at every resolved magnitude;
-    // primitive recovery handles sub-resolution density separately. Exact vacuum
-    // is admissible only when momentum and internal energy are also exactly zero.
+    // FAIL-FAST admissibility: do not modify state.
+    // For rho>0 we require rho finite and positive, mom finite, e_int finite and >=0.
+    // In the low-density envelope (|rho|<=rho_eps), rho_eps regularizes primitive
+    // recovery. Finite momentum and positive energy remain admissible because their
+    // derived characteristic speed is constrained by the host CFL calculation.
     (void)p_min; // no silent floors; this is not used for admissibility.
     if (!(gamma > 1.0f) || !isfinite(gamma)) return false;
     if (!isfinite(U.rho) || !isfinite(U.e_int) || !isfinite(U.mom.x) || !isfinite(U.mom.y) || !isfinite(U.mom.z)) return false;
-    (void)rho_min;
-    if (U.rho == 0.0f) {
-        return U.mom.x == 0.0f && U.mom.y == 0.0f && U.mom.z == 0.0f &&
-            U.e_int == 0.0f;
+    float rho_eps = max(rho_min, 0.0f);
+    const float f32_eps = 1.1920929e-7f;
+    float e_eps = 4.0f * rho_eps * f32_eps;
+    if (fabs(U.rho) <= rho_eps) {
+        // Low-density: tolerate tiny signed rho and fp32-scale signed energy noise.
+        if (U.e_int < -e_eps) return false;
+        return true;
     }
-    return U.rho > 0.0f && U.e_int >= 0.0f;
-}
-
-struct GasPrim {
-    float4 u_p;     // {ux, uy, uz, p}
-    float4 thermo;  // {T, c, speed, rho_safe}
-};
-
-inline uint gas_cell_gid(
-    constant GasGridParams& gas_params,
-    uint3 threadgroup_pos,
-    uint3 threadgroup_tid,
-    uint3 threadgroup_dim
-) {
-    uint cell_z = threadgroup_pos.x * threadgroup_dim.x + threadgroup_tid.x;
-    uint cell_y = threadgroup_pos.y * threadgroup_dim.y + threadgroup_tid.y;
-    uint cell_x = threadgroup_pos.z * threadgroup_dim.z + threadgroup_tid.z;
-
-    if (cell_x >= kGridX || cell_y >= kGridY || cell_z >= kGridZ) {
-        return gas_params.num_cells;
-    }
-
-    return idx3_periodic(cell_x, cell_y, cell_z, kGridX, kGridY, kGridZ);
-}
-
-// Applies one ordered population source/sink operation before transport.
-// source_mom_rho stores {delta_mom_x, delta_mom_y, delta_mom_z, delta_rho};
-// source_e stores delta internal-energy density. The host owns event ordering
-// and clears the source buffers after each application.
-kernel void gas_apply_sources(
-    device const float4* mom_rho_in      [[buffer(0)]],
-    device const float* e_in             [[buffer(1)]],
-    device const float4* source_mom_rho  [[buffer(2)]],
-    device const float* source_e         [[buffer(3)]],
-    device float4* mom_rho_out           [[buffer(4)]],
-    device float* e_out                  [[buffer(5)]],
-    constant GasGridParams& p            [[buffer(6)]],
-    device atomic_uint* dbg_head         [[buffer(7)]],
-    device uint* dbg_words               [[buffer(8)]],
-    constant uint& dbg_cap               [[buffer(9)]],
-    uint3 threadgroup_pos [[threadgroup_position_in_grid]],
-    uint3 threadgroup_tid [[thread_position_in_threadgroup]],
-    uint3 threadgroup_dim [[threads_per_threadgroup]]
-) {
-    uint gid = gas_cell_gid(p, threadgroup_pos, threadgroup_tid, threadgroup_dim);
-    if (gid >= p.num_cells) return;
-
-    U5 state = load_U5(mom_rho_in, e_in, gid);
-    float4 source = source_mom_rho[gid];
-    float energy_source = source_e[gid];
-
-    if (!isfinite(source.x) || !isfinite(source.y) || !isfinite(source.z) ||
-        !isfinite(source.w) || !isfinite(energy_source)) {
-        dbg_log(dbg_head, dbg_words, dbg_cap, 0x22u, gid, source.w, energy_source, source.x, source.y);
-        float qn = qnan_f();
-        mom_rho_out[gid] = float4(qn);
-        e_out[gid] = qn;
-        return;
-    }
-
-    state.mom += source.xyz;
-    state.rho += source.w;
-    state.e_int += energy_source;
-
-    if (!admissible_U5(state, p.gamma, p.rho_min, p.p_min)) {
-        dbg_log(dbg_head, dbg_words, dbg_cap, 0x23u, gid, state.rho, state.e_int, state.mom.x, state.mom.y);
-        float qn = qnan_f();
-        mom_rho_out[gid] = float4(qn);
-        e_out[gid] = qn;
-        return;
-    }
-
-    store_U5(mom_rho_out, e_out, gid, state);
-}
-
-kernel void gas_compute_primitives(
-    device const float4* mom_rho  [[buffer(0)]],
-    device const float* e0        [[buffer(1)]],
-    device GasPrim* prim          [[buffer(2)]],
-    constant GasGridParams& p     [[buffer(3)]],
-    uint3 threadgroup_pos [[threadgroup_position_in_grid]],
-    uint3 threadgroup_tid [[thread_position_in_threadgroup]],
-    uint3 threadgroup_dim [[threads_per_threadgroup]]
-) {
-    uint gid = gas_cell_gid(p, threadgroup_pos, threadgroup_tid, threadgroup_dim);
-    if (gid >= p.num_cells) return;
-
-    U5 U = load_U5(mom_rho, e0, gid);
-
-    GasPrim pr;
-    if (!admissible_U5(U, p.gamma, p.rho_min, p.p_min)) {
-        float qn = qnan_f();
-        pr.u_p = float4(qn);
-        pr.thermo = float4(qn);
-        prim[gid] = pr;
-        return;
-    }
-
-    float rho_safe, p_c, T_c, c_c, sp_c;
-    float3 u;
-    primitives_from_U(U, p.gamma, p.c_v, p.rho_min, p.p_min,
-                      rho_safe, u, p_c, T_c, c_c, sp_c);
-
-    pr.u_p = float4(u, p_c);
-    pr.thermo = float4(T_c, c_c, sp_c, rho_safe);
-    prim[gid] = pr;
-}
-
-inline uint gas_boundary_mode(
-    uint axis,
-    bool high_face,
-    constant GasGridParams& p
-) {
-    if (axis == 0u) return high_face ? p.boundary_x_high : p.boundary_x_low;
-    if (axis == 1u) return high_face ? p.boundary_y_high : p.boundary_y_low;
-    return high_face ? p.boundary_z_high : p.boundary_z_low;
-}
-
-inline uint gas_neighbor_index(
-    uint x,
-    uint y,
-    uint z,
-    uint axis,
-    bool high_face,
-    uint32_t boundary,
-    thread bool& ghost
-) {
-    uint coordinate = axis == 0u ? x : (axis == 1u ? y : z);
-    uint extent = axis == 0u ? kGridX : (axis == 1u ? kGridY : kGridZ);
-    bool edge = high_face ? coordinate + 1u == extent : coordinate == 0u;
-    ghost = edge && boundary != gas_boundary_periodic;
-
-    if (ghost) {
-        return idx3_periodic(x, y, z, kGridX, kGridY, kGridZ);
-    }
-
-    uint neighbor = high_face ? wrap_plus_one(coordinate, extent) : wrap_minus_one(coordinate, extent);
-    if (axis == 0u) x = neighbor;
-    if (axis == 1u) y = neighbor;
-    if (axis == 2u) z = neighbor;
-    return idx3_periodic(x, y, z, kGridX, kGridY, kGridZ);
-}
-
-inline U5 gas_ghost_state(U5 interior, uint axis, uint32_t boundary) {
-    if (boundary == gas_boundary_reflecting) {
-        if (axis == 0u) interior.mom.x = -interior.mom.x;
-        if (axis == 1u) interior.mom.y = -interior.mom.y;
-        if (axis == 2u) interior.mom.z = -interior.mom.z;
-    }
-
-    return interior;
-}
-
-inline GasPrim gas_primitive(U5 state, constant GasGridParams& p) {
-    GasPrim primitive;
-    float rho_safe, pressure, temperature, sound_speed, speed;
-    float3 velocity;
-    primitives_from_U(
-        state,
-        p.gamma,
-        p.c_v,
-        p.rho_min,
-        p.p_min,
-        rho_safe,
-        velocity,
-        pressure,
-        temperature,
-        sound_speed,
-        speed
-    );
-    primitive.u_p = float4(velocity, pressure);
-    primitive.thermo = float4(temperature, sound_speed, speed, rho_safe);
-    return primitive;
-}
-
-inline float gas_cell_conductivity(float rho, constant GasGridParams& p) {
-    if (!(rho > 0.0f) || !(p.rho_min > 0.0f)) {
-        return 0.0f;
-    }
-
-    // rho/rho_min is the resolved material fraction of a sub-resolution cell.
-    // Scaling conductivity by that fraction keeps thermal diffusivity finite as
-    // density approaches vacuum and makes exact vacuum thermally insulating.
-    return p.k_thermal * min(rho / p.rho_min, 1.0f);
-}
-
-inline float gas_face_conductivity(float left, float right) {
-    if (!(left > 0.0f) || !(right > 0.0f)) {
-        return 0.0f;
-    }
-
-    // Harmonic averaging is the finite-volume interface conductivity for two
-    // adjacent materials in series; it also preserves a zero-flux vacuum face.
-    return (2.0f * left * right) / (left + right);
-}
-
-inline F5 gas_outflow_flux(F5 flux, bool high_face, uint32_t boundary) {
-    if (boundary != gas_boundary_outflow) {
-        return flux;
-    }
-
-    bool incoming = high_face ? flux.frho < 0.0f : flux.frho > 0.0f;
-    if (!incoming) {
-        return flux;
-    }
-
-    F5 zero;
-    zero.frho = 0.0f;
-    zero.fmom = float3(0.0f);
-    zero.fenergy = 0.0f;
-    zero.fentropy = 0.0f;
-    return zero;
+    if (!(U.rho > rho_eps)) return false;
+    if (!(U.e_int >= 0.0f)) return false;
+    return true;
 }
 
 inline void gas_rhs_cell(
-    device const float4* mom_rho0,
+    device const float* rho0,
+    device const float* mom0,
     device const float* e0,
-    device const GasPrim* prim,
     constant GasGridParams& p,
     uint idx,
     thread float& drho,
     thread float3& dmom,
-    thread float& denergy,
-    thread float& dentropy,
-    thread float& diagnostic
+    thread float& de_int
 ) {
-    diagnostic = 0.0f;
+    uint gx = p.grid_x, gy = p.grid_y, gz = p.grid_z;
+    float dx = p.dx;
+    float inv_dx = 1.0f / dx;
+    float inv_dx2 = 1.0f / (dx * dx);
+    float gamma = p.gamma;
 
-    if (!gas_geometry_admissible(p) || !gas_diffusion_cfl_admissible(p)) {
-        diagnostic = -1.0f;
+    uint x, y, z;
+    ijk_from_linear(idx, gx, gy, gz, x, y, z);
+
+    uint xm = wrap_minus_one(x, gx), xp = wrap_plus_one(x, gx);
+    uint ym = wrap_minus_one(y, gy), yp = wrap_plus_one(y, gy);
+    uint zm = wrap_minus_one(z, gz), zp = wrap_plus_one(z, gz);
+
+    uint idx_c  = idx;
+    uint idx_xm = idx3_periodic(xm, y, z, gx, gy, gz);
+    uint idx_xp = idx3_periodic(xp, y, z, gx, gy, gz);
+    uint idx_ym = idx3_periodic(x, ym, z, gx, gy, gz);
+    uint idx_yp = idx3_periodic(x, yp, z, gx, gy, gz);
+    uint idx_zm = idx3_periodic(x, y, zm, gx, gy, gz);
+    uint idx_zp = idx3_periodic(x, y, zp, gx, gy, gz);
+
+    U5 Uc  = load_U5(rho0, mom0, e0, idx_c);
+    U5 Uxm = load_U5(rho0, mom0, e0, idx_xm);
+    U5 Uxp = load_U5(rho0, mom0, e0, idx_xp);
+    U5 Uym = load_U5(rho0, mom0, e0, idx_ym);
+    U5 Uyp = load_U5(rho0, mom0, e0, idx_yp);
+    U5 Uzm = load_U5(rho0, mom0, e0, idx_zm);
+    U5 Uzp = load_U5(rho0, mom0, e0, idx_zp);
+
+    // FAIL-FAST: stencil must already be admissible.
+    if (!admissible_U5(Uc,  p.gamma, p.rho_min, p.p_min) ||
+        !admissible_U5(Uxm, p.gamma, p.rho_min, p.p_min) ||
+        !admissible_U5(Uxp, p.gamma, p.rho_min, p.p_min) ||
+        !admissible_U5(Uym, p.gamma, p.rho_min, p.p_min) ||
+        !admissible_U5(Uyp, p.gamma, p.rho_min, p.p_min) ||
+        !admissible_U5(Uzm, p.gamma, p.rho_min, p.p_min) ||
+        !admissible_U5(Uzp, p.gamma, p.rho_min, p.p_min)) {
         float qn = qnan_f();
         drho = qn;
         dmom = float3(qn);
-        denergy = qn;
-        dentropy = qn;
+        de_int = qn;
         return;
     }
 
-    uint x, y, z;
-    ijk_from_linear(idx, kGridX, kGridY, kGridZ, x, y, z);
+    // Primitives for center and 6 neighbors (floors for wave speeds).
+    float rho_c, p_c, T_c, c_c, sp_c;
+    float3 u_c;
+    primitives_from_U(Uc, gamma, p.c_v, p.rho_min, p.p_min, rho_c, u_c, p_c, T_c, c_c, sp_c);
 
-    uint bxm = gas_boundary_mode(0u, false, p), bxp = gas_boundary_mode(0u, true, p);
-    uint bym = gas_boundary_mode(1u, false, p), byp = gas_boundary_mode(1u, true, p);
-    uint bzm = gas_boundary_mode(2u, false, p), bzp = gas_boundary_mode(2u, true, p);
-    bool ghost_xm, ghost_xp, ghost_ym, ghost_yp, ghost_zm, ghost_zp;
-    uint idx_xm = gas_neighbor_index(x, y, z, 0u, false, bxm, ghost_xm);
-    uint idx_xp = gas_neighbor_index(x, y, z, 0u, true, bxp, ghost_xp);
-    uint idx_ym = gas_neighbor_index(x, y, z, 1u, false, bym, ghost_ym);
-    uint idx_yp = gas_neighbor_index(x, y, z, 1u, true, byp, ghost_yp);
-    uint idx_zm = gas_neighbor_index(x, y, z, 2u, false, bzm, ghost_zm);
-    uint idx_zp = gas_neighbor_index(x, y, z, 2u, true, bzp, ghost_zp);
+    float rho_xm, p_xm, T_xm, c_xm, sp_xm; float3 u_xm;
+    float rho_xp, p_xp, T_xp, c_xp, sp_xp; float3 u_xp;
+    float rho_ym, p_ym, T_ym, c_ym, sp_ym; float3 u_ym;
+    float rho_yp, p_yp, T_yp, c_yp, sp_yp; float3 u_yp;
+    float rho_zm, p_zm, T_zm, c_zm, sp_zm; float3 u_zm;
+    float rho_zp, p_zp, T_zp, c_zp, sp_zp; float3 u_zp;
 
-    U5 Uc  = load_U5(mom_rho0, e0, idx);
-    U5 Uxm = ghost_xm ? gas_ghost_state(Uc, 0u, bxm) : load_U5(mom_rho0, e0, idx_xm);
-    U5 Uxp = ghost_xp ? gas_ghost_state(Uc, 0u, bxp) : load_U5(mom_rho0, e0, idx_xp);
-    U5 Uym = ghost_ym ? gas_ghost_state(Uc, 1u, bym) : load_U5(mom_rho0, e0, idx_ym);
-    U5 Uyp = ghost_yp ? gas_ghost_state(Uc, 1u, byp) : load_U5(mom_rho0, e0, idx_yp);
-    U5 Uzm = ghost_zm ? gas_ghost_state(Uc, 2u, bzm) : load_U5(mom_rho0, e0, idx_zm);
-    U5 Uzp = ghost_zp ? gas_ghost_state(Uc, 2u, bzp) : load_U5(mom_rho0, e0, idx_zp);
+    primitives_from_U(Uxm, gamma, p.c_v, p.rho_min, p.p_min, rho_xm, u_xm, p_xm, T_xm, c_xm, sp_xm);
+    primitives_from_U(Uxp, gamma, p.c_v, p.rho_min, p.p_min, rho_xp, u_xp, p_xp, T_xp, c_xp, sp_xp);
+    primitives_from_U(Uym, gamma, p.c_v, p.rho_min, p.p_min, rho_ym, u_ym, p_ym, T_ym, c_ym, sp_ym);
+    primitives_from_U(Uyp, gamma, p.c_v, p.rho_min, p.p_min, rho_yp, u_yp, p_yp, T_yp, c_yp, sp_yp);
+    primitives_from_U(Uzm, gamma, p.c_v, p.rho_min, p.p_min, rho_zm, u_zm, p_zm, T_zm, c_zm, sp_zm);
+    primitives_from_U(Uzp, gamma, p.c_v, p.rho_min, p.p_min, rho_zp, u_zp, p_zp, T_zp, c_zp, sp_zp);
 
-    GasPrim Pc  = prim[idx];
-    GasPrim Pxm = ghost_xm ? gas_primitive(Uxm, p) : prim[idx_xm];
-    GasPrim Pxp = ghost_xp ? gas_primitive(Uxp, p) : prim[idx_xp];
-    GasPrim Pym = ghost_ym ? gas_primitive(Uym, p) : prim[idx_ym];
-    GasPrim Pyp = ghost_yp ? gas_primitive(Uyp, p) : prim[idx_yp];
-    GasPrim Pzm = ghost_zm ? gas_primitive(Uzm, p) : prim[idx_zm];
-    GasPrim Pzp = ghost_zp ? gas_primitive(Uzp, p) : prim[idx_zp];
+    // Face fluxes (Rusanov/LLF), minus = (i-1,i), plus = (i,i+1)
+    F5 Fx_m = rusanov_flux(
+        inviscid_flux_dir(0u, Uxm, u_xm, p_xm),
+        inviscid_flux_dir(0u, Uc,  u_c,  p_c),
+        Uxm, Uc,
+        max(sp_xm, sp_c)
+    );
+    F5 Fx_p = rusanov_flux(
+        inviscid_flux_dir(0u, Uc,  u_c,  p_c),
+        inviscid_flux_dir(0u, Uxp, u_xp, p_xp),
+        Uc, Uxp,
+        max(sp_c, sp_xp)
+    );
+    F5 Fy_m = rusanov_flux(
+        inviscid_flux_dir(1u, Uym, u_ym, p_ym),
+        inviscid_flux_dir(1u, Uc,  u_c,  p_c),
+        Uym, Uc,
+        max(sp_ym, sp_c)
+    );
+    F5 Fy_p = rusanov_flux(
+        inviscid_flux_dir(1u, Uc,  u_c,  p_c),
+        inviscid_flux_dir(1u, Uyp, u_yp, p_yp),
+        Uc, Uyp,
+        max(sp_c, sp_yp)
+    );
+    F5 Fz_m = rusanov_flux(
+        inviscid_flux_dir(2u, Uzm, u_zm, p_zm),
+        inviscid_flux_dir(2u, Uc,  u_c,  p_c),
+        Uzm, Uc,
+        max(sp_zm, sp_c)
+    );
+    F5 Fz_p = rusanov_flux(
+        inviscid_flux_dir(2u, Uc,  u_c,  p_c),
+        inviscid_flux_dir(2u, Uzp, u_zp, p_zp),
+        Uc, Uzp,
+        max(sp_c, sp_zp)
+    );
 
-    if (!isfinite(Pc.thermo.z)  || !isfinite(Pxm.thermo.z) || !isfinite(Pxp.thermo.z) ||
-        !isfinite(Pym.thermo.z) || !isfinite(Pyp.thermo.z) || !isfinite(Pzm.thermo.z) ||
-        !isfinite(Pzp.thermo.z)) {
-        diagnostic = -2.0f;
-        float qn = qnan_f();
-        drho = qn; dmom = float3(qn); denergy = qn; dentropy = qn;
-        return;
-    }
-
-    float3 u_c  = Pc.u_p.xyz;
-    float3 u_xm = Pxm.u_p.xyz;
-    float3 u_xp = Pxp.u_p.xyz;
-    float3 u_ym = Pym.u_p.xyz;
-    float3 u_yp = Pyp.u_p.xyz;
-    float3 u_zm = Pzm.u_p.xyz;
-    float3 u_zp = Pzp.u_p.xyz;
-
-    float p_c  = Pc.u_p.w;
-    float p_xm = Pxm.u_p.w;
-    float p_xp = Pxp.u_p.w;
-    float p_ym = Pym.u_p.w;
-    float p_yp = Pyp.u_p.w;
-    float p_zm = Pzm.u_p.w;
-    float p_zp = Pzp.u_p.w;
-
-    float sound_c = Pc.thermo.y;
-    float sound_xm = Pxm.thermo.y;
-    float sound_xp = Pxp.thermo.y;
-    float sound_ym = Pym.thermo.y;
-    float sound_yp = Pyp.thermo.y;
-    float sound_zm = Pzm.thermo.y;
-    float sound_zp = Pzp.thermo.y;
-
-    float cfl_speed_x = max(
-        fabs(u_xm.x) + sound_xm,
-        max(fabs(u_c.x) + sound_c, fabs(u_xp.x) + sound_xp));
-    float cfl_speed_y = max(
-        fabs(u_ym.y) + sound_ym,
-        max(fabs(u_c.y) + sound_c, fabs(u_yp.y) + sound_yp));
-    float cfl_speed_z = max(
-        fabs(u_zm.z) + sound_zm,
-        max(fabs(u_c.z) + sound_c, fabs(u_zp.z) + sound_zp));
-    diagnostic = p.dt * (
-        cfl_speed_x * p.inv_dx +
-        cfl_speed_y * p.inv_dy +
-        cfl_speed_z * p.inv_dz);
-
-    if (!gas_advective_cfl_admissible(cfl_speed_x, cfl_speed_y, cfl_speed_z, p)) {
-        // A near-vacuum cell can thin during the step until its local |u|+c
-        // exceeds the CFL bound the host sub-stepping sized against (the global
-        // pre-step wave rate cannot see a cell that only becomes fast mid-step).
-        // Poisoning it with NaN cascades to the whole field; instead freeze this
-        // cell for the substep (zero RHS is conservative — no flux, no spurious
-        // mass/energy). Neighbours relax it and it re-enters transport next
-        // substep. Only p.dt<=0 / non-finite dt (a real config fault) still NaNs.
-        if (!(p.dt > 0.0f) || !isfinite(p.dt)) {
-            float qn = qnan_f();
-            drho = qn;
-            dmom = float3(qn);
-            denergy = qn;
-            dentropy = qn;
-            return;
-        }
-
-        drho = 0.0f;
-        dmom = float3(0.0f);
-        denergy = 0.0f;
-        dentropy = 0.0f;
-        return;
-    }
-
-    F5 Fx_m = hll_flux(
-        inviscid_flux_dir(0u, Uxm, u_xm, p_xm, p.gamma),
-        inviscid_flux_dir(0u, Uc,  u_c,  p_c, p.gamma),
-        Uxm, Uc, u_xm.x, Pxm.thermo.y, u_c.x, Pc.thermo.y, p.gamma);
-    F5 Fx_p = hll_flux(
-        inviscid_flux_dir(0u, Uc,  u_c,  p_c, p.gamma),
-        inviscid_flux_dir(0u, Uxp, u_xp, p_xp, p.gamma),
-        Uc, Uxp, u_c.x, Pc.thermo.y, u_xp.x, Pxp.thermo.y, p.gamma);
-    F5 Fy_m = hll_flux(
-        inviscid_flux_dir(1u, Uym, u_ym, p_ym, p.gamma),
-        inviscid_flux_dir(1u, Uc,  u_c,  p_c, p.gamma),
-        Uym, Uc, u_ym.y, Pym.thermo.y, u_c.y, Pc.thermo.y, p.gamma);
-    F5 Fy_p = hll_flux(
-        inviscid_flux_dir(1u, Uc,  u_c,  p_c, p.gamma),
-        inviscid_flux_dir(1u, Uyp, u_yp, p_yp, p.gamma),
-        Uc, Uyp, u_c.y, Pc.thermo.y, u_yp.y, Pyp.thermo.y, p.gamma);
-    F5 Fz_m = hll_flux(
-        inviscid_flux_dir(2u, Uzm, u_zm, p_zm, p.gamma),
-        inviscid_flux_dir(2u, Uc,  u_c,  p_c, p.gamma),
-        Uzm, Uc, u_zm.z, Pzm.thermo.y, u_c.z, Pc.thermo.y, p.gamma);
-    F5 Fz_p = hll_flux(
-        inviscid_flux_dir(2u, Uc,  u_c,  p_c, p.gamma),
-        inviscid_flux_dir(2u, Uzp, u_zp, p_zp, p.gamma),
-        Uc, Uzp, u_c.z, Pc.thermo.y, u_zp.z, Pzp.thermo.y, p.gamma);
-
-    if (ghost_xm) Fx_m = gas_outflow_flux(Fx_m, false, bxm);
-    if (ghost_xp) Fx_p = gas_outflow_flux(Fx_p, true, bxp);
-    if (ghost_ym) Fy_m = gas_outflow_flux(Fy_m, false, bym);
-    if (ghost_yp) Fy_p = gas_outflow_flux(Fy_p, true, byp);
-    if (ghost_zm) Fz_m = gas_outflow_flux(Fz_m, false, bzm);
-    if (ghost_zp) Fz_p = gas_outflow_flux(Fz_p, true, bzp);
-
-    float div_frho = (Fx_p.frho - Fx_m.frho) * p.inv_dx +
-        (Fy_p.frho - Fy_m.frho) * p.inv_dy +
-        (Fz_p.frho - Fz_m.frho) * p.inv_dz;
-    float3 div_fmom = (Fx_p.fmom - Fx_m.fmom) * p.inv_dx +
-        (Fy_p.fmom - Fy_m.fmom) * p.inv_dy +
-        (Fz_p.fmom - Fz_m.fmom) * p.inv_dz;
-    float div_energy = (Fx_p.fenergy - Fx_m.fenergy) * p.inv_dx +
-        (Fy_p.fenergy - Fy_m.fenergy) * p.inv_dy +
-        (Fz_p.fenergy - Fz_m.fenergy) * p.inv_dz;
-    float div_entropy = (Fx_p.fentropy - Fx_m.fentropy) * p.inv_dx +
-        (Fy_p.fentropy - Fy_m.fentropy) * p.inv_dy +
-        (Fz_p.fentropy - Fz_m.fentropy) * p.inv_dz;
+    // Conservative divergences for rho and mom; internal energy gets an extra pressure-work source.
+    float div_frho = ((Fx_p.frho - Fx_m.frho) + (Fy_p.frho - Fy_m.frho) + (Fz_p.frho - Fz_m.frho)) * inv_dx;
+    float3 div_fmom = ((Fx_p.fmom - Fx_m.fmom) + (Fy_p.fmom - Fy_m.fmom) + (Fz_p.fmom - Fz_m.fmom)) * inv_dx;
+    float div_fe = ((Fx_p.fe_int - Fx_m.fe_int) + (Fy_p.fe_int - Fy_m.fe_int) + (Fz_p.fe_int - Fz_m.fe_int)) * inv_dx;
 
     drho = -div_frho;
     dmom = -div_fmom;
 
-    float conductivity_c = gas_cell_conductivity(Uc.rho, p);
-    float conductivity_xm = gas_face_conductivity(
-        gas_cell_conductivity(Uxm.rho, p), conductivity_c);
-    float conductivity_xp = gas_face_conductivity(
-        conductivity_c, gas_cell_conductivity(Uxp.rho, p));
-    float conductivity_ym = gas_face_conductivity(
-        gas_cell_conductivity(Uym.rho, p), conductivity_c);
-    float conductivity_yp = gas_face_conductivity(
-        conductivity_c, gas_cell_conductivity(Uyp.rho, p));
-    float conductivity_zm = gas_face_conductivity(
-        gas_cell_conductivity(Uzm.rho, p), conductivity_c);
-    float conductivity_zp = gas_face_conductivity(
-        conductivity_c, gas_cell_conductivity(Uzp.rho, p));
-    float thermal_divergence = (
-        conductivity_xp * (Pxp.thermo.x - Pc.thermo.x) -
-        conductivity_xm * (Pc.thermo.x - Pxm.thermo.x)
-    ) * p.inv_dx2 + (
-        conductivity_yp * (Pyp.thermo.x - Pc.thermo.x) -
-        conductivity_ym * (Pc.thermo.x - Pym.thermo.x)
-    ) * p.inv_dy2 + (
-        conductivity_zp * (Pzp.thermo.x - Pc.thermo.x) -
-        conductivity_zm * (Pc.thermo.x - Pzm.thermo.x)
-    ) * p.inv_dz2;
+    // Pressure work term: -p * div(u)
+    float dux_dx = (u_xp.x - u_xm.x) * (0.5f * inv_dx);
+    float duy_dy = (u_yp.y - u_ym.y) * (0.5f * inv_dx);
+    float duz_dz = (u_zp.z - u_zm.z) * (0.5f * inv_dx);
+    float div_u = dux_dx + duy_dy + duz_dz;
 
-    denergy = -div_energy + thermal_divergence;
-    float entropy_source = Uc.rho > 0.0f
-        ? (p.gamma - 1.0f) * pow(Uc.rho, 1.0f - p.gamma) * thermal_divergence
-        : 0.0f;
-    dentropy = -div_entropy + entropy_source;
+    // Heat conduction: ∇·(k ∇T) = k ∇²T (constant k)
+    float lap_T = (T_xp + T_xm + T_yp + T_ym + T_zp + T_zm - 6.0f * T_c) * inv_dx2;
+
+    de_int = -div_fe + (-p_c * div_u) + (p.k_thermal * lap_T);
 }
 
 kernel void gas_rk2_stage1(
-    device const float4* mom_rho0  [[buffer(0)]],
-    device const float* e0         [[buffer(1)]],
-    device const GasPrim* prim0    [[buffer(2)]],
-    device float4* mom_rho1        [[buffer(3)]],
-    device float* e1               [[buffer(4)]],
-    device float* entropy1         [[buffer(5)]],
-    constant GasGridParams& p      [[buffer(6)]],
-    device atomic_uint* dbg_head   [[buffer(7)]],
-    device uint* dbg_words         [[buffer(8)]],
-    constant uint& dbg_cap         [[buffer(9)]],
-    uint3 threadgroup_pos [[threadgroup_position_in_grid]],
-    uint3 threadgroup_tid [[thread_position_in_threadgroup]],
-    uint3 threadgroup_dim [[threads_per_threadgroup]]
+    device const float* rho0      [[buffer(0)]],  // (N,)
+    device const float* mom0      [[buffer(1)]],  // (N*3,)
+    device const float* e0        [[buffer(2)]],  // (N,)
+    device float* rho1            [[buffer(3)]],  // (N,)
+    device float* mom1            [[buffer(4)]],  // (N*3,)
+    device float* e1              [[buffer(5)]],  // (N,)
+    device float* k1_rho          [[buffer(6)]],  // (N,)
+    device float* k1_mom          [[buffer(7)]],  // (N*3,)
+    device float* k1_e            [[buffer(8)]],  // (N,)
+    constant GasGridParams& p     [[buffer(9)]],
+    device atomic_uint* dbg_head  [[buffer(10)]],
+    device uint* dbg_words        [[buffer(11)]],
+    constant uint& dbg_cap        [[buffer(12)]],
+    uint gid [[thread_position_in_grid]]
 ) {
-    uint gid = gas_cell_gid(p, threadgroup_pos, threadgroup_tid, threadgroup_dim);
     if (gid >= p.num_cells) return;
 
-    float dr; float3 dm; float de; float ds; float diagnostic;
-    gas_rhs_cell(mom_rho0, e0, prim0, p, gid, dr, dm, de, ds, diagnostic);
-    if (!isfinite(dr) || !isfinite(dm.x) || !isfinite(dm.y) ||
-        !isfinite(dm.z) || !isfinite(de) || !isfinite(ds)) {
-        U5 Uc_bad = load_U5(mom_rho0, e0, gid);
-        dbg_log(
-            dbg_head, dbg_words, dbg_cap, 0x20u, gid,
-            Uc_bad.rho, Uc_bad.e_int, p.dt, diagnostic);
+    float dr; float3 dm; float de;
+    gas_rhs_cell(rho0, mom0, e0, p, gid, dr, dm, de);
+    if (!isfinite(dr) || !isfinite(dm.x) || !isfinite(dm.y) || !isfinite(dm.z) || !isfinite(de)) {
+        // TAG 0x20: gas RHS produced non-finite (likely inadmissible stencil)
+        U5 Uc_bad = load_U5(rho0, mom0, e0, gid);
+        dbg_log(dbg_head, dbg_words, dbg_cap, 0x20u, gid, Uc_bad.rho, Uc_bad.e_int, Uc_bad.mom.x, Uc_bad.mom.y);
         float qn = qnan_f();
-        mom_rho1[gid] = float4(qn);
+        rho1[gid] = qn;
         e1[gid] = qn;
-        entropy1[gid] = qn;
+        uint m = gid * 3u;
+        mom1[m + 0u] = qn;
+        mom1[m + 1u] = qn;
+        mom1[m + 2u] = qn;
+        k1_rho[gid] = qn;
+        k1_e[gid] = qn;
+        k1_mom[m + 0u] = qn;
+        k1_mom[m + 1u] = qn;
+        k1_mom[m + 2u] = qn;
         return;
     }
 
-    U5 Uc = load_U5(mom_rho0, e0, gid);
+    // Stage1 state
+    U5 Uc = load_U5(rho0, mom0, e0, gid);
     U5 U1;
     U1.rho = Uc.rho + p.dt * dr;
     U1.mom = Uc.mom + p.dt * dm;
-    float energy1 = gas_total_energy(Uc) + p.dt * de;
-    float stage_entropy = gas_entropy_density(Uc, p.gamma) + p.dt * ds;
-    bool stage_vacuum = gas_reconcile_vacuum(U1, energy1, stage_entropy, p);
-
-    if (!stage_vacuum) {
-        U1.e_int = gas_internal_energy(
-            energy1, stage_entropy, U1, p.gamma, p.rho_min, p.p_min);
-    }
+    U1.e_int = Uc.e_int + p.dt * de;
     if (!admissible_U5(U1, p.gamma, p.rho_min, p.p_min)) {
+        // TAG 0x12: stage1 produced inadmissible state
         dbg_log(
-            dbg_head, dbg_words, dbg_cap, 0x12u, gid,
-            U1.rho, U1.e_int, energy1,
-            gas_entropy_internal(stage_entropy, U1.rho, p.gamma));
+            dbg_head,
+            dbg_words,
+            dbg_cap,
+            0x12u,
+            gid,
+            U1.rho,
+            length(U1.mom),
+            U1.e_int,
+            (U1.rho != 0.0f) ? length(U1.mom) / fabs(U1.rho) : 0.0f
+        );
         float qn = qnan_f();
-        mom_rho1[gid] = float4(qn);
+        rho1[gid] = qn;
         e1[gid] = qn;
-        entropy1[gid] = qn;
+        uint m = gid * 3u;
+        mom1[m + 0u] = qn;
+        mom1[m + 1u] = qn;
+        mom1[m + 2u] = qn;
+        k1_rho[gid] = qn;
+        k1_e[gid] = qn;
+        k1_mom[m + 0u] = qn;
+        k1_mom[m + 1u] = qn;
+        k1_mom[m + 2u] = qn;
         return;
     }
 
-    store_U5(mom_rho1, e1, gid, U1);
-    entropy1[gid] = gas_entropy_density(U1, p.gamma);
+    store_U5(rho1, mom1, e1, gid, U1);
+
+    // Store k1
+    k1_rho[gid] = dr;
+    uint m = gid * 3u;
+    k1_mom[m + 0u] = dm.x;
+    k1_mom[m + 1u] = dm.y;
+    k1_mom[m + 2u] = dm.z;
+    k1_e[gid] = de;
 }
 
 kernel void gas_rk2_stage2(
-    device const float4* mom_rho0  [[buffer(0)]],
-    device const float* e0         [[buffer(1)]],
-    device const float4* mom_rho1  [[buffer(2)]],
-    device const float* e1         [[buffer(3)]],
-    device const GasPrim* prim1    [[buffer(4)]],
-    device const float* entropy1   [[buffer(5)]],
-    device float4* mom_rho_out     [[buffer(6)]],
-    device float* e_out            [[buffer(7)]],
-    constant GasGridParams& p      [[buffer(8)]],
-    device atomic_uint* dbg_head   [[buffer(9)]],
-    device uint* dbg_words         [[buffer(10)]],
-    constant uint& dbg_cap         [[buffer(11)]],
-    uint3 threadgroup_pos [[threadgroup_position_in_grid]],
-    uint3 threadgroup_tid [[thread_position_in_threadgroup]],
-    uint3 threadgroup_dim [[threads_per_threadgroup]]
+    device const float* rho0      [[buffer(0)]],  // (N,)
+    device const float* mom0      [[buffer(1)]],  // (N*3,)
+    device const float* e0        [[buffer(2)]],  // (N,)
+    device const float* rho1      [[buffer(3)]],  // (N,)
+    device const float* mom1      [[buffer(4)]],  // (N*3,)
+    device const float* e1        [[buffer(5)]],  // (N,)
+    device const float* k1_rho    [[buffer(6)]],  // (N,)
+    device const float* k1_mom    [[buffer(7)]],  // (N*3,)
+    device const float* k1_e      [[buffer(8)]],  // (N,)
+    device float* rho_out         [[buffer(9)]],  // (N,)
+    device float* mom_out         [[buffer(10)]], // (N*3,)
+    device float* e_out           [[buffer(11)]], // (N,)
+    constant GasGridParams& p     [[buffer(12)]],
+    device atomic_uint* dbg_head  [[buffer(13)]],
+    device uint* dbg_words        [[buffer(14)]],
+    constant uint& dbg_cap        [[buffer(15)]],
+    uint gid [[thread_position_in_grid]]
 ) {
-    uint gid = gas_cell_gid(p, threadgroup_pos, threadgroup_tid, threadgroup_dim);
     if (gid >= p.num_cells) return;
 
-    float dr2; float3 dm2; float de2; float ds2; float diagnostic;
-    gas_rhs_cell(mom_rho1, e1, prim1, p, gid, dr2, dm2, de2, ds2, diagnostic);
-    if (!isfinite(dr2) || !isfinite(dm2.x) || !isfinite(dm2.y) ||
-        !isfinite(dm2.z) || !isfinite(de2) || !isfinite(ds2)) {
-        U5 Uc_bad = load_U5(mom_rho1, e1, gid);
-        dbg_log(
-            dbg_head, dbg_words, dbg_cap, 0x21u, gid,
-            Uc_bad.rho, Uc_bad.e_int, p.dt, diagnostic);
+    float dr2; float3 dm2; float de2;
+    gas_rhs_cell(rho1, mom1, e1, p, gid, dr2, dm2, de2);
+    if (!isfinite(dr2) || !isfinite(dm2.x) || !isfinite(dm2.y) || !isfinite(dm2.z) || !isfinite(de2)) {
+        // TAG 0x21: gas RHS2 produced non-finite (likely inadmissible stencil)
+        U5 Uc_bad = load_U5(rho1, mom1, e1, gid);
+        dbg_log(dbg_head, dbg_words, dbg_cap, 0x21u, gid, Uc_bad.rho, Uc_bad.e_int, Uc_bad.mom.x, Uc_bad.mom.y);
         float qn = qnan_f();
-        mom_rho_out[gid] = float4(qn);
+        rho_out[gid] = qn;
         e_out[gid] = qn;
+        uint m = gid * 3u;
+        mom_out[m + 0u] = qn;
+        mom_out[m + 1u] = qn;
+        mom_out[m + 2u] = qn;
         return;
     }
 
-    U5 Uc = load_U5(mom_rho0, e0, gid);
-    U5 U1 = load_U5(mom_rho1, e1, gid);
+    U5 Uc = load_U5(rho0, mom0, e0, gid);
+    float dr1 = k1_rho[gid];
+    uint m = gid * 3u;
+    float3 dm1 = float3(k1_mom[m + 0u], k1_mom[m + 1u], k1_mom[m + 2u]);
+    float de1 = k1_e[gid];
 
     U5 U2;
-    U2.rho = 0.5f * (Uc.rho + U1.rho + p.dt * dr2);
-    U2.mom = 0.5f * (Uc.mom + U1.mom + p.dt * dm2);
-    float energy2 = 0.5f * (
-        gas_total_energy(Uc) + gas_total_energy(U1) + p.dt * de2);
-    float entropy2 = 0.5f * (
-        gas_entropy_density(Uc, p.gamma) + entropy1[gid] + p.dt * ds2);
-    bool output_vacuum = gas_reconcile_vacuum(U2, energy2, entropy2, p);
-
-    if (!output_vacuum) {
-        U2.e_int = gas_internal_energy(
-            energy2, entropy2, U2, p.gamma, p.rho_min, p.p_min);
-    }
+    U2.rho = Uc.rho + 0.5f * p.dt * (dr1 + dr2);
+    U2.mom = Uc.mom + 0.5f * p.dt * (dm1 + dm2);
+    U2.e_int = Uc.e_int + 0.5f * p.dt * (de1 + de2);
     if (!admissible_U5(U2, p.gamma, p.rho_min, p.p_min)) {
+        // TAG 0x13: stage2 produced inadmissible state
         dbg_log(
-            dbg_head, dbg_words, dbg_cap, 0x13u, gid,
-            U2.rho, U2.e_int, energy2,
-            gas_entropy_internal(entropy2, U2.rho, p.gamma));
+            dbg_head,
+            dbg_words,
+            dbg_cap,
+            0x13u,
+            gid,
+            U2.rho,
+            length(U2.mom),
+            U2.e_int,
+            (U2.rho != 0.0f) ? length(U2.mom) / fabs(U2.rho) : 0.0f
+        );
         float qn = qnan_f();
-        mom_rho_out[gid] = float4(qn);
+        rho_out[gid] = qn;
         e_out[gid] = qn;
+        uint m = gid * 3u;
+        mom_out[m + 0u] = qn;
+        mom_out[m + 1u] = qn;
+        mom_out[m + 2u] = qn;
         return;
     }
 
-    store_U5(mom_rho_out, e_out, gid, U2);
+    store_U5(rho_out, mom_out, e_out, gid, U2);
 }
 
 // -----------------------------------------------------------------------------
@@ -2997,9 +2095,9 @@ kernel void pic_gather_update_particles(
     device const float* particle_mass     [[buffer(1)]],  // N
     device float* particle_pos_out        [[buffer(2)]],  // N * 3
     device float* particle_vel_out        [[buffer(3)]],  // N * 3
-    device const float* particle_heat_in  [[buffer(4)]],  // N
-    device float* particle_heat_out       [[buffer(5)]],  // N
-    device const float4* mom_rho_field    [[buffer(6)]],  // gx * gy * gz
+    device float* particle_heat_out       [[buffer(4)]],  // N
+    device const float* rho_field         [[buffer(5)]],  // gx * gy * gz
+    device const float* mom_field         [[buffer(6)]],  // gx * gy * gz * 3
     device const float* E_field           [[buffer(7)]],  // gx * gy * gz
     device const float* gravity_potential [[buffer(8)]],  // gx * gy * gz (gravitational potential φ)
     constant PicGatherParams& p           [[buffer(9)]],
@@ -3020,13 +2118,7 @@ kernel void pic_gather_update_particles(
     uint3 grid_dims = uint3(p.grid_x, p.grid_y, p.grid_z);
     uint3 base_idx;
     float3 frac;
-    float3 inv_cell = float3(p.inv_cell_x, p.inv_cell_y, p.inv_cell_z);
-    uint3 boundary_low = uint3(
-        p.boundary_x_low, p.boundary_y_low, p.boundary_z_low);
-    uint3 boundary_high = uint3(
-        p.boundary_x_high, p.boundary_y_high, p.boundary_z_high);
-    pic_trilinear_coords(
-        pos, inv_cell, grid_dims, boundary_low, boundary_high, base_idx, frac);
+    trilinear_coords(pos, p.inv_grid_spacing, grid_dims, base_idx, frac);
 
     float wx0 = 1.0f - frac.x, wx1 = frac.x;
     float wy0 = 1.0f - frac.y, wy1 = frac.y;
@@ -3043,14 +2135,15 @@ kernel void pic_gather_update_particles(
         wx1 * wy1 * wz1
     };
 
+    uint gx = p.grid_x, gy = p.grid_y, gz = p.grid_z;
     uint x0 = base_idx.x, y0 = base_idx.y, z0 = base_idx.z;
-    uint x1 = pic_axis_corner(x0, grid_dims.x, boundary_low.x, boundary_high.x);
-    uint y1 = pic_axis_corner(y0, grid_dims.y, boundary_low.y, boundary_high.y);
-    uint z1 = pic_axis_corner(z0, grid_dims.z, boundary_low.z, boundary_high.z);
+    uint x1 = (x0 + 1) % gx;
+    uint y1 = (y0 + 1) % gy;
+    uint z1 = (z0 + 1) % gz;
 
     uint stride_z = 1;
-    uint stride_y = grid_dims.z;
-    uint stride_x = grid_dims.y * grid_dims.z;
+    uint stride_y = gz;
+    uint stride_x = gy * gz;
 
     uint idxs[8] = {
         x0 * stride_x + y0 * stride_y + z0 * stride_z,
@@ -3069,57 +2162,37 @@ kernel void pic_gather_update_particles(
     for (uint c = 0; c < 8; c++) {
         float w = weights[c];
         uint idx = idxs[c];
-        float4 mr = mom_rho_field[idx];
-        rho += w * mr.w;
-        mom += w * mr.xyz;
+        rho += w * rho_field[idx];
         E += w * E_field[idx];
+        uint mbase = idx * 3u;
+        mom.x += w * mom_field[mbase + 0u];
+        mom.y += w * mom_field[mbase + 1u];
+        mom.z += w * mom_field[mbase + 2u];
     }
 
     // Convert to primitives at particle position (dual-energy; no subtraction).
     //
-    // [CHOICE] vacuum semantics for PIC coupling (no numeric floors)
-    // [FORMULA] if ρ <= 0: treat as vacuum: u := 0, T := 0
-    // [REASON] true vacuum has no well-defined continuum temperature/velocity; attempting
-    //          to interpret numerical solver floors as physics injects energy.
-    bool vacuum = !(rho > 0.0f);
-    float rho_safe = rho; // only valid when !vacuum
-    float3 u = vacuum ? float3(0.0f) : (mom / rho_safe);
-    // E_field holds internal energy density directly (u_int = ρ c_v T).
+    // [CHOICE] primitive recovery uses the *same* low-density envelope as the gas solver
+    // [REASON] avoids u=mom/rho and T=e_int/(rho c_v) blow-ups in near-vacuum cells,
+    //          and keeps particle advection consistent with the CFL estimator.
+    //
+    // E_field holds internal energy density directly: e_int = ρ c_v T.
     float e_int_density = E;
 
-    // TAG 0x01: baseline sample (first particle only)
-    if (gid == 0u) {
-        dbg_log(dbg_head, dbg_words, dbg_cap, 0x01u, gid, rho, e_int_density, u.x, u.y);
-    }
-    // FAIL-FAST: gathered conserved fields must be finite and physically admissible.
-    if (!isfinite(rho) || !(rho >= 0.0f) || !isfinite(e_int_density) || !(e_int_density >= 0.0f) ||
+    // FAIL-FAST: gathered conserved fields must be finite.
+    if (!isfinite(rho) || !isfinite(e_int_density) ||
         !isfinite(mom.x) || !isfinite(mom.y) || !isfinite(mom.z)) {
-        float heat_in = particle_heat_in[gid];
-
-        if (!isfinite(pos.x) || !isfinite(pos.y) || !isfinite(pos.z) || !isfinite(heat_in)) {
-            float qn = qnan_f();
-            particle_pos_out[gid * 3 + 0] = qn;
-            particle_pos_out[gid * 3 + 1] = qn;
-            particle_pos_out[gid * 3 + 2] = qn;
-            particle_vel_out[gid * 3 + 0] = qn;
-            particle_vel_out[gid * 3 + 1] = qn;
-            particle_vel_out[gid * 3 + 2] = qn;
-            particle_heat_out[gid] = qn;
-            return;
-        }
-
-        particle_pos_out[gid * 3 + 0] = pos.x;
-        particle_pos_out[gid * 3 + 1] = pos.y;
-        particle_pos_out[gid * 3 + 2] = pos.z;
-        particle_vel_out[gid * 3 + 0] = 0.0f;
-        particle_vel_out[gid * 3 + 1] = 0.0f;
-        particle_vel_out[gid * 3 + 2] = 0.0f;
-        particle_heat_out[gid] = heat_in;
+        // TAG 0x07: invalid gathered conserved fields
+        dbg_log(dbg_head, dbg_words, dbg_cap, 0x07u, gid, rho, e_int_density, mom.x, mom.y);
+        float qn = qnan_f();
+        particle_heat_out[gid] = qn;
+        particle_pos_out[gid * 3 + 0] = qn;
+        particle_pos_out[gid * 3 + 1] = qn;
+        particle_pos_out[gid * 3 + 2] = qn;
+        particle_vel_out[gid * 3 + 0] = qn;
+        particle_vel_out[gid * 3 + 1] = qn;
+        particle_vel_out[gid * 3 + 2] = qn;
         return;
-    }
-    // TAG 0x02: vacuum gather (exact vacuum only: rho==0 & E==0 & mom==0)
-    if (rho == 0.0f && e_int_density == 0.0f && mom.x == 0.0f && mom.y == 0.0f && mom.z == 0.0f) {
-        dbg_log(dbg_head, dbg_words, dbg_cap, 0x02u, gid, rho, e_int_density, 0.0f, 0.0f);
     }
 
     float cv = p.c_v;
@@ -3127,54 +2200,135 @@ kernel void pic_gather_update_particles(
         // Fail loudly: invalid thermodynamic parameter.
         // TAG 0x03: invalid c_v
         dbg_log(dbg_head, dbg_words, dbg_cap, 0x03u, gid, cv, rho, e_int_density, 0.0f);
-        particle_heat_out[gid] = qnan_f();
-        particle_pos_out[gid * 3 + 0] = qnan_f();
-        particle_pos_out[gid * 3 + 1] = qnan_f();
-        particle_pos_out[gid * 3 + 2] = qnan_f();
-        particle_vel_out[gid * 3 + 0] = qnan_f();
-        particle_vel_out[gid * 3 + 1] = qnan_f();
-        particle_vel_out[gid * 3 + 2] = qnan_f();
+        float qn = qnan_f();
+        particle_heat_out[gid] = qn;
+        particle_pos_out[gid * 3 + 0] = qn;
+        particle_pos_out[gid * 3 + 1] = qn;
+        particle_pos_out[gid * 3 + 2] = qn;
+        particle_vel_out[gid * 3 + 0] = qn;
+        particle_vel_out[gid * 3 + 1] = qn;
+        particle_vel_out[gid * 3 + 2] = qn;
         return;
     }
 
-    // [CHOICE] temperature from internal energy (no clamps)
-    // [FORMULA] e_int = ρ c_v T  =>  T = e_int / (ρ c_v)
-    if (!vacuum) {
-        // [INVARIANT] internal energy density must be finite and non-negative.
-        if (!isfinite(e_int_density) || !(e_int_density >= 0.0f)) {
-            // TAG 0x04: invalid internal energy gather
-            dbg_log(dbg_head, dbg_words, dbg_cap, 0x04u, gid, rho, e_int_density, mom.x, mom.y);
-            particle_heat_out[gid] = qnan_f();
-            particle_pos_out[gid * 3 + 0] = qnan_f();
-            particle_pos_out[gid * 3 + 1] = qnan_f();
-            particle_pos_out[gid * 3 + 2] = qnan_f();
-            particle_vel_out[gid * 3 + 0] = qnan_f();
-            particle_vel_out[gid * 3 + 1] = qnan_f();
-            particle_vel_out[gid * 3 + 2] = qnan_f();
+    // Numerical low-density envelope (must match primitives_from_U()).
+    float rho_eps = max(p.rho_min, 0.0f);
+    const float f32_eps = 1.1920929e-7f;
+    float e_eps = 4.0f * rho_eps * f32_eps;
+    const float e_spec_max = 10.0f;
+    float e_int_max = e_spec_max * rho_eps;
+
+    bool vacuum_exact = (rho == 0.0f && e_int_density == 0.0f && mom.x == 0.0f && mom.y == 0.0f && mom.z == 0.0f);
+
+    float rho_safe = 0.0f;
+    float3 u = float3(0.0f);
+    float e_used = 0.0f;
+
+    if (vacuum_exact) {
+        // True vacuum: no well-defined continuum temperature/velocity.
+        rho_safe = rho_eps; // may be 0; safe because e_used=0
+        u = float3(0.0f);
+        e_used = 0.0f;
+        // TAG 0x02: vacuum gather (exact vacuum only)
+        dbg_log(dbg_head, dbg_words, dbg_cap, 0x02u, gid, rho, e_int_density, 0.0f, 0.0f);
+    } else if (fabs(rho) <= rho_eps) {
+        // Low-density: require bounded momentum and bounded internal energy density.
+        float mom2 = dot(mom, mom);
+        float rho_eps2 = rho_eps * rho_eps;
+        if (mom2 > rho_eps2 || e_int_density < -e_eps || e_int_density > e_int_max) {
+            // TAG 0x08: low-density envelope violated
+            dbg_log(dbg_head, dbg_words, dbg_cap, 0x08u, gid, rho, e_int_density, mom.x, mom.y);
+            float qn = qnan_f();
+            particle_heat_out[gid] = qn;
+            particle_pos_out[gid * 3 + 0] = qn;
+            particle_pos_out[gid * 3 + 1] = qn;
+            particle_pos_out[gid * 3 + 2] = qn;
+            particle_vel_out[gid * 3 + 0] = qn;
+            particle_vel_out[gid * 3 + 1] = qn;
+            particle_vel_out[gid * 3 + 2] = qn;
             return;
         }
+
+        // Regularize primitive recovery using rho_eps (not rho).
+        rho_safe = rho_eps;
+        if (rho_safe > 0.0f) {
+            u = mom / rho_safe;
+        } else {
+            u = float3(0.0f);
+        }
+        e_used = (e_int_density < 0.0f) ? 0.0f : e_int_density; // affects primitives only
+    } else {
+        // Outside envelope: require physical positive-density state.
+        if (!(rho > 0.0f)) {
+            // TAG 0x07: invalid gathered conserved fields (negative rho)
+            dbg_log(dbg_head, dbg_words, dbg_cap, 0x07u, gid, rho, e_int_density, mom.x, mom.y);
+            float qn = qnan_f();
+            particle_heat_out[gid] = qn;
+            particle_pos_out[gid * 3 + 0] = qn;
+            particle_pos_out[gid * 3 + 1] = qn;
+            particle_pos_out[gid * 3 + 2] = qn;
+            particle_vel_out[gid * 3 + 0] = qn;
+            particle_vel_out[gid * 3 + 1] = qn;
+            particle_vel_out[gid * 3 + 2] = qn;
+            return;
+        }
+        if (!(e_int_density >= 0.0f)) {
+            // TAG 0x04: invalid internal energy gather (negative e_int)
+            dbg_log(dbg_head, dbg_words, dbg_cap, 0x04u, gid, rho, e_int_density, mom.x, mom.y);
+            float qn = qnan_f();
+            particle_heat_out[gid] = qn;
+            particle_pos_out[gid * 3 + 0] = qn;
+            particle_pos_out[gid * 3 + 1] = qn;
+            particle_pos_out[gid * 3 + 2] = qn;
+            particle_vel_out[gid * 3 + 0] = qn;
+            particle_vel_out[gid * 3 + 1] = qn;
+            particle_vel_out[gid * 3 + 2] = qn;
+            return;
+        }
+
+        rho_safe = rho;
+        u = mom / rho_safe;
+        e_used = e_int_density;
     }
-    float T = vacuum ? 0.0f : (e_int_density / (rho_safe * cv));
+
+    // TAG 0x01: baseline sample (first particle only)
+    if (gid == 0u) {
+        dbg_log(dbg_head, dbg_words, dbg_cap, 0x01u, gid, rho, e_int_density, u.x, u.y);
+    }
+
+    // Temperature (diagnostic only; cancels out in heat computation).
+    float T = ((e_used > 0.0f) && (rho_safe > 0.0f)) ? (e_used / (rho_safe * cv)) : 0.0f;
 
     float mass = particle_mass[gid];
-    // [CHOICE] vacuum heat: preserve intrinsic particle heat; do not zero on ρ==0 gather.
-    // Continuum T and u are undefined in vacuum, but zeroing heat would silently destroy energy.
-    float heat = vacuum ? particle_heat_in[gid] : (mass * cv * T);
-    if (!isfinite(heat) || !isfinite(T)) {
-        // TAG 0x05: non-finite temperature/heat result
-        dbg_log(dbg_head, dbg_words, dbg_cap, 0x05u, gid, mass, T, heat, rho);
-        heat = particle_heat_in[gid];
+    if (!isfinite(mass) || !(mass >= 0.0f)) {
+        // TAG 0x07: invalid particle mass
+        dbg_log(dbg_head, dbg_words, dbg_cap, 0x07u, gid, mass, 0.0f, 0.0f, 0.0f);
+        float qn = qnan_f();
+        particle_heat_out[gid] = qn;
+        particle_pos_out[gid * 3 + 0] = qn;
+        particle_pos_out[gid * 3 + 1] = qn;
+        particle_pos_out[gid * 3 + 2] = qn;
+        particle_vel_out[gid * 3 + 0] = qn;
+        particle_vel_out[gid * 3 + 1] = qn;
+        particle_vel_out[gid * 3 + 2] = qn;
+        return;
+    }
 
-        if (!isfinite(heat)) {
-            particle_heat_out[gid] = qnan_f();
-            particle_pos_out[gid * 3 + 0] = qnan_f();
-            particle_pos_out[gid * 3 + 1] = qnan_f();
-            particle_pos_out[gid * 3 + 2] = qnan_f();
-            particle_vel_out[gid * 3 + 0] = qnan_f();
-            particle_vel_out[gid * 3 + 1] = qnan_f();
-            particle_vel_out[gid * 3 + 2] = qnan_f();
-            return;
-        }
+    // Heat per particle: Q = m c_v T = m * e_int / ρ  (c_v cancels).
+    float heat = ((e_used > 0.0f) && (rho_safe > 0.0f)) ? (mass * e_used / rho_safe) : 0.0f;
+
+    if (!isfinite(heat) || !isfinite(T) || !isfinite(u.x) || !isfinite(u.y) || !isfinite(u.z)) {
+        // TAG 0x05: non-finite temperature/heat/velocity result
+        dbg_log(dbg_head, dbg_words, dbg_cap, 0x05u, gid, mass, T, heat, rho_safe);
+        float qn = qnan_f();
+        particle_heat_out[gid] = qn;
+        particle_pos_out[gid * 3 + 0] = qn;
+        particle_pos_out[gid * 3 + 1] = qn;
+        particle_pos_out[gid * 3 + 2] = qn;
+        particle_vel_out[gid * 3 + 0] = qn;
+        particle_vel_out[gid * 3 + 1] = qn;
+        particle_vel_out[gid * 3 + 2] = qn;
+        return;
     }
 
     // Sample gravity gradient smoothly at particle position.
@@ -3189,7 +2343,7 @@ kernel void pic_gather_update_particles(
             base_idx,
             frac,
             grid_dims,
-            inv_cell
+            p.inv_grid_spacing
         );
         g_accel = -grad_phi;
     }
@@ -3198,9 +2352,9 @@ kernel void pic_gather_update_particles(
     float3 u_with_gravity = u + g_accel * p.dt;
 
     // Advect particle with gravity-corrected velocity (PIC)
+    float3 pos_next = pos + u_with_gravity * p.dt;
     float3 domain = float3(p.domain_x, p.domain_y, p.domain_z);
-    float3 pos_next = pic_advect_position(
-        pos, u_with_gravity, p.dt, domain, boundary_low, boundary_high);
+    pos_next = pos_next - floor(pos_next / domain) * domain;
     if (!isfinite(pos_next.x) || !isfinite(pos_next.y) || !isfinite(pos_next.z) ||
         !isfinite(u_with_gravity.x) || !isfinite(u_with_gravity.y) || !isfinite(u_with_gravity.z)) {
         // TAG 0x06: non-finite advection state
@@ -3218,43 +2372,38 @@ kernel void pic_gather_update_particles(
     particle_heat_out[gid] = heat;
 }
 
+// -----------------------------------------------------------------------------
+// Helper: Atomic Max for Threadgroup/Device Memory (CAS Loop)
+// -----------------------------------------------------------------------------
+// Replaces atomic_max_explicit which may not be supported for all types/spaces.
+
 inline void atomic_max_uint_threadgroup(threadgroup atomic_uint* address, uint val) {
-    atomic_fetch_max_explicit(address, val, memory_order_relaxed);
-}
-
-inline void atomic_max_uint_device(device atomic_uint* address, uint val) {
-    atomic_fetch_max_explicit(address, val, memory_order_relaxed);
-}
-
-inline void atomic_min_uint_device(device atomic_uint* address, uint val) {
-    atomic_fetch_min_explicit(address, val, memory_order_relaxed);
-}
-
-inline void atomic_max_offender_threadgroup(
-    threadgroup atomic_uint* score_addr,
-    threadgroup atomic_uint* idx_addr,
-    float score,
-    uint idx
-) {
-    uint new_score = float_to_ordered_u32(score);
-    uint previous_score = atomic_fetch_max_explicit(score_addr, new_score, memory_order_relaxed);
-
-    if (new_score > previous_score) {
-        atomic_store_explicit(idx_addr, idx, memory_order_relaxed);
+    uint old_val = atomic_load_explicit(address, memory_order_relaxed);
+    while (val > old_val) {
+        if (atomic_compare_exchange_weak_explicit(
+                address, &old_val, val, memory_order_relaxed, memory_order_relaxed)) {
+            break;
+        }
     }
 }
 
-inline void atomic_max_offender_device(
-    device atomic_uint* score_addr,
-    device atomic_uint* idx_addr,
-    float score,
-    uint idx
-) {
-    uint new_score = float_to_ordered_u32(score);
-    uint previous_score = atomic_fetch_max_explicit(score_addr, new_score, memory_order_relaxed);
+inline void atomic_max_uint_device(device atomic_uint* address, uint val) {
+    uint old_val = atomic_load_explicit(address, memory_order_relaxed);
+    while (val > old_val) {
+        if (atomic_compare_exchange_weak_explicit(
+                address, &old_val, val, memory_order_relaxed, memory_order_relaxed)) {
+            break;
+        }
+    }
+}
 
-    if (new_score > previous_score) {
-        atomic_store_explicit(idx_addr, idx, memory_order_relaxed);
+inline void atomic_min_uint_device(device atomic_uint* address, uint val) {
+    uint old_val = atomic_load_explicit(address, memory_order_relaxed);
+    while (val < old_val) {
+        if (atomic_compare_exchange_weak_explicit(
+                address, &old_val, val, memory_order_relaxed, memory_order_relaxed)) {
+            break;
+        }
     }
 }
 
@@ -3342,8 +2491,6 @@ struct SpectralModeParams {
     // [FORMULA] W_req = metabolic_rate * A_i * dt
     // [REASON] coupling to Ψ(ω) is "work"; heat pays for it, and GPE decay dissipates it.
     float metabolic_rate;
-    uint32_t carrier_tile_base;
-    uint32_t carrier_tile_count;
 };
 
 // Parameter bundle for the ω-field (coherence) layer.
@@ -3419,7 +2566,6 @@ kernel void project_modes_to_spatial_psi(
     device atomic_uint* psi_re_field            [[buffer(5)]],   // grid_numel (float bits)
     device atomic_uint* psi_im_field            [[buffer(6)]],   // grid_numel (float bits)
     constant ModeProjectParams& p               [[buffer(7)]],
-    device const float* mode_omega              [[buffer(8)]],   // num_modes
     uint gid                                    [[thread_position_in_grid]]
 ) {
     uint total = p.num_modes * p.anchors_per_mode;
@@ -3434,30 +2580,17 @@ kernel void project_modes_to_spatial_psi(
     float w = mode_anchor_weight[mode * p.anchors_per_mode + a];
     if (!(w > 0.0f)) return;
 
+    float re = mode_psi_real[mode] * w;
+    float im = mode_psi_imag[mode] * w;
+
     float3 pos = float3(
         particle_pos[anchor * 3 + 0],
         particle_pos[anchor * 3 + 1],
         particle_pos[anchor * 3 + 2]
     );
 
-    if (!isfinite(pos.x) || !isfinite(pos.y) || !isfinite(pos.z) ||
-        !(p.domain_x > 0.0f) || !(p.dt > 0.0f)) {
-        return;
-    }
-
-    // Real CIC envelopes alone make Im(conj(Ψ)∇Ψ)=0 for an isolated mode.
-    // Apply the price-axis plane wave at each destination cell (not the particle
-    // center) so neighbouring CIC corners carry a phase gradient.
-    float omega = mode_omega[mode];
-    float re0 = mode_psi_real[mode] * w;
-    float im0 = mode_psi_imag[mode] * w;
-
-    if (!isfinite(re0) || !isfinite(im0) || !isfinite(omega)) {
-        return;
-    }
-
-    float3 inv_cell = float3(p.inv_cell_x, p.inv_cell_y, p.inv_cell_z);
-    float3 g = pos * inv_cell;
+    // CIC splat onto the spatial grid (periodic).
+    float3 g = pos * p.inv_grid_spacing;
 
     int ix0 = (int)floor(g.x);
     int iy0 = (int)floor(g.y);
@@ -3471,56 +2604,73 @@ kernel void project_modes_to_spatial_psi(
     int iy1 = iy0 + 1;
     int iz1 = iz0 + 1;
 
-    int ix0w = wrap_i32(ix0, (int)p.grid_x);
-    int iy0w = wrap_i32(iy0, (int)p.grid_y);
-    int iz0w = wrap_i32(iz0, (int)p.grid_z);
-    int ix1w = wrap_i32(ix1, (int)p.grid_x);
-    int iy1w = wrap_i32(iy1, (int)p.grid_y);
-    int iz1w = wrap_i32(iz1, (int)p.grid_z);
+    ix0 = wrap_i32(ix0, (int)p.grid_x);
+    iy0 = wrap_i32(iy0, (int)p.grid_y);
+    iz0 = wrap_i32(iz0, (int)p.grid_z);
+
+    ix1 = wrap_i32(ix1, (int)p.grid_x);
+    iy1 = wrap_i32(iy1, (int)p.grid_y);
+    iz1 = wrap_i32(iz1, (int)p.grid_z);
 
     float wx0 = 1.0f - fx;
     float wy0 = 1.0f - fy;
     float wz0 = 1.0f - fz;
+
     float wx1 = fx;
     float wy1 = fy;
     float wz1 = fz;
 
-    uint stride_x = p.grid_y * p.grid_z;
-    uint stride_y = p.grid_z;
-    float k_phase = omega * p.dt / p.domain_x;
+    uint gy = p.grid_y;
+    uint gz = p.grid_z;
 
-    // Deposit rotated amplitude at each CIC corner using that cell's x-phase.
-    int xs[2] = { ix0w, ix1w };
-    int ys[2] = { iy0w, iy1w };
-    int zs[2] = { iz0w, iz1w };
-    float wx[2] = { wx0, wx1 };
-    float wy[2] = { wy0, wy1 };
-    float wz[2] = { wz0, wz1 };
+    // Linear indexing convention matches sample_field_trilinear():
+    // field shape is (gx, gy, gz) with z as the fastest axis.
+    // idx = x*(gy*gz) + y*(gz) + z
+    uint stride_x = gy * gz;
+    uint stride_y = gz;
 
-    for (int dx = 0; dx < 2; dx++) {
-        float phase = k_phase * ((float)xs[dx] + 0.5f) * p.cell_x;
-        float c = cos(phase);
-        float s = sin(phase);
-        float re = re0 * c - im0 * s;
-        float im = re0 * s + im0 * c;
+    uint i000 = (uint)ix0 * stride_x + (uint)iy0 * stride_y + (uint)iz0;
+    uint i100 = (uint)ix1 * stride_x + (uint)iy0 * stride_y + (uint)iz0;
+    uint i010 = (uint)ix0 * stride_x + (uint)iy1 * stride_y + (uint)iz0;
+    uint i110 = (uint)ix1 * stride_x + (uint)iy1 * stride_y + (uint)iz0;
+    uint i001 = (uint)ix0 * stride_x + (uint)iy0 * stride_y + (uint)iz1;
+    uint i101 = (uint)ix1 * stride_x + (uint)iy0 * stride_y + (uint)iz1;
+    uint i011 = (uint)ix0 * stride_x + (uint)iy1 * stride_y + (uint)iz1;
+    uint i111 = (uint)ix1 * stride_x + (uint)iy1 * stride_y + (uint)iz1;
 
-        if (!isfinite(re) || !isfinite(im)) {
-            continue;
-        }
+    float w000 = wx0 * wy0 * wz0;
+    float w100 = wx1 * wy0 * wz0;
+    float w010 = wx0 * wy1 * wz0;
+    float w110 = wx1 * wy1 * wz0;
+    float w001 = wx0 * wy0 * wz1;
+    float w101 = wx1 * wy0 * wz1;
+    float w011 = wx0 * wy1 * wz1;
+    float w111 = wx1 * wy1 * wz1;
 
-        for (int dy = 0; dy < 2; dy++) {
-            for (int dz = 0; dz < 2; dz++) {
-                float weight = wx[dx] * wy[dy] * wz[dz];
-                if (!(weight > 0.0f)) {
-                    continue;
-                }
+    atomic_add_float_device(&psi_re_field[i000], re * w000);
+    atomic_add_float_device(&psi_im_field[i000], im * w000);
 
-                uint index = (uint)xs[dx] * stride_x + (uint)ys[dy] * stride_y + (uint)zs[dz];
-                atomic_add_float_device(&psi_re_field[index], re * weight);
-                atomic_add_float_device(&psi_im_field[index], im * weight);
-            }
-        }
-    }
+    atomic_add_float_device(&psi_re_field[i100], re * w100);
+    atomic_add_float_device(&psi_im_field[i100], im * w100);
+
+    atomic_add_float_device(&psi_re_field[i010], re * w010);
+    atomic_add_float_device(&psi_im_field[i010], im * w010);
+
+    atomic_add_float_device(&psi_re_field[i110], re * w110);
+    atomic_add_float_device(&psi_im_field[i110], im * w110);
+
+    atomic_add_float_device(&psi_re_field[i001], re * w001);
+    atomic_add_float_device(&psi_im_field[i001], im * w001);
+
+    atomic_add_float_device(&psi_re_field[i101], re * w101);
+    atomic_add_float_device(&psi_im_field[i101], im * w101);
+
+    atomic_add_float_device(&psi_re_field[i011], re * w011);
+    atomic_add_float_device(&psi_im_field[i011], im * w011);
+
+    atomic_add_float_device(&psi_re_field[i111], re * w111);
+    atomic_add_float_device(&psi_im_field[i111], im * w111);
+
 }
 
 // -----------------------------------------------------------------------------
@@ -3548,34 +2698,26 @@ kernel void pic_gather_update_particles_pilot_wave(
         particle_pos_in[gid * 3 + 2]
     );
 
-    uint3 grid_dims = uint3(p.grid_x, p.grid_y, p.grid_z);
-    uint3 base_idx;
-    float3 frac;
-    float3 inv_cell = float3(p.inv_cell_x, p.inv_cell_y, p.inv_cell_z);
-    uint3 boundary_low = uint3(
-        p.boundary_x_low, p.boundary_y_low, p.boundary_z_low);
-    uint3 boundary_high = uint3(
-        p.boundary_x_high, p.boundary_y_high, p.boundary_z_high);
-    pic_trilinear_coords(
-        pos, inv_cell, grid_dims, boundary_low, boundary_high, base_idx, frac);
+    float psi_re = sample_trilinear(psi_re_field, pos, p.grid_x, p.grid_y, p.grid_z, p.grid_spacing, p.inv_grid_spacing);
+    float psi_im = sample_trilinear(psi_im_field, pos, p.grid_x, p.grid_y, p.grid_z, p.grid_spacing, p.inv_grid_spacing);
 
-    float4 re = pic_sample_value_and_gradient_trilinear(
-        psi_re_field, base_idx, frac, grid_dims, inv_cell, boundary_low, boundary_high);
-    float4 im = pic_sample_value_and_gradient_trilinear(
-        psi_im_field, base_idx, frac, grid_dims, inv_cell, boundary_low, boundary_high);
+    float3 grad_re = sample_gradient_trilinear(psi_re_field, pos, p.grid_x, p.grid_y, p.grid_z, p.grid_spacing, p.inv_grid_spacing);
+    float3 grad_im = sample_gradient_trilinear(psi_im_field, pos, p.grid_x, p.grid_y, p.grid_z, p.grid_spacing, p.inv_grid_spacing);
 
-    float psi_re = re.w;
-    float psi_im = im.w;
-    float3 grad_re = re.xyz;
-    float3 grad_im = im.xyz;
+    float density = psi_re * psi_re + psi_im * psi_im;
 
-    float denom = psi_re * psi_re + psi_im * psi_im + p.eps_denom;
+    if (!isfinite(density)) {
+        float qn = qnan_f();
+        particle_pos_out[gid * 3 + 0] = qn;
+        particle_pos_out[gid * 3 + 1] = qn;
+        particle_pos_out[gid * 3 + 2] = qn;
+        particle_vel_out[gid * 3 + 0] = qn;
+        particle_vel_out[gid * 3 + 1] = qn;
+        particle_vel_out[gid * 3 + 2] = qn;
+        return;
+    }
 
-    if (!isfinite(psi_re) || !isfinite(psi_im) ||
-        !isfinite(grad_re.x) || !isfinite(grad_re.y) || !isfinite(grad_re.z) ||
-        !isfinite(grad_im.x) || !isfinite(grad_im.y) || !isfinite(grad_im.z) ||
-        !isfinite(denom) || !(denom > 0.0f) ||
-        !isfinite(p.hbar_eff) || !isfinite(p.mass_min) || !(p.mass_min > 0.0f)) {
+    if (density == 0.0f) {
         particle_pos_out[gid * 3 + 0] = pos.x;
         particle_pos_out[gid * 3 + 1] = pos.y;
         particle_pos_out[gid * 3 + 2] = pos.z;
@@ -3584,29 +2726,34 @@ kernel void pic_gather_update_particles_pilot_wave(
         particle_vel_out[gid * 3 + 2] = 0.0f;
         return;
     }
+
+    float denom = density + p.eps_denom;
 
     // Im(conj(Ψ) ∇Ψ) = Ψ_re ∇Ψ_im - Ψ_im ∇Ψ_re
     float3 current = (psi_re * grad_im - psi_im * grad_re) / denom;
 
     float m = particle_mass[gid];
-    float inv_m = 1.0f / max(m, p.mass_min);
+
+    if (!isfinite(m) || !(m > p.mass_min) || !(denom > 0.0f)) {
+        float qn = qnan_f();
+        particle_pos_out[gid * 3 + 0] = qn;
+        particle_pos_out[gid * 3 + 1] = qn;
+        particle_pos_out[gid * 3 + 2] = qn;
+        particle_vel_out[gid * 3 + 0] = qn;
+        particle_vel_out[gid * 3 + 1] = qn;
+        particle_vel_out[gid * 3 + 2] = qn;
+        return;
+    }
+
+    float inv_m = 1.0f / m;
 
     float3 v = current * (p.hbar_eff * inv_m);
 
-    float3 domain = float3(p.domain_x, p.domain_y, p.domain_z);
-    float3 pos_new = pic_advect_position(
-        pos, v, p.dt, domain, boundary_low, boundary_high);
+    float3 pos_new = pos + v * p.dt;
 
-    if (!isfinite(pos_new.x) || !isfinite(pos_new.y) || !isfinite(pos_new.z) ||
-        !isfinite(v.x) || !isfinite(v.y) || !isfinite(v.z)) {
-        particle_pos_out[gid * 3 + 0] = pos.x;
-        particle_pos_out[gid * 3 + 1] = pos.y;
-        particle_pos_out[gid * 3 + 2] = pos.z;
-        particle_vel_out[gid * 3 + 0] = 0.0f;
-        particle_vel_out[gid * 3 + 1] = 0.0f;
-        particle_vel_out[gid * 3 + 2] = 0.0f;
-        return;
-    }
+    // Periodic wrap remains correct even when one step crosses multiple domains.
+    float3 domain = float3(p.domain_x, p.domain_y, p.domain_z);
+    pos_new = pos_new - floor(pos_new / domain) * domain;
 
     particle_pos_out[gid * 3 + 0] = pos_new.x;
     particle_pos_out[gid * 3 + 1] = pos_new.y;
@@ -3648,12 +2795,6 @@ inline float spatial_overlap_from_anchors(
         );
         float3 d = min_image_delta(pos_i - pos_a, domain);
         float r2 = dot(d, d);
-        float r2_cutoff = 4.0f * sigma * sigma * kFp32ExpUnderflowX0;
-
-        if (r2 >= r2_cutoff) {
-            continue;
-        }
-
         float ov = exp(-r2 * inv_4s2);
         sum_w += w;
         sum_ov += w * ov;
@@ -3662,148 +2803,40 @@ inline float spatial_overlap_from_anchors(
     return sum_ov / sum_w;
 }
 
-inline float spatial_overlap_from_anchor_pos(
+inline float spatial_overlap_from_anchors_simple(
     float3 pos_i,
-    device const float* anchor_pos,            // maxM * MODE_ANCHORS * 3
+    device const float* particle_pos,          // N*3
+    device const uint* anchor_idx,             // maxM * MODE_ANCHORS
     device const float* anchor_weight,         // maxM * MODE_ANCHORS
     uint mode_k,
     float3 domain,
     float spatial_sigma
 ) {
+    // Same semantics as spatial_overlap_from_anchors(), but without SpectralCarrierParams.
     float sigma = spatial_sigma;
     if (!(sigma > 0.0f)) return 0.0f;
-    if (!isfinite(pos_i.x) || !isfinite(pos_i.y) || !isfinite(pos_i.z)) return 0.0f;
-
     float inv_4s2 = 1.0f / (4.0f * sigma * sigma);
     float sum_w = 0.0f;
     float sum_ov = 0.0f;
     uint base = mode_k * MODE_ANCHORS;
-    uint pos_base = base * 3u;
     for (uint a = 0; a < MODE_ANCHORS; a++) {
+        uint idx = anchor_idx[base + a];
+        if (idx == 0xFFFFFFFFu) continue;
         float w = anchor_weight[base + a];
         if (!(w > 0.0f)) continue;
         float3 pos_a = float3(
-            anchor_pos[pos_base + a * 3u + 0u],
-            anchor_pos[pos_base + a * 3u + 1u],
-            anchor_pos[pos_base + a * 3u + 2u]
+            particle_pos[idx * 3 + 0],
+            particle_pos[idx * 3 + 1],
+            particle_pos[idx * 3 + 2]
         );
-        if (!isfinite(pos_a.x) || !isfinite(pos_a.y) || !isfinite(pos_a.z)) continue;
-
         float3 d = min_image_delta(pos_i - pos_a, domain);
         float r2 = dot(d, d);
-        if (!isfinite(r2)) continue;
-
-        float r2_cutoff = 4.0f * sigma * sigma * kFp32ExpUnderflowX0;
-
-        if (r2 >= r2_cutoff) {
-            continue;
-        }
-
         float ov = exp(-r2 * inv_4s2);
         sum_w += w;
         sum_ov += w * ov;
     }
     if (!(sum_w > 0.0f)) return 0.0f;
     return sum_ov / sum_w;
-}
-
-kernel void precompute_carrier_anchor_positions(
-    device const float* particle_pos         [[buffer(0)]],
-    device const uint* anchor_idx            [[buffer(1)]],
-    device float* anchor_pos                 [[buffer(2)]],
-    device float* anchor_weight              [[buffer(3)]],
-    constant uint& num_carriers              [[buffer(4)]],
-    uint gid [[thread_position_in_grid]]
-) {
-    uint total = num_carriers * MODE_ANCHORS;
-    if (gid >= total) return;
-
-    uint mode = gid / MODE_ANCHORS;
-    uint anchor = gid - mode * MODE_ANCHORS;
-    uint weight_slot = mode * MODE_ANCHORS + anchor;
-    uint pos_slot = gid * 3u;
-    uint idx = anchor_idx[weight_slot];
-
-    if (idx == 0xFFFFFFFFu) {
-        anchor_pos[pos_slot + 0u] = 0.0f;
-        anchor_pos[pos_slot + 1u] = 0.0f;
-        anchor_pos[pos_slot + 2u] = 0.0f;
-        anchor_weight[weight_slot] = 0.0f;
-        return;
-    }
-
-    anchor_pos[pos_slot + 0u] = particle_pos[idx * 3u + 0u];
-    anchor_pos[pos_slot + 1u] = particle_pos[idx * 3u + 1u];
-    anchor_pos[pos_slot + 2u] = particle_pos[idx * 3u + 2u];
-}
-
-// One-shot per-step coupling prep: heat payment, eff_amp, (zr, zi), and bin index.
-kernel void coherence_prep_oscillator_coupling(
-    device const float* osc_phase           [[buffer(0)]],
-    device const float* osc_omega           [[buffer(1)]],
-    device const float* osc_amp             [[buffer(2)]],
-    device float* particle_heat             [[buffer(3)]],
-    device float* osc_coupling_prep         [[buffer(4)]],  // N * 4: eff_amp, zr, zi, bin_f
-    constant CoherenceModeParams& p         [[buffer(5)]],
-    device const CoherenceBinParams* bin_p    [[buffer(6)]],
-    constant uint& num_bins                 [[buffer(7)]],
-    uint gid [[thread_position_in_grid]]
-) {
-    uint prep_base = gid * 4u;
-
-    if (gid >= p.num_osc) {
-        return;
-    }
-
-    float amp_i = osc_amp[gid];
-    float phi_i = osc_phase[gid];
-    float omega_i = osc_omega[gid];
-    float Q = particle_heat[gid];
-    if (!isfinite(Q) || Q < 0.0f) {
-        particle_heat[gid] = 0.0f;
-        osc_coupling_prep[prep_base + 0u] = 0.0f;
-        osc_coupling_prep[prep_base + 1u] = 0.0f;
-        osc_coupling_prep[prep_base + 2u] = 0.0f;
-        osc_coupling_prep[prep_base + 3u] = -1.0e9f;
-        return;
-    }
-
-    float energy_i = amp_i * amp_i;
-    float work_required = p.metabolic_rate * energy_i * p.dt;
-    float coupling_factor = 1.0f;
-    float work_done = 0.0f;
-
-    if (work_required > 1e-8f) {
-        if (Q >= work_required) {
-            work_done = work_required;
-            coupling_factor = 1.0f;
-        } else {
-            work_done = Q;
-            coupling_factor = Q / work_required;
-        }
-    }
-
-    particle_heat[gid] = Q - work_done;
-
-    float eff_amp = amp_i * sqrt(max(0.0f, coupling_factor));
-    float zr = eff_amp * cos(phi_i);
-    float zi = eff_amp * sin(phi_i);
-    float bin_f = 0.0f;
-
-    if (num_bins > 0u) {
-        float fbin = (omega_i - bin_p[0].omega_min) * bin_p[0].inv_bin_width;
-
-        if (isfinite(fbin)) {
-            bin_f = floor(fbin);
-        } else {
-            bin_f = -1.0e9f;
-        }
-    }
-
-    osc_coupling_prep[prep_base + 0u] = eff_amp;
-    osc_coupling_prep[prep_base + 1u] = zr;
-    osc_coupling_prep[prep_base + 2u] = zi;
-    osc_coupling_prep[prep_base + 3u] = bin_f;
 }
 
 // -----------------------------------------------------------------------------
@@ -3815,11 +2848,10 @@ kernel void coherence_prep_oscillator_coupling(
 // 2. Threads accumulate to threadgroup memory (fast local atomics)
 // 3. After barrier, one flush to global per carrier per threadgroup
 //
-// Threadgroup memory: num_carriers * 8 atomic_uint fields (32 bytes each).
-// Host sets threadgroup memory length to num_carriers * 32; capacity is capped at
-// min(maxThreadgroupMemoryLength / 32, pipeline.maxTotalThreadsPerThreadgroup, 1024).
+// Memory layout: max_carriers * 6 floats + 2 uints per threadgroup
+// For 64 carriers: 64 * 8 * 4 = 2KB threadgroup memory (well within limits)
 
-constant uint kMaxCarriersForTG = 256u;
+constant uint kMaxCarriersForTG = 128u;  // Max carriers for threadgroup reduction
 
 struct CarrierAccumulators {
     atomic_float force_r;
@@ -3828,58 +2860,49 @@ struct CarrierAccumulators {
     atomic_float w_omega_sum;
     atomic_float w_omega2_sum;
     atomic_float w_amp_sum;
-    atomic_uint offender_score;
-    atomic_uint offender_idx;
+    atomic_uint offender_score; // float bits
+    atomic_uint offender_idx;   // uint
 };
 
-kernel void clear_carrier_accums(
-    device CarrierAccumulators* accums [[buffer(0)]],
-    constant uint& num_carriers        [[buffer(1)]],
-    uint gid [[thread_position_in_grid]]
-) {
-    if (gid >= num_carriers) return;
-    device CarrierAccumulators& accum = accums[gid];
-    atomic_store_explicit(&accum.force_r, 0.0f, memory_order_relaxed);
-    atomic_store_explicit(&accum.force_i, 0.0f, memory_order_relaxed);
-    atomic_store_explicit(&accum.w_sum, 0.0f, memory_order_relaxed);
-    atomic_store_explicit(&accum.w_omega_sum, 0.0f, memory_order_relaxed);
-    atomic_store_explicit(&accum.w_omega2_sum, 0.0f, memory_order_relaxed);
-    atomic_store_explicit(&accum.w_amp_sum, 0.0f, memory_order_relaxed);
-    atomic_store_explicit(&accum.offender_score, 0u, memory_order_relaxed);
-    atomic_store_explicit(&accum.offender_idx, 0xFFFFFFFFu, memory_order_relaxed);
-}
-
+// Threadgroup-local accumulator using atomic_uint for floats (stored as bit patterns)
+// Metal's atomic_float in threadgroup memory has inconsistent support across toolchains.
+// We use atomic_uint and bitcast floats via as_type<uint>/as_type<float> for portability.
 struct TGCarrierAccum {
-    atomic_uint force_r;
-    atomic_uint force_i;
-    atomic_uint w_sum;
-    atomic_uint w_omega_sum;
-    atomic_uint w_omega2_sum;
-    atomic_uint w_amp_sum;
+    atomic_uint force_r;      // float stored as uint bits
+    atomic_uint force_i;      // float stored as uint bits
+    atomic_uint w_sum;        // float stored as uint bits
+    atomic_uint w_omega_sum;  // float stored as uint bits
+    atomic_uint w_omega2_sum; // float stored as uint bits
+    atomic_uint w_amp_sum;    // float stored as uint bits
     atomic_uint offender_score;
     atomic_uint offender_idx;
 };
 
 kernel void coherence_accumulate_forces(
     // Oscillator state
-    device const float* osc_omega           [[buffer(0)]],  // N
+    device const float* osc_phase           [[buffer(0)]],  // N
+    device const float* osc_omega           [[buffer(1)]],  // N
+    device const float* osc_amp             [[buffer(2)]],  // N
     // Geometric state (for overlap integrals)
-    device const float* particle_pos        [[buffer(1)]],  // N * 3
+    device const float* particle_pos        [[buffer(3)]],  // N * 3
     // Mode state (read-only)
-    device const float* carrier_omega       [[buffer(2)]],  // maxM
-    device const float* carrier_gate_width  [[buffer(3)]],  // maxM
-    device const float* carrier_anchor_w    [[buffer(4)]],  // maxM * MODE_ANCHORS
+    device const float* carrier_omega       [[buffer(4)]],  // maxM
+    device const float* carrier_gate_width  [[buffer(5)]],  // maxM
+    device const uint* carrier_anchor_idx   [[buffer(6)]],  // maxM * MODE_ANCHORS (UINT_MAX=empty)
+    device const float* carrier_anchor_w    [[buffer(7)]],  // maxM * MODE_ANCHORS
     // Output accumulators
-    device CarrierAccumulators* accums      [[buffer(5)]],  // maxM
+    device CarrierAccumulators* accums      [[buffer(8)]],  // maxM
     // Parameters
-    constant CoherenceModeParams& p         [[buffer(6)]],
-    device const uint* num_carriers_in      [[buffer(7)]], // (1,) uint32/int32
+    constant CoherenceModeParams& p         [[buffer(9)]],
+    device const uint* num_carriers_in      [[buffer(10)]], // (1,) uint32/int32
     // Sparse binning inputs
-    device const uint* bin_starts           [[buffer(8)]],  // num_bins + 1
-    device const uint* carrier_binned_idx   [[buffer(9)]], // maxM (indices in [0,num_carriers))
-    constant uint& num_bins                 [[buffer(10)]],
-    device const float* carrier_anchor_pos [[buffer(11)]], // maxM * MODE_ANCHORS * 3
-    device const float* osc_coupling_prep   [[buffer(12)]], // N * 4: eff_amp, zr, zi, bin_f
+    device const uint* bin_starts           [[buffer(11)]],  // num_bins + 1
+    device const uint* carrier_binned_idx   [[buffer(12)]], // maxM (indices in [0,num_carriers))
+    device const CoherenceBinParams* bin_p  [[buffer(13)]], // (1,) {omega_min, inv_bin_width}
+    constant uint& num_bins                 [[buffer(14)]],
+    // Heat (read-write): pays for phase alignment work.
+    device float* particle_heat             [[buffer(15)]], // N
+    // Threadgroup indexing
     uint gid [[thread_position_in_grid]],
     uint tid [[thread_index_in_threadgroup]],
     uint tg_size [[threads_per_threadgroup]],
@@ -3887,84 +2910,117 @@ kernel void coherence_accumulate_forces(
     threadgroup TGCarrierAccum* tg_accums   [[threadgroup(0)]]  // kMaxCarriersForTG
 ) {
     uint num_carriers = (num_carriers_in != nullptr) ? num_carriers_in[0] : 0u;
-    uint tile_base = p.carrier_tile_base;
-    uint tile_count = min(p.carrier_tile_count, kMaxCarriersForTG);
-    if (tile_count == 0u || tile_base >= num_carriers) {
+    uint capacity = min(p.max_carriers, kMaxCarriersForTG);
+    if (num_carriers > capacity) {
+        // Fail loudly rather than silently clamping counts (would mask host/kernel mismatch).
+        if (gid == 0u && capacity > 0u) {
+            float qn = qnan_f();
+            atomic_store_explicit(&accums[0].force_r, qn, memory_order_relaxed);
+            atomic_store_explicit(&accums[0].force_i, qn, memory_order_relaxed);
+            atomic_store_explicit(&accums[0].w_sum, qn, memory_order_relaxed);
+            atomic_store_explicit(&accums[0].w_omega_sum, qn, memory_order_relaxed);
+            atomic_store_explicit(&accums[0].w_omega2_sum, qn, memory_order_relaxed);
+            atomic_store_explicit(&accums[0].w_amp_sum, qn, memory_order_relaxed);
+        }
         return;
     }
-    if (tile_base + tile_count > num_carriers) {
-        tile_count = num_carriers - tile_base;
-    }
 
-    float3 domain = float3(p.domain_x, p.domain_y, p.domain_z);
-
-    for (uint local_k = tid; local_k < tile_count; local_k += tg_size) {
-        uint zero_bits = as_type<uint>(0.0f);
-        atomic_store_explicit(&tg_accums[local_k].force_r, zero_bits, memory_order_relaxed);
-        atomic_store_explicit(&tg_accums[local_k].force_i, zero_bits, memory_order_relaxed);
-        atomic_store_explicit(&tg_accums[local_k].w_sum, zero_bits, memory_order_relaxed);
-        atomic_store_explicit(&tg_accums[local_k].w_omega_sum, zero_bits, memory_order_relaxed);
-        atomic_store_explicit(&tg_accums[local_k].w_omega2_sum, zero_bits, memory_order_relaxed);
-        atomic_store_explicit(&tg_accums[local_k].w_amp_sum, zero_bits, memory_order_relaxed);
-        atomic_store_explicit(&tg_accums[local_k].offender_score, 0u, memory_order_relaxed);
-        atomic_store_explicit(&tg_accums[local_k].offender_idx, 0xFFFFFFFFu, memory_order_relaxed);
+    // Phase 1: Initialize threadgroup accumulators (store 0.0f as uint bits)
+    uint zero_bits = as_type<uint>(0.0f);
+    for (uint k = tid; k < num_carriers; k += tg_size) {
+        atomic_store_explicit(&tg_accums[k].force_r, zero_bits, memory_order_relaxed);
+        atomic_store_explicit(&tg_accums[k].force_i, zero_bits, memory_order_relaxed);
+        atomic_store_explicit(&tg_accums[k].w_sum, zero_bits, memory_order_relaxed);
+        atomic_store_explicit(&tg_accums[k].w_omega_sum, zero_bits, memory_order_relaxed);
+        atomic_store_explicit(&tg_accums[k].w_omega2_sum, zero_bits, memory_order_relaxed);
+        atomic_store_explicit(&tg_accums[k].w_amp_sum, zero_bits, memory_order_relaxed);
+        atomic_store_explicit(&tg_accums[k].offender_score, 0u, memory_order_relaxed);
+        atomic_store_explicit(&tg_accums[k].offender_idx, 0xFFFFFFFFu, memory_order_relaxed);
     }
     threadgroup_barrier(mem_flags::mem_threadgroup);
 
     // Phase 2: Accumulate to threadgroup memory
     if (gid < p.num_osc && num_carriers > 0u && num_bins > 0u) {
-        uint prep_base = gid * 4u;
-        float eff_amp = osc_coupling_prep[prep_base + 0u];
-        float zr = osc_coupling_prep[prep_base + 1u];
-        float zi = osc_coupling_prep[prep_base + 2u];
-        int bin_i = (int)osc_coupling_prep[prep_base + 3u];
-
-        if (eff_amp <= p.offender_weight_floor) {
-            eff_amp = 0.0f;
-        }
-
         float omega_i = osc_omega[gid];
+        float amp_i = osc_amp[gid];
+        float phi_i = osc_phase[gid];
+
+        // -----------------------------------------------------------------
+        // Homeostasis: heat → work budget for coupling to Ψ(ω)
+        // -----------------------------------------------------------------
+        // Heat Q is the entropic energy store. Coupling to the coherence field is
+        // "work" that consumes Q. If the particle can't afford the work, coupling
+        // browns out proportionally (coupling_factor ∈ [0,1]).
+        float Q = particle_heat[gid];
+        // [FIX] work must scale with energy, not amplitude:
+        // - In the host, extensive quantities (heat, oscillator energy) are normalized ~1/N.
+        // - amp_i = sqrt(E_i) would make work_required scale like sqrt(1/N), while Q scales 1/N,
+        //   so large-N runs would always brown out and Ψ(ω) would stay dark.
+        // [FORMULA] W_req = metabolic_rate * E_i * dt  with E_i = amp_i^2
+        float E_i = amp_i * amp_i;
+        float work_required = p.metabolic_rate * E_i * p.dt;
+        float coupling_factor = 1.0f;
+        float work_done = 0.0f;
+        if (work_required > 1e-8f) {
+            if (Q >= work_required) {
+                work_done = work_required;
+                coupling_factor = 1.0f;
+            } else {
+                work_done = Q;
+                coupling_factor = Q / work_required;
+            }
+        }
+        // Pay for work (cooling term).
+        particle_heat[gid] = Q - work_done;
+        // If coupling_factor is the fraction of required energy paid, amplitude should
+        // scale as sqrt(f) so that field energy ∝ |Ψ|^2 scales linearly with paid work.
+        float eff_amp = amp_i * sqrt(max(0.0f, coupling_factor));
         float3 pos_i = float3(
             particle_pos[gid * 3 + 0],
             particle_pos[gid * 3 + 1],
             particle_pos[gid * 3 + 2]
         );
 
+        float zr = eff_amp * cos(phi_i);
+        float zi = eff_amp * sin(phi_i);
+
+        // [CHOICE] bin neighborhood radius
+        // [FORMULA] radius = 2 bins guarantees covering |Δω|<=R_max when bin_width>=R_max
         const int rad = 2;
+        float fbin = (omega_i - bin_p[0].omega_min) * bin_p[0].inv_bin_width;
+        int bin_i = (int)floor(fbin);
         int b0 = bin_i - rad;
         int b1 = bin_i + rad;
 
-        if (eff_amp > p.offender_weight_floor) {
-            for (int b = b0; b <= b1; b++) {
-                if (b < 0 || b >= (int)num_bins) continue;
-                uint start = bin_starts[(uint)b];
-                uint end = bin_starts[(uint)b + 1u];
-                for (uint j = start; j < end; j++) {
-                    uint k = carrier_binned_idx[j];
-                    if (k < tile_base || k >= tile_base + tile_count) continue;
+        for (int b = b0; b <= b1; b++) {
+            if (b < 0 || b >= (int)num_bins) continue;
+            uint start = bin_starts[(uint)b];
+            uint end = bin_starts[(uint)b + 1u];
+            for (uint j = start; j < end; j++) {
+                uint k = carrier_binned_idx[j];
+                if (k >= num_carriers) continue;
 
-                    float omega_k = carrier_omega[k];
-                    float gate_w = carrier_gate_width[k];
-                    float r = resonance_from_freq(omega_i, omega_k, gate_w);
+                float omega_k = carrier_omega[k];
+                float gate_w = carrier_gate_width[k];
+                float r = resonance_from_freq(omega_i, omega_k, gate_w);
+                float s = spatial_overlap_from_anchors(pos_i, particle_pos, carrier_anchor_idx, carrier_anchor_w, k, p);
+                float w = (r * s) * eff_amp;
+                if (w <= p.offender_weight_floor) continue;
 
-                    if (r * eff_amp <= p.offender_weight_floor) continue;
+                // Accumulate to threadgroup memory (much faster than global atomics)
+                // Use CAS-based atomic add with uint bits for portability
+                threadgroup TGCarrierAccum& tg_acc = tg_accums[k];
+                atomic_add_float_threadgroup(&tg_acc.force_r, w * zr);
+                atomic_add_float_threadgroup(&tg_acc.force_i, w * zi);
+                atomic_add_float_threadgroup(&tg_acc.w_sum, w);
+                atomic_add_float_threadgroup(&tg_acc.w_omega_sum, w * omega_i);
+                atomic_add_float_threadgroup(&tg_acc.w_omega2_sum, w * omega_i * omega_i);
+                atomic_add_float_threadgroup(&tg_acc.w_amp_sum, w * eff_amp);
 
-                    float s = spatial_overlap_from_anchor_pos(
-                        pos_i, carrier_anchor_pos, carrier_anchor_w, k, domain, p.spatial_sigma);
-                    float w = (r * s) * eff_amp;
-
-                    if (!isfinite(w) || w <= p.offender_weight_floor) continue;
-
-                    uint local_k = k - tile_base;
-                    threadgroup TGCarrierAccum& tg_acc = tg_accums[local_k];
-                    atomic_add_float_threadgroup(&tg_acc.force_r, w * zr);
-                    atomic_add_float_threadgroup(&tg_acc.force_i, w * zi);
-                    atomic_add_float_threadgroup(&tg_acc.w_sum, w);
-                    atomic_add_float_threadgroup(&tg_acc.w_omega_sum, w * omega_i);
-                    atomic_add_float_threadgroup(&tg_acc.w_omega2_sum, w * omega_i * omega_i);
-                    atomic_add_float_threadgroup(&tg_acc.w_amp_sum, w * eff_amp);
-
-                    atomic_max_offender_threadgroup(&tg_acc.offender_score, &tg_acc.offender_idx, w, gid);
+                uint score_bits = as_type<uint>(w);
+                atomic_max_uint_threadgroup(&tg_acc.offender_score, score_bits);
+                if (atomic_load_explicit(&tg_acc.offender_score, memory_order_relaxed) == score_bits) {
+                    atomic_store_explicit(&tg_acc.offender_idx, gid, memory_order_relaxed);
                 }
             }
         }
@@ -3972,11 +3028,11 @@ kernel void coherence_accumulate_forces(
     threadgroup_barrier(mem_flags::mem_threadgroup);
 
     // Phase 3: Flush threadgroup accumulators to global (one atomic per carrier per threadgroup)
-    for (uint local_k = tid; local_k < tile_count; local_k += tg_size) {
-        uint k = tile_base + local_k;
-        threadgroup TGCarrierAccum& tg_acc = tg_accums[local_k];
+    for (uint k = tid; k < num_carriers; k += tg_size) {
+        threadgroup TGCarrierAccum& tg_acc = tg_accums[k];
         device CarrierAccumulators& g_acc = accums[k];
 
+        // Load from threadgroup atomic_uint and bitcast to float
         float fr = as_type<float>(atomic_load_explicit(&tg_acc.force_r, memory_order_relaxed));
         float fi = as_type<float>(atomic_load_explicit(&tg_acc.force_i, memory_order_relaxed));
         float ws = as_type<float>(atomic_load_explicit(&tg_acc.w_sum, memory_order_relaxed));
@@ -3984,17 +3040,23 @@ kernel void coherence_accumulate_forces(
         float wo2s = as_type<float>(atomic_load_explicit(&tg_acc.w_omega2_sum, memory_order_relaxed));
         float was = as_type<float>(atomic_load_explicit(&tg_acc.w_amp_sum, memory_order_relaxed));
 
-        atomic_store_explicit(&g_acc.force_r, fr + atomic_load_explicit(&g_acc.force_r, memory_order_relaxed), memory_order_relaxed);
-        atomic_store_explicit(&g_acc.force_i, fi + atomic_load_explicit(&g_acc.force_i, memory_order_relaxed), memory_order_relaxed);
-        atomic_store_explicit(&g_acc.w_sum, ws + atomic_load_explicit(&g_acc.w_sum, memory_order_relaxed), memory_order_relaxed);
-        atomic_store_explicit(&g_acc.w_omega_sum, wos + atomic_load_explicit(&g_acc.w_omega_sum, memory_order_relaxed), memory_order_relaxed);
-        atomic_store_explicit(&g_acc.w_omega2_sum, wo2s + atomic_load_explicit(&g_acc.w_omega2_sum, memory_order_relaxed), memory_order_relaxed);
-        atomic_store_explicit(&g_acc.w_amp_sum, was + atomic_load_explicit(&g_acc.w_amp_sum, memory_order_relaxed), memory_order_relaxed);
+        // Only flush if there's something to add
+        if (fr != 0.0f) atomic_fetch_add_explicit(&g_acc.force_r, fr, memory_order_relaxed);
+        if (fi != 0.0f) atomic_fetch_add_explicit(&g_acc.force_i, fi, memory_order_relaxed);
+        if (ws != 0.0f) atomic_fetch_add_explicit(&g_acc.w_sum, ws, memory_order_relaxed);
+        if (wos != 0.0f) atomic_fetch_add_explicit(&g_acc.w_omega_sum, wos, memory_order_relaxed);
+        if (wo2s != 0.0f) atomic_fetch_add_explicit(&g_acc.w_omega2_sum, wo2s, memory_order_relaxed);
+        if (was != 0.0f) atomic_fetch_add_explicit(&g_acc.w_amp_sum, was, memory_order_relaxed);
 
-        uint tg_off_score_u = atomic_load_explicit(&tg_acc.offender_score, memory_order_relaxed);
-        uint tg_off_idx = atomic_load_explicit(&tg_acc.offender_idx, memory_order_relaxed);
-        float tg_off_score = ordered_u32_to_float(tg_off_score_u);
-        atomic_max_offender_device(&g_acc.offender_score, &g_acc.offender_idx, tg_off_score, tg_off_idx);
+        // Offender: use max across threadgroups
+        uint tg_score = atomic_load_explicit(&tg_acc.offender_score, memory_order_relaxed);
+        if (tg_score > 0u) {
+            atomic_max_uint_device(&g_acc.offender_score, tg_score);
+            uint tg_idx = atomic_load_explicit(&tg_acc.offender_idx, memory_order_relaxed);
+            if (atomic_load_explicit(&g_acc.offender_score, memory_order_relaxed) == tg_score) {
+                atomic_store_explicit(&g_acc.offender_idx, tg_idx, memory_order_relaxed);
+            }
+        }
     }
 }
 
@@ -4077,7 +3139,7 @@ kernel void coherence_gpe_step(
     // The symmetric split reduces phase drift versus a single forward-Euler blend.
     //
     // 1) half-step potential/nonlinear rotation at k
-    // 2) full-step kinetic/tunneling in the Laplacian eigenbasis
+    // 2) full-step kinetic/tunneling using half-rotated neighbors
     // 3) half-step potential/nonlinear rotation at k (recompute density after kinetic)
     float hbar = gp.hbar_eff;
     if (!(hbar > 0.0f)) {
@@ -4092,15 +3154,14 @@ kernel void coherence_gpe_step(
         float density = c_mag2(psi);
         float H_local = V_ext + (gp.g_interaction * density) - gp.chemical_potential;
         float theta = -(H_local * half_dt) / hbar;
-        theta = clamp(theta, -M_PI_F, M_PI_F);
+        theta = fmod(theta, 2.0f * M_PI_F);
         psi = c_mul(psi, c_exp_i(theta));
     }
 
     // Kinetic/tunneling is propagated exactly in the eigenbasis of the
-    // Neumann finite-difference Laplacian. A forward-Euler update of iL is
-    // unconditionally norm-increasing; the orthonormal DCT-II rotation below
-    // is unitary for every dt and preserves the endpoint behavior of the
-    // previous self-neighbor stencil.
+    // Neumann finite-difference Laplacian. Forward Euler applied to iL is
+    // unconditionally norm-increasing; this orthonormal DCT-II rotation is
+    // unitary for every dt and preserves the self-neighbor endpoint stencil.
     if (gp.mass_eff > 0.0f && gp.inv_domega2 > 0.0f) {
         kinetic_scratch[gid] = float2(psi.r, psi.i);
         threadgroup_barrier(mem_flags::mem_threadgroup);
@@ -4154,7 +3215,7 @@ kernel void coherence_gpe_step(
         float density = c_mag2(psi);
         float H_local = V_ext + (gp.g_interaction * density) - gp.chemical_potential;
         float theta = -(H_local * half_dt) / hbar;
-        theta = clamp(theta, -M_PI_F, M_PI_F);
+        theta = fmod(theta, 2.0f * M_PI_F);
         psi = c_mul(psi, c_exp_i(theta));
     }
 
@@ -4165,8 +3226,7 @@ kernel void coherence_gpe_step(
         float damp = exp(-gp.energy_decay * gp.dt);
         psi = c_scale(psi, damp);
     }
-    float drive_scale = 1.0f + p.topdown_energy_scale;
-    psi = c_add(psi, c_scale(drive, gp.dt * drive_scale));
+    psi = c_add(psi, c_scale(drive, gp.dt));
 
     // --- write back Ψ_k ---
     mode_real[gid] = psi.r;
@@ -4181,17 +3241,16 @@ kernel void coherence_update_oscillator_phases(
     device const float* mode_imag              [[buffer(4)]],  // maxM
     device const float* mode_omega             [[buffer(5)]],  // maxM
     device const float* mode_gate_width        [[buffer(6)]],  // maxM
-    device const float* mode_anchor_weight     [[buffer(7)]],  // maxM * MODE_ANCHORS
-    device const uint* num_carriers_in    [[buffer(8)]], // (1,) uint32/int32 snapshot
-    constant CoherenceModeParams& p      [[buffer(9)]],
+    device const uint* mode_anchor_idx         [[buffer(7)]],  // maxM * MODE_ANCHORS
+    device const float* mode_anchor_weight     [[buffer(8)]],  // maxM * MODE_ANCHORS
+    device const uint* num_carriers_in    [[buffer(9)]], // (1,) uint32/int32 snapshot
+    constant CoherenceModeParams& p      [[buffer(10)]],
     // Sparse binning inputs
-    device const uint* bin_starts         [[buffer(10)]],  // num_bins + 1
-    device const uint* carrier_binned_idx [[buffer(11)]],  // maxM
-    device const CoherenceBinParams* bin_p [[buffer(12)]],  // (1,)
-    constant uint& num_bins               [[buffer(13)]],
-    device const float* particle_pos      [[buffer(14)]],  // N * 3
-    device const float* mode_anchor_pos   [[buffer(15)]],  // maxM * MODE_ANCHORS * 3
-    device const float* osc_coupling_prep [[buffer(16)]],  // N * 4: eff_amp, zr, zi, bin_f
+    device const uint* bin_starts         [[buffer(11)]],  // num_bins + 1
+    device const uint* carrier_binned_idx [[buffer(12)]],  // maxM
+    device const CoherenceBinParams* bin_p [[buffer(13)]],  // (1,)
+    constant uint& num_bins               [[buffer(14)]],
+    device const float* particle_pos      [[buffer(15)]],  // N * 3
     uint gid [[thread_position_in_grid]]
 ) {
     if (gid >= p.num_osc) return;
@@ -4204,22 +3263,19 @@ kernel void coherence_update_oscillator_phases(
     float phi = particle_phase[gid];
     float omega_i = particle_omega[gid];
     float amp_i = particle_amp[gid];
-    float cphi = 0.0f;
-    float sphi = sincos(phi, cphi);
     float3 pos_i = float3(
         particle_pos[gid * 3 + 0],
         particle_pos[gid * 3 + 1],
         particle_pos[gid * 3 + 2]
     );
-    float3 domain = float3(p.domain_x, p.domain_y, p.domain_z);
 
     // Torque from resonance potential:
     //   θ̇_i += Σ_k T_ik (A_i R_k) sin(ψ_k - θ_i)
-    // with R*sin(ψ-φ) = ci*cos(φ) - cr*sin(φ) when cr=R*cos(ψ), ci=R*sin(ψ).
     float torque = 0.0f;
     const int rad = 2;
     if (num_carriers > 0u && num_bins > 0u) {
-        int bin_i = (int)osc_coupling_prep[gid * 4u + 3u];
+        float fbin = (omega_i - bin_p[0].omega_min) * bin_p[0].inv_bin_width;
+        int bin_i = (int)floor(fbin);
         int b0 = bin_i - rad;
         int b1 = bin_i + rad;
         for (int b = b0; b <= b1; b++) {
@@ -4230,46 +3286,25 @@ kernel void coherence_update_oscillator_phases(
                 uint k = carrier_binned_idx[jj];
                 if (k >= num_carriers) continue;
 
-                float cr = mode_real[k];
-                float ci = mode_imag[k];
-
-                if (!isfinite(cr) || !isfinite(ci)) continue;
-                if (cr == 0.0f && ci == 0.0f) continue;
-
                 float omega_k = mode_omega[k];
                 float gate_w = mode_gate_width[k];
                 float r = resonance_from_freq(omega_i, omega_k, gate_w);
-                float s = spatial_overlap_from_anchor_pos(
-                    pos_i, mode_anchor_pos, mode_anchor_weight, k, domain, p.spatial_sigma);
-                if (!isfinite(r) || !isfinite(s)) continue;
-
+                float s = spatial_overlap_from_anchors(pos_i, particle_pos, mode_anchor_idx, mode_anchor_weight, k, p);
                 float t = r * s;
-                if (!isfinite(t)) continue;
-
-                torque += t * amp_i * (ci * cphi - cr * sphi);
+                float cr = mode_real[k];
+                float ci = mode_imag[k];
+                float psi = atan2(ci, cr);
+                float R = sqrt(cr * cr + ci * ci);
+                torque += t * (amp_i * R) * sin(psi - phi);
             }
         }
     }
 
-    float dphi = omega_i + (p.coupling_scale + p.topdown_phase_scale) * torque;
-    if (!isfinite(dphi)) {
-        particle_phase[gid] = phi;
-        return;
-    }
-
-    float previous_phi = phi;
+    float dphi = omega_i + p.coupling_scale * torque;
     phi += dphi * p.dt;
-    if (!isfinite(phi)) {
-        particle_phase[gid] = previous_phi;
-        return;
-    }
 
     // Wrap phase to [0, 2π)
     phi = phi - 2.0f * M_PI_F * floor(phi / (2.0f * M_PI_F));
-    if (!isfinite(phi)) {
-        return;
-    }
-
     particle_phase[gid] = phi;
 }
 
@@ -4395,7 +3430,9 @@ kernel void initialize_particle_properties(
     
     float3 center = float3(center_x, center_y, center_z);
     
-    float3 vel = float3(0.0f);
+    // Velocity: toward center with small random component
+    float3 vel = (center - pos) * 0.01f;
+    vel += (float3(random_vals[gid * 4 + 0], random_vals[gid * 4 + 1], random_vals[gid * 4 + 2]) - 0.5f) * 0.1f;
     
     // Energy: distance-based for cluster/sphere, random otherwise
     float energy;
@@ -4407,20 +3444,14 @@ kernel void initialize_particle_properties(
         energy = random_vals[gid * 4 + 3] * p.energy_scale * 0.5f + 0.5f;
     }
     
-    // Heat: preserve host-provided entropic store from SetOscillators
-    float heat = heats[gid];
-    float mass;
-    
-    if (heat > 0.0f) {
-        energy = heat;
-        mass = heat;
-    } else {
-        heat = 0.0f;
-        mass = energy;
-    }
+    // Heat: starts at zero
+    float heat = 0.0f;
     
     // Excitation: small random
     float exc = random_vals[gid * 4 + 2] * 0.1f;
+    
+    // Mass: proportional to energy
+    float mass = energy;
     
     velocities[gid * 3 + 0] = vel.x;
     velocities[gid * 3 + 1] = vel.y;
@@ -4430,3 +3461,5 @@ kernel void initialize_particle_properties(
     excitations[gid] = exc;
     masses[gid] = mass;
 }
+
+

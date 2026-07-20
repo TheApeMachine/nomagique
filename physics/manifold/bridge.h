@@ -75,6 +75,13 @@ typedef struct ManifoldOscillator {
 void *manifold_solver_create(const ManifoldConfig *config, const void *metallib_bytes, size_t metallib_length, char *err_out, int err_cap);
 void manifold_solver_destroy(void *handle);
 
+void *manifold_engine_create(const ManifoldConfig *config, const void *metallib_bytes, size_t metallib_length, char *err_out, int err_cap);
+void manifold_engine_destroy(void *handle);
+void *manifold_field_create(void *engine, const ManifoldConfig *config, char *err_out, int err_cap);
+uint64_t manifold_solver_resident_bytes(void *handle);
+uint64_t manifold_device_working_set_budget(void);
+uint64_t manifold_device_allocated_bytes(void);
+
 int manifold_solver_set_controls(
     void *handle,
     const ManifoldControls *controls,

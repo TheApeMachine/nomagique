@@ -129,10 +129,11 @@ func (dial PhaseDial) Rotate(angleRadians float64) PhaseDial {
 }
 
 /*
-Similarity returns cosine similarity between two PhaseDial vectors
-(real part of normalized Hermitian inner product).
+Overlap returns the normalized Hermitian inner product between two phase
+fingerprints. Its magnitude is their rotationally invariant affinity, while
+its argument is the global phase displacement needed to align them.
 */
-func (dial PhaseDial) Similarity(other PhaseDial) float64 {
+func (dial PhaseDial) Overlap(other PhaseDial) complex128 {
 	if len(dial) != len(other) || len(dial) == 0 {
 		return 0
 	}
@@ -155,7 +156,15 @@ func (dial PhaseDial) Similarity(other PhaseDial) float64 {
 		return 0
 	}
 
-	return real(dot) / (math.Sqrt(normA) * math.Sqrt(normB))
+	return dot / complex(math.Sqrt(normA)*math.Sqrt(normB), 0)
+}
+
+/*
+Similarity returns the real component of the normalized Hermitian overlap.
+It is the response observed at the dial's current global phase.
+*/
+func (dial PhaseDial) Similarity(other PhaseDial) float64 {
+	return real(dial.Overlap(other))
 }
 
 /*

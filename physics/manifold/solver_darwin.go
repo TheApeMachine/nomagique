@@ -47,8 +47,8 @@ type Oscillator struct {
 	VelZ      float64
 }
 
-func NewSolver(config Config) (*Solver, error) {
-	cConfig := C.ManifoldConfig{
+func (config Config) toC() C.ManifoldConfig {
+	return C.ManifoldConfig{
 		grid_x:               C.uint32_t(config.GridX),
 		grid_y:               C.uint32_t(config.GridY),
 		grid_z:               C.uint32_t(config.GridZ),
@@ -78,7 +78,10 @@ func NewSolver(config Config) (*Solver, error) {
 		boundary_z_low:       C.uint32_t(config.BoundaryZLow),
 		boundary_z_high:      C.uint32_t(config.BoundaryZHigh),
 	}
+}
 
+func NewSolver(config Config) (*Solver, error) {
+	cConfig := config.toC()
 	errBuf := make([]byte, 512)
 
 	handle := C.manifold_solver_create(

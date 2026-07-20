@@ -1,6 +1,8 @@
 # nomagique — common developer targets
 
-.PHONY: help test bench profile profile-cpu profile-mem profile-block profile-open clean-profiles physics-metallib build dump
+.PHONY: help test bench profile profile-cpu profile-mem profile-block \
+	profile-open clean-profiles physics-metallib physics-manifold-metallib \
+	physics-fluid-metallib build dump
 
 PROFILE_DIR := .profiles
 PKG ?= .
@@ -61,8 +63,13 @@ profile-open:
 clean-profiles:
 	rm -rf $(PROFILE_DIR)
 
-physics-metallib:
+physics-metallib: physics-manifold-metallib physics-fluid-metallib
+
+physics-manifold-metallib:
 	cd physics/manifold && go run ./metallibgen
+
+physics-fluid-metallib:
+	cd physics/fluid && go run ../manifold/metallibgen
 
 build: physics-metallib
 	@mkdir -p $(LOG_DIR)

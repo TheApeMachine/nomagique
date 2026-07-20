@@ -42,6 +42,25 @@ func TestFlow_Measure(testingTB *testing.T) {
 		Convey("It should classify hidden absorption", func() {
 			So(int(output.Category), ShouldEqual, 1)
 			So(output.Absorption, ShouldBeGreaterThan, 0)
+			So(output.Value, ShouldBeGreaterThan, 0)
+		})
+	})
+
+	Convey("Given aggressive buy flow with perfectly flat price", testingTB, func() {
+		flow := equation.NewFlow()
+		output, err := flow.Measure(equation.FlowInput{
+			BuyNotional:    500,
+			TradeCount:     5,
+			MedianNotional: 100,
+			Prices:         []float64{100, 100, 100, 100, 100},
+		})
+
+		So(err, ShouldBeNil)
+
+		Convey("It should score full absorption when impact is exactly zero", func() {
+			So(int(output.Category), ShouldEqual, 1)
+			So(output.Absorption, ShouldAlmostEqual, 1, 1e-12)
+			So(output.Value, ShouldAlmostEqual, 1, 1e-12)
 		})
 	})
 }

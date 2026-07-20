@@ -1,17 +1,17 @@
-package equation_test
+package physics_test
 
 import (
 	"math"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/nomagique/equation"
+	"github.com/theapemachine/nomagique/physics"
 )
 
-func TestFluidflow_Measure(testingTB *testing.T) {
+func TestFlow_Measure(testingTB *testing.T) {
 	Convey("Given a balanced laminar field", testingTB, func() {
-		fluidflow := equation.NewFluidflow()
-		output, err := fluidflow.Measure(fluidflowInput(
+		flow := physics.NewFlow()
+		output, err := flow.Measure(flowInput(
 			0.5, 0.01, 0.8, 2, 4, 0.05, 0.8, 0, 0, 0, 0,
 		))
 
@@ -26,8 +26,8 @@ func TestFluidflow_Measure(testingTB *testing.T) {
 	})
 
 	Convey("Given huge finite viscosity and its empirical baseline", testingTB, func() {
-		fluidflow := equation.NewFluidflow()
-		output, err := fluidflow.Measure(fluidflowInput(
+		flow := physics.NewFlow()
+		output, err := flow.Measure(flowInput(
 			0.5, 0.01, math.MaxFloat64, 2, 4, 0.05,
 			math.MaxFloat64, 0, 0, 0, 0,
 		))
@@ -41,8 +41,8 @@ func TestFluidflow_Measure(testingTB *testing.T) {
 	})
 
 	Convey("Given Reynolds above the turbulent floor", testingTB, func() {
-		fluidflow := equation.NewFluidflow()
-		output, err := fluidflow.Measure(fluidflowInput(
+		flow := physics.NewFlow()
+		output, err := flow.Measure(flowInput(
 			8, 0.2, 0.5, 2, 4, 0.1, 0.5, 0.5, 0.1, 0.8, 0.2,
 		))
 
@@ -56,8 +56,8 @@ func TestFluidflow_Measure(testingTB *testing.T) {
 	})
 
 	Convey("Given zero field motion with positive viscosity", testingTB, func() {
-		fluidflow := equation.NewFluidflow()
-		output, err := fluidflow.Measure(equation.FluidflowInput{
+		flow := physics.NewFlow()
+		output, err := flow.Measure(physics.FlowInput{
 			Viscosity:         1000,
 			ViscosityBaseline: 1000,
 		})
@@ -70,20 +70,20 @@ func TestFluidflow_Measure(testingTB *testing.T) {
 	})
 }
 
-func BenchmarkFluidflowMeasure(benchmark *testing.B) {
-	fluidflow := equation.NewFluidflow()
-	input := fluidflowInput(
+func BenchmarkFlowMeasure(benchmark *testing.B) {
+	flow := physics.NewFlow()
+	input := flowInput(
 		2, 0.1, 0.6, 3, 5, 0.08, 0.5, 0.2, 0.1, 0.3, 0.2,
 	)
 
 	benchmark.ReportAllocs()
 
 	for benchmark.Loop() {
-		_, _ = fluidflow.Measure(input)
+		_, _ = flow.Measure(input)
 	}
 }
 
-func fluidflowInput(
+func flowInput(
 	reynolds float64,
 	divergence float64,
 	viscosity float64,
@@ -95,8 +95,8 @@ func fluidflowInput(
 	vorticityBaseline float64,
 	turbulence float64,
 	turbulenceBaseline float64,
-) equation.FluidflowInput {
-	return equation.FluidflowInput{
+) physics.FlowInput {
+	return physics.FlowInput{
 		Reynolds:           reynolds,
 		Divergence:         divergence,
 		Viscosity:          viscosity,

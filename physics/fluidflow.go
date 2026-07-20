@@ -1,4 +1,4 @@
-package equation
+package physics
 
 import (
 	"math"
@@ -6,16 +6,30 @@ import (
 	"github.com/theapemachine/errnie"
 )
 
-/*
-Fluidflow measures laminar, turbulent, inertial, and viscous book-flow evidence
-without selecting a market category.
-*/
-type Fluidflow struct{}
+var FlowInputKeys = []string{
+	"reynolds",
+	"divergence",
+	"viscosity",
+	"laminarCeiling",
+	"turbulentFloor",
+	"divergenceEdge",
+	"viscosityBaseline",
+	"vorticity",
+	"vorticityBaseline",
+	"turbulence",
+	"turbulenceBaseline",
+}
 
 /*
-FluidflowInput contains the float-only fluid-flow inputs.
+Flow measures laminar, turbulent, inertial, and viscous book-flow evidence
+without selecting a market category.
 */
-type FluidflowInput struct {
+type Flow struct{}
+
+/*
+FlowInput contains the float-only fluid-flow inputs.
+*/
+type FlowInput struct {
 	Reynolds           float64
 	Divergence         float64
 	Viscosity          float64
@@ -30,9 +44,9 @@ type FluidflowInput struct {
 }
 
 /*
-FluidflowOutput contains the float-only fluid-flow scores.
+FlowOutput contains the float-only fluid-flow scores.
 */
-type FluidflowOutput struct {
+type FlowOutput struct {
 	LaminarScore   float64
 	TurbulentScore float64
 	InertialScore  float64
@@ -40,18 +54,18 @@ type FluidflowOutput struct {
 }
 
 /*
-NewFluidflow returns a fluid-dynamics calculator.
+NewFlow returns a fluid-dynamics calculator.
 */
-func NewFluidflow() *Fluidflow {
-	return &Fluidflow{}
+func NewFlow() *Flow {
+	return &Flow{}
 }
 
 /*
 Measure calculates fluid-flow scores from floats without artifact transport.
 */
-func (fluidflow *Fluidflow) Measure(
-	input FluidflowInput,
-) (FluidflowOutput, error) {
+func (flow *Flow) Measure(
+	input FlowInput,
+) (FlowOutput, error) {
 	values := []float64{
 		input.Reynolds,
 		input.Divergence,
@@ -68,9 +82,9 @@ func (fluidflow *Fluidflow) Measure(
 
 	for _, value := range values {
 		if value < 0 || math.IsNaN(value) || math.IsInf(value, 0) {
-			return FluidflowOutput{}, errnie.Error(errnie.Err(
+			return FlowOutput{}, errnie.Error(errnie.Err(
 				errnie.Validation,
-				"fluidflow: invalid mechanics input",
+				"flow: invalid mechanics input",
 				nil,
 			))
 		}
@@ -132,7 +146,7 @@ func (fluidflow *Fluidflow) Measure(
 		)
 	}
 
-	return FluidflowOutput{
+	return FlowOutput{
 		LaminarScore:   laminarScore,
 		TurbulentScore: turbulentScore,
 		InertialScore:  inertialScore,

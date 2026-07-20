@@ -101,6 +101,30 @@ func TestPhaseDialSimilarity(t *testing.T) {
 	})
 }
 
+func TestPhaseDialOverlap(t *testing.T) {
+	Convey("Given a phase fingerprint and a global rotation", t, func() {
+		dial := PhaseDial{1, complex(0, 1), -1, complex(0, -1)}
+		angle := math.Pi / 3
+		overlap := dial.Overlap(dial.Rotate(angle))
+
+		Convey("It should retain both affinity and angular displacement", func() {
+			So(cmplx.Abs(overlap), ShouldAlmostEqual, 1)
+			So(cmplx.Phase(overlap), ShouldAlmostEqual, angle)
+			So(dial.Similarity(dial.Rotate(angle)), ShouldAlmostEqual, math.Cos(angle))
+		})
+
+		Convey("It should be invariant to positive amplitude scaling", func() {
+			scaled := make(PhaseDial, len(dial))
+
+			for index := range dial {
+				scaled[index] = 7 * dial[index]
+			}
+
+			So(cmplx.Abs(dial.Overlap(scaled)), ShouldAlmostEqual, 1)
+		})
+	})
+}
+
 func TestNewPhaseRotor(t *testing.T) {
 	Convey("Given NewPhaseRotor", t, func() {
 		r := NewPhaseRotor()

@@ -2,10 +2,15 @@ package equation
 
 import (
 	"testing"
+	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
 )
 
+var ignitionEpoch = time.Date(2026, 7, 20, 10, 0, 0, 0, time.UTC)
+
+// ignitionInput advances cumulative volume, price, and time on a steady clock so
+// successive calls close equal-volume bars with a real return and intensity.
 func ignitionInput(index int) IgnitionInput {
 	return IgnitionInput{
 		Symbol: "BTC/USD",
@@ -13,22 +18,36 @@ func ignitionInput(index int) IgnitionInput {
 		Last:   100 + float64(index),
 		Bid:    99.5 + float64(index),
 		Ask:    100.5 + float64(index),
+		At:     ignitionEpoch.Add(time.Duration(index) * time.Second),
 	}
 }
 
+// warm drives enough steady observations to close several volume bars.
+func warm(ignition *Ignition, count int) (IgnitionOutput, bool) {
+	var output IgnitionOutput
+	var ready bool
+
+	for index := range count {
+		output, ready, _, _ = ignition.Measure(ignitionInput(index))
+	}
+
+	return output, ready
+}
+
 func TestIgnition_Measure(testingTB *testing.T) {
-	Convey("Given direct ticker inputs", testingTB, func() {
-		ignition := NewIgnition()
-		var output IgnitionOutput
-		var ready bool
-		var err error
+	Convey("Given no baseline retention capacity", testingTB, func() {
+		_, _, _, err := NewIgnition(0).Measure(ignitionInput(0))
 
-		for index := range 8 {
-			output, ready, _, err = ignition.Measure(ignitionInput(index))
-		}
+		Convey("It should reject an unbounded calculator", func() {
+			So(err, ShouldNotBeNil)
+		})
+	})
 
-		Convey("It measures ignition without artifact transport", func() {
-			So(err, ShouldBeNil)
+	Convey("Given steady volume-clock advances", testingTB, func() {
+		ignition := NewIgnition(128)
+		output, ready := warm(ignition, 12)
+
+		Convey("It measures ignition on closed volume bars", func() {
 			So(ready, ShouldBeTrue)
 			So(output.RVOL, ShouldBeGreaterThan, 0)
 			So(output.Precursor, ShouldBeGreaterThan, 0)
@@ -37,58 +56,83 @@ func TestIgnition_Measure(testingTB *testing.T) {
 		})
 	})
 
-	Convey("Given a zero-lift update after history is ready", testingTB, func() {
-		ignition := NewIgnition()
+	Convey("Given quote churn with no new executed volume", testingTB, func() {
+		ignition := NewIgnition(128)
+		warm(ignition, 12)
 
-		for index := range 8 {
-			_, _, _, err := ignition.Measure(ignitionInput(index))
-			So(err, ShouldBeNil)
+		// Quote-only ticks: price wanders, volume and time frozen, so no bar
+		// closes. This is the live failure mode that used to zero every field.
+		var output IgnitionOutput
+		var ready bool
+
+		for index := range 20 {
+			output, ready, _, _ = ignition.Measure(IgnitionInput{
+				Symbol: "BTC/USD",
+				Volume: 1000 + float64(11*20), // unchanged cumulative volume
+				Last:   111 + float64(index%2),
+				Bid:    110.5,
+				Ask:    111.5,
+				At:     ignitionEpoch.Add(12 * time.Second),
+			})
 		}
 
-		output, ready, _, err := ignition.Measure(IgnitionInput{
-			Symbol: "BTC/USD",
-			Volume: 1140,
-			Last:   107,
-			Bid:    106.5,
-			Ask:    107.5,
+		Convey("It keeps reporting the live spread instead of blanking", func() {
+			So(ready, ShouldBeTrue)
+			So(output.Spread, ShouldEqual, 1.0)
 		})
 
-		Convey("It emits a zero-score observation instead of an error", func() {
-			So(err, ShouldBeNil)
-			So(ready, ShouldBeTrue)
-			So(output.Exhaustion, ShouldEqual, 0)
-			So(output.Strength, ShouldEqual, 0)
+		Convey("It never poisons the move baseline with quote-churn zeros", func() {
+			window := ignition.windows["BTC/USD"]
+			for _, sample := range window.returns {
+				So(sample, ShouldBeGreaterThan, 0)
+			}
 		})
 	})
 
-	Convey("Given declining relative volume with a price rejection", testingTB, func() {
-		ignition := NewIgnition()
+	Convey("Given a calm bar after history is ready", testingTB, func() {
+		ignition := NewIgnition(128)
+		warm(ignition, 12)
 
-		for index := range 8 {
+		// A flat-price bar with real executed volume: intensity stays valid but
+		// the upward precursor is zero, so ignition collapses without erroring.
+		output, ready, _, err := ignition.Measure(IgnitionInput{
+			Symbol: "BTC/USD",
+			Volume: 1000 + float64(12*20),
+			Last:   111,
+			Bid:    110.5,
+			Ask:    111.5,
+			At:     ignitionEpoch.Add(13 * time.Second),
+		})
+
+		Convey("It emits a live spread with a zero ignition score", func() {
+			So(err, ShouldBeNil)
+			So(ready, ShouldBeTrue)
+			So(output.Spread, ShouldEqual, 1.0)
+			So(output.Ignition, ShouldEqual, 0)
+		})
+	})
+
+	Convey("Given a bounded retention capacity", testingTB, func() {
+		const capacity = 16
+		ignition := NewIgnition(capacity)
+
+		for index := range 60 {
 			_, _, _, err := ignition.Measure(ignitionInput(index))
 			So(err, ShouldBeNil)
 		}
 
-		output, ready, _, err := ignition.Measure(IgnitionInput{
-			Symbol: "BTC/USD",
-			Volume: 1140,
-			Last:   106,
-			Bid:    105.5,
-			Ask:    106.5,
-		})
-
-		Convey("It should require the rejection and remain below certainty", func() {
-			So(err, ShouldBeNil)
-			So(ready, ShouldBeTrue)
-			So(output.Exhaustion, ShouldBeGreaterThan, 0)
-			So(output.Exhaustion, ShouldBeLessThan, 1)
-			So(output.Strength, ShouldBeLessThan, 1)
+		Convey("It never grows a baseline past capacity", func() {
+			window := ignition.windows["BTC/USD"]
+			So(len(window.rates), ShouldBeLessThanOrEqualTo, capacity)
+			So(len(window.returns), ShouldBeLessThanOrEqualTo, capacity)
+			So(len(window.precursors), ShouldBeLessThanOrEqualTo, capacity)
+			So(len(window.spreads), ShouldBeLessThanOrEqualTo, capacity)
 		})
 	})
 }
 
 func BenchmarkIgnition_Measure(benchmark *testing.B) {
-	ignition := NewIgnition()
+	ignition := NewIgnition(128)
 
 	benchmark.ReportAllocs()
 

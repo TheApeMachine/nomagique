@@ -508,6 +508,8 @@ void manifold_velocity_at(
 @property(nonatomic, assign) uint32_t maxCarriersForTG;
 @property(nonatomic, assign) uint32_t simdWidth;
 @property(nonatomic, assign) NSUInteger maxThreadsPerThreadgroup;
+@property(nonatomic, assign) uint64_t residentBytes;
+@property(nonatomic, strong) ManifoldSolver *metalOwner;
 @property(nonatomic, strong) id<MTLBuffer> momRho;
 @property(nonatomic, strong) id<MTLBuffer> eInt;
 @property(nonatomic, strong) id<MTLBuffer> momRhoStage;

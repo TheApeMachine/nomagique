@@ -182,6 +182,79 @@ func TestSolverStepSizesTransportAfterSources(t *testing.T) {
 	})
 }
 
+/*
+TestSolverRunGasTransport proves a resolved double rarefaction remains inside
+the Euler admissible set instead of producing negative internal energy.
+*/
+func TestSolverRunGasTransport(t *testing.T) {
+	convey.Convey("Given a cold near-vacuum cell between separating gas streams", t, func() {
+		config := Config{
+			GridX:    3,
+			GridY:    1,
+			GridZ:    1,
+			DomainX:  3,
+			DomainY:  1,
+			DomainZ:  1,
+			Gamma:    5.0 / 3.0,
+			MaxModes: 4,
+		}
+		ApplyDerivedGasParams(&config)
+		config.KThermal = 0
+
+		states := []struct {
+			rho      float64
+			velocity float64
+			energy   float64
+		}{
+			{rho: 0.01, velocity: -28_000, energy: 1e-7},
+			{rho: 4e-10, velocity: -9_000, energy: 1e-13},
+			{rho: 0.2, velocity: 28_000, energy: 3e-4},
+		}
+
+		waveRate := 0.0
+		transverseRate := 0.0
+
+		for _, state := range states {
+			sound := math.Sqrt(config.Gamma * (config.Gamma - 1) * state.energy / state.rho)
+			rarefaction := 2 * sound / (config.Gamma - 1)
+			waveRate = math.Max(waveRate, math.Abs(state.velocity)+rarefaction)
+			transverseRate = math.Max(transverseRate, rarefaction)
+		}
+
+		const resolvedCourant = 0.75
+		config.DeltaT = resolvedCourant / (waveRate + 2*transverseRate)
+		solver, err := NewSolver(config)
+		convey.So(err, convey.ShouldBeNil)
+		convey.Reset(solver.Close)
+
+		convey.Convey("When the finite-volume gas transport advances once", func() {
+			for cellX, state := range states {
+				err = solver.DepositCell(
+					uint32(cellX),
+					0,
+					0,
+					state.rho,
+					state.rho*state.velocity,
+					0,
+					0,
+					state.energy,
+				)
+				convey.So(err, convey.ShouldBeNil)
+			}
+
+			err = solver.RunGasTransport()
+
+			convey.Convey("Then the near-vacuum state remains physically admissible", func() {
+				convey.So(err, convey.ShouldBeNil)
+				rho, _, _, _, energy, readErr := solver.ReadCell(1, 0, 0)
+				convey.So(readErr, convey.ShouldBeNil)
+				convey.So(rho, convey.ShouldBeGreaterThan, 0)
+				convey.So(energy, convey.ShouldBeGreaterThanOrEqualTo, 0)
+			})
+		})
+	})
+}
+
 func TestReadProjectionReading(t *testing.T) {
 	convey.Convey("Given a deposited rho lattice", t, func() {
 		config := smallTestConfig()

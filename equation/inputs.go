@@ -18,20 +18,6 @@ var BookQualityInputKeys = []string{
 	"lastPrice",
 }
 
-var FluidflowInputKeys = []string{
-	"reynolds",
-	"divergence",
-	"viscosity",
-	"laminarCeiling",
-	"turbulentFloor",
-	"divergenceEdge",
-	"viscosityBaseline",
-	"vorticity",
-	"vorticityBaseline",
-	"turbulence",
-	"turbulenceBaseline",
-}
-
 var FlowInputKeys = []string{
 	"buyNotional",
 	"sellNotional",

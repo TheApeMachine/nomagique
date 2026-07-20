@@ -1,6 +1,9 @@
 package geometry
 
 import (
+	"fmt"
+	"math"
+	"math/cmplx"
 	"sort"
 	"sync"
 	"time"
@@ -11,105 +14,102 @@ CorpusEntry is a market state snapshot stored in the corpus, tagged with
 what happened next (the outcome). The PhaseDial is pre-computed at insert
 time so retrieval is pure similarity arithmetic with no re-encoding.
 */
-type CorpusEntry struct {
+type CorpusEntry[Outcome any] struct {
 	Dial    PhaseDial
-	Outcome CorpusOutcome
+	Outcome Outcome
 	At      time.Time
-}
-
-/*
-CorpusOutcome records what happened after the state was observed.
-ReturnBps is the realized return in basis points over the horizon.
-Category is the eventual market regime label (for display only).
-*/
-type CorpusOutcome struct {
-	ReturnBps float64
-	Category  string
-	Horizon   time.Duration
 }
 
 /*
 CorpusMatch is a single result from a corpus similarity scan.
 */
-type CorpusMatch struct {
-	Entry      CorpusEntry
+type CorpusMatch[Outcome any] struct {
+	Outcome    Outcome
+	At         time.Time
 	Similarity float64
 }
 
 /*
-Corpus is an in-memory outcome-tagged collection of PhaseDial encodings.
-It provides top-K cosine similarity retrieval against stored historical
-market states so the decision engine can ask "how closely does this
-exact current state resemble historical states?" and read their outcomes.
+Corpus is an in-memory outcome-tagged collection of PhaseDial encodings. It
+provides top-K signed interference retrieval and controlled global phase scans
+against stored historical market states.
 
 The corpus is safe for concurrent reads and writes.
 */
-type Corpus struct {
-	mu      sync.RWMutex
-	entries []CorpusEntry
-	maxSize int
+type Corpus[Outcome any] struct {
+	mu         sync.RWMutex
+	entries    []CorpusEntry[Outcome]
+	maxSize    int
+	dimensions int
+	next       int
 }
 
 /*
 NewCorpus creates a corpus with a maximum capacity. When full, the
 oldest entries are evicted to make room for new observations.
 */
-func NewCorpus(maxSize int) *Corpus {
+func NewCorpus[Outcome any](maxSize int) (*Corpus[Outcome], error) {
 	if maxSize <= 0 {
-		maxSize = 10000
+		return nil, fmt.Errorf("geometry: corpus capacity must be positive")
 	}
 
-	return &Corpus{
-		entries: make([]CorpusEntry, 0, maxSize),
+	return &Corpus[Outcome]{
+		entries: make([]CorpusEntry[Outcome], 0, maxSize),
 		maxSize: maxSize,
-	}
+	}, nil
 }
 
 /*
 Insert adds a new state observation to the corpus. If the corpus is
-at capacity, the oldest entry is evicted.
+at capacity, the oldest entry is evicted. The dial is copied so callers cannot
+mutate a corpus entry after insertion.
 */
-func (corpus *Corpus) Insert(entry CorpusEntry) {
+func (corpus *Corpus[Outcome]) Insert(entry CorpusEntry[Outcome]) error {
+	if err := corpus.validate(entry.Dial); err != nil {
+		return fmt.Errorf("geometry: insert corpus entry: %w", err)
+	}
+
+	entry.Dial = entry.Dial.CopyAndNormalize()
 	corpus.mu.Lock()
 	defer corpus.mu.Unlock()
 
-	if len(corpus.entries) >= corpus.maxSize {
-		copy(corpus.entries, corpus.entries[1:])
-		corpus.entries = corpus.entries[:len(corpus.entries)-1]
+	if corpus.dimensions == 0 {
+		corpus.dimensions = len(entry.Dial)
 	}
 
-	corpus.entries = append(corpus.entries, entry)
+	if len(entry.Dial) != corpus.dimensions {
+		return fmt.Errorf(
+			"geometry: corpus dial has %d dimensions, expected %d",
+			len(entry.Dial), corpus.dimensions,
+		)
+	}
+
+	if len(corpus.entries) < corpus.maxSize {
+		corpus.entries = append(corpus.entries, entry)
+
+		return nil
+	}
+
+	corpus.entries[corpus.next] = entry
+	corpus.next = (corpus.next + 1) % corpus.maxSize
+
+	return nil
 }
 
 /*
 Scan returns the top-K corpus entries ranked by cosine similarity to
 the query PhaseDial, sorted by descending similarity.
 */
-func (corpus *Corpus) Scan(queryDial PhaseDial, topK int) []CorpusMatch {
-	corpus.mu.RLock()
+func (corpus *Corpus[Outcome]) Scan(
+	queryDial PhaseDial, topK int,
+) ([]CorpusMatch[Outcome], error) {
+	responses, err := corpus.ScanPhases(queryDial, []float64{0}, topK)
 
-	matches := make([]CorpusMatch, 0, len(corpus.entries))
-
-	for _, entry := range corpus.entries {
-		similarity := queryDial.Similarity(entry.Dial)
-
-		matches = append(matches, CorpusMatch{
-			Entry:      entry,
-			Similarity: similarity,
-		})
+	if err != nil {
+		return nil, err
 	}
 
-	corpus.mu.RUnlock()
-
-	sort.Slice(matches, func(leftIndex, rightIndex int) bool {
-		return matches[leftIndex].Similarity > matches[rightIndex].Similarity
-	})
-
-	if topK > 0 && topK < len(matches) {
-		matches = matches[:topK]
-	}
-
-	return matches
+	return responses[0], nil
 }
 
 /*
@@ -117,49 +117,60 @@ ScanExcluding returns the top-K entries excluding any that match the
 given timestamps. Used to prevent self-matching when the query state
 is also in the corpus.
 */
-func (corpus *Corpus) ScanExcluding(
+func (corpus *Corpus[Outcome]) ScanExcluding(
 	queryDial PhaseDial, topK int, excludeTimes ...time.Time,
-) []CorpusMatch {
+) ([]CorpusMatch[Outcome], error) {
 	excluded := make(map[int64]bool, len(excludeTimes))
 
 	for _, excludeTime := range excludeTimes {
 		excluded[excludeTime.UnixNano()] = true
 	}
 
-	corpus.mu.RLock()
+	responses, err := corpus.scanPhases(queryDial, []float64{0}, topK, excluded)
 
-	matches := make([]CorpusMatch, 0, len(corpus.entries))
-
-	for _, entry := range corpus.entries {
-		if excluded[entry.At.UnixNano()] {
-			continue
-		}
-
-		similarity := queryDial.Similarity(entry.Dial)
-
-		matches = append(matches, CorpusMatch{
-			Entry:      entry,
-			Similarity: similarity,
-		})
+	if err != nil {
+		return nil, err
 	}
 
-	corpus.mu.RUnlock()
+	return responses[0], nil
+}
 
-	sort.Slice(matches, func(leftIndex, rightIndex int) bool {
-		return matches[leftIndex].Similarity > matches[rightIndex].Similarity
-	})
+/*
+ScanPhases evaluates the corpus at each requested global phase rotation. The
+complex overlaps are calculated once, then analytically rotated, preserving
+both constructive and destructive interference without repeatedly allocating
+rotated fingerprints.
+*/
+func (corpus *Corpus[Outcome]) ScanPhases(
+	queryDial PhaseDial, angles []float64, topK int,
+) ([][]CorpusMatch[Outcome], error) {
+	return corpus.scanPhases(queryDial, angles, topK, nil)
+}
 
-	if topK > 0 && topK < len(matches) {
-		matches = matches[:topK]
+/*
+ScanPhasesExcluding evaluates a controlled phase path while excluding entries
+at the supplied timestamps. This keeps a resident query from selecting itself
+at every constructive phase when a caller scans an online corpus.
+*/
+func (corpus *Corpus[Outcome]) ScanPhasesExcluding(
+	queryDial PhaseDial,
+	angles []float64,
+	topK int,
+	excludeTimes ...time.Time,
+) ([][]CorpusMatch[Outcome], error) {
+	excluded := make(map[int64]bool, len(excludeTimes))
+
+	for _, excludeTime := range excludeTimes {
+		excluded[excludeTime.UnixNano()] = true
 	}
 
-	return matches
+	return corpus.scanPhases(queryDial, angles, topK, excluded)
 }
 
 /*
 Size returns the current number of entries in the corpus.
 */
-func (corpus *Corpus) Size() int {
+func (corpus *Corpus[Outcome]) Size() int {
 	corpus.mu.RLock()
 	defer corpus.mu.RUnlock()
 
@@ -167,32 +178,110 @@ func (corpus *Corpus) Size() int {
 }
 
 /*
-WeightedOutcome computes a similarity-weighted average return from
-the top-K matches. The weighting ensures closer historical analogues
-dominate the predicted outcome.
+scanPhases validates a phase path, snapshots the resident complex overlaps,
+and ranks their signed response at each requested angle.
 */
-func WeightedOutcome(matches []CorpusMatch) float64 {
-	if len(matches) == 0 {
-		return 0
+func (corpus *Corpus[Outcome]) scanPhases(
+	queryDial PhaseDial, angles []float64, topK int, excluded map[int64]bool,
+) ([][]CorpusMatch[Outcome], error) {
+	if err := corpus.validate(queryDial); err != nil {
+		return nil, fmt.Errorf("geometry: scan corpus: %w", err)
 	}
 
-	weightedSum := 0.0
-	totalWeight := 0.0
+	if topK <= 0 {
+		return nil, fmt.Errorf("geometry: scan count must be positive")
+	}
 
-	for _, match := range matches {
-		weight := match.Similarity
+	if len(angles) == 0 {
+		return nil, fmt.Errorf("geometry: phase scan requires at least one angle")
+	}
 
-		if weight <= 0 {
+	for _, angle := range angles {
+		if math.IsNaN(angle) || math.IsInf(angle, 0) {
+			return nil, fmt.Errorf("geometry: phase scan angle must be finite")
+		}
+	}
+
+	corpus.mu.RLock()
+
+	if corpus.dimensions != 0 && len(queryDial) != corpus.dimensions {
+		corpus.mu.RUnlock()
+
+		return nil, fmt.Errorf(
+			"geometry: query dial has %d dimensions, expected %d",
+			len(queryDial), corpus.dimensions,
+		)
+	}
+
+	entries := make([]CorpusEntry[Outcome], 0, len(corpus.entries))
+	overlaps := make([]complex128, 0, len(corpus.entries))
+
+	for _, entry := range corpus.entries {
+		if excluded[entry.At.UnixNano()] {
 			continue
 		}
 
-		weightedSum += weight * match.Entry.Outcome.ReturnBps
-		totalWeight += weight
+		entries = append(entries, entry)
+		overlaps = append(overlaps, queryDial.Overlap(entry.Dial))
 	}
 
-	if totalWeight <= 0 {
-		return 0
+	corpus.mu.RUnlock()
+
+	responses := make([][]CorpusMatch[Outcome], len(angles))
+	matches := make([]CorpusMatch[Outcome], len(entries))
+
+	for angleIndex, angle := range angles {
+		rotation := cmplx.Rect(1, -angle)
+
+		for entryIndex, entry := range entries {
+			matches[entryIndex] = CorpusMatch[Outcome]{
+				Outcome:    entry.Outcome,
+				At:         entry.At,
+				Similarity: real(overlaps[entryIndex] * rotation),
+			}
+		}
+
+		corpus.rank(matches)
+		responses[angleIndex] = append(
+			[]CorpusMatch[Outcome](nil),
+			matches[:min(topK, len(matches))]...,
+		)
 	}
 
-	return weightedSum / totalWeight
+	return responses, nil
+}
+
+/*
+validate rejects fingerprints whose complex response would be undefined.
+*/
+func (corpus *Corpus[Outcome]) validate(dial PhaseDial) error {
+	if len(dial) == 0 || dial.norm() == 0 {
+		return fmt.Errorf("phase dial must contain nonzero amplitude")
+	}
+
+	for _, component := range dial {
+		if math.IsNaN(real(component)) || math.IsNaN(imag(component)) ||
+			math.IsInf(real(component), 0) || math.IsInf(imag(component), 0) {
+			return fmt.Errorf("phase dial must contain finite components")
+		}
+	}
+
+	return nil
+}
+
+/*
+rank orders signed phase responses and uses observation time to make equal
+responses independent of insertion order.
+*/
+func (corpus *Corpus[Outcome]) rank(matches []CorpusMatch[Outcome]) {
+	sort.Slice(matches, func(leftIndex, rightIndex int) bool {
+		left := matches[leftIndex]
+		right := matches[rightIndex]
+
+		if left.Similarity != right.Similarity {
+			return left.Similarity > right.Similarity
+		}
+
+		return left.At.Before(right.At)
+	})
 }

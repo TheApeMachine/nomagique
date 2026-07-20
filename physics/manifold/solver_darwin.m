@@ -11,7 +11,162 @@ static float manifold_wrap_coordinate(float value, float extent) {
     return value - floorf(value / extent) * extent;
 }
 
+/*
+Process-lifetime Metal host. Never a field solver: field Close must not tear
+down device/library/pipelines, or the next Field create walks freed objects.
+*/
+static void *gManifoldMetalHostRaw = NULL;
+static NSData *gManifoldMetallib = nil;
+static NSLock *gManifoldMetalLock = nil;
+
+static ManifoldSolver *manifold_metal_host_load(void) {
+    if (gManifoldMetalHostRaw == NULL) {
+        return nil;
+    }
+
+    return (__bridge ManifoldSolver *)gManifoldMetalHostRaw;
+}
+
+@interface ManifoldSolver (MetalHostPrivate)
+- (BOOL)installSharedMetalWithBytes:(const void *)metallibBytes
+                             length:(size_t)metallibLength
+                              config:(const ManifoldConfig *)config
+                              error:(NSString **)error;
+- (void)adoptMetalFrom:(ManifoldSolver *)host;
+- (id<MTLBuffer>)trackResident:(id<MTLBuffer>)buffer;
+@end
+
+static void manifold_metal_lock_init(void) {
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        gManifoldMetalLock = [[NSLock alloc] init];
+    });
+}
+
+static ManifoldSolver *manifold_shared_metal_host(
+    const void *metallibBytes,
+    size_t metallibLength,
+    const ManifoldConfig *config,
+    NSString **error
+) {
+    manifold_metal_lock_init();
+    [gManifoldMetalLock lock];
+
+    ManifoldSolver *existing = manifold_metal_host_load();
+
+    if (existing != nil) {
+        [gManifoldMetalLock unlock];
+        return existing;
+    }
+
+    if (metallibBytes == NULL || metallibLength == 0) {
+        if (error != nil) {
+            *error = @"metallib payload is empty";
+        }
+
+        [gManifoldMetalLock unlock];
+        return nil;
+    }
+
+    ManifoldSolver *host = [[ManifoldSolver alloc] init];
+
+    if (![host installSharedMetalWithBytes:metallibBytes
+                                   length:metallibLength
+                                   config:config
+                                    error:error]) {
+        [gManifoldMetalLock unlock];
+        return nil;
+    }
+
+    // Process-lifetime ownership via CF only — never an ARC static.
+    gManifoldMetalHostRaw = (void *)CFBridgingRetain(host);
+    [gManifoldMetalLock unlock];
+    return host;
+}
+
 @implementation ManifoldSolver
+
+- (BOOL)installSharedMetalWithBytes:(const void *)metallibBytes
+                             length:(size_t)metallibLength
+                              config:(const ManifoldConfig *)config
+                              error:(NSString **)error {
+    if (config != NULL) {
+        self.config = *config;
+    }
+
+    self.device = MTLCreateSystemDefaultDevice();
+
+    if (self.device == nil) {
+        if (error != nil) {
+            *error = @"Metal device unavailable";
+        }
+
+        return NO;
+    }
+
+    self.queue = [self.device newCommandQueue];
+
+    if (self.queue == nil) {
+        if (error != nil) {
+            *error = @"Metal command queue unavailable";
+        }
+
+        return NO;
+    }
+
+    gManifoldMetallib = [NSData dataWithBytes:metallibBytes length:metallibLength];
+    CFBridgingRetain(gManifoldMetallib);
+    NSError *metalError = nil;
+    dispatch_data_t metallibData = dispatch_data_create(
+        gManifoldMetallib.bytes,
+        gManifoldMetallib.length,
+        dispatch_get_global_queue(QOS_CLASS_DEFAULT, 0),
+        DISPATCH_DATA_DESTRUCTOR_DEFAULT
+    );
+    self.library = [self.device newLibraryWithData:metallibData error:&metalError];
+
+    if (self.library == nil) {
+        if (error != nil) {
+            *error = metalError.localizedDescription ?: @"failed to load kernels.metallib";
+        }
+
+        return NO;
+    }
+
+    if (![self buildPipelines:error]) {
+        return NO;
+    }
+
+    self.simdWidth = (uint32_t)self.accumulateForces.threadExecutionWidth;
+
+    if (self.simdWidth == 0) {
+        self.simdWidth = 32;
+    }
+
+    self.maxThreadsPerThreadgroup = manifold_pipeline_max_threads(self.accumulateForces);
+    self.maxCarriersForTG = manifold_max_carriers_for_pipeline(self.device, self.accumulateForces);
+    uint32_t gpeThreadLimit = (uint32_t)manifold_pipeline_max_threads(self.gpeStep);
+
+    if (self.maxCarriersForTG > gpeThreadLimit) {
+        self.maxCarriersForTG = gpeThreadLimit;
+    }
+
+    return YES;
+}
+
+- (void)adoptMetalFrom:(ManifoldSolver *)host {
+    self.metalOwner = host;
+    self.device = host.device;
+    self.library = host.library;
+}
+
+- (id<MTLBuffer>)trackResident:(id<MTLBuffer>)buffer {
+    if (buffer != nil && buffer.heap == nil) {
+        self.residentBytes += (uint64_t)buffer.length;
+    }
+
+    return buffer;
+}
 
 - (instancetype)initWithConfig:(const ManifoldConfig *)config
                  metallibBytes:(const void *)metallibBytes
@@ -23,17 +178,23 @@ static float manifold_wrap_coordinate(float value, float extent) {
         return nil;
     }
 
-    self.device = MTLCreateSystemDefaultDevice();
+    ManifoldSolver *host = manifold_shared_metal_host(metallibBytes, metallibLength, config, error);
 
-    if (self.device == nil) {
+    if (host == nil) {
+        return nil;
+    }
+
+    [self adoptMetalFrom:host];
+    self.queue = [self.device newCommandQueue];
+
+    if (self.queue == nil) {
         if (error != nil) {
-            *error = @"Metal device unavailable";
+            *error = @"Metal command queue unavailable";
         }
 
         return nil;
     }
 
-    self.queue = [self.device newCommandQueue];
     self.config = *config;
     self.controls = (ManifoldControls){
         .dt = config->dt,
@@ -42,32 +203,10 @@ static float manifold_wrap_coordinate(float value, float extent) {
         .topdown_energy_scale = 0.0f,
     };
     self.numCells = config->grid_x * config->grid_y * config->grid_z;
+    self.residentBytes = 0;
 
-    if (metallibBytes == NULL || metallibLength == 0) {
-        if (error != nil) {
-            *error = @"metallib payload is empty";
-        }
-
-        return nil;
-    }
-
-    NSError *metalError = nil;
-    dispatch_data_t metallibData = dispatch_data_create(
-        metallibBytes,
-        metallibLength,
-        dispatch_get_global_queue(QOS_CLASS_DEFAULT, 0),
-        DISPATCH_DATA_DESTRUCTOR_DEFAULT
-    );
-    self.library = [self.device newLibraryWithData:metallibData error:&metalError];
-
-    if (self.library == nil) {
-        if (error != nil) {
-            *error = metalError.localizedDescription ?: @"failed to load kernels.metallib";
-        }
-
-        return nil;
-    }
-
+    // Pipelines are per-field: function constants bind grid size, and AGX does
+    // not keep shared pipeline states alive across Field teardown.
     if (![self buildPipelines:error]) {
         return nil;
     }
@@ -172,6 +311,10 @@ static float manifold_wrap_coordinate(float value, float extent) {
 }
 
 - (void)drainGPUQueue {
+    if (self.queue == nil) {
+        return;
+    }
+
     id<MTLCommandBuffer> commandBuffer = [self.queue commandBuffer];
     [commandBuffer commit];
     [commandBuffer waitUntilCompleted];
@@ -257,100 +400,105 @@ static float manifold_wrap_coordinate(float value, float extent) {
     heapDescriptor.size = gpuOnlyBytes + (4u << 20);
     heapDescriptor.storageMode = MTLStorageModePrivate;
     self.gpuHeap = [self.device newHeapWithDescriptor:heapDescriptor];
+    self.residentBytes = 0;
 
-    self.momRho = [self newSharedBufferWithLength:cellBytes * 4];
-    self.eInt = [self newSharedBufferWithLength:cellBytes];
-    self.momRhoStage = [self newGPUBufferWithLength:cellBytes * 4];
-    self.eStage = [self newGPUBufferWithLength:cellBytes];
-    self.entropyStage = [self newGPUBufferWithLength:cellBytes];
-    self.gasPrim = [self newGPUBufferWithLength:gasPrimBytes];
-    self.particleCicA = [self newGPUBufferWithLength:particleCicBytes];
-    self.particleCicB = [self newGPUBufferWithLength:particleCicBytes];
-    self.gasParams = [self.device newBufferWithLength:sizeof(GasGridParamsHost) options:MTLResourceStorageModeShared];
-    self.sourceMomRho = [self newSharedBufferWithLength:cellBytes * 4];
-    self.sourceE = [self newSharedBufferWithLength:cellBytes];
-    self.dbgCap = [self.device newBufferWithLength:sizeof(uint32_t) options:MTLResourceStorageModeShared];
-    self.dbgHead = [self.device newBufferWithLength:sizeof(uint32_t) options:MTLResourceStorageModeShared];
-    self.dbgWords = [self.device
+    if (self.gpuHeap != nil) {
+        self.residentBytes += (uint64_t)self.gpuHeap.size;
+    }
+
+    self.momRho = [self trackResident:[self newSharedBufferWithLength:cellBytes * 4]];
+    self.eInt = [self trackResident:[self newSharedBufferWithLength:cellBytes]];
+    self.momRhoStage = [self trackResident:[self newGPUBufferWithLength:cellBytes * 4]];
+    self.eStage = [self trackResident:[self newGPUBufferWithLength:cellBytes]];
+    self.entropyStage = [self trackResident:[self newGPUBufferWithLength:cellBytes]];
+    self.gasPrim = [self trackResident:[self newGPUBufferWithLength:gasPrimBytes]];
+    self.particleCicA = [self trackResident:[self newGPUBufferWithLength:particleCicBytes]];
+    self.particleCicB = [self trackResident:[self newGPUBufferWithLength:particleCicBytes]];
+    self.gasParams = [self trackResident:[self.device newBufferWithLength:sizeof(GasGridParamsHost) options:MTLResourceStorageModeShared]];
+    self.sourceMomRho = [self trackResident:[self newSharedBufferWithLength:cellBytes * 4]];
+    self.sourceE = [self trackResident:[self newSharedBufferWithLength:cellBytes]];
+    self.dbgCap = [self trackResident:[self.device newBufferWithLength:sizeof(uint32_t) options:MTLResourceStorageModeShared]];
+    self.dbgHead = [self trackResident:[self.device newBufferWithLength:sizeof(uint32_t) options:MTLResourceStorageModeShared]];
+    self.dbgWords = [self trackResident:[self.device
         newBufferWithLength:(size_t)self.numCells * 6u * sizeof(uint32_t)
         options:MTLResourceStorageModeShared
-    ];
+    ]];
 
-    self.oscPhase = [self.device newBufferWithLength:(size_t)maxModes * sizeof(float) options:MTLResourceStorageModeShared];
-    self.oscOmega = [self.device newBufferWithLength:(size_t)maxModes * sizeof(float) options:MTLResourceStorageModeShared];
-    self.oscAmp = [self.device newBufferWithLength:(size_t)maxModes * sizeof(float) options:MTLResourceStorageModeShared];
-    self.oscHeat = [self.device newBufferWithLength:(size_t)maxModes * sizeof(float) options:MTLResourceStorageModeShared];
-    self.particlePos = [self.device newBufferWithLength:(size_t)maxModes * 3 * sizeof(float) options:MTLResourceStorageModeShared];
-    self.particleVel = [self.device newBufferWithLength:(size_t)maxModes * 3 * sizeof(float) options:MTLResourceStorageModeShared];
-    self.particleMass = [self.device newBufferWithLength:(size_t)maxModes * sizeof(float) options:MTLResourceStorageModeShared];
-    self.particleEnergy = [self.device newBufferWithLength:(size_t)maxModes * sizeof(float) options:MTLResourceStorageModeShared];
-    self.particlePosSorted = [self.device newBufferWithLength:(size_t)maxModes * 3 * sizeof(float) options:MTLResourceStorageModeShared];
-    self.particleVelSorted = [self.device newBufferWithLength:(size_t)maxModes * 3 * sizeof(float) options:MTLResourceStorageModeShared];
-    self.particleMassSorted = [self.device newBufferWithLength:(size_t)maxModes * sizeof(float) options:MTLResourceStorageModeShared];
-    self.particleHeatSorted = [self.device newBufferWithLength:(size_t)maxModes * sizeof(float) options:MTLResourceStorageModeShared];
-    self.particleEnergySorted = [self.device newBufferWithLength:(size_t)maxModes * sizeof(float) options:MTLResourceStorageModeShared];
-    self.particleCellIdx = [self.device newBufferWithLength:(size_t)maxModes * sizeof(uint32_t) options:MTLResourceStorageModeShared];
-    self.scatterCellCounts = [self.device newBufferWithLength:cellBytes options:MTLResourceStorageModeShared];
-    self.scatterCellStarts = [self.device newBufferWithLength:cellBytes options:MTLResourceStorageModeShared];
-    self.scatterCellOffsets = [self.device newBufferWithLength:cellBytes options:MTLResourceStorageModeShared];
-    self.sortedOriginalIdx = [self.device newBufferWithLength:(size_t)maxModes * sizeof(uint32_t) options:MTLResourceStorageModeShared];
-    self.rhoAtomic = [self.device newBufferWithLength:cellBytes options:MTLResourceStorageModeShared];
-    self.momAtomic = [self.device newBufferWithLength:cellBytes * 3 options:MTLResourceStorageModeShared];
-    self.eAtomic = [self.device newBufferWithLength:cellBytes options:MTLResourceStorageModeShared];
-    self.gravityPotential = [self.device newBufferWithLength:cellBytes options:MTLResourceStorageModeShared];
-    self.sortScatterParams = [self.device newBufferWithLength:sizeof(SortScatterParamsHost) options:MTLResourceStorageModeShared];
-    self.picGatherParams = [self.device newBufferWithLength:sizeof(PicGatherParamsHost) options:MTLResourceStorageModeShared];
-    self.particleExcitation = [self.device newBufferWithLength:(size_t)maxModes * sizeof(float) options:MTLResourceStorageModeShared];
-    self.particleVelIn = [self.device newBufferWithLength:(size_t)maxModes * 3 * sizeof(float) options:MTLResourceStorageModeShared];
-    self.particleHeatIn = [self.device newBufferWithLength:(size_t)maxModes * sizeof(float) options:MTLResourceStorageModeShared];
-    self.hashCellCounts = [self.device newBufferWithLength:cellBytes options:MTLResourceStorageModeShared];
-    self.hashCellStarts = [self.device newBufferWithLength:((size_t)self.numCells + 1u) * sizeof(uint32_t) options:MTLResourceStorageModeShared];
-    self.hashCellOffsets = [self.device newBufferWithLength:cellBytes options:MTLResourceStorageModeShared];
-    self.hashSortedIdx = [self.device newBufferWithLength:(size_t)maxModes * sizeof(uint32_t) options:MTLResourceStorageModeShared];
-    self.hashParticleCellIdx = [self.device newBufferWithLength:(size_t)maxModes * sizeof(uint32_t) options:MTLResourceStorageModeShared];
-    self.hashNumCellsBuf = [self.device newBufferWithLength:sizeof(uint32_t) options:MTLResourceStorageModeShared];
-    self.hashNumParticlesBuf = [self.device newBufferWithLength:sizeof(uint32_t) options:MTLResourceStorageModeShared];
+    self.oscPhase = [self trackResident:[self.device newBufferWithLength:(size_t)maxModes * sizeof(float) options:MTLResourceStorageModeShared]];
+    self.oscOmega = [self trackResident:[self.device newBufferWithLength:(size_t)maxModes * sizeof(float) options:MTLResourceStorageModeShared]];
+    self.oscAmp = [self trackResident:[self.device newBufferWithLength:(size_t)maxModes * sizeof(float) options:MTLResourceStorageModeShared]];
+    self.oscHeat = [self trackResident:[self.device newBufferWithLength:(size_t)maxModes * sizeof(float) options:MTLResourceStorageModeShared]];
+    self.particlePos = [self trackResident:[self.device newBufferWithLength:(size_t)maxModes * 3 * sizeof(float) options:MTLResourceStorageModeShared]];
+    self.particleVel = [self trackResident:[self.device newBufferWithLength:(size_t)maxModes * 3 * sizeof(float) options:MTLResourceStorageModeShared]];
+    self.particleMass = [self trackResident:[self.device newBufferWithLength:(size_t)maxModes * sizeof(float) options:MTLResourceStorageModeShared]];
+    self.particleEnergy = [self trackResident:[self.device newBufferWithLength:(size_t)maxModes * sizeof(float) options:MTLResourceStorageModeShared]];
+    self.particlePosSorted = [self trackResident:[self.device newBufferWithLength:(size_t)maxModes * 3 * sizeof(float) options:MTLResourceStorageModeShared]];
+    self.particleVelSorted = [self trackResident:[self.device newBufferWithLength:(size_t)maxModes * 3 * sizeof(float) options:MTLResourceStorageModeShared]];
+    self.particleMassSorted = [self trackResident:[self.device newBufferWithLength:(size_t)maxModes * sizeof(float) options:MTLResourceStorageModeShared]];
+    self.particleHeatSorted = [self trackResident:[self.device newBufferWithLength:(size_t)maxModes * sizeof(float) options:MTLResourceStorageModeShared]];
+    self.particleEnergySorted = [self trackResident:[self.device newBufferWithLength:(size_t)maxModes * sizeof(float) options:MTLResourceStorageModeShared]];
+    self.particleCellIdx = [self trackResident:[self.device newBufferWithLength:(size_t)maxModes * sizeof(uint32_t) options:MTLResourceStorageModeShared]];
+    self.scatterCellCounts = [self trackResident:[self.device newBufferWithLength:cellBytes options:MTLResourceStorageModeShared]];
+    self.scatterCellStarts = [self trackResident:[self.device newBufferWithLength:cellBytes options:MTLResourceStorageModeShared]];
+    self.scatterCellOffsets = [self trackResident:[self.device newBufferWithLength:cellBytes options:MTLResourceStorageModeShared]];
+    self.sortedOriginalIdx = [self trackResident:[self.device newBufferWithLength:(size_t)maxModes * sizeof(uint32_t) options:MTLResourceStorageModeShared]];
+    self.rhoAtomic = [self trackResident:[self.device newBufferWithLength:cellBytes options:MTLResourceStorageModeShared]];
+    self.momAtomic = [self trackResident:[self.device newBufferWithLength:cellBytes * 3 options:MTLResourceStorageModeShared]];
+    self.eAtomic = [self trackResident:[self.device newBufferWithLength:cellBytes options:MTLResourceStorageModeShared]];
+    self.gravityPotential = [self trackResident:[self.device newBufferWithLength:cellBytes options:MTLResourceStorageModeShared]];
+    self.sortScatterParams = [self trackResident:[self.device newBufferWithLength:sizeof(SortScatterParamsHost) options:MTLResourceStorageModeShared]];
+    self.picGatherParams = [self trackResident:[self.device newBufferWithLength:sizeof(PicGatherParamsHost) options:MTLResourceStorageModeShared]];
+    self.particleExcitation = [self trackResident:[self.device newBufferWithLength:(size_t)maxModes * sizeof(float) options:MTLResourceStorageModeShared]];
+    self.particleVelIn = [self trackResident:[self.device newBufferWithLength:(size_t)maxModes * 3 * sizeof(float) options:MTLResourceStorageModeShared]];
+    self.particleHeatIn = [self trackResident:[self.device newBufferWithLength:(size_t)maxModes * sizeof(float) options:MTLResourceStorageModeShared]];
+    self.hashCellCounts = [self trackResident:[self.device newBufferWithLength:cellBytes options:MTLResourceStorageModeShared]];
+    self.hashCellStarts = [self trackResident:[self.device newBufferWithLength:((size_t)self.numCells + 1u) * sizeof(uint32_t) options:MTLResourceStorageModeShared]];
+    self.hashCellOffsets = [self trackResident:[self.device newBufferWithLength:cellBytes options:MTLResourceStorageModeShared]];
+    self.hashSortedIdx = [self trackResident:[self.device newBufferWithLength:(size_t)maxModes * sizeof(uint32_t) options:MTLResourceStorageModeShared]];
+    self.hashParticleCellIdx = [self trackResident:[self.device newBufferWithLength:(size_t)maxModes * sizeof(uint32_t) options:MTLResourceStorageModeShared]];
+    self.hashNumCellsBuf = [self trackResident:[self.device newBufferWithLength:sizeof(uint32_t) options:MTLResourceStorageModeShared]];
+    self.hashNumParticlesBuf = [self trackResident:[self.device newBufferWithLength:sizeof(uint32_t) options:MTLResourceStorageModeShared]];
     *(uint32_t *)self.hashNumCellsBuf.contents = self.numCells;
-    self.spatialHashParams = [self.device newBufferWithLength:sizeof(SpatialHashParamsHost) options:MTLResourceStorageModeShared];
-    self.spatialCollisionParams = [self.device newBufferWithLength:sizeof(SpatialCollisionParamsHost) options:MTLResourceStorageModeShared];
-    self.particleInteractionParams = [self.device newBufferWithLength:sizeof(ParticleInteractionParamsHost) options:MTLResourceStorageModeShared];
-    self.psiReField = [self.device newBufferWithLength:cellBytes options:MTLResourceStorageModeShared];
-    self.psiImField = [self.device newBufferWithLength:cellBytes options:MTLResourceStorageModeShared];
-    self.psiReAtomic = [self.device newBufferWithLength:cellBytes options:MTLResourceStorageModeShared];
-    self.psiImAtomic = [self.device newBufferWithLength:cellBytes options:MTLResourceStorageModeShared];
-    self.modeProjectParams = [self.device newBufferWithLength:sizeof(ModeProjectParamsHost) options:MTLResourceStorageModeShared];
-    self.pilotWaveParams = [self.device newBufferWithLength:sizeof(PilotWaveParamsHost) options:MTLResourceStorageModeShared];
-    self.particleGenParams = [self.device newBufferWithLength:sizeof(ParticleGenParamsHost) options:MTLResourceStorageModeShared];
-    self.particleRandomVals = [self.device newBufferWithLength:(size_t)maxModes * 4 * sizeof(float) options:MTLResourceStorageModeShared];
-    self.reduceGroupStats = [self.device newBufferWithLength:(size_t)maxModes * 4 * sizeof(float) options:MTLResourceStorageModeShared];
-    self.reduceStatsOut = [self.device newBufferWithLength:4 * sizeof(float) options:MTLResourceStorageModeShared];
-    self.hashBlockSums = [self.device newBufferWithLength:(size_t)maxModes * sizeof(uint32_t) options:MTLResourceStorageModeShared];
+    self.spatialHashParams = [self trackResident:[self.device newBufferWithLength:sizeof(SpatialHashParamsHost) options:MTLResourceStorageModeShared]];
+    self.spatialCollisionParams = [self trackResident:[self.device newBufferWithLength:sizeof(SpatialCollisionParamsHost) options:MTLResourceStorageModeShared]];
+    self.particleInteractionParams = [self trackResident:[self.device newBufferWithLength:sizeof(ParticleInteractionParamsHost) options:MTLResourceStorageModeShared]];
+    self.psiReField = [self trackResident:[self.device newBufferWithLength:cellBytes options:MTLResourceStorageModeShared]];
+    self.psiImField = [self trackResident:[self.device newBufferWithLength:cellBytes options:MTLResourceStorageModeShared]];
+    self.psiReAtomic = [self trackResident:[self.device newBufferWithLength:cellBytes options:MTLResourceStorageModeShared]];
+    self.psiImAtomic = [self trackResident:[self.device newBufferWithLength:cellBytes options:MTLResourceStorageModeShared]];
+    self.modeProjectParams = [self trackResident:[self.device newBufferWithLength:sizeof(ModeProjectParamsHost) options:MTLResourceStorageModeShared]];
+    self.pilotWaveParams = [self trackResident:[self.device newBufferWithLength:sizeof(PilotWaveParamsHost) options:MTLResourceStorageModeShared]];
+    self.particleGenParams = [self trackResident:[self.device newBufferWithLength:sizeof(ParticleGenParamsHost) options:MTLResourceStorageModeShared]];
+    self.particleRandomVals = [self trackResident:[self.device newBufferWithLength:(size_t)maxModes * 4 * sizeof(float) options:MTLResourceStorageModeShared]];
+    self.reduceGroupStats = [self trackResident:[self.device newBufferWithLength:(size_t)maxModes * 4 * sizeof(float) options:MTLResourceStorageModeShared]];
+    self.reduceStatsOut = [self trackResident:[self.device newBufferWithLength:4 * sizeof(float) options:MTLResourceStorageModeShared]];
+    self.hashBlockSums = [self trackResident:[self.device newBufferWithLength:(size_t)maxModes * sizeof(uint32_t) options:MTLResourceStorageModeShared]];
     self.gravityReady = NO;
-    self.modeReal = [self.device newBufferWithLength:(size_t)maxModes * sizeof(float) options:MTLResourceStorageModeShared];
-    self.modeImag = [self.device newBufferWithLength:(size_t)maxModes * sizeof(float) options:MTLResourceStorageModeShared];
-    self.modeOmega = [self.device newBufferWithLength:(size_t)maxModes * sizeof(float) options:MTLResourceStorageModeShared];
-    self.modeGate = [self.device newBufferWithLength:(size_t)maxModes * sizeof(float) options:MTLResourceStorageModeShared];
-    self.modeAnchorIdx = [self.device newBufferWithLength:(size_t)maxModes * 8 * sizeof(uint32_t) options:MTLResourceStorageModeShared];
-    self.modeAnchorWeight = [self.device newBufferWithLength:(size_t)maxModes * 8 * sizeof(float) options:MTLResourceStorageModeShared];
-    self.modeAnchorPos = [self newGPUBufferWithLength:(size_t)maxModes * kModeAnchors * 3 * sizeof(float)];
-    self.oscCouplingPrep = [self newGPUBufferWithLength:(size_t)maxModes * 4 * sizeof(float)];
-    self.accums = [self.device newBufferWithLength:(size_t)maxModes * sizeof(CarrierAccumHost) options:MTLResourceStorageModeShared];
-    self.numCarriers = [self.device newBufferWithLength:sizeof(uint32_t) options:MTLResourceStorageModeShared];
-    self.omegaMinKey = [self.device newBufferWithLength:sizeof(uint32_t) options:MTLResourceStorageModeShared];
-    self.omegaMaxKey = [self.device newBufferWithLength:sizeof(uint32_t) options:MTLResourceStorageModeShared];
-    self.binCounts = [self.device newBufferWithLength:(size_t)maxModes * sizeof(uint32_t) options:MTLResourceStorageModeShared];
-    self.binStarts = [self.device newBufferWithLength:((size_t)maxModes + 1) * sizeof(uint32_t) options:MTLResourceStorageModeShared];
-    self.binOffsets = [self.device newBufferWithLength:(size_t)maxModes * sizeof(uint32_t) options:MTLResourceStorageModeShared];
-    self.carrierBinnedIdx = [self.device newBufferWithLength:(size_t)maxModes * sizeof(uint32_t) options:MTLResourceStorageModeShared];
-    self.binParams = [self.device newBufferWithLength:sizeof(BinParamsHost) options:MTLResourceStorageModeShared];
-    self.numBinsBuf = [self.device newBufferWithLength:sizeof(uint32_t) options:MTLResourceStorageModeShared];
-    self.gateWidthMaxBuf = [self.device newBufferWithLength:sizeof(float) options:MTLResourceStorageModeShared];
+    self.modeReal = [self trackResident:[self.device newBufferWithLength:(size_t)maxModes * sizeof(float) options:MTLResourceStorageModeShared]];
+    self.modeImag = [self trackResident:[self.device newBufferWithLength:(size_t)maxModes * sizeof(float) options:MTLResourceStorageModeShared]];
+    self.modeOmega = [self trackResident:[self.device newBufferWithLength:(size_t)maxModes * sizeof(float) options:MTLResourceStorageModeShared]];
+    self.modeGate = [self trackResident:[self.device newBufferWithLength:(size_t)maxModes * sizeof(float) options:MTLResourceStorageModeShared]];
+    self.modeAnchorIdx = [self trackResident:[self.device newBufferWithLength:(size_t)maxModes * 8 * sizeof(uint32_t) options:MTLResourceStorageModeShared]];
+    self.modeAnchorWeight = [self trackResident:[self.device newBufferWithLength:(size_t)maxModes * 8 * sizeof(float) options:MTLResourceStorageModeShared]];
+    self.modeAnchorPos = [self trackResident:[self newGPUBufferWithLength:(size_t)maxModes * kModeAnchors * 3 * sizeof(float)]];
+    self.oscCouplingPrep = [self trackResident:[self newGPUBufferWithLength:(size_t)maxModes * 4 * sizeof(float)]];
+    self.accums = [self trackResident:[self.device newBufferWithLength:(size_t)maxModes * sizeof(CarrierAccumHost) options:MTLResourceStorageModeShared]];
+    self.numCarriers = [self trackResident:[self.device newBufferWithLength:sizeof(uint32_t) options:MTLResourceStorageModeShared]];
+    self.omegaMinKey = [self trackResident:[self.device newBufferWithLength:sizeof(uint32_t) options:MTLResourceStorageModeShared]];
+    self.omegaMaxKey = [self trackResident:[self.device newBufferWithLength:sizeof(uint32_t) options:MTLResourceStorageModeShared]];
+    self.binCounts = [self trackResident:[self.device newBufferWithLength:(size_t)maxModes * sizeof(uint32_t) options:MTLResourceStorageModeShared]];
+    self.binStarts = [self trackResident:[self.device newBufferWithLength:((size_t)maxModes + 1) * sizeof(uint32_t) options:MTLResourceStorageModeShared]];
+    self.binOffsets = [self trackResident:[self.device newBufferWithLength:(size_t)maxModes * sizeof(uint32_t) options:MTLResourceStorageModeShared]];
+    self.carrierBinnedIdx = [self trackResident:[self.device newBufferWithLength:(size_t)maxModes * sizeof(uint32_t) options:MTLResourceStorageModeShared]];
+    self.binParams = [self trackResident:[self.device newBufferWithLength:sizeof(BinParamsHost) options:MTLResourceStorageModeShared]];
+    self.numBinsBuf = [self trackResident:[self.device newBufferWithLength:sizeof(uint32_t) options:MTLResourceStorageModeShared]];
+    self.gateWidthMaxBuf = [self trackResident:[self.device newBufferWithLength:sizeof(float) options:MTLResourceStorageModeShared]];
     *(float *)self.gateWidthMaxBuf.contents = self.config.gate_width_max;
-    self.scanBlockSums = [self.device newBufferWithLength:(size_t)maxModes * sizeof(uint32_t) options:MTLResourceStorageModeShared];
-    self.scanBlockPrefix = [self.device newBufferWithLength:(size_t)maxModes * sizeof(uint32_t) options:MTLResourceStorageModeShared];
-    self.scanBlockScratch = [self.device newBufferWithLength:(size_t)maxModes * sizeof(uint32_t) options:MTLResourceStorageModeShared];
-    self.coherenceParams = [self.device newBufferWithLength:sizeof(CoherenceParamsHost) options:MTLResourceStorageModeShared];
-    self.gpeParams = [self.device newBufferWithLength:sizeof(GPEParamsHost) options:MTLResourceStorageModeShared];
+    self.scanBlockSums = [self trackResident:[self.device newBufferWithLength:(size_t)maxModes * sizeof(uint32_t) options:MTLResourceStorageModeShared]];
+    self.scanBlockPrefix = [self trackResident:[self.device newBufferWithLength:(size_t)maxModes * sizeof(uint32_t) options:MTLResourceStorageModeShared]];
+    self.scanBlockScratch = [self trackResident:[self.device newBufferWithLength:(size_t)maxModes * sizeof(uint32_t) options:MTLResourceStorageModeShared]];
+    self.coherenceParams = [self trackResident:[self.device newBufferWithLength:sizeof(CoherenceParamsHost) options:MTLResourceStorageModeShared]];
+    self.gpeParams = [self trackResident:[self.device newBufferWithLength:sizeof(GPEParamsHost) options:MTLResourceStorageModeShared]];
 
     [self resetDepositsInternal];
     [self resetSourcesInternal];
@@ -1294,6 +1442,99 @@ static float manifold_wrap_coordinate(float value, float extent) {
 
 @end
 
+
+void *manifold_engine_create(
+    const ManifoldConfig *config,
+    const void *metallib_bytes,
+    size_t metallib_length,
+    char *err_out,
+    int err_cap
+) {
+    @autoreleasepool {
+        NSString *error = nil;
+        ManifoldSolver *host = manifold_shared_metal_host(metallib_bytes, metallib_length, config, &error);
+
+        if (host == nil) {
+            manifold_write_error(err_out, err_cap, error ?: @"failed to create manifold engine");
+            return NULL;
+        }
+
+        // Opaque sentinel — must not be the host, so destroy cannot free Metal.
+        return (void *)0x1;
+    }
+}
+
+void manifold_engine_destroy(void *handle) {
+    (void)handle;
+}
+
+void *manifold_field_create(
+    void *engine,
+    const ManifoldConfig *config,
+    char *err_out,
+    int err_cap
+) {
+    @autoreleasepool {
+        if (engine == NULL || config == NULL) {
+            manifold_write_error(err_out, err_cap, @"engine and config are required");
+            return NULL;
+        }
+
+        if (gManifoldMetallib == nil) {
+            manifold_write_error(err_out, err_cap, @"shared metallib is not installed");
+            return NULL;
+        }
+
+        NSString *error = nil;
+        ManifoldSolver *field = [[ManifoldSolver alloc] initWithConfig:config
+                                                         metallibBytes:gManifoldMetallib.bytes
+                                                        metallibLength:gManifoldMetallib.length
+                                                                 error:&error];
+
+        if (field == nil) {
+            manifold_write_error(err_out, err_cap, error ?: @"failed to create manifold field");
+            return NULL;
+        }
+
+        return (__bridge_retained void *)field;
+    }
+}
+
+uint64_t manifold_solver_resident_bytes(void *handle) {
+    if (handle == NULL) {
+        return 0;
+    }
+
+    ManifoldSolver *solver = (__bridge ManifoldSolver *)handle;
+    return solver.residentBytes;
+}
+
+uint64_t manifold_device_working_set_budget(void) {
+    ManifoldSolver *host = manifold_metal_host_load();
+
+    if (host == nil || host.device == nil) {
+        id<MTLDevice> device = MTLCreateSystemDefaultDevice();
+
+        if (device == nil) {
+            return 0;
+        }
+
+        return (uint64_t)device.recommendedMaxWorkingSetSize;
+    }
+
+    return (uint64_t)host.device.recommendedMaxWorkingSetSize;
+}
+
+uint64_t manifold_device_allocated_bytes(void) {
+    ManifoldSolver *host = manifold_metal_host_load();
+
+    if (host == nil || host.device == nil) {
+        return 0;
+    }
+
+    return (uint64_t)host.device.currentAllocatedSize;
+}
+
 void *manifold_solver_create(
     const ManifoldConfig *config,
     const void *metallib_bytes,
@@ -1489,37 +1730,41 @@ int manifold_solver_set_oscillators(
     char *err_out,
     int err_cap
 ) {
-    if (handle == NULL) {
-        manifold_write_error(err_out, err_cap, @"solver handle is nil");
-        return 1;
+    @autoreleasepool {
+        if (handle == NULL) {
+            manifold_write_error(err_out, err_cap, @"solver handle is nil");
+            return 1;
+        }
+
+        ManifoldSolver *solver = (__bridge ManifoldSolver *)handle;
+        NSString *error = nil;
+
+        if (![solver setOscillators:oscillators count:count error:&error]) {
+            manifold_write_error(err_out, err_cap, error ?: @"set oscillators failed");
+            return 1;
+        }
+
+        return 0;
     }
-
-    ManifoldSolver *solver = (__bridge ManifoldSolver *)handle;
-    NSString *error = nil;
-
-    if (![solver setOscillators:oscillators count:count error:&error]) {
-        manifold_write_error(err_out, err_cap, error ?: @"set oscillators failed");
-        return 1;
-    }
-
-    return 0;
 }
 
 int manifold_solver_step(void *handle, ManifoldReading *reading, char *err_out, int err_cap) {
-    if (handle == NULL || reading == NULL) {
-        manifold_write_error(err_out, err_cap, @"solver handle and reading are required");
-        return 1;
+    @autoreleasepool {
+        if (handle == NULL || reading == NULL) {
+            manifold_write_error(err_out, err_cap, @"solver handle and reading are required");
+            return 1;
+        }
+
+        ManifoldSolver *solver = (__bridge ManifoldSolver *)handle;
+        NSString *error = nil;
+
+        if (![solver step:reading error:&error]) {
+            manifold_write_error(err_out, err_cap, error ?: @"step failed");
+            return 1;
+        }
+
+        return 0;
     }
-
-    ManifoldSolver *solver = (__bridge ManifoldSolver *)handle;
-    NSString *error = nil;
-
-    if (![solver step:reading error:&error]) {
-        manifold_write_error(err_out, err_cap, error ?: @"step failed");
-        return 1;
-    }
-
-    return 0;
 }
 
 int manifold_solver_run_gas_transport(void *handle, char *err_out, int err_cap) {

@@ -112,6 +112,39 @@ func TestIgnition_Measure(testingTB *testing.T) {
 		})
 	})
 
+	Convey("Given a pump after a sustained decline", testingTB, func() {
+		ignition := NewIgnition(128)
+		warm(ignition, 12)
+
+		for index := range 16 {
+			_, _, _, err := ignition.Measure(IgnitionInput{
+				Symbol: "BTC/USD",
+				Volume: 1000 + float64((12+index)*20),
+				Last:   111 - float64(index+1),
+				Bid:    110.5 - float64(index+1),
+				Ask:    111.5 - float64(index+1),
+				At:     ignitionEpoch.Add(time.Duration(12+index) * time.Second),
+			})
+			So(err, ShouldBeNil)
+		}
+
+		output, ready, _, err := ignition.Measure(IgnitionInput{
+			Symbol: "BTC/USD",
+			Volume: 1000 + float64(28*20),
+			Last:   100,
+			Bid:    99.5,
+			Ask:    100.5,
+			At:     ignitionEpoch.Add(28 * time.Second),
+		})
+
+		Convey("It should retain a usable upward-move scale", func() {
+			So(err, ShouldBeNil)
+			So(ready, ShouldBeTrue)
+			So(output.Precursor, ShouldBeGreaterThan, 0)
+			So(output.Ignition, ShouldBeGreaterThan, 0)
+		})
+	})
+
 	Convey("Given a bounded retention capacity", testingTB, func() {
 		const capacity = 16
 		ignition := NewIgnition(capacity)

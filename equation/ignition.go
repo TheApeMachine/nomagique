@@ -224,7 +224,7 @@ func (window *ignitionWindow) closeBar(
 	if window.prevClose > 0 && closePrice > 0 {
 		priceMove = math.Log(closePrice / window.prevClose)
 		window.returns = window.appendNonNegative(window.returns, math.Abs(priceMove))
-		window.precursors = window.appendNonNegative(window.precursors, math.Max(0, priceMove))
+		window.precursors = window.appendPositive(window.precursors, priceMove)
 	}
 
 	barRate := 0.0

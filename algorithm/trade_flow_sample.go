@@ -23,20 +23,31 @@ type TradeFlowSample struct {
 }
 
 /*
-TradeFlowInput is one executed trade observation.
+TradeFlowInput is one executed trade observation. Price values the executed
+notional while ResponsePrice tracks the quote midpoint response without
+mistaking bid-ask execution bounce for directional movement.
 */
 type TradeFlowInput struct {
-	Symbol   string
-	Price    float64
-	Quantity float64
-	Side     string
+	Symbol        string
+	Price         float64
+	ResponsePrice float64
+	Quantity      float64
+	Side          string
 }
 
+/*
+tradeFlowWindow retains the bounded per-symbol observations used by the
+adaptive active and baseline windows.
+*/
 type tradeFlowWindow struct {
 	ticks        []tradeFlowTick
 	observations int
 }
 
+/*
+tradeFlowTick stores the two economically distinct prices needed by CVD as a
+signed notional and an execution-bounce-free response price.
+*/
 type tradeFlowTick struct {
 	buy      bool
 	notional float64
@@ -59,10 +70,14 @@ ready to score, and a confidence maturity for that reading.
 func (tradeFlowSample *TradeFlowSample) Measure(
 	input TradeFlowInput,
 ) (equation.FlowInput, bool, float64, error) {
-	if input.Symbol == "" || input.Price <= 0 || input.Quantity <= 0 {
+	if input.Symbol == "" || input.Price <= 0 || input.ResponsePrice <= 0 ||
+		input.Quantity <= 0 || math.IsNaN(input.Price) ||
+		math.IsInf(input.Price, 0) || math.IsNaN(input.ResponsePrice) ||
+		math.IsInf(input.ResponsePrice, 0) || math.IsNaN(input.Quantity) ||
+		math.IsInf(input.Quantity, 0) {
 		return equation.FlowInput{}, false, 0, errnie.Error(errnie.Err(
 			errnie.Validation,
-			"trade-flow-sample: trade frame requires symbol, price, and qty",
+			"trade-flow-sample: trade requires symbol, execution price, response price, and qty",
 			nil,
 		))
 	}
@@ -77,10 +92,19 @@ func (tradeFlowSample *TradeFlowSample) Measure(
 
 	window := tradeFlowSample.window(input.Symbol)
 	notional := input.Price * input.Quantity
+
+	if math.IsNaN(notional) || math.IsInf(notional, 0) {
+		return equation.FlowInput{}, false, 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"trade-flow-sample: execution notional must be finite",
+			nil,
+		))
+	}
+
 	window.ticks = append(window.ticks, tradeFlowTick{
 		buy:      input.Side == "buy",
 		notional: notional,
-		price:    input.Price,
+		price:    input.ResponsePrice,
 	})
 	window.observations++
 
@@ -88,16 +112,20 @@ func (tradeFlowSample *TradeFlowSample) Measure(
 		window.ticks = window.ticks[len(window.ticks)-flowSampleHistoryCap:]
 	}
 
-	features, ok := tradeFlowSample.features(window)
 	maturity := float64(window.observations) / float64(window.observations+1)
+	features, err := tradeFlowSample.features(window)
 
-	if !ok {
-		return equation.FlowInput{}, false, maturity, nil
+	if err != nil {
+		return equation.FlowInput{}, false, maturity, err
 	}
 
 	return features, true, maturity, nil
 }
 
+/*
+window returns the rolling state owned by one symbol, creating it on the first
+valid observation.
+*/
 func (tradeFlowSample *TradeFlowSample) window(symbol string) *tradeFlowWindow {
 	existing, ok := tradeFlowSample.windows.Load(symbol)
 
@@ -111,74 +139,59 @@ func (tradeFlowSample *TradeFlowSample) window(symbol string) *tradeFlowWindow {
 	return window
 }
 
+/*
+features resolves the adaptive active window and its empirical notional range
+into the numerical input consumed by Flow.
+*/
 func (tradeFlowSample *TradeFlowSample) features(
 	window *tradeFlowWindow,
-) (equation.FlowInput, bool) {
+) (equation.FlowInput, error) {
 	tradeCount := len(window.ticks)
-
-	if tradeCount == 0 {
-		return equation.FlowInput{}, false
-	}
-
 	notionals := make([]float64, tradeCount)
 
 	for index, tick := range window.ticks {
 		notionals[index] = tick.notional
 	}
 
-	// ResolveWindowSet always clamps LongWindow to at most tradeCount (the
-	// adaptive window can never exceed observed history), so a count
-	// shortfall here is structurally impossible — only a resolution error
-	// (e.g. non-finite notionals) is a real reason to withhold a reading.
 	windows, err := statistic.ResolveWindowSet(notionals, statistic.WindowsConfig{})
 
 	if err != nil {
-		return equation.FlowInput{}, false
+		return equation.FlowInput{}, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"trade-flow-sample: resolve adaptive window",
+			err,
+		))
 	}
 
-	activeWindow := windows.ShortWindow
-	responseWindow := windows.ReturnLag + 1
-
-	if responseWindow > activeWindow {
-		activeWindow = responseWindow
-	}
-
-	if activeWindow > windows.LongWindow {
-		activeWindow = windows.LongWindow
-	}
-
+	activeWindow := max(windows.ShortWindow, windows.ReturnLag+1)
+	activeWindow = min(activeWindow, windows.LongWindow)
 	active := window.ticks[len(window.ticks)-activeWindow:]
 	baseline := window.ticks[len(window.ticks)-windows.LongWindow:]
-
 	buyNotional := 0.0
 	sellNotional := 0.0
 	prices := make([]float64, 0, len(active))
-	activeNotionals := make([]float64, 0, len(active))
 	baselineNotionals := make([]float64, 0, len(baseline))
 
 	for _, tick := range active {
+		prices = append(prices, tick.price)
+
 		if tick.buy {
 			buyNotional += tick.notional
+			continue
 		}
 
-		if !tick.buy {
-			sellNotional += tick.notional
-		}
-
-		prices = append(prices, tick.price)
-		activeNotionals = append(activeNotionals, tick.notional)
+		sellNotional += tick.notional
 	}
 
 	for _, tick := range baseline {
 		baselineNotionals = append(baselineNotionals, tick.notional)
 	}
 
-	// medianPositive(baselineNotionals) is structurally guaranteed positive:
-	// Measure only ever appends strictly positive notionals (Price and
-	// Quantity are validated > 0), and baseline always includes at least
-	// the tick just appended.
-	medianNotional := medianPositive(baselineNotionals)
-	grossFloor := medianNotional * float64(len(activeNotionals))
+	// The lower boundary is the empirical center less its own absolute
+	// dispersion. A merely below-median window therefore remains ordinary
+	// flow; starvation requires gross flow outside the observed lower range.
+	medianNotional, lowerNotional := notionalRange(baselineNotionals)
+	grossFloor := lowerNotional * float64(len(active))
 
 	return equation.FlowInput{
 		BuyNotional:    buyNotional,
@@ -187,29 +200,47 @@ func (tradeFlowSample *TradeFlowSample) features(
 		GrossFloor:     grossFloor,
 		MedianNotional: medianNotional,
 		Prices:         prices,
-	}, true
+	}, nil
 }
 
-func medianPositive(values []float64) float64 {
-	positive := make([]float64, 0, len(values))
-
-	for _, value := range values {
-		if value <= 0 || math.IsNaN(value) || math.IsInf(value, 0) {
-			continue
-		}
-
-		positive = append(positive, value)
+/*
+notionalRange returns the empirical center and its lower absolute-dispersion
+boundary so flow starvation is scaled by the symbol's own observed tape.
+*/
+func notionalRange(values []float64) (float64, float64) {
+	if len(values) == 0 {
+		panic(errnie.Error(errnie.Err(
+			errnie.Unknown,
+			"trade-flow-sample: notional range requires observations",
+			nil,
+		)))
 	}
 
-	if len(positive) == 0 {
-		return 0
-	}
-
-	median, ok := statistic.MedianOf(positive)
+	median, ok := statistic.MedianOf(values)
 
 	if !ok {
-		return 0
+		panic(errnie.Error(errnie.Err(
+			errnie.Unknown,
+			"trade-flow-sample: invalid notional center",
+			nil,
+		)))
 	}
 
-	return median
+	deviations := make([]float64, len(values))
+
+	for index, value := range values {
+		deviations[index] = math.Abs(value - median)
+	}
+
+	dispersion, ok := statistic.MedianOf(deviations)
+
+	if !ok {
+		panic(errnie.Error(errnie.Err(
+			errnie.Unknown,
+			"trade-flow-sample: invalid notional dispersion",
+			nil,
+		)))
+	}
+
+	return median, median - dispersion
 }

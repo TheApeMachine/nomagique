@@ -142,7 +142,7 @@ func (flow *Flow) Measure(
 	if input.Viscosity > 0 && input.ViscosityBaseline > 0 {
 		viscousScore = math.Max(
 			0,
-			math.Min(input.ViscosityBaseline/input.Viscosity, divergenceActivity)-1,
+			math.Min(viscosityActivity, divergenceActivity)-1,
 		)
 	}
 

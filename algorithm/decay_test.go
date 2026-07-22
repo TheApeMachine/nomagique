@@ -7,8 +7,8 @@ import (
 	"github.com/theapemachine/nomagique/equation"
 )
 
-func TestDecayMeasure(testingTB *testing.T) {
-	Convey("Given deteriorating long-side book history", testingTB, func() {
+func TestDecayMeasure(t *testing.T) {
+	Convey("Given deteriorating long-side book history", t, func() {
 		decay := equation.NewDecay()
 		output, err := decay.Measure(equation.DecayInput{
 			LastPrice:     100,
@@ -20,16 +20,17 @@ func TestDecayMeasure(testingTB *testing.T) {
 		So(err, ShouldBeNil)
 
 		Convey("It should publish an eligible exhaustion outcome", func() {
-			So(output.Value, ShouldBeGreaterThan, 0)
-			So(output.Urgency, ShouldBeGreaterThan, 0)
-			So(int(output.Category), ShouldEqual, 1)
+			So(output.Long.Value, ShouldBeGreaterThan, 0)
+			So(output.Long.Urgency, ShouldBeGreaterThan, 0)
+			So(int(output.Long.Category), ShouldEqual, 1)
 		})
 	})
 
-	Convey("Given pressure fade on the long side", testingTB, func() {
+	Convey("Given pressure fade on the long side", t, func() {
 		decay := equation.NewDecay()
 		output, err := decay.Measure(equation.DecayInput{
 			LastPrice:      100,
+			PriceReturn:    -0.02,
 			BidDepthRatio:  1,
 			AskDepthRatio:  1,
 			DensityRatio:   1,
@@ -41,15 +42,15 @@ func TestDecayMeasure(testingTB *testing.T) {
 		So(err, ShouldBeNil)
 
 		Convey("It should classify thermal exhaustion", func() {
-			So(int(output.Category), ShouldEqual, 3)
+			So(int(output.Long.Category), ShouldEqual, 3)
 		})
 	})
 
-	Convey("Given ask-side thinning stronger than bid-side", testingTB, func() {
+	Convey("Given ask-side thinning stronger than bid-side", t, func() {
 		decay := equation.NewDecay()
 		output, err := decay.Measure(equation.DecayInput{
 			LastPrice:     100,
-			BidDepthRatio: 0.9,
+			BidDepthRatio: 1,
 			AskDepthRatio: 0.2,
 			DensityRatio:  1,
 		})
@@ -57,13 +58,14 @@ func TestDecayMeasure(testingTB *testing.T) {
 		So(err, ShouldBeNil)
 
 		Convey("It should let the stronger short-side score win", func() {
-			So(output.Value, ShouldBeGreaterThan, 0)
-			So(int(output.Category), ShouldEqual, 1)
+			So(output.Short.Value, ShouldBeGreaterThan, 0)
+			So(int(output.Short.Category), ShouldEqual, 1)
+			So(output.Long.Value, ShouldEqual, 0)
 		})
 	})
 }
 
-func BenchmarkDecayMeasure(benchmark *testing.B) {
+func BenchmarkDecayMeasure(b *testing.B) {
 	decay := equation.NewDecay()
 	input := equation.DecayInput{
 		LastPrice:     100,
@@ -72,9 +74,9 @@ func BenchmarkDecayMeasure(benchmark *testing.B) {
 		DensityRatio:  1,
 	}
 
-	benchmark.ReportAllocs()
+	b.ReportAllocs()
 
-	for benchmark.Loop() {
+	for b.Loop() {
 		_, _ = decay.Measure(input)
 	}
 }

@@ -146,8 +146,16 @@ func (book *Book) Imbalance(
 	toxicBid float64,
 	toxicAsk float64,
 ) float64 {
-	bidWeight := book.bids.SideWeight(mid, decayRate, touchOnly, flatDepth, book.tickSize)
-	askWeight := book.asks.SideWeight(mid, decayRate, touchOnly, flatDepth, book.tickSize)
+	bestBidTick, bidOK := book.bids.bestTick()
+	bestAskTick, askOK := book.asks.bestTick()
+
+	if mid <= 0 || !bidOK || !askOK || bestAskTick <= bestBidTick {
+		return 0
+	}
+
+	midTick := (float64(bestBidTick) + float64(bestAskTick)) / 2
+	bidWeight := book.bids.SideWeight(midTick, decayRate, touchOnly, flatDepth)
+	askWeight := book.asks.SideWeight(midTick, decayRate, touchOnly, flatDepth)
 
 	if toxicBid > 0 {
 		bidWeight *= 1 - toxicBid
@@ -269,11 +277,10 @@ func (sideBook *SideBook) Depth() float64 {
 }
 
 func (sideBook *SideBook) SideWeight(
-	mid float64,
+	midTick float64,
 	decayRate float64,
 	touchOnly bool,
 	flatDepth int,
-	tickSize float64,
 ) float64 {
 	if touchOnly {
 		return sideBook.TouchQty()
@@ -281,7 +288,7 @@ func (sideBook *SideBook) SideWeight(
 
 	weight := 0.0
 	remaining := flatDepth
-	ticks := sideBook.sortedTicks(mid, tickSize)
+	ticks := sideBook.sortedTicks(midTick)
 
 	for _, tick := range ticks {
 		if flatDepth > 0 {
@@ -292,8 +299,7 @@ func (sideBook *SideBook) SideWeight(
 			remaining--
 		}
 
-		price := TickPrice(tick, tickSize)
-		distance := math.Abs(price-mid) / mid
+		distance := math.Abs(float64(tick)-midTick) / midTick
 		kernel := math.Exp(-decayRate * distance)
 		qty, ok := sideBook.levels.Load(tick)
 
@@ -347,7 +353,7 @@ func (sideBook *SideBook) bestTick() (int64, bool) {
 	return bestTick, ok
 }
 
-func (sideBook *SideBook) sortedTicks(mid float64, tickSize float64) []int64 {
+func (sideBook *SideBook) sortedTicks(midTick float64) []int64 {
 	sideBook.ticks = sideBook.ticks[:0]
 
 	sideBook.levels.Range(func(key, value any) bool {
@@ -360,10 +366,8 @@ func (sideBook *SideBook) sortedTicks(mid float64, tickSize float64) []int64 {
 		cursor := sideBook.ticks[left]
 
 		for index := left - 1; index >= 0; index-- {
-			leftPrice := TickPrice(sideBook.ticks[index], tickSize)
-			cursorPrice := TickPrice(cursor, tickSize)
-			leftDistance := math.Abs(leftPrice - mid)
-			cursorDistance := math.Abs(cursorPrice - mid)
+			leftDistance := math.Abs(float64(sideBook.ticks[index]) - midTick)
+			cursorDistance := math.Abs(float64(cursor) - midTick)
 
 			if leftDistance <= cursorDistance {
 				break

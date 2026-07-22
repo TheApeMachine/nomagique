@@ -44,16 +44,22 @@ func DecayRate(mid, spread float64) float64 {
 	return 1 / relativeSpread
 }
 
+/*
+ToxicPenalty measures the share of recently cancelled touch liquidity that was
+not replaced on the same side of the atomic book update. Repricing an intact
+side therefore contributes no false toxicity, while an actual withdrawal is
+scaled against the liquidity still available at the touch.
+*/
 func ToxicPenalty(touchCancel, frameAdd, touchDepth float64) float64 {
-	if touchCancel <= 0 || frameAdd <= 0 {
+	unreplaced := math.Max(0, touchCancel-frameAdd)
+
+	if unreplaced == 0 {
 		return 0
 	}
 
-	churn := touchCancel / frameAdd
-
 	if touchDepth <= 0 {
-		return math.Min(1, churn)
+		return 1
 	}
 
-	return math.Min(1, churn*(touchCancel/touchDepth))
+	return unreplaced / (unreplaced + touchDepth)
 }

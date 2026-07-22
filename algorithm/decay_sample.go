@@ -70,10 +70,11 @@ func (decaySample *DecaySample) MeasureTrade(
 		))
 	}
 
-	if input.Price <= 0 || input.Quantity <= 0 {
+	if input.Price <= 0 || input.Quantity <= 0 ||
+		(input.Side != "buy" && input.Side != "sell") {
 		return equation.DecayInput{}, false, 0, errnie.Error(errnie.Err(
 			errnie.Validation,
-			"decay-sample: trade price and quantity required",
+			"decay-sample: trade price, quantity, and side required",
 			nil,
 		))
 	}
@@ -82,11 +83,16 @@ func (decaySample *DecaySample) MeasureTrade(
 	window.mu.Lock()
 	defer window.mu.Unlock()
 
-	window.ingestTrade(input)
+	if err := window.ingestTrade(input); err != nil {
+		return equation.DecayInput{}, false, 0, err
+	}
 
 	return window.features()
 }
 
+/*
+window returns the existing symbol window or atomically installs its first one.
+*/
 func (decaySample *DecaySample) window(symbol string) *decayWindow {
 	decaySample.mu.RLock()
 	existing, ok := decaySample.windows[symbol]

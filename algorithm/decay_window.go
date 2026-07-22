@@ -17,15 +17,9 @@ trend, spread deviation, pressure fade, and imbalance flip are each backed
 by an adaptive nomagique primitive, so every quantity is defined from its
 first observation instead of gating on a minimum sample count.
 
-Depth and spread tracking use adaptive.Variance rather than a
-history-array-backed primitive (such as statistic.MeanMedianRatio or
-statistic.RollingZScore): those retain their whole per-series history and
-recompute over it on every tick, so an indefinitely long single series —
-one book tick per update, for the life of a live symbol — grows that
-history and its per-tick cost without bound. adaptive.Variance derives its
-own update rate from the series' own observed range, giving O(1) space and
-time with no history array and no externally chosen decay constant.
-statistic.Max/Min/Mean are already O(1) themselves and need no such swap.
+Depth and spread tracking use adaptive.Variance rather than retained history
+arrays. Its online mean and variance keep O(1) space and time without an
+externally chosen window. statistic.Max, Min, and Mean are also O(1).
 */
 type decayWindow struct {
 	book               *flow.Book
@@ -45,6 +39,9 @@ type decayWindow struct {
 	mu                 sync.Mutex
 }
 
+/*
+newDecayWindow constructs one symbol-local set of online statistics.
+*/
 func newDecayWindow() *decayWindow {
 	return &decayWindow{
 		book:             flow.NewBook(),
@@ -58,6 +55,10 @@ func newDecayWindow() *decayWindow {
 	}
 }
 
+/*
+ingestBook reconstructs the symbol book and records one lattice-normalized
+microstructure observation.
+*/
 func (window *decayWindow) ingestBook(input flow.BookInput) error {
 	if err := window.book.Configure(input); err != nil {
 		return err
@@ -75,7 +76,19 @@ func (window *decayWindow) ingestBook(input flow.BookInput) error {
 	spread := window.book.Spread()
 
 	if mid <= 0 || spread <= 0 {
-		return nil
+		return decayWindowErr("positive book midpoint and spread required", nil)
+	}
+
+	// Quotes occupy the venue tick lattice, so their midpoint occupies its
+	// half-tick lattice and their spread occupies whole ticks. Normalize before
+	// differencing so binary float residue cannot become decay evidence.
+	mid = math.Round(2*mid/input.TickSize) * input.TickSize / 2
+	spread = math.Round(spread/input.TickSize) * input.TickSize
+
+	priceReturn := 0.0
+
+	if window.lastPrice > 0 {
+		priceReturn = math.Log(mid / window.lastPrice)
 	}
 
 	window.lastPrice = mid
@@ -84,10 +97,14 @@ func (window *decayWindow) ingestBook(input flow.BookInput) error {
 	decayRate := flow.DecayRate(mid, spread)
 	imbalance := window.book.Imbalance(mid, decayRate, false, 0, 0, 0)
 
-	return window.observe(bidDepth, askDepth, spread, imbalance)
+	return window.observe(bidDepth, askDepth, spread, imbalance, priceReturn)
 }
 
-func (window *decayWindow) ingestTrade(input flow.TradeInput) {
+/*
+ingestTrade incorporates aggressor notional immediately so a trade event never
+re-emits stale pressure while waiting for another book update.
+*/
+func (window *decayWindow) ingestTrade(input flow.TradeInput) error {
 	notional := input.Price * input.Quantity
 	signedNotional := notional
 
@@ -103,17 +120,31 @@ func (window *decayWindow) ingestTrade(input flow.TradeInput) {
 	}
 
 	window.tradePressure += smoothing * (signedNotional - window.tradePressure)
+	pressurePeak, pressureTrough, err := window.observePressure()
+
+	if err != nil {
+		return err
+	}
+
+	window.lastFeatures.PriceReturn = 0
+	window.lastFeatures.Pressure = window.tradePressure
+	window.lastFeatures.PressurePeak = pressurePeak
+	window.lastFeatures.PressureTrough = pressureTrough
 
 	if window.lastPrice <= 0 {
 		window.lastPrice = input.Price
 	}
+
+	return nil
 }
 
 /*
 observe feeds one new book-derived reading into every adaptive statistic
 and refreshes the window's cached feature snapshot.
 */
-func (window *decayWindow) observe(bidDepth, askDepth, spread, imbalance float64) error {
+func (window *decayWindow) observe(
+	bidDepth, askDepth, spread, imbalance, priceReturn float64,
+) error {
 	bidRatio, err := window.ratio(window.bidDepthVariance, bidDepth, "bid depth ratio")
 
 	if err != nil {
@@ -138,12 +169,6 @@ func (window *decayWindow) observe(bidDepth, askDepth, spread, imbalance float64
 		return err
 	}
 
-	pressurePeak, pressureTrough, err := window.observePressure()
-
-	if err != nil {
-		return err
-	}
-
 	priorImbalanceMean, err := window.observeImbalance(imbalance)
 
 	if err != nil {
@@ -152,13 +177,14 @@ func (window *decayWindow) observe(bidDepth, askDepth, spread, imbalance float64
 
 	window.observations++
 	window.lastFeatures = equation.DecayInput{
+		PriceReturn:        priceReturn,
 		BidDepthRatio:      bidRatio,
 		AskDepthRatio:      askRatio,
 		DensityRatio:       densityRatio,
 		SpreadDeviation:    spreadDeviation,
 		Pressure:           window.tradePressure,
-		PressurePeak:       pressurePeak,
-		PressureTrough:     pressureTrough,
+		PressurePeak:       window.lastFeatures.PressurePeak,
+		PressureTrough:     window.lastFeatures.PressureTrough,
 		Imbalance:          imbalance,
 		PriorImbalanceMean: priorImbalanceMean,
 	}
@@ -180,7 +206,7 @@ func (window *decayWindow) ratio(
 	}
 
 	if output.Mean <= 0 {
-		return 0, nil
+		return 0, decayWindowErr(what+" baseline must be positive", nil)
 	}
 
 	return sample / output.Mean, nil
@@ -213,6 +239,9 @@ func (window *decayWindow) deviation(spread float64) (float64, error) {
 	return (spread - output.Mean) / math.Sqrt(output.Value), nil
 }
 
+/*
+observePressure updates the directional extrema used to measure later fade.
+*/
 func (window *decayWindow) observePressure() (peak, trough float64, err error) {
 	peakOutput, err := window.pressurePeak.Measure(window.tradePressure)
 
@@ -247,8 +276,12 @@ func (window *decayWindow) observeImbalance(imbalance float64) (float64, error) 
 	return priorMean, nil
 }
 
+/*
+features returns a scoreable input only after a book established all depth
+ratios; trade prices alone cannot stand in for missing microstructure.
+*/
 func (window *decayWindow) features() (equation.DecayInput, bool, float64, error) {
-	if window.lastPrice <= 0 {
+	if window.lastPrice <= 0 || window.observations == 0 {
 		return equation.DecayInput{}, false, 0, nil
 	}
 
@@ -271,6 +304,9 @@ func (window *decayWindow) maturity() float64 {
 	return observations / (observations + 1)
 }
 
+/*
+decayWindowErr gives every online-statistic failure its feature context.
+*/
 func decayWindowErr(what string, err error) error {
 	return errnie.Error(errnie.Err(
 		errnie.Validation,

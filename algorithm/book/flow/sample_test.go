@@ -8,9 +8,25 @@ import (
 	"github.com/theapemachine/nomagique/probability"
 )
 
+// sampleTestHistoryCapacity retains the longest six-frame fixture without
+// eviction so each case controls exactly which observations reach the sampler.
+const sampleTestHistoryCapacity = 6
+
+func TestNewSample(testingTB *testing.T) {
+	Convey("Given no retained-history capacity", testingTB, func() {
+		sample, err := NewSample(0)
+
+		Convey("It should reject construction instead of installing a hidden window", func() {
+			So(err, ShouldNotBeNil)
+			So(sample, ShouldBeNil)
+		})
+	})
+}
+
 func TestBookflowSample_MeasureBook(testingTB *testing.T) {
 	Convey("Given repeated bid-heavy book frames", testingTB, func() {
-		sample := NewSample()
+		sample, err := NewSample(sampleTestHistoryCapacity)
+		So(err, ShouldBeNil)
 		bookflow := equation.NewBookflow()
 		classifier := probability.NewScoreClassifier(
 			[]string{"loadedScore", "spoofScore", "thinScore", "neutralScore"},
@@ -18,16 +34,16 @@ func TestBookflowSample_MeasureBook(testingTB *testing.T) {
 		)
 
 		var (
-			input equation.BookflowInput
-			ok    bool
-			err   error
+			input      equation.BookflowInput
+			ok         bool
+			measureErr error
 		)
 
 		for range 6 {
-			input, ok, _, err = sample.MeasureBook(bookflowBookInput())
+			input, ok, _, measureErr = sample.MeasureBook(bookflowBookInput())
 		}
 
-		So(err, ShouldBeNil)
+		So(measureErr, ShouldBeNil)
 
 		output, err := bookflow.Measure(input)
 		So(err, ShouldBeNil)
@@ -50,7 +66,8 @@ func TestBookflowSample_MeasureBook(testingTB *testing.T) {
 	})
 
 	Convey("Given a valid first book frame before feature history is ready", testingTB, func() {
-		sample := NewSample()
+		sample, constructErr := NewSample(sampleTestHistoryCapacity)
+		So(constructErr, ShouldBeNil)
 		input, ok, _, err := sample.MeasureBook(bookflowBookInput())
 
 		Convey("It should publish a feature sample from the first valid book frame", func() {
@@ -62,7 +79,8 @@ func TestBookflowSample_MeasureBook(testingTB *testing.T) {
 	})
 
 	Convey("Given repeated prices that resolve to the same exchange tick", testingTB, func() {
-		sample := NewSample()
+		sample, constructErr := NewSample(sampleTestHistoryCapacity)
+		So(constructErr, ShouldBeNil)
 		price := 100.1
 		tickSize := 0.1
 
@@ -101,7 +119,8 @@ func TestBookflowSample_MeasureBook(testingTB *testing.T) {
 	})
 
 	Convey("Given a book frame without symbol", testingTB, func() {
-		sample := NewSample()
+		sample, constructErr := NewSample(sampleTestHistoryCapacity)
+		So(constructErr, ShouldBeNil)
 		_, _, _, err := sample.MeasureBook(BookInput{
 			Bids: []BookLevel{{Price: 100, Quantity: 10}},
 			Asks: []BookLevel{{Price: 101, Quantity: 10}},
@@ -115,7 +134,8 @@ func TestBookflowSample_MeasureBook(testingTB *testing.T) {
 
 func TestBookflowSample_MeasureTrade(testingTB *testing.T) {
 	Convey("Given trade pressure after book state", testingTB, func() {
-		sample := NewSample()
+		sample, constructErr := NewSample(sampleTestHistoryCapacity)
+		So(constructErr, ShouldBeNil)
 		_, _, _, err := sample.MeasureBook(bookflowBookInput())
 		So(err, ShouldBeNil)
 
@@ -135,7 +155,12 @@ func TestBookflowSample_MeasureTrade(testingTB *testing.T) {
 }
 
 func BenchmarkBookflowSampleMeasureBook(benchmark *testing.B) {
-	sample := NewSample()
+	sample, err := NewSample(sampleTestHistoryCapacity)
+
+	if err != nil {
+		benchmark.Fatal(err)
+	}
+
 	input := bookflowBookInput()
 
 	benchmark.ReportAllocs()

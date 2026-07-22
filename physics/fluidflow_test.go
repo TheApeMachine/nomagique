@@ -68,6 +68,19 @@ func TestFlow_Measure(testingTB *testing.T) {
 			So(output.LaminarScore, ShouldEqual, 1)
 		})
 	})
+
+	Convey("Given viscosity and divergence above their empirical baselines", testingTB, func() {
+		flow := physics.NewFlow()
+		output, err := flow.Measure(flowInput(
+			0.5, 0.2, 4, 2, 4, 0.05, 2, 0, 0, 0, 0,
+		))
+
+		So(err, ShouldBeNil)
+
+		Convey("It should measure viscous resistance from increased viscosity", func() {
+			So(output.ViscousScore, ShouldEqual, 1)
+		})
+	})
 }
 
 func BenchmarkFlowMeasure(benchmark *testing.B) {

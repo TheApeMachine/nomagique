@@ -7,6 +7,32 @@ import (
 	"github.com/theapemachine/nomagique/equation"
 )
 
+func TestBook_Imbalance(testingTB *testing.T) {
+	Convey("Given symmetric depth on a high-resolution integer price lattice", testingTB, func() {
+		book := NewBook()
+		tickSize := 0.00000001
+		midTick := int64(10_000_000_000)
+		So(book.Configure(BookInput{TickSize: tickSize}), ShouldBeNil)
+		_, err := book.ApplyLevels([]BookLevel{
+			{Price: TickPrice(midTick-1, tickSize), Ticks: midTick - 1, Quantity: 5},
+			{Price: TickPrice(midTick-2, tickSize), Ticks: midTick - 2, Quantity: 3},
+		}, SideBid)
+		So(err, ShouldBeNil)
+		_, err = book.ApplyLevels([]BookLevel{
+			{Price: TickPrice(midTick+1, tickSize), Ticks: midTick + 1, Quantity: 5},
+			{Price: TickPrice(midTick+2, tickSize), Ticks: midTick + 2, Quantity: 3},
+		}, SideAsk)
+		So(err, ShouldBeNil)
+
+		Convey("It should preserve exact balance instead of fabricating float skew", func() {
+			mid := TickPrice(midTick, tickSize)
+			spread := 2 * tickSize
+			So(book.Imbalance(mid, DecayRate(mid, spread), false, 0, 0, 0),
+				ShouldEqual, 0)
+		})
+	})
+}
+
 func TestBookflowMeasure(testingTB *testing.T) {
 	Convey("Given a bid-heavy book snapshot", testingTB, func() {
 		bookflow := equation.NewBookflow()

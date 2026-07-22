@@ -8,16 +8,13 @@ import (
 	"github.com/theapemachine/nomagique/utils"
 )
 
-const (
-	SampleHistoryCap = 64
-)
-
 /*
 Sample accumulates book and trade frames into the feature batch expects.
 Decay rate and history windows are derived from observed spread and imbalance history.
 */
 type Sample struct {
-	windows *sync.Map
+	windows         *sync.Map
+	historyCapacity int
 }
 
 /*
@@ -68,12 +65,22 @@ type Window struct {
 }
 
 /*
-NewSample returns a book/trade sampler for depth-flow classification.
+NewSample returns a book/trade sampler whose retained observation capacity is
+supplied by the composition root rather than hidden in the classifier.
 */
-func NewSample() *Sample {
-	return &Sample{
-		windows: &sync.Map{},
+func NewSample(historyCapacity int) (*Sample, error) {
+	if historyCapacity <= 0 {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"-sample: positive history capacity required",
+			nil,
+		))
 	}
+
+	return &Sample{
+		windows:         &sync.Map{},
+		historyCapacity: historyCapacity,
+	}, nil
 }
 
 /*
@@ -209,8 +216,16 @@ func (s *Sample) ingestBook(
 	window.touchDepth = touchDepth
 	window.flatOK = 1
 	window.observations++
-	window.weightedHist = utils.AppendRingFloat(window.weightedHist, weighted, SampleHistoryCap)
-	window.level1Hist = utils.AppendRingFloat(window.level1Hist, level1, SampleHistoryCap)
+	window.weightedHist = utils.AppendRingFloat(
+		window.weightedHist,
+		weighted,
+		s.historyCapacity,
+	)
+	window.level1Hist = utils.AppendRingFloat(
+		window.level1Hist,
+		level1,
+		s.historyCapacity,
+	)
 
 	if err != nil {
 		return errnie.Error(errnie.Err(
@@ -225,7 +240,11 @@ func (s *Sample) ingestBook(
 	}
 
 	flat := window.book.Imbalance(mid, decayRate, false, flatDepth, toxicBid, toxicAsk)
-	window.flatHist = utils.AppendRingFloat(window.flatHist, flat, SampleHistoryCap)
+	window.flatHist = utils.AppendRingFloat(
+		window.flatHist,
+		flat,
+		s.historyCapacity,
+	)
 
 	return nil
 }

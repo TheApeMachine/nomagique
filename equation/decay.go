@@ -14,22 +14,26 @@ type Decay struct{}
 
 /*
 DecayInput carries pre-computed, per-tick microstructure decay ingredients.
-Every field is produced by an adaptive nomagique/statistic primitive that is
-already well-defined from its first observation, so there are no raw
-histories and no per-metric sample-count floors here.
+Every ratio and deviation is scaled against the symbol's own accumulated
+history, while price rejection joins pressure fade on the current observation.
 */
 type DecayInput struct {
 	LastPrice float64
 
-	// BidDepthRatio, AskDepthRatio, and DensityRatio are short-window mean
-	// over long-window median depth ratios (statistic.MeanMedianRatio). A
-	// ratio below 1 means recent depth sits below its own baseline.
+	// PriceReturn is the latest book-mid log return. Thermal exhaustion
+	// requires this price move to reject the held side; pressure fade alone
+	// cannot establish that an advancing position is actually exhausting.
+	PriceReturn float64
+
+	// BidDepthRatio, AskDepthRatio, and DensityRatio are the current depth
+	// divided by that series' accumulated mean. A ratio below 1 means the
+	// current book sits below its own observed baseline.
 	BidDepthRatio float64
 	AskDepthRatio float64
 	DensityRatio  float64
 
-	// SpreadDeviation is the current spread's rolling z-score against its
-	// own history (statistic.RollingZScore). Positive means wider than typical.
+	// SpreadDeviation is the current spread's standardized deviation from its
+	// accumulated mean. Positive means wider than the symbol's observed norm.
 	SpreadDeviation float64
 
 	// Pressure is the current smoothed trade pressure. PressurePeak and
@@ -49,9 +53,11 @@ type DecayInput struct {
 }
 
 /*
-DecayOutput contains the float-only decay scores.
+DecaySideOutput contains one held side's float-only decay scores. Long scores
+describe evidence for exiting a bought position; short scores describe evidence
+for exiting a sold position.
 */
-type DecayOutput struct {
+type DecaySideOutput struct {
 	Value      float64
 	Strength   float64
 	Mechanical float64
@@ -60,6 +66,15 @@ type DecayOutput struct {
 	Reversal   float64
 	Urgency    float64
 	Category   float64
+}
+
+/*
+DecayOutput preserves both hypothetical position sides so a market-wide signal
+does not discard one side before the consumer identifies its actual position.
+*/
+type DecayOutput struct {
+	Long  DecaySideOutput
+	Short DecaySideOutput
 }
 
 /*
@@ -73,78 +88,91 @@ func NewDecay() *Decay {
 Measure calculates decay scores from pre-computed microstructure scalars.
 */
 func (decay *Decay) Measure(input DecayInput) (DecayOutput, error) {
-	if input.LastPrice <= 0 {
+	values := []float64{
+		input.LastPrice,
+		input.PriceReturn,
+		input.BidDepthRatio,
+		input.AskDepthRatio,
+		input.DensityRatio,
+		input.SpreadDeviation,
+		input.Pressure,
+		input.PressurePeak,
+		input.PressureTrough,
+		input.Imbalance,
+		input.PriorImbalanceMean,
+	}
+
+	for _, value := range values {
+		if math.IsNaN(value) || math.IsInf(value, 0) {
+			return DecayOutput{}, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"decay: every input must be finite",
+				nil,
+			))
+		}
+	}
+
+	if input.LastPrice <= 0 || input.BidDepthRatio <= 0 ||
+		input.AskDepthRatio <= 0 || input.DensityRatio <= 0 {
 		return DecayOutput{}, errnie.Error(errnie.Err(
 			errnie.Validation,
-			"decay: last price must be positive",
+			"decay: price and depth ratios must be positive",
 			nil,
 		))
 	}
 
-	longOutcome, err := decay.exitSide(input, 1)
+	longOutcome, err := decay.exitSide(input, decayLong)
 
 	if err != nil {
 		return DecayOutput{}, err
 	}
 
-	shortOutcome, err := decay.exitSide(input, -1)
+	shortOutcome, err := decay.exitSide(input, decayShort)
 
 	if err != nil {
 		return DecayOutput{}, err
-	}
-
-	mechanical := longOutcome.mechanical
-	fragile := longOutcome.fragile
-	thermal := longOutcome.thermal
-	reversal := longOutcome.reversal
-	urgency := longOutcome.urgency
-	category := longOutcome.category
-
-	if shortOutcome.urgency > urgency {
-		mechanical = shortOutcome.mechanical
-		fragile = shortOutcome.fragile
-		thermal = shortOutcome.thermal
-		reversal = shortOutcome.reversal
-		urgency = shortOutcome.urgency
-		category = shortOutcome.category
 	}
 
 	return DecayOutput{
-		Value:      urgency,
-		Strength:   urgency,
-		Mechanical: mechanical,
-		Fragile:    fragile,
-		Thermal:    thermal,
-		Reversal:   reversal,
-		Urgency:    urgency,
-		Category:   float64(category),
+		Long:  longOutcome,
+		Short: shortOutcome,
 	}, nil
 }
 
-type decaySideOutcome struct {
-	mechanical float64
-	fragile    float64
-	thermal    float64
-	reversal   float64
-	urgency    float64
-	category   int
-}
+/*
+decaySide identifies which held position the equation is evaluating without
+leaking an application-specific order-side type into nomagique.
+*/
+type decaySide int
 
-func (decay *Decay) exitSide(input DecayInput, side int) (decaySideOutcome, error) {
+const (
+	decayShort decaySide = -1
+	decayLong  decaySide = 1
+)
+
+/*
+exitSide scores the depth, spread, pressure, and imbalance evidence that is
+adverse to one held side.
+*/
+func (decay *Decay) exitSide(
+	input DecayInput, side decaySide,
+) (DecaySideOutput, error) {
 	thinning := 0.0
 	fade := 0.0
 	flip := 0.0
 
-	if side > 0 {
+	if side == decayLong {
 		thinning = ratioDecline(input.BidDepthRatio)
-		fade = pressureFade(input.Pressure, input.PressurePeak, 1)
-		flip = imbalanceFlip(input.Imbalance, input.PriorImbalanceMean, 1)
+		fade = pressureFade(input.Pressure, input.PressurePeak, decayLong) *
+			priceRejection(input.PriceReturn, side)
+		flip = imbalanceFlip(input.Imbalance, input.PriorImbalanceMean, decayLong)
 	}
 
-	if side < 0 {
+	if side == decayShort {
 		thinning = ratioDecline(input.AskDepthRatio)
-		fade = pressureFade(input.Pressure, input.PressureTrough, -1)
-		flip = imbalanceFlip(input.Imbalance, input.PriorImbalanceMean, -1)
+		fade = pressureFade(input.Pressure, input.PressureTrough, decayShort) *
+			priceRejection(input.PriceReturn, side)
+		flip = imbalanceFlip(input.Imbalance, input.PriorImbalanceMean, decayShort)
 	}
 
 	widen := math.Max(0, input.SpreadDeviation)
@@ -160,7 +188,7 @@ func (decay *Decay) exitSide(input DecayInput, side int) (decaySideOutcome, erro
 		thinningScore, err = probability.MagnitudeMargin(thinning)
 
 		if err != nil {
-			return decaySideOutcome{}, errnie.Error(errnie.Err(
+			return DecaySideOutput{}, errnie.Error(errnie.Err(
 				errnie.Validation,
 				"equation decay: thinning margin failed",
 				err,
@@ -172,7 +200,7 @@ func (decay *Decay) exitSide(input DecayInput, side int) (decaySideOutcome, erro
 		collapseScore, err = probability.MagnitudeMargin(collapse)
 
 		if err != nil {
-			return decaySideOutcome{}, errnie.Error(errnie.Err(
+			return DecaySideOutput{}, errnie.Error(errnie.Err(
 				errnie.Validation,
 				"equation decay: collapse margin failed",
 				err,
@@ -184,7 +212,7 @@ func (decay *Decay) exitSide(input DecayInput, side int) (decaySideOutcome, erro
 		fragileScore, err = probability.MagnitudeMargin(widen)
 
 		if err != nil {
-			return decaySideOutcome{}, errnie.Error(errnie.Err(
+			return DecaySideOutput{}, errnie.Error(errnie.Err(
 				errnie.Validation,
 				"equation decay: spread margin failed",
 				err,
@@ -196,7 +224,7 @@ func (decay *Decay) exitSide(input DecayInput, side int) (decaySideOutcome, erro
 		thermalScore, err = probability.MagnitudeMargin(fade)
 
 		if err != nil {
-			return decaySideOutcome{}, errnie.Error(errnie.Err(
+			return DecaySideOutput{}, errnie.Error(errnie.Err(
 				errnie.Validation,
 				"equation decay: pressure margin failed",
 				err,
@@ -208,7 +236,7 @@ func (decay *Decay) exitSide(input DecayInput, side int) (decaySideOutcome, erro
 		reversalScore, err = probability.MagnitudeMargin(flip)
 
 		if err != nil {
-			return decaySideOutcome{}, errnie.Error(errnie.Err(
+			return DecaySideOutput{}, errnie.Error(errnie.Err(
 				errnie.Validation,
 				"equation decay: imbalance margin failed",
 				err,
@@ -228,7 +256,7 @@ func (decay *Decay) exitSide(input DecayInput, side int) (decaySideOutcome, erro
 	fusionWeights, err := probability.SoftmaxScoresNormalized(margins)
 
 	if err != nil {
-		return decaySideOutcome{}, errnie.Error(errnie.Err(
+		return DecaySideOutput{}, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"equation decay: softmax fusion failed",
 			err,
@@ -243,19 +271,21 @@ func (decay *Decay) exitSide(input DecayInput, side int) (decaySideOutcome, erro
 
 	category := classifyDecay(mechanicalScore, fragileScore, thermalScore, reversalScore)
 
-	return decaySideOutcome{
-		mechanical: margins[0],
-		fragile:    margins[1],
-		thermal:    margins[2],
-		reversal:   margins[3],
-		urgency:    urgency,
-		category:   category,
+	return DecaySideOutput{
+		Value:      urgency,
+		Strength:   urgency,
+		Mechanical: margins[0],
+		Fragile:    margins[1],
+		Thermal:    margins[2],
+		Reversal:   margins[3],
+		Urgency:    urgency,
+		Category:   float64(category),
 	}, nil
 }
 
 /*
-ratioDecline turns a short-over-long ratio into a decline fraction. A ratio
-at or above 1 means recent activity is not below its own baseline, so there
+ratioDecline turns a current-over-baseline ratio into a decline fraction. A
+ratio at or above 1 means current depth is not below its own baseline, so there
 is nothing to report.
 */
 func ratioDecline(ratio float64) float64 {
@@ -271,8 +301,8 @@ pressureFade compares the current pressure reading to the running extremum
 (peak for the long side, trough for the short side) computed including this
 tick. A tick that sets a new extreme is, by construction, not faded from it.
 */
-func pressureFade(pressure, extremum float64, side int) float64 {
-	if side > 0 {
+func pressureFade(pressure, extremum float64, side decaySide) float64 {
+	if side == decayLong {
 		if extremum <= 0 || pressure >= extremum {
 			return 0
 		}
@@ -288,16 +318,29 @@ func pressureFade(pressure, extremum float64, side int) float64 {
 }
 
 /*
+priceRejection returns the adverse log-return magnitude for a held position.
+A long is rejected only by a negative move, while a short is rejected only by
+a positive move.
+*/
+func priceRejection(priceReturn float64, side decaySide) float64 {
+	if side == decayLong {
+		return math.Max(0, -priceReturn)
+	}
+
+	return math.Max(0, priceReturn)
+}
+
+/*
 imbalanceFlip reports how far the current imbalance has crossed against a
 prior mean that supported the opposite side. It is zero unless the prior
 mean actually favored this side and the current reading has flipped sign.
 */
-func imbalanceFlip(current, priorMean float64, side int) float64 {
-	if side > 0 && priorMean > 0 && current < 0 {
+func imbalanceFlip(current, priorMean float64, side decaySide) float64 {
+	if side == decayLong && priorMean > 0 && current < 0 {
 		return math.Abs(current) / priorMean
 	}
 
-	if side < 0 && priorMean < 0 && current > 0 {
+	if side == decayShort && priorMean < 0 && current > 0 {
 		return current / math.Abs(priorMean)
 	}
 

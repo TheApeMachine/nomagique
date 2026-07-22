@@ -24,11 +24,13 @@ func TestTradeFlowSample_Measure(testingTB *testing.T) {
 		)
 
 		for index := range 30 {
+			price := 100 + float64(index)*0.01
 			input, ok, _, err = sample.Measure(TradeFlowInput{
-				Symbol:   "BTC/USD",
-				Side:     "buy",
-				Price:    100 + float64(index)*0.01,
-				Quantity: 1,
+				Symbol:        "BTC/USD",
+				Side:          "buy",
+				Price:         price,
+				ResponsePrice: price,
+				Quantity:      1,
 			})
 		}
 
@@ -57,9 +59,10 @@ func TestTradeFlowSample_Measure(testingTB *testing.T) {
 	Convey("Given a trade without a symbol", testingTB, func() {
 		sample := NewTradeFlowSample()
 		_, _, _, err := sample.Measure(TradeFlowInput{
-			Side:     "buy",
-			Price:    100,
-			Quantity: 1,
+			Side:          "buy",
+			Price:         100,
+			ResponsePrice: 100,
+			Quantity:      1,
 		})
 
 		Convey("It should return a validation error", func() {
@@ -70,10 +73,11 @@ func TestTradeFlowSample_Measure(testingTB *testing.T) {
 	Convey("Given a single valid trade", testingTB, func() {
 		sample := NewTradeFlowSample()
 		input, ok, _, err := sample.Measure(TradeFlowInput{
-			Symbol:   "BTC/USD",
-			Side:     "buy",
-			Price:    100,
-			Quantity: 1,
+			Symbol:        "BTC/USD",
+			Side:          "buy",
+			Price:         100,
+			ResponsePrice: 100,
+			Quantity:      1,
 		})
 
 		Convey("It should publish a feature sample from the first valid trade", func() {
@@ -90,11 +94,13 @@ func TestTradeFlowSample_Measure(testingTB *testing.T) {
 		var err error
 
 		for index := range 4 {
+			price := 100 + float64(index)
 			input, ok, _, err = sample.Measure(TradeFlowInput{
-				Symbol:   "BTC/USD",
-				Side:     "buy",
-				Price:    100 + float64(index),
-				Quantity: 1,
+				Symbol:        "BTC/USD",
+				Side:          "buy",
+				Price:         price,
+				ResponsePrice: price,
+				Quantity:      1,
 			})
 		}
 
@@ -109,6 +115,74 @@ func TestTradeFlowSample_Measure(testingTB *testing.T) {
 			So(output.Drive, ShouldBeGreaterThan, 0)
 		})
 	})
+
+	Convey("Given rising executions around a stationary midpoint", testingTB, func() {
+		sample := NewTradeFlowSample()
+		var input equation.FlowInput
+
+		for index := range 8 {
+			var err error
+			input, _, _, err = sample.Measure(TradeFlowInput{
+				Symbol:        "BTC/USD",
+				Side:          "buy",
+				Price:         100 + float64(index),
+				ResponsePrice: 100,
+				Quantity:      1,
+			})
+			So(err, ShouldBeNil)
+		}
+
+		flow := equation.NewFlow()
+		output, err := flow.Measure(input)
+
+		Convey("It should measure absorption instead of execution-price drive", func() {
+			So(err, ShouldBeNil)
+			So(output.Absorption, ShouldBeGreaterThan, 0)
+			So(output.Drive, ShouldEqual, 0.0)
+		})
+	})
+
+	Convey("Given ordinary flow below its empirical median", testingTB, func() {
+		sample := NewTradeFlowSample()
+		var input equation.FlowInput
+
+		for index := range 40 {
+			quantity := 12 + float64(index%7)
+
+			if index >= 32 {
+				quantity = 10 + float64(index-32)/5
+			}
+
+			side := "buy"
+
+			if index%2 != 0 {
+				side = "sell"
+			}
+
+			var err error
+			input, _, _, err = sample.Measure(TradeFlowInput{
+				Symbol:        "BTC/USD",
+				Side:          side,
+				Price:         100,
+				ResponsePrice: 100,
+				Quantity:      quantity,
+			})
+			So(err, ShouldBeNil)
+		}
+
+		gross := input.BuyNotional + input.SellNotional
+		flow := equation.NewFlow()
+		output, err := flow.Measure(input)
+
+		Convey("It should retain balance inside the observed dispersion", func() {
+			So(err, ShouldBeNil)
+			So(gross, ShouldBeLessThan,
+				input.MedianNotional*float64(input.TradeCount))
+			So(gross, ShouldBeGreaterThanOrEqualTo, input.GrossFloor)
+			So(output.Balance, ShouldBeGreaterThan, 0)
+			So(output.Starvation, ShouldEqual, 0.0)
+		})
+	})
 }
 
 func BenchmarkTradeFlowSampleMeasure(benchmark *testing.B) {
@@ -118,10 +192,11 @@ func BenchmarkTradeFlowSampleMeasure(benchmark *testing.B) {
 
 	for benchmark.Loop() {
 		_, _, _, _ = sample.Measure(TradeFlowInput{
-			Symbol:   "BTC/USD",
-			Side:     "buy",
-			Price:    100,
-			Quantity: 1,
+			Symbol:        "BTC/USD",
+			Side:          "buy",
+			Price:         100,
+			ResponsePrice: 100,
+			Quantity:      1,
 		})
 	}
 }

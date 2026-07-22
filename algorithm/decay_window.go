@@ -75,8 +75,10 @@ func (window *decayWindow) ingestBook(input flow.BookInput) error {
 	mid := window.book.Mid()
 	spread := window.book.Spread()
 
+	// Crossed or one-sided venues do not establish decay microstructure. Leave
+	// the feature cache untouched; MeasureBook reports not-ready for this cut.
 	if mid <= 0 || spread <= 0 {
-		return decayWindowErr("positive book midpoint and spread required", nil)
+		return nil
 	}
 
 	// Quotes occupy the venue tick lattice, so their midpoint occupies its

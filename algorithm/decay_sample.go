@@ -51,6 +51,12 @@ func (decaySample *DecaySample) MeasureBook(
 		return equation.DecayInput{}, false, 0, err
 	}
 
+	// After applying levels, a crossed/empty book must not re-emit the prior
+	// feature snapshot as if this frame established new microstructure.
+	if window.book.Mid() <= 0 || window.book.Spread() <= 0 {
+		return equation.DecayInput{}, false, 0, nil
+	}
+
 	return window.features()
 }
 

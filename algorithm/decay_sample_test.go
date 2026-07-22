@@ -90,6 +90,27 @@ func TestDecaySample_MeasureBook(t *testing.T) {
 			So(err, ShouldNotBeNil)
 		})
 	})
+
+	Convey("Given a crossed book after a valid observation", t, func() {
+		sample := NewDecaySample()
+		_, ready, _, err := sample.MeasureBook(decayBookInput(10, 10))
+		So(err, ShouldBeNil)
+		So(ready, ShouldBeTrue)
+
+		input, ready, maturity, err := sample.MeasureBook(flow.BookInput{
+			Symbol:   "BTC/USD",
+			TickSize: 1,
+			Bids:     []flow.BookLevel{{Price: 101, Ticks: 101, Quantity: 10}},
+			Asks:     []flow.BookLevel{{Price: 100, Ticks: 100, Quantity: 10}},
+		})
+
+		Convey("It should stay not-ready without inventing features or failing", func() {
+			So(err, ShouldBeNil)
+			So(ready, ShouldBeFalse)
+			So(maturity, ShouldEqual, 0)
+			So(input, ShouldResemble, equation.DecayInput{})
+		})
+	})
 }
 
 /*

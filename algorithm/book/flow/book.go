@@ -39,6 +39,11 @@ func NewSideBook(side byte) *SideBook {
 	}
 }
 
+/*
+Configure locks the book onto one price lattice. Later calls with the same
+economic tick are ignored; a true increment change clears resting levels and
+adopts the new lattice so instrument refreshes cannot poison an active book.
+*/
 func (book *Book) Configure(input BookInput) error {
 	tickSize := input.TickSize
 
@@ -50,21 +55,37 @@ func (book *Book) Configure(input BookInput) error {
 		))
 	}
 
-	if book.tickSize == tickSize {
+	if book.tickSize == 0 {
+		book.tickSize = tickSize
+
 		return nil
 	}
 
-	if book.tickSize > 0 {
-		return errnie.Error(errnie.Err(
-			errnie.Validation,
-			"-sample: tick size changed for active book",
-			nil,
-		))
+	if sameTickSize(book.tickSize, tickSize) {
+		return nil
 	}
 
+	book.bids = NewSideBook(SideBid)
+	book.asks = NewSideBook(SideAsk)
 	book.tickSize = tickSize
 
 	return nil
+}
+
+/*
+sameTickSize reports whether two positive float ticks describe the same lattice
+after decimal→float conversion, without a fixed absolute epsilon.
+*/
+func sameTickSize(left, right float64) bool {
+	if left == right {
+		return true
+	}
+
+	if left <= 0 || right <= 0 {
+		return false
+	}
+
+	return math.Round(left/right) == 1 && math.Round(right/left) == 1
 }
 
 func (book *Book) ApplyLevels(

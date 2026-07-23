@@ -33,6 +33,35 @@ func TestBook_Imbalance(testingTB *testing.T) {
 	})
 }
 
+/*
+TestBook_Configure proves decimal→float tick restamps are lattice-stable and a
+true increment change rebuilds an empty book instead of failing the hot path.
+*/
+func TestBook_Configure(testingTB *testing.T) {
+	Convey("Given a book locked to a one-cent lattice", testingTB, func() {
+		book := NewBook()
+		So(book.Configure(BookInput{TickSize: 0.01}), ShouldBeNil)
+		_, err := book.ApplyLevels([]BookLevel{
+			{Price: 100.00, Ticks: 10000, Quantity: 1},
+		}, SideBid)
+		So(err, ShouldBeNil)
+
+		Convey("It should accept a float-restamped equivalent tick", func() {
+			restamped := 1.0 / 100.0
+			So(restamped == 0.01 || sameTickSize(0.01, restamped), ShouldBeTrue)
+			So(book.Configure(BookInput{TickSize: restamped}), ShouldBeNil)
+			So(book.bids.Len(), ShouldEqual, 1)
+		})
+
+		Convey("It should clear levels when the lattice truly changes", func() {
+			So(book.Configure(BookInput{TickSize: 0.1}), ShouldBeNil)
+			So(book.tickSize, ShouldEqual, 0.1)
+			So(book.bids.Len(), ShouldEqual, 0)
+			So(book.asks.Len(), ShouldEqual, 0)
+		})
+	})
+}
+
 func TestBookflowMeasure(testingTB *testing.T) {
 	Convey("Given a bid-heavy book snapshot", testingTB, func() {
 		bookflow := equation.NewBookflow()

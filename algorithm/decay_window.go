@@ -96,6 +96,14 @@ func (window *decayWindow) ingestBook(input flow.BookInput) error {
 	window.lastPrice = mid
 	bidDepth := window.book.SideDepth(flow.SideBid)
 	askDepth := window.book.SideDepth(flow.SideAsk)
+
+	// A one-sided or empty book cannot form depth ratios. Leave the feature
+	// cache untouched so MeasureBook reports not-ready instead of spamming
+	// validation errors on thin venues.
+	if bidDepth <= 0 || askDepth <= 0 {
+		return nil
+	}
+
 	decayRate := flow.DecayRate(mid, spread)
 	imbalance := window.book.Imbalance(mid, decayRate, false, 0, 0, 0)
 
@@ -165,6 +173,10 @@ func (window *decayWindow) observe(
 		return err
 	}
 
+	if bidRatio <= 0 || askRatio <= 0 || densityRatio <= 0 {
+		return nil
+	}
+
 	spreadDeviation, err := window.deviation(spread)
 
 	if err != nil {
@@ -208,7 +220,13 @@ func (window *decayWindow) ratio(
 	}
 
 	if output.Mean <= 0 {
-		return 0, decayWindowErr(what+" baseline must be positive", nil)
+		// First observations can be zero-mean before a positive depth sample
+		// lands; callers treat this as not-ready rather than a hard fault.
+		return 0, nil
+	}
+
+	if sample <= 0 {
+		return 0, nil
 	}
 
 	return sample / output.Mean, nil

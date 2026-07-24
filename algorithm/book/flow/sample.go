@@ -16,7 +16,7 @@ Each symbol is owned by one serial window so concurrent first-use cannot fork
 state, and book updates commit both sides atomically before features run.
 */
 type Sample struct {
-	mu              sync.Mutex
+	mu              sync.RWMutex
 	windows         map[string]*Window
 	historyCapacity int
 }
@@ -80,6 +80,7 @@ type TradeInput struct {
 Window retains one symbol's book and rolling imbalance history.
 */
 type Window struct {
+	mu             sync.Mutex
 	book           *Book
 	weightedHist   []float64
 	level1Hist     []float64
@@ -125,9 +126,6 @@ book is valid enough to score, and a confidence maturity for that reading.
 func (sample *Sample) MeasureBook(
 	input BookInput,
 ) (equation.BookflowInput, bool, float64, error) {
-	sample.mu.Lock()
-	defer sample.mu.Unlock()
-
 	if input.Symbol == "" {
 		return equation.BookflowInput{}, false, 0, errnie.Error(errnie.Err(
 			errnie.Validation,
@@ -137,6 +135,8 @@ func (sample *Sample) MeasureBook(
 	}
 
 	window := sample.window(input.Symbol)
+	window.mu.Lock()
+	defer window.mu.Unlock()
 
 	if err := sample.ingestBook(input, window); err != nil {
 		return equation.BookflowInput{}, false, 0, err
@@ -154,9 +154,6 @@ the book is valid enough to score, and a confidence maturity for that reading.
 func (sample *Sample) MeasureTrade(
 	input TradeInput,
 ) (equation.BookflowInput, bool, float64, error) {
-	sample.mu.Lock()
-	defer sample.mu.Unlock()
-
 	if input.Symbol == "" {
 		return equation.BookflowInput{}, false, 0, errnie.Error(errnie.Err(
 			errnie.Validation,
@@ -186,6 +183,8 @@ func (sample *Sample) MeasureTrade(
 	}
 
 	window := sample.window(input.Symbol)
+	window.mu.Lock()
+	defer window.mu.Unlock()
 
 	if err := sample.ingestTrade(input, window); err != nil {
 		return equation.BookflowInput{}, false, 0, err
@@ -207,9 +206,20 @@ func (sample *Sample) maturity(window *Window) float64 {
 }
 
 func (sample *Sample) window(symbol string) *Window {
+	sample.mu.RLock()
 	existing, ok := sample.windows[symbol]
+	sample.mu.RUnlock()
 
 	if ok {
+		return existing
+	}
+
+	sample.mu.Lock()
+	defer sample.mu.Unlock()
+
+	existing = sample.windows[symbol]
+
+	if existing != nil {
 		return existing
 	}
 

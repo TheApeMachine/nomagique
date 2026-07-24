@@ -321,21 +321,21 @@ func (sample *Sample) ingestTrade(
 	}
 
 	if input.At.Before(window.tradeAt) {
-		return errnie.Error(errnie.Err(
+		return errnie.Err(
 			errnie.Validation,
 			"-sample: trade timestamp must not regress",
 			nil,
-		))
+		)
 	}
 
 	elapsed := input.At.Sub(window.tradeAt).Seconds()
 
 	if elapsed < 0 {
-		return errnie.Error(errnie.Err(
+		return errnie.Err(
 			errnie.Validation,
 			"-sample: trade timestamp must not regress",
 			nil,
-		))
+		)
 	}
 
 	window.tradeGaps++

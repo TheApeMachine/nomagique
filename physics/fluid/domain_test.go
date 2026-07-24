@@ -141,6 +141,7 @@ func TestDomainStep(t *testing.T) {
 				nextDiagnostics, nextErr := domain.Step(particles)
 				So(nextErr, ShouldBeNil)
 				So(nextDiagnostics.DeltaUsed, ShouldBeGreaterThan, 0)
+				particles = particles[:domain.ParticleCount()]
 
 				for _, particle := range particles {
 					So(finiteParticle(particle), ShouldBeTrue)
@@ -149,7 +150,7 @@ func TestDomainStep(t *testing.T) {
 		})
 
 		Convey("It should accept a changing complete population without resetting the wave", func() {
-			particles = append(particles, Particle{
+			particles = append(particles[:domain.ParticleCount()], Particle{
 				Position: Vector{X: 0.5, Y: 0.5, Z: 0.5},
 				Mass:     1,
 				Heat:     0.5,
@@ -161,11 +162,107 @@ func TestDomainStep(t *testing.T) {
 			nextDiagnostics, nextErr := domain.Step(particles)
 			So(nextErr, ShouldBeNil)
 			So(nextDiagnostics.PsiRMS, ShouldBeGreaterThan, 0)
-			So(finiteParticle(particles[2]), ShouldBeTrue)
+			particles = particles[:domain.ParticleCount()]
+			So(finiteParticle(particles[len(particles)-1]), ShouldBeTrue)
 
-			shrunkDiagnostics, shrinkErr := domain.Step(particles[:2])
+			shrunk := particles[:min(2, len(particles))]
+			shrunkDiagnostics, shrinkErr := domain.Step(shrunk)
 			So(shrinkErr, ShouldBeNil)
 			So(shrunkDiagnostics.PsiRMS, ShouldBeGreaterThan, 0)
+		})
+	})
+
+	Convey("Given Sensorium-style append into resident Metal storage", t, func() {
+		domain, err := NewDomain(testDomainConfig())
+		So(err, ShouldBeNil)
+		Reset(func() { So(domain.Close(), ShouldBeNil) })
+		first := []Particle{{
+			Position: Vector{X: 0.25, Y: 0.25, Z: 0.25},
+			Mass:     1,
+			Heat:     0.5,
+			Energy:   1,
+			Phase:    0.1,
+			Omega:    1,
+		}}
+		second := []Particle{{
+			Position: Vector{X: 0.75, Y: 0.75, Z: 0.75},
+			Mass:     1,
+			Heat:     0.5,
+			Energy:   1,
+			Phase:    math.Pi,
+			Omega:    2,
+		}}
+
+		Convey("It should grow resident history and advance without host re-upload", func() {
+			start, appendErr := domain.Append(first, []uint32{1})
+			So(appendErr, ShouldBeNil)
+			So(start, ShouldEqual, 0)
+			So(domain.ParticleCount(), ShouldEqual, 1)
+			_, advanceErr := domain.Advance()
+			So(advanceErr, ShouldBeNil)
+			So(domain.ParticleCount(), ShouldEqual, 1)
+
+			start, appendErr = domain.Append(second, []uint32{2})
+			So(appendErr, ShouldBeNil)
+			So(start, ShouldEqual, 1)
+			So(domain.ParticleCount(), ShouldEqual, 2)
+			diagnostics, advanceErr := domain.Advance()
+			So(advanceErr, ShouldBeNil)
+			So(diagnostics.PsiRMS, ShouldBeGreaterThan, 0)
+
+			resident, readErr := domain.ReadParticles(0, domain.ParticleCount())
+			So(readErr, ShouldBeNil)
+			So(len(resident), ShouldBeGreaterThanOrEqualTo, 1)
+			So(finiteParticle(resident[0]), ShouldBeTrue)
+		})
+	})
+
+	Convey("Given same-cell same-content particles after advance", t, func() {
+		domain, err := NewDomain(testDomainConfig())
+		So(err, ShouldBeNil)
+		Reset(func() { So(domain.Close(), ShouldBeNil) })
+		twins := []Particle{
+			{
+				Position: Vector{X: 0.26, Y: 0.26, Z: 0.26},
+				Velocity: Vector{X: 0.2},
+				Mass:     1,
+				Heat:     0.1,
+				Energy:   1,
+				Phase:    0.1,
+				Omega:    1,
+			},
+			{
+				Position: Vector{X: 0.26, Y: 0.26, Z: 0.26},
+				Velocity: Vector{X: -0.1},
+				Mass:     1,
+				Heat:     0.2,
+				Energy:   1,
+				Phase:    0.2,
+				Omega:    1,
+			},
+		}
+
+		Convey("It should compact via inelastic merge and conserve mass", func() {
+			_, appendErr := domain.Append(twins, []uint32{7, 7})
+			So(appendErr, ShouldBeNil)
+			So(domain.ParticleCount(), ShouldEqual, 2)
+			_, advanceErr := domain.Advance()
+			So(advanceErr, ShouldBeNil)
+			So(domain.ParticleCount(), ShouldEqual, 1)
+
+			resident, readErr := domain.ReadParticles(0, 1)
+			So(readErr, ShouldBeNil)
+			So(resident[0].Mass, ShouldAlmostEqual, float32(2), 0.05)
+			// Heat after gather/Planck is not the inject sum; merge still deposits
+			// inelastic KE loss into extensive heat.
+			So(resident[0].Heat, ShouldBeGreaterThan, float32(0))
+			So(finiteParticle(resident[0]), ShouldBeTrue)
+
+			spatial, spatialErr := domain.ReadSpatialIDs(0, 1)
+			So(spatialErr, ShouldBeNil)
+			So(spatial, ShouldHaveLength, 1)
+			// Low byte is content identity; high bits are post-merge Morton cell.
+			So(spatial[0]&0xFF, ShouldEqual, uint32(7))
 		})
 	})
 
@@ -180,6 +277,7 @@ func TestDomainStep(t *testing.T) {
 		for range config.Grid.Z {
 			diagnostics, err = domain.Step(particles)
 			So(err, ShouldBeNil)
+			particles = particles[:domain.ParticleCount()]
 		}
 
 		Convey("It should remain finite across a topology-scale trajectory", func() {
@@ -337,17 +435,51 @@ func BenchmarkDomainStep(b *testing.B) {
 			}
 
 			defer domain.Close()
+			particles := append([]Particle(nil), fixture.particles...)
 			b.ResetTimer()
 			steps := 0
 
 			for b.Loop() {
 				steps++
 
-				if _, err := domain.Step(fixture.particles); err != nil {
+				if _, err := domain.Step(particles); err != nil {
 					b.Fatalf("step %d: %v", steps, err)
 				}
+
+				particles = particles[:domain.ParticleCount()]
 			}
 		})
+	}
+}
+
+func BenchmarkDomainAppendAdvance(b *testing.B) {
+	domain, err := NewDomain(testDomainConfig())
+
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	defer domain.Close()
+	batch := []Particle{{
+		Position: Vector{X: 0.25, Y: 0.25, Z: 0.25},
+		Mass:     1,
+		Heat:     1e-4,
+		Energy:   1,
+		Phase:    0.1,
+		Omega:    1,
+	}}
+	content := []uint32{1}
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	for b.Loop() {
+		if _, err := domain.Append(batch, content); err != nil {
+			b.Fatal(err)
+		}
+
+		if _, err := domain.Advance(); err != nil {
+			b.Fatal(err)
+		}
 	}
 }
 

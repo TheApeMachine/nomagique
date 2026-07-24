@@ -2,12 +2,14 @@
 
 #import <Foundation/Foundation.h>
 #import <Metal/Metal.h>
+#import <Accelerate/Accelerate.h>
 
 #include "bridge.h"
 
 #include <algorithm>
 #include <cfloat>
 #include <cmath>
+#include <complex>
 #include <cstring>
 #include <vector>
 
@@ -25,6 +27,22 @@ typedef struct SortScatterParams {
     float grid_spacing;
     float inv_grid_spacing;
 } SortScatterParams;
+
+typedef struct PlanckExchangeParams {
+    uint32_t num_particles;
+    float dt;
+    float conductivity;
+    float radius;
+} PlanckExchangeParams;
+
+typedef struct MergeParams {
+    uint32_t num_particles;
+    uint32_t padded;
+    uint32_t grid_x;
+    uint32_t grid_y;
+    uint32_t grid_z;
+    float inv_spacing;
+} MergeParams;
 
 typedef struct PicGatherParams {
     uint32_t num_particles;
@@ -183,6 +201,8 @@ static float fluid_debug_float(uint32_t word) {
     FluidConfig _config;
     uint32_t _cellCount;
     uint32_t _particleCount;
+    uint32_t _particleCapacity;
+    uint32_t _mergePadCapacity;
     uint32_t _modeCount;
     uint32_t _randomSeed;
     BOOL _waveInitialized;
@@ -191,7 +211,10 @@ static float fluid_debug_float(uint32_t word) {
     float _gateMinimum;
     float _gateMaximum;
     float _spatialSigma;
+    float _meanTemperature;
     std::vector<float> _previousAmplitude;
+    std::vector<float> _previousPsiReal;
+    std::vector<float> _previousPsiImaginary;
 
     id<MTLDevice> _device;
     id<MTLCommandQueue> _queue;
@@ -214,6 +237,7 @@ static float fluid_debug_float(uint32_t word) {
     id<MTLBuffer> _spatialPsiReal;
     id<MTLBuffer> _spatialPsiImaginary;
 
+    // Private GPU particle SoT (Sensorium device-resident history).
     id<MTLBuffer> _position;
     id<MTLBuffer> _velocity;
     id<MTLBuffer> _mass;
@@ -222,9 +246,38 @@ static float fluid_debug_float(uint32_t word) {
     id<MTLBuffer> _phase;
     id<MTLBuffer> _omega;
     id<MTLBuffer> _amplitude;
+    id<MTLBuffer> _content;
     id<MTLBuffer> _positionOutput;
     id<MTLBuffer> _velocityOutput;
     id<MTLBuffer> _heatOutput;
+
+    // Shared staging for host pack/unpack and CPU thermo helpers. History grow
+    // and append upload go Private via blit — never CPU-memcpy of resident SoT.
+    id<MTLBuffer> _hostPosition;
+    id<MTLBuffer> _hostVelocity;
+    id<MTLBuffer> _hostMass;
+    id<MTLBuffer> _hostHeat;
+    id<MTLBuffer> _hostEnergy;
+    id<MTLBuffer> _hostPhase;
+    id<MTLBuffer> _hostOmega;
+    id<MTLBuffer> _hostAmplitude;
+    id<MTLBuffer> _hostContent;
+
+    id<MTLBuffer> _mergeKeys;
+    id<MTLBuffer> _mergeIndices;
+    id<MTLBuffer> _mergePhase;
+    id<MTLBuffer> _mergeOmega;
+    id<MTLBuffer> _mergeAmplitude;
+    id<MTLBuffer> _mergeContent;
+    id<MTLBuffer> _mergeCount;
+    id<MTLBuffer> _clamped;
+    id<MTLBuffer> _hostClamped;
+    id<MTLBuffer> _cellMorton;
+    id<MTLBuffer> _spatialTokenIDs;
+    std::vector<float> _fftInvK2;
+    std::vector<std::complex<float>> _fftScratch;
+    FFTSetup _fftSetup;
+    uint32_t _fftLogMax;
 
     id<MTLBuffer> _cellIndex;
     id<MTLBuffer> _cellCounts;
@@ -261,6 +314,26 @@ static float fluid_debug_float(uint32_t word) {
                  count:(uint32_t)count
            diagnostics:(FluidDiagnostics *)diagnostics
                  error:(NSString **)error;
+- (BOOL)appendParticles:(const FluidParticle *)particles
+             contentIDs:(const uint32_t *)contentIDs
+                  count:(uint32_t)count
+                  start:(uint32_t *)start
+                  error:(NSString **)error;
+- (BOOL)advanceResident:(FluidDiagnostics *)diagnostics error:(NSString **)error;
+- (BOOL)solveGravity:(NSString **)error;
+- (BOOL)applyClamp:(NSString **)error;
+- (BOOL)computeSpatialIDs:(NSString **)error;
+- (BOOL)readSpatialIDs:(uint32_t *)ids
+                 start:(uint32_t)start
+                 count:(uint32_t)count
+                 error:(NSString **)error;
+- (BOOL)applyCouplingWeights:(NSString **)error;
+- (void)applySeparationSoliton:(float)delta;
+- (BOOL)mergeInelastic:(NSString **)error;
+- (BOOL)readParticles:(FluidParticle *)particles
+                start:(uint32_t)start
+                count:(uint32_t)count
+                error:(NSString **)error;
 - (BOOL)readWave:(FluidWaveMode *)modes count:(uint32_t)count error:(NSString **)error;
 - (BOOL)read:(FluidReading *)reading error:(NSString **)error;
 - (BOOL)readProjection:(float *)density
@@ -286,9 +359,23 @@ static float fluid_debug_float(uint32_t word) {
 
     _config = *config;
     _cellCount = config->grid_x * config->grid_y * config->grid_z;
+    _particleCount = 0u;
+    _particleCapacity = 0u;
+    _mergePadCapacity = 0u;
     _modeCount = fluid_mode_count(*config);
     _randomSeed = 1u;
+    _fftSetup = nullptr;
+    _fftLogMax = 0u;
+    _meanTemperature = 0.0f;
     _device = MTLCreateSystemDefaultDevice();
+
+    if (!std::isfinite(config->gravity_g) || config->gravity_g <= 0.0f) {
+        if (error != nil) {
+            *error = @"gravity_g must be finite and positive (ω-natural CODATA G)";
+        }
+
+        return nil;
+    }
 
     if (_device == nil) {
         if (error != nil) {
@@ -362,11 +449,185 @@ static float fluid_debug_float(uint32_t word) {
     }
 
     binStarts[_modeCount] = _modeCount;
+
+    auto isPow2 = [](uint32_t value) {
+        return value > 0u && (value & (value - 1u)) == 0u;
+    };
+
+    if (!isPow2(_config.grid_x) || !isPow2(_config.grid_y) || !isPow2(_config.grid_z)) {
+        if (error != nil) {
+            *error = @"gravity FFT requires power-of-two grid dimensions";
+        }
+
+        return nil;
+    }
+
+    uint32_t logX = 0u;
+    uint32_t logY = 0u;
+    uint32_t logZ = 0u;
+
+    for (uint32_t value = _config.grid_x; value > 1u; value >>= 1u) {
+        logX++;
+    }
+
+    for (uint32_t value = _config.grid_y; value > 1u; value >>= 1u) {
+        logY++;
+    }
+
+    for (uint32_t value = _config.grid_z; value > 1u; value >>= 1u) {
+        logZ++;
+    }
+
+    _fftLogMax = std::max(logX, std::max(logY, logZ));
+    _fftSetup = vDSP_create_fftsetup(_fftLogMax, kFFTRadix2);
+
+    if (_fftSetup == nullptr) {
+        if (error != nil) {
+            *error = @"failed to create Accelerate FFT setup";
+        }
+
+        return nil;
+    }
+
+    _fftInvK2.assign((size_t)_cellCount, 0.0f);
+    _fftScratch.assign((size_t)_cellCount, std::complex<float>{0.0f, 0.0f});
+    const float twoPi = 2.0f * (float)M_PI;
+    const float spacing = _config.spacing;
+
+    auto fftfreq = [](uint32_t index, uint32_t count, float step) -> float {
+        int32_t signedIndex = 0;
+
+        if ((count & 1u) == 0u) {
+            if (index < count / 2u) {
+                signedIndex = (int32_t)index;
+            } else if (index == count / 2u) {
+                signedIndex = -(int32_t)(count / 2u);
+            } else {
+                signedIndex = (int32_t)index - (int32_t)count;
+            }
+        } else if (index <= count / 2u) {
+            signedIndex = (int32_t)index;
+        } else {
+            signedIndex = (int32_t)index - (int32_t)count;
+        }
+
+        return (float)signedIndex / ((float)count * step);
+    };
+
+    for (uint32_t iz = 0; iz < _config.grid_z; iz++) {
+        for (uint32_t iy = 0; iy < _config.grid_y; iy++) {
+            for (uint32_t ix = 0; ix < _config.grid_x; ix++) {
+                float kx = twoPi * fftfreq(ix, _config.grid_x, spacing);
+                float ky = twoPi * fftfreq(iy, _config.grid_y, spacing);
+                float kz = twoPi * fftfreq(iz, _config.grid_z, spacing);
+                float k2 = kx * kx + ky * ky + kz * kz;
+                size_t cell = (size_t)ix +
+                    (size_t)iy * _config.grid_x +
+                    (size_t)iz * _config.grid_x * _config.grid_y;
+                _fftInvK2[cell] = k2 > 0.0f ? 1.0f / k2 : 0.0f;
+            }
+        }
+    }
+
     return self;
+}
+
+- (void)dealloc {
+    if (_fftSetup != nullptr) {
+        vDSP_destroy_fftsetup(_fftSetup);
+        _fftSetup = nullptr;
+    }
 }
 
 - (id<MTLBuffer>)buffer:(size_t)length {
     return [_device newBufferWithLength:length options:MTLResourceStorageModeShared];
+}
+
+- (id<MTLBuffer>)privateBuffer:(size_t)length {
+    return [_device newBufferWithLength:length options:MTLResourceStorageModePrivate];
+}
+
+- (BOOL)blitFrom:(id<MTLBuffer>)source
+    sourceOffset:(NSUInteger)sourceOffset
+              to:(id<MTLBuffer>)destination
+ destinationOffset:(NSUInteger)destinationOffset
+           bytes:(NSUInteger)bytes
+           error:(NSString **)error {
+    if (bytes == 0u) {
+        return YES;
+    }
+
+    if (source == nil || destination == nil) {
+        if (error != nil) {
+            *error = @"blit requires source and destination buffers";
+        }
+
+        return NO;
+    }
+
+    id<MTLCommandBuffer> command = [_queue commandBuffer];
+    id<MTLBlitCommandEncoder> encoder = [command blitCommandEncoder];
+    [encoder copyFromBuffer:source
+               sourceOffset:sourceOffset
+                   toBuffer:destination
+          destinationOffset:destinationOffset
+                       size:bytes];
+    [encoder endEncoding];
+    [command commit];
+    [command waitUntilCompleted];
+
+    if (command.status == MTLCommandBufferStatusError) {
+        if (error != nil) {
+            *error = command.error.localizedDescription ?: @"Metal blit failed";
+        }
+
+        return NO;
+    }
+
+    return YES;
+}
+
+- (BOOL)pullParticles:(NSString **)error {
+    if (_particleCount == 0u) {
+        return YES;
+    }
+
+    size_t liveScalar = (size_t)_particleCount * sizeof(float);
+    size_t liveVector = liveScalar * 3u;
+    size_t liveIndex = (size_t)_particleCount * sizeof(uint32_t);
+
+    return [self blitFrom:_position sourceOffset:0 to:_hostPosition destinationOffset:0 bytes:liveVector error:error] &&
+        [self blitFrom:_velocity sourceOffset:0 to:_hostVelocity destinationOffset:0 bytes:liveVector error:error] &&
+        [self blitFrom:_mass sourceOffset:0 to:_hostMass destinationOffset:0 bytes:liveScalar error:error] &&
+        [self blitFrom:_heat sourceOffset:0 to:_hostHeat destinationOffset:0 bytes:liveScalar error:error] &&
+        [self blitFrom:_energy sourceOffset:0 to:_hostEnergy destinationOffset:0 bytes:liveScalar error:error] &&
+        [self blitFrom:_phase sourceOffset:0 to:_hostPhase destinationOffset:0 bytes:liveScalar error:error] &&
+        [self blitFrom:_omega sourceOffset:0 to:_hostOmega destinationOffset:0 bytes:liveScalar error:error] &&
+        [self blitFrom:_amplitude sourceOffset:0 to:_hostAmplitude destinationOffset:0 bytes:liveScalar error:error] &&
+        [self blitFrom:_content sourceOffset:0 to:_hostContent destinationOffset:0 bytes:liveIndex error:error];
+}
+
+- (BOOL)pushParticleRange:(uint32_t)offset count:(uint32_t)count error:(NSString **)error {
+    if (count == 0u) {
+        return YES;
+    }
+
+    size_t scalarBytes = (size_t)count * sizeof(float);
+    size_t vectorBytes = scalarBytes * 3u;
+    size_t indexBytes = (size_t)count * sizeof(uint32_t);
+    NSUInteger scalarOffset = (NSUInteger)offset * sizeof(float);
+    NSUInteger vectorOffset = scalarOffset * 3u;
+    NSUInteger indexOffset = (NSUInteger)offset * sizeof(uint32_t);
+
+    return [self blitFrom:_hostPosition sourceOffset:vectorOffset to:_position destinationOffset:vectorOffset bytes:vectorBytes error:error] &&
+        [self blitFrom:_hostVelocity sourceOffset:vectorOffset to:_velocity destinationOffset:vectorOffset bytes:vectorBytes error:error] &&
+        [self blitFrom:_hostMass sourceOffset:scalarOffset to:_mass destinationOffset:scalarOffset bytes:scalarBytes error:error] &&
+        [self blitFrom:_hostHeat sourceOffset:scalarOffset to:_heat destinationOffset:scalarOffset bytes:scalarBytes error:error] &&
+        [self blitFrom:_hostEnergy sourceOffset:scalarOffset to:_energy destinationOffset:scalarOffset bytes:scalarBytes error:error] &&
+        [self blitFrom:_hostPhase sourceOffset:scalarOffset to:_phase destinationOffset:scalarOffset bytes:scalarBytes error:error] &&
+        [self blitFrom:_hostOmega sourceOffset:scalarOffset to:_omega destinationOffset:scalarOffset bytes:scalarBytes error:error] &&
+        [self blitFrom:_hostAmplitude sourceOffset:scalarOffset to:_amplitude destinationOffset:scalarOffset bytes:scalarBytes error:error] &&
+        [self blitFrom:_hostContent sourceOffset:indexOffset to:_content destinationOffset:indexOffset bytes:indexBytes error:error];
 }
 
 - (id<MTLComputePipelineState>)pipeline:(NSString *)name error:(NSString **)error {
@@ -436,64 +697,212 @@ static float fluid_debug_float(uint32_t word) {
             threadsPerThreadgroup:MTLSizeMake(width, 1u, 1u)];
 }
 
-- (BOOL)allocateParticles:(uint32_t)count error:(NSString **)error {
-    if (_particleCount == count) {
+- (BOOL)ensureCapacity:(uint32_t)capacity error:(NSString **)error {
+    if (capacity <= _particleCapacity) {
         return YES;
     }
 
-    // A step supplies the complete current population. Particle storage follows
-    // that population while the gas and omega fields remain resident, allowing a
-    // streaming caller to remove observations without accumulating ghost mass.
-    _particleCount = count;
-    size_t scalarBytes = (size_t)count * sizeof(float);
+    // Grow Private resident storage by GPU blit of evolved history — Sensorium
+    // device-side concat, not host re-upload of the full tape.
+    uint32_t grown = _particleCapacity == 0u ? capacity : _particleCapacity;
+
+    while (grown < capacity) {
+        grown = grown < 1024u ? 1024u : grown * 2u;
+    }
+
+    size_t scalarBytes = (size_t)grown * sizeof(float);
     size_t vectorBytes = scalarBytes * 3u;
-    _position = [self buffer:vectorBytes];
-    _velocity = [self buffer:vectorBytes];
-    _mass = [self buffer:scalarBytes];
-    _heat = [self buffer:scalarBytes];
-    _energy = [self buffer:scalarBytes];
-    _phase = [self buffer:scalarBytes];
-    _omega = [self buffer:scalarBytes];
-    _amplitude = [self buffer:scalarBytes];
-    _positionOutput = [self buffer:vectorBytes];
-    _velocityOutput = [self buffer:vectorBytes];
-    _heatOutput = [self buffer:scalarBytes];
-    _cellIndex = [self buffer:(size_t)count * sizeof(uint32_t)];
-    _sortedOriginalIndex = [self buffer:(size_t)count * sizeof(uint32_t)];
-    _sortedPosition = [self buffer:vectorBytes];
-    _sortedVelocity = [self buffer:vectorBytes];
-    _sortedMass = [self buffer:scalarBytes];
-    _sortedHeat = [self buffer:scalarBytes];
-    _sortedEnergy = [self buffer:scalarBytes];
+    size_t indexBytes = (size_t)grown * sizeof(uint32_t);
+    id<MTLBuffer> position = [self privateBuffer:vectorBytes];
+    id<MTLBuffer> velocity = [self privateBuffer:vectorBytes];
+    id<MTLBuffer> mass = [self privateBuffer:scalarBytes];
+    id<MTLBuffer> heat = [self privateBuffer:scalarBytes];
+    id<MTLBuffer> energy = [self privateBuffer:scalarBytes];
+    id<MTLBuffer> phase = [self privateBuffer:scalarBytes];
+    id<MTLBuffer> omega = [self privateBuffer:scalarBytes];
+    id<MTLBuffer> amplitude = [self privateBuffer:scalarBytes];
+    id<MTLBuffer> content = [self privateBuffer:indexBytes];
+    id<MTLBuffer> positionOutput = [self privateBuffer:vectorBytes];
+    id<MTLBuffer> velocityOutput = [self privateBuffer:vectorBytes];
+    id<MTLBuffer> heatOutput = [self privateBuffer:scalarBytes];
+    id<MTLBuffer> cellIndex = [self privateBuffer:indexBytes];
+    id<MTLBuffer> sortedOriginalIndex = [self privateBuffer:indexBytes];
+    id<MTLBuffer> sortedPosition = [self privateBuffer:vectorBytes];
+    id<MTLBuffer> sortedVelocity = [self privateBuffer:vectorBytes];
+    id<MTLBuffer> sortedMass = [self privateBuffer:scalarBytes];
+    id<MTLBuffer> sortedHeat = [self privateBuffer:scalarBytes];
+    id<MTLBuffer> sortedEnergy = [self privateBuffer:scalarBytes];
+    id<MTLBuffer> hostPosition = [self buffer:vectorBytes];
+    id<MTLBuffer> hostVelocity = [self buffer:vectorBytes];
+    id<MTLBuffer> hostMass = [self buffer:scalarBytes];
+    id<MTLBuffer> hostHeat = [self buffer:scalarBytes];
+    id<MTLBuffer> hostEnergy = [self buffer:scalarBytes];
+    id<MTLBuffer> hostPhase = [self buffer:scalarBytes];
+    id<MTLBuffer> hostOmega = [self buffer:scalarBytes];
+    id<MTLBuffer> hostAmplitude = [self buffer:scalarBytes];
+    id<MTLBuffer> hostContent = [self buffer:indexBytes];
+    uint32_t padCapacity = 1u;
+
+    while (padCapacity < grown) {
+        padCapacity *= 2u;
+    }
+
+    size_t keyBytes = (size_t)padCapacity * sizeof(uint64_t);
+    size_t padIndexBytes = (size_t)padCapacity * sizeof(uint32_t);
+    id<MTLBuffer> mergeKeys = [self privateBuffer:keyBytes];
+    id<MTLBuffer> mergeIndices = [self privateBuffer:padIndexBytes];
+    id<MTLBuffer> mergePhase = [self privateBuffer:scalarBytes];
+    id<MTLBuffer> mergeOmega = [self privateBuffer:scalarBytes];
+    id<MTLBuffer> mergeAmplitude = [self privateBuffer:scalarBytes];
+    id<MTLBuffer> mergeContent = [self privateBuffer:indexBytes];
+    id<MTLBuffer> mergeCount = [self buffer:sizeof(uint32_t)];
+    id<MTLBuffer> clamped = [self privateBuffer:indexBytes];
+    id<MTLBuffer> hostClamped = [self buffer:indexBytes];
+    id<MTLBuffer> cellMorton = [self privateBuffer:indexBytes];
+    id<MTLBuffer> spatialTokenIDs = [self privateBuffer:indexBytes];
+
+    if (position == nil || velocity == nil || mass == nil || heat == nil ||
+        energy == nil || phase == nil || omega == nil || amplitude == nil ||
+        content == nil || positionOutput == nil || velocityOutput == nil ||
+        heatOutput == nil || cellIndex == nil || sortedOriginalIndex == nil ||
+        sortedPosition == nil || sortedVelocity == nil || sortedMass == nil ||
+        sortedHeat == nil || sortedEnergy == nil || hostPosition == nil ||
+        hostVelocity == nil || hostMass == nil || hostHeat == nil ||
+        hostEnergy == nil || hostPhase == nil || hostOmega == nil ||
+        hostAmplitude == nil || hostContent == nil || mergeKeys == nil ||
+        mergeIndices == nil || mergePhase == nil || mergeOmega == nil ||
+        mergeAmplitude == nil || mergeContent == nil || mergeCount == nil ||
+        clamped == nil || hostClamped == nil || cellMorton == nil ||
+        spatialTokenIDs == nil) {
+        if (error != nil) {
+            *error = @"failed to grow resident particle buffers";
+        }
+
+        return NO;
+    }
+
+    if (_particleCount > 0u && _position != nil) {
+        size_t liveScalar = (size_t)_particleCount * sizeof(float);
+        size_t liveVector = liveScalar * 3u;
+        size_t liveIndex = (size_t)_particleCount * sizeof(uint32_t);
+
+        if (![self blitFrom:_position sourceOffset:0 to:position destinationOffset:0 bytes:liveVector error:error] ||
+            ![self blitFrom:_velocity sourceOffset:0 to:velocity destinationOffset:0 bytes:liveVector error:error] ||
+            ![self blitFrom:_mass sourceOffset:0 to:mass destinationOffset:0 bytes:liveScalar error:error] ||
+            ![self blitFrom:_heat sourceOffset:0 to:heat destinationOffset:0 bytes:liveScalar error:error] ||
+            ![self blitFrom:_energy sourceOffset:0 to:energy destinationOffset:0 bytes:liveScalar error:error] ||
+            ![self blitFrom:_phase sourceOffset:0 to:phase destinationOffset:0 bytes:liveScalar error:error] ||
+            ![self blitFrom:_omega sourceOffset:0 to:omega destinationOffset:0 bytes:liveScalar error:error] ||
+            ![self blitFrom:_amplitude sourceOffset:0 to:amplitude destinationOffset:0 bytes:liveScalar error:error] ||
+            ![self blitFrom:_content sourceOffset:0 to:content destinationOffset:0 bytes:liveIndex error:error] ||
+            ![self blitFrom:_clamped sourceOffset:0 to:clamped destinationOffset:0 bytes:liveIndex error:error]) {
+            return NO;
+        }
+
+        // Keep host staging coherent with the grown Private SoT.
+        if (![self blitFrom:position sourceOffset:0 to:hostPosition destinationOffset:0 bytes:liveVector error:error] ||
+            ![self blitFrom:velocity sourceOffset:0 to:hostVelocity destinationOffset:0 bytes:liveVector error:error] ||
+            ![self blitFrom:mass sourceOffset:0 to:hostMass destinationOffset:0 bytes:liveScalar error:error] ||
+            ![self blitFrom:heat sourceOffset:0 to:hostHeat destinationOffset:0 bytes:liveScalar error:error] ||
+            ![self blitFrom:energy sourceOffset:0 to:hostEnergy destinationOffset:0 bytes:liveScalar error:error] ||
+            ![self blitFrom:phase sourceOffset:0 to:hostPhase destinationOffset:0 bytes:liveScalar error:error] ||
+            ![self blitFrom:omega sourceOffset:0 to:hostOmega destinationOffset:0 bytes:liveScalar error:error] ||
+            ![self blitFrom:amplitude sourceOffset:0 to:hostAmplitude destinationOffset:0 bytes:liveScalar error:error] ||
+            ![self blitFrom:content sourceOffset:0 to:hostContent destinationOffset:0 bytes:liveIndex error:error] ||
+            ![self blitFrom:clamped sourceOffset:0 to:hostClamped destinationOffset:0 bytes:liveIndex error:error]) {
+            return NO;
+        }
+    }
+
+    _position = position;
+    _velocity = velocity;
+    _mass = mass;
+    _heat = heat;
+    _energy = energy;
+    _phase = phase;
+    _omega = omega;
+    _amplitude = amplitude;
+    _content = content;
+    _positionOutput = positionOutput;
+    _velocityOutput = velocityOutput;
+    _heatOutput = heatOutput;
+    _cellIndex = cellIndex;
+    _sortedOriginalIndex = sortedOriginalIndex;
+    _sortedPosition = sortedPosition;
+    _sortedVelocity = sortedVelocity;
+    _sortedMass = sortedMass;
+    _sortedHeat = sortedHeat;
+    _sortedEnergy = sortedEnergy;
+    _hostPosition = hostPosition;
+    _hostVelocity = hostVelocity;
+    _hostMass = hostMass;
+    _hostHeat = hostHeat;
+    _hostEnergy = hostEnergy;
+    _hostPhase = hostPhase;
+    _hostOmega = hostOmega;
+    _hostAmplitude = hostAmplitude;
+    _hostContent = hostContent;
+    _mergeKeys = mergeKeys;
+    _mergeIndices = mergeIndices;
+    _mergePhase = mergePhase;
+    _mergeOmega = mergeOmega;
+    _mergeAmplitude = mergeAmplitude;
+    _mergeContent = mergeContent;
+    _mergeCount = mergeCount;
+    _clamped = clamped;
+    _hostClamped = hostClamped;
+    _cellMorton = cellMorton;
+    _spatialTokenIDs = spatialTokenIDs;
+    _particleCapacity = grown;
+    _mergePadCapacity = padCapacity;
     return YES;
 }
 
-- (void)loadParticles:(FluidParticle *)particles count:(uint32_t)count {
-    float *position = (float *)_position.contents;
-    float *velocity = (float *)_velocity.contents;
-    float *mass = (float *)_mass.contents;
-    float *heat = (float *)_heat.contents;
-    float *energy = (float *)_energy.contents;
-    float *phase = (float *)_phase.contents;
-    float *omega = (float *)_omega.contents;
+- (BOOL)writeParticles:(const FluidParticle *)particles
+            contentIDs:(const uint32_t *)contentIDs
+                 count:(uint32_t)count
+                offset:(uint32_t)offset
+                 error:(NSString **)error {
+    float *position = (float *)_hostPosition.contents;
+    float *velocity = (float *)_hostVelocity.contents;
+    float *mass = (float *)_hostMass.contents;
+    float *heat = (float *)_hostHeat.contents;
+    float *energy = (float *)_hostEnergy.contents;
+    float *phase = (float *)_hostPhase.contents;
+    float *omega = (float *)_hostOmega.contents;
+    float *amplitude = (float *)_hostAmplitude.contents;
+    uint32_t *content = (uint32_t *)_hostContent.contents;
+    uint32_t *clamped = (uint32_t *)_hostClamped.contents;
     float domainX = _config.grid_x * _config.spacing;
     float domainY = _config.grid_y * _config.spacing;
     float domainZ = _config.grid_z * _config.spacing;
 
     for (uint32_t index = 0; index < count; index++) {
-        uint32_t base = index * 3u;
+        uint32_t slot = offset + index;
+        uint32_t base = slot * 3u;
         position[base] = fluid_periodic(particles[index].position_x, domainX);
         position[base + 1u] = fluid_periodic(particles[index].position_y, domainY);
         position[base + 2u] = fluid_periodic(particles[index].position_z, domainZ);
         velocity[base] = particles[index].velocity_x;
         velocity[base + 1u] = particles[index].velocity_y;
         velocity[base + 2u] = particles[index].velocity_z;
-        mass[index] = particles[index].mass;
-        heat[index] = particles[index].heat;
-        energy[index] = particles[index].energy;
-        phase[index] = particles[index].phase;
-        omega[index] = particles[index].omega;
+        mass[slot] = particles[index].mass;
+        heat[slot] = particles[index].heat;
+        energy[slot] = particles[index].energy;
+        phase[slot] = particles[index].phase;
+        omega[slot] = particles[index].omega;
+        amplitude[slot] = std::sqrt(std::max(particles[index].energy, 1.0e-8f));
+        // Keep the full identity word; merge masks to 16 bits like Python's key.
+        content[slot] = contentIDs != nullptr ? contentIDs[index] : 0u;
+        // Market inject is unclamped; probe/crystallization sets the mask later.
+        clamped[slot] = 0u;
     }
+
+    size_t indexBytes = (size_t)count * sizeof(uint32_t);
+    NSUInteger indexOffset = (NSUInteger)offset * sizeof(uint32_t);
+
+    return [self pushParticleRange:offset count:count error:error] &&
+        [self blitFrom:_hostClamped sourceOffset:indexOffset to:_clamped destinationOffset:indexOffset bytes:indexBytes error:error];
 }
 
 - (void)initializeWave {
@@ -521,21 +930,28 @@ static float fluid_debug_float(uint32_t word) {
     CoherenceBinParams *bin = (CoherenceBinParams *)_binParams.contents;
     bin->omega_min = omegaMinimum;
     bin->inv_bin_width = _omegaSpacing > 0.0f ? 1.0f / _omegaSpacing : 0.0f;
-    [self seedAnchors];
+    // Anchors are seeded each omegawave.step against the live population.
     _waveInitialized = YES;
 }
 
 - (void)seedAnchors {
     uint32_t *anchorIndex = (uint32_t *)_anchorIndex.contents;
     float *anchorWeight = (float *)_anchorWeight.contents;
-    float *omega = (float *)_omega.contents;
-    float *energy = (float *)_energy.contents;
     std::fill(anchorIndex, anchorIndex + (size_t)_modeCount * FluidAnchorSlots, UINT32_MAX);
     std::fill(anchorWeight, anchorWeight + (size_t)_modeCount * FluidAnchorSlots, 0.0f);
 
-    if (!std::isfinite(_omegaSpacing) || _omegaSpacing <= 0.0f) {
+    if (!std::isfinite(_omegaSpacing) || _omegaSpacing <= 0.0f || _particleCount == 0u) {
         return;
     }
+
+    NSString *pullError = nil;
+
+    if (![self pullParticles:&pullError]) {
+        return;
+    }
+
+    float *omega = (float *)_hostOmega.contents;
+    float *energy = (float *)_hostEnergy.contents;
 
     for (uint32_t mode = 0; mode < _modeCount; mode++) {
         std::vector<std::pair<float, uint32_t>> candidates;
@@ -676,10 +1092,17 @@ static float fluid_debug_float(uint32_t word) {
     float *density = (float *)_density.contents;
     float *momentum = (float *)_momentum.contents;
     float *internalEnergy = (float *)_internalEnergy.contents;
+    size_t liveScalar = (size_t)_particleCount * sizeof(float);
+
+    if (![self blitFrom:_mass sourceOffset:0 to:_hostMass destinationOffset:0 bytes:liveScalar error:error]) {
+        return NO;
+    }
+
     float massTotal = 0.0f;
+    float *hostMass = (float *)_hostMass.contents;
 
     for (uint32_t index = 0; index < _particleCount; index++) {
-        massTotal += ((float *)_mass.contents)[index];
+        massTotal += hostMass[index];
     }
 
     float domainVolume = (float)_cellCount * _config.spacing * _config.spacing * _config.spacing;
@@ -924,12 +1347,13 @@ static float fluid_debug_float(uint32_t word) {
     // The restored Sensorium model uses nondimensional natural units and an
     // attractive cubic interaction. These are model equations, not recovery
     // defaults; changing their sign or scale changes the represented physics.
+    // energy_decay is filled by advanceWave (Lindblad/SOC); unused here.
     return GPEParams{
         delta,
         1.0f,
         1.0f,
         -1.0f,
-        1.0f / (float)_modeCount,
+        0.0f,
         0.0f,
         _omegaSpacing > 0.0f ? 1.0f / (_omegaSpacing * _omegaSpacing) : 0.0f,
         FluidAnchorSlots,
@@ -946,8 +1370,7 @@ static float fluid_debug_float(uint32_t word) {
     }
 
     // R_specific = (gamma - 1) * c_v = 0.4 in the restored nondimensional gas.
-    // Newtonian gravity is deliberately disabled: spatial transport is applied
-    // by the pilot-wave probability current after the omega field advances.
+    // Gravity is enabled after solveGravity fills φ (thermo.step parity).
     PicGatherParams params = {
         _particleCount,
         _config.grid_x,
@@ -964,7 +1387,7 @@ static float fluid_debug_float(uint32_t word) {
         1.0f,
         1.0e-3f,
         1.0e-3f,
-        0.0f,
+        1.0f,
     };
     id<MTLCommandBuffer> command = nil;
     id<MTLComputeCommandEncoder> encoder = [self encoder:pipeline command:&command];
@@ -988,7 +1411,14 @@ static float fluid_debug_float(uint32_t word) {
         return NO;
     }
 
-    float *heat = (float *)_heatOutput.contents;
+    // Validate gather heat only; commit/clamp happen after Planck (thermo.step).
+    size_t liveScalar = (size_t)_particleCount * sizeof(float);
+
+    if (![self blitFrom:_heatOutput sourceOffset:0 to:_hostHeat destinationOffset:0 bytes:liveScalar error:error]) {
+        return NO;
+    }
+
+    float *heat = (float *)_hostHeat.contents;
 
     for (uint32_t index = 0; index < _particleCount; index++) {
         if (!std::isfinite(heat[index]) || heat[index] < 0.0f) {
@@ -1000,15 +1430,14 @@ static float fluid_debug_float(uint32_t word) {
         }
     }
 
-    std::memcpy(_position.contents, _positionOutput.contents, _position.length);
-    std::memcpy(_velocity.contents, _velocityOutput.contents, _velocity.length);
-    std::memcpy(_heat.contents, _heatOutput.contents, _heat.length);
     return YES;
 }
 
 - (BOOL)advancePilotWave:(float)delta
              diagnostics:(FluidDiagnostics *)diagnostics
                    error:(NSString **)error {
+    // quantum_flow.step: project Ψ(x) → Bohm current advection
+    // (Ψ smoothing omitted — QuantumFlowConfig defaults steps=0).
     id<MTLComputePipelineState> project = [self pipeline:@"project_modes_to_spatial_psi" error:error];
     id<MTLComputePipelineState> advect = [self pipeline:@"pic_gather_update_particles_pilot_wave" error:error];
 
@@ -1041,11 +1470,11 @@ static float fluid_debug_float(uint32_t word) {
 
     [encoder setBytes:&projectParams length:sizeof(projectParams) atIndex:7];
     [self dispatch:encoder count:_modeCount * FluidAnchorSlots pipeline:project];
-    [encoder endEncoding];
 
-    // The restored pilot-wave model uses hbar_eff=1. Particle validation already
-    // requires positive inertial mass, while exact spatial vacuum has a defined
-    // zero-guidance path, so no denominator or mass fallback is introduced here.
+    if (![self finish:encoder command:command error:error]) {
+        return NO;
+    }
+
     PilotWaveParams pilotParams = {
         _particleCount,
         _config.grid_x,
@@ -1058,11 +1487,11 @@ static float fluid_debug_float(uint32_t word) {
         _config.grid_y * _config.spacing,
         _config.grid_z * _config.spacing,
         1.0f,
-        0.0f,
-        0.0f,
+        1.0e-8f,
+        1.0e-6f,
     };
-    encoder = [command computeCommandEncoder];
-    [encoder setComputePipelineState:advect];
+    command = nil;
+    encoder = [self encoder:advect command:&command];
     NSArray<id<MTLBuffer>> *pilotBuffers = @[
         _position, _mass, _positionOutput, _velocityOutput,
         _spatialPsiReal, _spatialPsiImaginary,
@@ -1079,8 +1508,15 @@ static float fluid_debug_float(uint32_t word) {
         return NO;
     }
 
-    float *position = (float *)_positionOutput.contents;
-    float *velocity = (float *)_velocityOutput.contents;
+    size_t liveVector = (size_t)_particleCount * 3u * sizeof(float);
+
+    if (![self blitFrom:_positionOutput sourceOffset:0 to:_hostPosition destinationOffset:0 bytes:liveVector error:error] ||
+        ![self blitFrom:_velocityOutput sourceOffset:0 to:_hostVelocity destinationOffset:0 bytes:liveVector error:error]) {
+        return NO;
+    }
+
+    float *position = (float *)_hostPosition.contents;
+    float *velocity = (float *)_hostVelocity.contents;
     float guidanceSquared = 0.0f;
 
     for (uint32_t index = 0; index < _particleCount * 3u; index++) {
@@ -1096,46 +1532,49 @@ static float fluid_debug_float(uint32_t word) {
     }
 
     diagnostics->guidance_rms = std::sqrt(guidanceSquared / (float)_particleCount);
-    std::memcpy(_position.contents, _positionOutput.contents, _position.length);
-    std::memcpy(_velocity.contents, _velocityOutput.contents, _velocity.length);
-    return YES;
+    return [self blitFrom:_positionOutput sourceOffset:0 to:_position destinationOffset:0 bytes:liveVector error:error] &&
+        [self blitFrom:_velocityOutput sourceOffset:0 to:_velocity destinationOffset:0 bytes:liveVector error:error];
 }
 
 - (BOOL)planckExchange:(float)delta error:(NSString **)error {
-    float *heat = (float *)_heat.contents;
-    float *energy = (float *)_energy.contents;
-    float *omega = (float *)_omega.contents;
-    float *mass = (float *)_mass.contents;
-    const float conductivity = 1.0e-4f * 1.4f / 0.71f;
-    const float radius = 0.5f * _config.spacing;
+    id<MTLComputePipelineState> pipeline = [self pipeline:@"planck_exchange" error:error];
+
+    if (pipeline == nil) {
+        return NO;
+    }
+
+    PlanckExchangeParams params = {
+        _particleCount,
+        delta,
+        1.0e-4f * 1.4f / 0.71f,
+        0.5f * _config.spacing,
+    };
+    id<MTLCommandBuffer> command = nil;
+    id<MTLComputeCommandEncoder> encoder = [self encoder:pipeline command:&command];
+    [encoder setBuffer:_heat offset:0 atIndex:0];
+    [encoder setBuffer:_energy offset:0 atIndex:1];
+    [encoder setBuffer:_omega offset:0 atIndex:2];
+    [encoder setBuffer:_mass offset:0 atIndex:3];
+    [encoder setBytes:&params length:sizeof(params) atIndex:4];
+    [self dispatch:encoder count:_particleCount pipeline:pipeline];
+
+    if (![self finish:encoder command:command error:error]) {
+        return NO;
+    }
+
+    size_t liveScalar = (size_t)_particleCount * sizeof(float);
+
+    if (![self blitFrom:_heat sourceOffset:0 to:_hostHeat destinationOffset:0 bytes:liveScalar error:error] ||
+        ![self blitFrom:_energy sourceOffset:0 to:_hostEnergy destinationOffset:0 bytes:liveScalar error:error]) {
+        return NO;
+    }
+
+    float *heat = (float *)_hostHeat.contents;
+    float *energy = (float *)_hostEnergy.contents;
 
     for (uint32_t index = 0; index < _particleCount; index++) {
-        float temperature = heat[index] / mass[index];
-        float ratio = omega[index] / std::max(temperature, 1.0e-20f);
-        float equilibrium = 0.0f;
-
-        if (ratio < 1.0e-4f) {
-            equilibrium = temperature;
-        } else if (ratio > 50.0f) {
-            equilibrium = omega[index] * std::exp(-ratio);
-        } else {
-            equilibrium = omega[index] / std::expm1(std::min(ratio, 80.0f));
-        }
-
-        if (!std::isfinite(equilibrium) || equilibrium < 0.0f) {
-            equilibrium = 0.0f;
-        }
-
-        float relaxation = mass[index] / (4.0f * (float)M_PI * conductivity * radius);
-        float alpha = 1.0f - std::exp(-delta / relaxation);
-        float exchanged = alpha * (equilibrium - energy[index]);
-        exchanged = std::min(exchanged, heat[index]);
-        exchanged = std::max(exchanged, -energy[index]);
-        energy[index] += exchanged;
-        heat[index] -= exchanged;
-
-        if (!std::isfinite(energy[index]) || !std::isfinite(heat[index]) ||
-            energy[index] < 0.0f || heat[index] < 0.0f) {
+        if (!std::isfinite(heat[index]) || !std::isfinite(energy[index]) ||
+            heat[index] < 0.0f || energy[index] < 0.0f) {
             if (error != nil) {
                 *error = [NSString stringWithFormat:@"Planck exchange failed at particle %u", index];
             }
@@ -1148,18 +1587,39 @@ static float fluid_debug_float(uint32_t word) {
 }
 
 - (void)deriveSpatialSigma {
-    float *heat = (float *)_heat.contents;
-    float *mass = (float *)_mass.contents;
-    float meanTemperature = 0.0f;
-    float meanMass = 0.0f;
+    // omegawave: σ_x = √(2π) / √(m̄ T̄) with c_v=1 in ω-natural units.
+    NSString *pullError = nil;
+    size_t liveScalar = (size_t)_particleCount * sizeof(float);
 
-    for (uint32_t index = 0; index < _particleCount; index++) {
-        meanTemperature += heat[index] / mass[index];
-        meanMass += mass[index];
+    if (![self blitFrom:_heat sourceOffset:0 to:_hostHeat destinationOffset:0 bytes:liveScalar error:&pullError] ||
+        ![self blitFrom:_mass sourceOffset:0 to:_hostMass destinationOffset:0 bytes:liveScalar error:&pullError]) {
+        return;
     }
 
-    meanTemperature /= (float)_particleCount;
-    meanMass /= (float)_particleCount;
+    float *heat = (float *)_hostHeat.contents;
+    float *mass = (float *)_hostMass.contents;
+    float meanTemperature = 0.0f;
+    float meanMass = 0.0f;
+    uint32_t counted = 0u;
+
+    for (uint32_t index = 0; index < _particleCount; index++) {
+        if (!(mass[index] > 0.0f)) {
+            continue;
+        }
+
+        meanTemperature += heat[index] / mass[index];
+        meanMass += mass[index];
+        counted++;
+    }
+
+    if (counted == 0u) {
+        _meanTemperature = 0.0f;
+        return;
+    }
+
+    meanTemperature /= (float)counted;
+    meanMass /= (float)counted;
+    _meanTemperature = meanTemperature;
     float domainLimit = 0.5f * std::min(
         _config.grid_x * _config.spacing,
         std::min(_config.grid_y * _config.spacing, _config.grid_z * _config.spacing)
@@ -1173,21 +1633,224 @@ static float fluid_debug_float(uint32_t word) {
     _spatialSigma = std::clamp(sigma, _config.spacing, domainLimit);
 }
 
-- (BOOL)advanceWave:(float)delta diagnostics:(FluidDiagnostics *)diagnostics error:(NSString **)error {
-    [self deriveSpatialSigma];
-    float *energy = (float *)_energy.contents;
-    float *amplitude = (float *)_amplitude.contents;
+- (BOOL)applyCouplingWeights:(NSString **)error {
+    // omegawave._renormalized_coupling_weights: κ(ω) ∝ 1/√ω_rel, mean-normalized.
+    size_t liveScalar = (size_t)_particleCount * sizeof(float);
+
+    if (![self blitFrom:_amplitude sourceOffset:0 to:_hostAmplitude destinationOffset:0 bytes:liveScalar error:error] ||
+        ![self blitFrom:_omega sourceOffset:0 to:_hostOmega destinationOffset:0 bytes:liveScalar error:error]) {
+        return NO;
+    }
+
+    float *amplitude = (float *)_hostAmplitude.contents;
+    float *omega = (float *)_hostOmega.contents;
+    float omegaMin = omega[0];
+
+    for (uint32_t index = 1; index < _particleCount; index++) {
+        omegaMin = std::min(omegaMin, omega[index]);
+    }
+
+    float omegaFloor = _omegaSpacing > 0.0f ? _omegaSpacing : 1.0e-3f;
+    std::vector<float> kappa((size_t)_particleCount);
+    float meanKappa = 0.0f;
 
     for (uint32_t index = 0; index < _particleCount; index++) {
-        amplitude[index] = std::sqrt(std::max(energy[index], 1.0e-8f));
+        float omegaRel = std::max(omega[index] - omegaMin + omegaFloor, omegaFloor);
+        kappa[index] = 1.0f / std::sqrt(omegaRel);
+        meanKappa += kappa[index];
     }
+
+    meanKappa = std::max(meanKappa / (float)_particleCount, 1.0e-6f);
+
+    for (uint32_t index = 0; index < _particleCount; index++) {
+        amplitude[index] *= kappa[index] / meanKappa;
+    }
+
+    return [self blitFrom:_hostAmplitude sourceOffset:0 to:_amplitude destinationOffset:0 bytes:liveScalar error:error];
+}
+
+- (void)applySeparationSoliton:(float)delta {
+    // omegawave._apply_separation_shift + _apply_soliton_projection on Ψ(ω).
+    float *real = (float *)_psiReal.contents;
+    float *imaginary = (float *)_psiImaginary.contents;
+    const uint32_t modes = _modeCount;
+
+    if (modes < 3u || !(delta > 0.0f)) {
+        return;
+    }
+
+    std::vector<float> density((size_t)modes);
+    std::vector<float> vRep((size_t)modes);
+    const float sepSigma = 1.0f;
+    const float sepStrength = 1.0f;
+    const int radius = (int)std::ceil(4.0f * sepSigma);
+    std::vector<float> kernel((size_t)(2 * radius + 1));
+    float kernelSum = 0.0f;
+
+    for (int offset = -radius; offset <= radius; offset++) {
+        float weight = std::exp(-0.5f * ((float)offset / sepSigma) * ((float)offset / sepSigma));
+        kernel[(size_t)(offset + radius)] = weight;
+        kernelSum += weight;
+    }
+
+    kernelSum = std::max(kernelSum, 1.0e-12f);
+
+    for (float &weight : kernel) {
+        weight /= kernelSum;
+    }
+
+    for (uint32_t mode = 0; mode < modes; mode++) {
+        density[mode] = real[mode] * real[mode] + imaginary[mode] * imaginary[mode];
+    }
+
+    for (uint32_t mode = 0; mode < modes; mode++) {
+        float sum = 0.0f;
+
+        for (int offset = -radius; offset <= radius; offset++) {
+            int sample = (int)mode + offset;
+
+            if (sample < 0 || sample >= (int)modes) {
+                continue;
+            }
+
+            sum += density[(size_t)sample] * kernel[(size_t)(offset + radius)];
+        }
+
+        vRep[mode] = sum;
+    }
+
+    std::vector<float> shift((size_t)modes);
+    shift[0] = std::clamp(-sepStrength * delta * (vRep[1] - vRep[0]), -0.5f, 0.5f);
+    shift[modes - 1u] = std::clamp(
+        -sepStrength * delta * (vRep[modes - 1u] - vRep[modes - 2u]), -0.5f, 0.5f
+    );
+
+    for (uint32_t mode = 1; mode + 1u < modes; mode++) {
+        float grad = 0.5f * (vRep[mode + 1u] - vRep[mode - 1u]);
+        shift[mode] = std::clamp(-sepStrength * delta * grad, -0.5f, 0.5f);
+    }
+
+    std::vector<float> outReal((size_t)modes);
+    std::vector<float> outImag((size_t)modes);
+    float denom = (float)std::max(modes - 1u, 1u);
+
+    for (uint32_t mode = 0; mode < modes; mode++) {
+        float sample = (float)mode - shift[mode];
+        float x0 = std::floor(sample);
+        int i0 = (int)x0;
+        int i1 = i0 + 1;
+        float frac = sample - x0;
+
+        if (i0 < 0 || i1 >= (int)modes) {
+            outReal[mode] = 0.0f;
+            outImag[mode] = 0.0f;
+            continue;
+        }
+
+        outReal[mode] = real[(size_t)i0] * (1.0f - frac) + real[(size_t)i1] * frac;
+        outImag[mode] = imaginary[(size_t)i0] * (1.0f - frac) + imaginary[(size_t)i1] * frac;
+        (void)denom;
+    }
+
+    // Soliton double-well projection (strength=1).
+    std::vector<float> amp((size_t)modes);
+
+    for (uint32_t mode = 0; mode < modes; mode++) {
+        amp[mode] = std::hypot(outReal[mode], outImag[mode]);
+    }
+
+    std::vector<float> sorted = amp;
+    std::nth_element(sorted.begin(), sorted.begin() + (sorted.size() * 3u) / 4u, sorted.end());
+    float aStar = sorted[(sorted.size() * 3u) / 4u];
+
+    if (!(aStar > 0.0f) || !std::isfinite(aStar)) {
+        std::memcpy(real, outReal.data(), (size_t)modes * sizeof(float));
+        std::memcpy(imaginary, outImag.data(), (size_t)modes * sizeof(float));
+        return;
+    }
+
+    float lambda = 2.0f / std::max(aStar * aStar, 1.0e-6f);
+    float stepCap = 0.25f * aStar;
+
+    for (uint32_t mode = 0; mode < modes; mode++) {
+        float a = amp[mode];
+        float dV = 2.0f * lambda * a * (a - aStar) * (2.0f * a - aStar);
+        float step = std::clamp(delta * dV, -stepCap, stepCap);
+        float aNew = std::max(a - step, 0.0f);
+        float aBlend = 0.5f * (a + aNew);
+        float phase = std::atan2(outImag[mode], outReal[mode]);
+        real[mode] = aBlend * std::cos(phase);
+        imaginary[mode] = aBlend * std::sin(phase);
+    }
+}
+
+- (BOOL)advanceWave:(float)delta diagnostics:(FluidDiagnostics *)diagnostics error:(NSString **)error {
+    // omegawave.step (single-head): σₓ, Lindblad/SOC decay, κ(σ), Planck-bias
+    // amp weights, accumulate → GPE → separation → soliton → phase update.
+    // Re-seed anchors on the post-thermo population so quantum_flow projection
+    // has support under the modes the particles actually occupy.
+    [self seedAnchors];
+    [self deriveSpatialSigma];
+    id<MTLComputePipelineState> amplitudePipeline =
+        [self pipeline:@"particle_amplitude_from_energy" error:error];
+
+    if (amplitudePipeline == nil) {
+        return NO;
+    }
+
+    id<MTLCommandBuffer> amplitudeCommand = nil;
+    id<MTLComputeCommandEncoder> amplitudeEncoder =
+        [self encoder:amplitudePipeline command:&amplitudeCommand];
+    [amplitudeEncoder setBuffer:_energy offset:0 atIndex:0];
+    [amplitudeEncoder setBuffer:_amplitude offset:0 atIndex:1];
+    [amplitudeEncoder setBytes:&_particleCount length:sizeof(_particleCount) atIndex:2];
+    [self dispatch:amplitudeEncoder count:_particleCount pipeline:amplitudePipeline];
+
+    if (![self finish:amplitudeEncoder command:amplitudeCommand error:error] ||
+        ![self applyCouplingWeights:error]) {
+        return NO;
+    }
+
+    float domainScale = std::min(
+        _config.grid_x * _config.spacing,
+        std::min(_config.grid_y * _config.spacing, _config.grid_z * _config.spacing)
+    );
+    float kappaPhysical = _spatialSigma > 0.0f
+        ? (domainScale / _spatialSigma) * (domainScale / _spatialSigma)
+        : 1.0f;
+    float couplingScale = kappaPhysical / std::sqrt((float)_modeCount);
+
+    // Lindblad Γ = γ · T (ħ=k_B=1) with SOC flux boost from ||ΔΨ||.
+    const float bathCoupling = 0.1f;
+    float energyDecay = bathCoupling * std::max(_meanTemperature, 0.0f);
+    float flux = 0.0f;
+
+    if (_previousPsiReal.size() == _modeCount && _previousPsiImaginary.size() == _modeCount) {
+        float *real = (float *)_psiReal.contents;
+        float *imaginary = (float *)_psiImaginary.contents;
+        float mag2 = 0.0f;
+
+        for (uint32_t mode = 0; mode < _modeCount; mode++) {
+            float dReal = real[mode] - _previousPsiReal[mode];
+            float dImag = imaginary[mode] - _previousPsiImaginary[mode];
+            mag2 += dReal * dReal + dImag * dImag;
+        }
+
+        mag2 /= (float)_modeCount;
+        float dtSafe = delta > 0.0f ? delta : 1.0e-9f;
+        flux = mag2 / (dtSafe * dtSafe);
+    }
+
+    energyDecay *= 1.0f + 10.0f * std::min(flux, 10.0f);
+    energyDecay = std::clamp(energyDecay, 1.0e-6f, 20.0f);
 
     std::memset(_modeAccumulators.contents, 0, _modeAccumulators.length);
     _randomSeed++;
     SpectralModeParams spectral = [self spectralParams:delta];
-    spectral.coupling_scale = 1.0f / std::sqrt((float)_modeCount);
+    spectral.coupling_scale = couplingScale;
     spectral.rng_seed = _randomSeed;
     GPEParams gpe = [self gpeParams:delta];
+    gpe.energy_decay = energyDecay;
     gpe.rng_seed = _randomSeed;
     id<MTLComputePipelineState> accumulate = [self pipeline:@"coherence_accumulate_forces" error:error];
     id<MTLComputePipelineState> gpePipeline = [self pipeline:@"coherence_gpe_step" error:error];
@@ -1235,9 +1898,15 @@ static float fluid_debug_float(uint32_t word) {
     [encoder setThreadgroupMemoryLength:(NSUInteger)_modeCount * 4u * sizeof(float) atIndex:0];
     [encoder dispatchThreadgroups:MTLSizeMake(1u, 1u, 1u)
             threadsPerThreadgroup:MTLSizeMake(_modeCount, 1u, 1u)];
-    [encoder endEncoding];
-    encoder = [command computeCommandEncoder];
-    [encoder setComputePipelineState:phasePipeline];
+
+    if (![self finish:encoder command:command error:error]) {
+        return NO;
+    }
+
+    [self applySeparationSoliton:delta];
+
+    command = nil;
+    encoder = [self encoder:phasePipeline command:&command];
     NSArray<id<MTLBuffer>> *phaseBuffers = @[
         _phase, _omega, _amplitude, _psiReal, _psiImaginary, _modeOmega,
         _modeLinewidth, _anchorIndex, _anchorWeight, _modeCountBuffer,
@@ -1272,8 +1941,13 @@ static float fluid_debug_float(uint32_t word) {
         }
     }
 
-    float *phase = (float *)_phase.contents;
-    float *heat = (float *)_heat.contents;
+    if (![self blitFrom:_phase sourceOffset:0 to:_hostPhase destinationOffset:0 bytes:(size_t)_particleCount * sizeof(float) error:error] ||
+        ![self blitFrom:_heat sourceOffset:0 to:_hostHeat destinationOffset:0 bytes:(size_t)_particleCount * sizeof(float) error:error]) {
+        return NO;
+    }
+
+    float *phase = (float *)_hostPhase.contents;
+    float *heat = (float *)_hostHeat.contents;
 
     for (uint32_t particle = 0; particle < _particleCount; particle++) {
         if (!std::isfinite(phase[particle]) || !std::isfinite(heat[particle]) || heat[particle] < 0.0f) {
@@ -1287,12 +1961,14 @@ static float fluid_debug_float(uint32_t word) {
 
     float squared = 0.0f;
     float deltaSquared = 0.0f;
-
     BOOL hasPreviousAmplitude = _previousAmplitude.size() == _modeCount;
 
     if (!hasPreviousAmplitude) {
         _previousAmplitude.resize(_modeCount);
     }
+
+    _previousPsiReal.resize(_modeCount);
+    _previousPsiImaginary.resize(_modeCount);
 
     for (uint32_t mode = 0; mode < _modeCount; mode++) {
         float current = std::hypot(real[mode], imaginary[mode]);
@@ -1300,6 +1976,8 @@ static float fluid_debug_float(uint32_t word) {
         squared += current * current;
         deltaSquared += difference * difference;
         _previousAmplitude[mode] = current;
+        _previousPsiReal[mode] = real[mode];
+        _previousPsiImaginary[mode] = imaginary[mode];
     }
 
     diagnostics->psi_rms = std::sqrt(squared / (float)_modeCount);
@@ -1307,23 +1985,464 @@ static float fluid_debug_float(uint32_t word) {
     return YES;
 }
 
-- (void)storeParticles:(FluidParticle *)particles count:(uint32_t)count {
-    float *position = (float *)_position.contents;
-    float *velocity = (float *)_velocity.contents;
-    float *mass = (float *)_mass.contents;
-    float *heat = (float *)_heat.contents;
-    float *energy = (float *)_energy.contents;
-    float *phase = (float *)_phase.contents;
-    float *omega = (float *)_omega.contents;
+- (BOOL)readParticles:(FluidParticle *)particles
+                start:(uint32_t)start
+                count:(uint32_t)count
+                error:(NSString **)error {
+    if (particles == nullptr || count == 0u) {
+        if (error != nil) {
+            *error = @"particle read buffer is required";
+        }
+
+        return NO;
+    }
+
+    if (start > _particleCount || count > _particleCount - start) {
+        if (error != nil) {
+            *error = @"particle read range exceeds resident population";
+        }
+
+        return NO;
+    }
+
+    if (![self pullParticles:error]) {
+        return NO;
+    }
+
+    float *position = (float *)_hostPosition.contents;
+    float *velocity = (float *)_hostVelocity.contents;
+    float *mass = (float *)_hostMass.contents;
+    float *heat = (float *)_hostHeat.contents;
+    float *energy = (float *)_hostEnergy.contents;
+    float *phase = (float *)_hostPhase.contents;
+    float *omega = (float *)_hostOmega.contents;
 
     for (uint32_t index = 0; index < count; index++) {
-        uint32_t base = index * 3u;
+        uint32_t slot = start + index;
+        uint32_t base = slot * 3u;
         particles[index] = FluidParticle{
             position[base], position[base + 1u], position[base + 2u],
             velocity[base], velocity[base + 1u], velocity[base + 2u],
-            mass[index], heat[index], energy[index], phase[index], omega[index],
+            mass[slot], heat[slot], energy[slot], phase[slot], omega[slot],
         };
     }
+
+    return YES;
+}
+
+- (BOOL)appendParticles:(const FluidParticle *)particles
+             contentIDs:(const uint32_t *)contentIDs
+                  count:(uint32_t)count
+                  start:(uint32_t *)start
+                  error:(NSString **)error {
+    if (particles == nullptr || contentIDs == nullptr || count == 0u || start == nullptr) {
+        if (error != nil) {
+            *error = @"append requires particles, content IDs, and a start out";
+        }
+
+        return NO;
+    }
+
+    uint32_t offset = _particleCount;
+
+    if (![self ensureCapacity:offset + count error:error]) {
+        return NO;
+    }
+
+    if (![self writeParticles:particles contentIDs:contentIDs count:count offset:offset error:error]) {
+        return NO;
+    }
+
+    _particleCount = offset + count;
+    *start = offset;
+    return YES;
+}
+
+- (BOOL)mergeInelastic:(NSString **)error {
+    // thermodynamics._merge_inelastic_collisions on device: key/sort/reduce.
+    if (_particleCount < 2u) {
+        return YES;
+    }
+
+    uint32_t padded = 1u;
+
+    while (padded < _particleCount) {
+        padded *= 2u;
+    }
+
+    if (padded > _mergePadCapacity) {
+        if (error != nil) {
+            *error = @"merge pad capacity is insufficient";
+        }
+
+        return NO;
+    }
+
+    id<MTLComputePipelineState> keysPipeline = [self pipeline:@"merge_compute_keys" error:error];
+    id<MTLComputePipelineState> fillPipeline = [self pipeline:@"bitonic_fill_indices" error:error];
+    id<MTLComputePipelineState> bitonicPipeline =
+        [self pipeline:@"bitonic_compare_exchange" error:error];
+    id<MTLComputePipelineState> reducePipeline = [self pipeline:@"merge_reduce_runs" error:error];
+
+    if (keysPipeline == nil || fillPipeline == nil || bitonicPipeline == nil ||
+        reducePipeline == nil) {
+        return NO;
+    }
+
+    MergeParams params = {
+        _particleCount,
+        padded,
+        _config.grid_x,
+        _config.grid_y,
+        _config.grid_z,
+        1.0f / _config.spacing,
+    };
+    *(uint32_t *)_mergeCount.contents = 0u;
+
+    // One command buffer for keying, bitonic sort, and reduce — no mid-sort sync.
+    id<MTLCommandBuffer> command = [_queue commandBuffer];
+    id<MTLComputeCommandEncoder> encoder = [command computeCommandEncoder];
+    [encoder setComputePipelineState:keysPipeline];
+    [encoder setBuffer:_position offset:0 atIndex:0];
+    [encoder setBuffer:_content offset:0 atIndex:1];
+    [encoder setBuffer:_mergeKeys offset:0 atIndex:2];
+    [encoder setBytes:&params length:sizeof(params) atIndex:3];
+    [self dispatch:encoder count:padded pipeline:keysPipeline];
+    [encoder endEncoding];
+
+    encoder = [command computeCommandEncoder];
+    [encoder setComputePipelineState:fillPipeline];
+    [encoder setBuffer:_mergeIndices offset:0 atIndex:0];
+    [encoder setBytes:&padded length:sizeof(padded) atIndex:1];
+    [self dispatch:encoder count:padded pipeline:fillPipeline];
+    [encoder endEncoding];
+
+    for (uint32_t k = 2u; k <= padded; k <<= 1u) {
+        for (uint32_t j = k >> 1u; j > 0u; j >>= 1u) {
+            encoder = [command computeCommandEncoder];
+            [encoder setComputePipelineState:bitonicPipeline];
+            [encoder setBuffer:_mergeIndices offset:0 atIndex:0];
+            [encoder setBuffer:_mergeKeys offset:0 atIndex:1];
+            [encoder setBytes:&j length:sizeof(j) atIndex:2];
+            [encoder setBytes:&k length:sizeof(k) atIndex:3];
+            [encoder setBytes:&padded length:sizeof(padded) atIndex:4];
+            [self dispatch:encoder count:padded pipeline:bitonicPipeline];
+            [encoder endEncoding];
+        }
+    }
+
+    encoder = [command computeCommandEncoder];
+    [encoder setComputePipelineState:reducePipeline];
+    // sortedOriginalIndex holds compacted clamped-OR flags until blit to _clamped.
+    NSArray<id<MTLBuffer>> *reduceBuffers = @[
+        _mergeIndices, _mergeKeys, _position, _velocity, _mass, _heat, _energy,
+        _phase, _omega, _content, _clamped, _sortedPosition, _sortedVelocity,
+        _sortedMass, _sortedHeat, _sortedEnergy, _mergePhase, _mergeOmega,
+        _mergeAmplitude, _mergeContent, _sortedOriginalIndex, _mergeCount,
+    ];
+
+    for (NSUInteger index = 0; index < reduceBuffers.count; index++) {
+        [encoder setBuffer:reduceBuffers[index] offset:0 atIndex:index];
+    }
+
+    [encoder setBytes:&params length:sizeof(params) atIndex:22];
+    [self dispatch:encoder count:_particleCount pipeline:reducePipeline];
+    // Encoders above already ended; commit the fused merge graph once.
+    [encoder endEncoding];
+    [command commit];
+    [command waitUntilCompleted];
+
+    if (command.status == MTLCommandBufferStatusError) {
+        if (error != nil) {
+            *error = command.error.localizedDescription ?: @"Metal merge failed";
+        }
+
+        return NO;
+    }
+
+    uint32_t written = *(uint32_t *)_mergeCount.contents;
+
+    if (written == 0u) {
+        if (error != nil) {
+            *error = @"inelastic merge produced empty population";
+        }
+
+        return NO;
+    }
+
+    if (written == _particleCount) {
+        return YES;
+    }
+
+    size_t liveScalar = (size_t)written * sizeof(float);
+    size_t liveVector = liveScalar * 3u;
+    size_t liveIndex = (size_t)written * sizeof(uint32_t);
+
+    if (![self blitFrom:_sortedPosition sourceOffset:0 to:_position destinationOffset:0 bytes:liveVector error:error] ||
+        ![self blitFrom:_sortedVelocity sourceOffset:0 to:_velocity destinationOffset:0 bytes:liveVector error:error] ||
+        ![self blitFrom:_sortedMass sourceOffset:0 to:_mass destinationOffset:0 bytes:liveScalar error:error] ||
+        ![self blitFrom:_sortedHeat sourceOffset:0 to:_heat destinationOffset:0 bytes:liveScalar error:error] ||
+        ![self blitFrom:_sortedEnergy sourceOffset:0 to:_energy destinationOffset:0 bytes:liveScalar error:error] ||
+        ![self blitFrom:_mergePhase sourceOffset:0 to:_phase destinationOffset:0 bytes:liveScalar error:error] ||
+        ![self blitFrom:_mergeOmega sourceOffset:0 to:_omega destinationOffset:0 bytes:liveScalar error:error] ||
+        ![self blitFrom:_mergeAmplitude sourceOffset:0 to:_amplitude destinationOffset:0 bytes:liveScalar error:error] ||
+        ![self blitFrom:_mergeContent sourceOffset:0 to:_content destinationOffset:0 bytes:liveIndex error:error] ||
+        ![self blitFrom:_sortedOriginalIndex sourceOffset:0 to:_clamped destinationOffset:0 bytes:liveIndex error:error]) {
+        return NO;
+    }
+
+    _particleCount = written;
+    return YES;
+}
+
+- (BOOL)advanceResident:(FluidDiagnostics *)diagnostics error:(NSString **)error {
+    if (diagnostics == nullptr) {
+        if (error != nil) {
+            *error = @"diagnostics are required";
+        }
+
+        return NO;
+    }
+
+    if (_particleCount == 0u) {
+        if (error != nil) {
+            *error = @"resident particle population is empty";
+        }
+
+        return NO;
+    }
+
+    if (!_waveInitialized) {
+        [self initializeWave];
+    }
+
+    *diagnostics = FluidDiagnostics{};
+
+    // Sensorium manifold physics order:
+    //   1) thermo.step  2) omegawave.step  3) quantum_flow.step
+    if (![self scatter:error] ||
+        ![self solveGravity:error] ||
+        ![self advanceGas:diagnostics error:error] ||
+        ![self gather:diagnostics->delta_used error:error]) {
+        return NO;
+    }
+
+    size_t liveScalar = (size_t)_particleCount * sizeof(float);
+    size_t liveVector = liveScalar * 3u;
+    float dt = diagnostics->delta_used;
+
+    // thermo: stash → Planck → clamp → commit → merge → spatial IDs.
+    if (![self blitFrom:_heat sourceOffset:0 to:_sortedHeat destinationOffset:0 bytes:liveScalar error:error] ||
+        ![self blitFrom:_energy sourceOffset:0 to:_sortedEnergy destinationOffset:0 bytes:liveScalar error:error] ||
+        ![self blitFrom:_heatOutput sourceOffset:0 to:_heat destinationOffset:0 bytes:liveScalar error:error] ||
+        ![self planckExchange:dt error:error] ||
+        ![self applyClamp:error] ||
+        ![self blitFrom:_positionOutput sourceOffset:0 to:_position destinationOffset:0 bytes:liveVector error:error] ||
+        ![self blitFrom:_velocityOutput sourceOffset:0 to:_velocity destinationOffset:0 bytes:liveVector error:error] ||
+        ![self mergeInelastic:error] ||
+        ![self computeSpatialIDs:error] ||
+        ![self advanceWave:dt diagnostics:diagnostics error:error] ||
+        ![self advancePilotWave:dt diagnostics:diagnostics error:error]) {
+        return NO;
+    }
+
+    return YES;
+}
+
+- (BOOL)solveGravity:(NSString **)error {
+    // Periodic Poisson ∇²φ = 4πGρ via FFT; φ̂(k) = -(4πG/k²)ρ̂(k), φ̂(0)=0.
+    if (_fftSetup == nullptr || _fftInvK2.size() != (size_t)_cellCount) {
+        if (error != nil) {
+            *error = @"gravity FFT cache is not initialized";
+        }
+
+        return NO;
+    }
+
+    float *density = (float *)_density.contents;
+    double mean = 0.0;
+
+    for (uint32_t cell = 0; cell < _cellCount; cell++) {
+        mean += (double)density[cell];
+    }
+
+    mean /= (double)_cellCount;
+
+    for (uint32_t cell = 0; cell < _cellCount; cell++) {
+        _fftScratch[cell] = {(float)((double)density[cell] - mean), 0.0f};
+    }
+
+    // Axis-contiguous 3D FFT: X fastest, then Y, then Z (matches density layout).
+    const uint32_t nx = _config.grid_x;
+    const uint32_t ny = _config.grid_y;
+    const uint32_t nz = _config.grid_z;
+    enum class Axis { X, Y, Z };
+    auto transformAxis = [&](Axis axis, bool inverse) {
+        uint32_t n = axis == Axis::X ? nx : (axis == Axis::Y ? ny : nz);
+        uint32_t lines = _cellCount / n;
+        uint32_t log2n = 0u;
+
+        for (uint32_t value = n; value > 1u; value >>= 1u) {
+            log2n++;
+        }
+
+        std::vector<float> real((size_t)n);
+        std::vector<float> imag((size_t)n);
+        DSPSplitComplex split{real.data(), imag.data()};
+
+        for (uint32_t line = 0; line < lines; line++) {
+            for (uint32_t index = 0; index < n; index++) {
+                size_t cell = 0;
+
+                if (axis == Axis::X) {
+                    cell = (size_t)line * n + index;
+                } else if (axis == Axis::Y) {
+                    uint32_t z = line / nx;
+                    uint32_t x = line % nx;
+                    cell = (size_t)x + (size_t)index * nx + (size_t)z * nx * ny;
+                } else {
+                    uint32_t y = line / nx;
+                    uint32_t x = line % nx;
+                    cell = (size_t)x + (size_t)y * nx + (size_t)index * nx * ny;
+                }
+
+                real[index] = _fftScratch[cell].real();
+                imag[index] = _fftScratch[cell].imag();
+            }
+
+            vDSP_fft_zip(_fftSetup, &split, 1, log2n, inverse ? FFT_INVERSE : FFT_FORWARD);
+
+            for (uint32_t index = 0; index < n; index++) {
+                size_t cell = 0;
+
+                if (axis == Axis::X) {
+                    cell = (size_t)line * n + index;
+                } else if (axis == Axis::Y) {
+                    uint32_t z = line / nx;
+                    uint32_t x = line % nx;
+                    cell = (size_t)x + (size_t)index * nx + (size_t)z * nx * ny;
+                } else {
+                    uint32_t y = line / nx;
+                    uint32_t x = line % nx;
+                    cell = (size_t)x + (size_t)y * nx + (size_t)index * nx * ny;
+                }
+
+                _fftScratch[cell] = {real[index], imag[index]};
+            }
+        }
+    };
+
+    transformAxis(Axis::X, false);
+    transformAxis(Axis::Y, false);
+    transformAxis(Axis::Z, false);
+
+    const float scale = -4.0f * (float)M_PI * _config.gravity_g;
+
+    for (uint32_t cell = 0; cell < _cellCount; cell++) {
+        float factor = scale * _fftInvK2[cell];
+        _fftScratch[cell] *= factor;
+    }
+
+    transformAxis(Axis::Z, true);
+    transformAxis(Axis::Y, true);
+    transformAxis(Axis::X, true);
+
+    const float invCells = 1.0f / (float)_cellCount;
+    float *potential = (float *)_gravityPotential.contents;
+
+    for (uint32_t cell = 0; cell < _cellCount; cell++) {
+        potential[cell] = _fftScratch[cell].real() * invCells;
+    }
+
+    return YES;
+}
+
+- (BOOL)applyClamp:(NSString **)error {
+    // Restore step-start state for clamped particles into the gather/Planck
+    // updates (sortedHeat/Energy hold the pre-gather originals).
+    id<MTLComputePipelineState> pipeline =
+        [self pipeline:@"apply_crystallization_clamp" error:error];
+
+    if (pipeline == nil) {
+        return NO;
+    }
+
+    id<MTLCommandBuffer> command = nil;
+    id<MTLComputeCommandEncoder> encoder = [self encoder:pipeline command:&command];
+    [encoder setBuffer:_clamped offset:0 atIndex:0];
+    [encoder setBuffer:_position offset:0 atIndex:1];
+    [encoder setBuffer:_velocity offset:0 atIndex:2];
+    [encoder setBuffer:_sortedHeat offset:0 atIndex:3];
+    [encoder setBuffer:_sortedEnergy offset:0 atIndex:4];
+    [encoder setBuffer:_omega offset:0 atIndex:5];
+    [encoder setBuffer:_positionOutput offset:0 atIndex:6];
+    [encoder setBuffer:_velocityOutput offset:0 atIndex:7];
+    [encoder setBuffer:_heat offset:0 atIndex:8];
+    [encoder setBuffer:_energy offset:0 atIndex:9];
+    [encoder setBuffer:_omega offset:0 atIndex:10];
+    [encoder setBytes:&_particleCount length:sizeof(_particleCount) atIndex:11];
+    [self dispatch:encoder count:_particleCount pipeline:pipeline];
+    return [self finish:encoder command:command error:error];
+}
+
+- (BOOL)computeSpatialIDs:(NSString **)error {
+    id<MTLComputePipelineState> pipeline =
+        [self pipeline:@"compute_spatial_token_ids" error:error];
+
+    if (pipeline == nil) {
+        return NO;
+    }
+
+    MergeParams params = {
+        _particleCount,
+        _particleCount,
+        _config.grid_x,
+        _config.grid_y,
+        _config.grid_z,
+        1.0f / _config.spacing,
+    };
+    id<MTLCommandBuffer> command = nil;
+    id<MTLComputeCommandEncoder> encoder = [self encoder:pipeline command:&command];
+    [encoder setBuffer:_position offset:0 atIndex:0];
+    [encoder setBuffer:_content offset:0 atIndex:1];
+    [encoder setBuffer:_cellMorton offset:0 atIndex:2];
+    [encoder setBuffer:_spatialTokenIDs offset:0 atIndex:3];
+    [encoder setBytes:&params length:sizeof(params) atIndex:4];
+    [self dispatch:encoder count:_particleCount pipeline:pipeline];
+    return [self finish:encoder command:command error:error];
+}
+
+- (BOOL)readSpatialIDs:(uint32_t *)ids
+                 start:(uint32_t)start
+                 count:(uint32_t)count
+                 error:(NSString **)error {
+    if (ids == nullptr || count == 0u) {
+        if (error != nil) {
+            *error = @"spatial ID read requires an output buffer";
+        }
+
+        return NO;
+    }
+
+    if (start > _particleCount || count > _particleCount - start) {
+        if (error != nil) {
+            *error = @"spatial ID read range exceeds resident population";
+        }
+
+        return NO;
+    }
+
+    size_t liveIndex = (size_t)_particleCount * sizeof(uint32_t);
+
+    // Staging through hostContent: same width as content/spatial uint32 lanes.
+    if (![self blitFrom:_spatialTokenIDs sourceOffset:0
+                     to:_hostContent destinationOffset:0 bytes:liveIndex error:error]) {
+        return NO;
+    }
+
+    uint32_t *spatial = (uint32_t *)_hostContent.contents;
+    std::memcpy(ids, spatial + start, (size_t)count * sizeof(uint32_t));
+    return YES;
 }
 
 - (BOOL)stepParticles:(FluidParticle *)particles
@@ -1338,28 +2457,39 @@ static float fluid_debug_float(uint32_t word) {
         return NO;
     }
 
-    if (![self allocateParticles:count error:error]) {
+    // Legacy one-shot replace: host supplies the complete population for this
+    // step. Streaming callers should prefer appendParticles + advanceResident.
+    if (![self ensureCapacity:count error:error]) {
         return NO;
     }
 
-    [self loadParticles:particles count:count];
+    // Legacy Step has no tokenizer content IDs; give each host slot a distinct
+    // identity so replace-path particles do not falsely inelastic-merge.
+    std::vector<uint32_t> contentIDs((size_t)count);
 
-    if (!_waveInitialized) {
-        [self initializeWave];
+    for (uint32_t index = 0; index < count; index++) {
+        contentIDs[index] = index;
     }
 
-    *diagnostics = FluidDiagnostics{};
+    _particleCount = count;
 
-    if (![self scatter:error] ||
-        ![self advanceGas:diagnostics error:error] ||
-        ![self gather:diagnostics->delta_used error:error] ||
-        ![self planckExchange:diagnostics->delta_used error:error] ||
-        ![self advanceWave:_config.spacing diagnostics:diagnostics error:error] ||
-        ![self advancePilotWave:diagnostics->delta_used diagnostics:diagnostics error:error]) {
+    if (![self writeParticles:particles contentIDs:contentIDs.data() count:count offset:0u error:error]) {
         return NO;
     }
 
-    [self storeParticles:particles count:count];
+    if (![self advanceResident:diagnostics error:error]) {
+        return NO;
+    }
+
+    // Merge may compact; copy the live prefix and clear any host ghosts.
+    if (![self readParticles:particles start:0u count:_particleCount error:error]) {
+        return NO;
+    }
+
+    for (uint32_t index = _particleCount; index < count; index++) {
+        particles[index] = FluidParticle{};
+    }
+
     return YES;
 }
 
@@ -1393,13 +2523,17 @@ static float fluid_debug_float(uint32_t word) {
         return NO;
     }
 
-    float *position = (float *)_position.contents;
+    if (![self pullParticles:error]) {
+        return NO;
+    }
+
+    float *position = (float *)_hostPosition.contents;
     float *density = (float *)_density.contents;
     float *momentum = (float *)_momentum.contents;
     float *energy = (float *)_internalEnergy.contents;
     float *waveReal = (float *)_psiReal.contents;
     float *waveImaginary = (float *)_psiImaginary.contents;
-    float *velocity = (float *)_velocity.contents;
+    float *velocity = (float *)_hostVelocity.contents;
     uint32_t dimensions[3] = {_config.grid_x, _config.grid_y, _config.grid_z};
     uint32_t centroid[3] = {};
 
@@ -1662,6 +2796,125 @@ extern "C" int fluid_domain_step(
 
         if (!success) {
             fluid_write_error(errorOutput, errorCapacity, error ?: @"fluid domain step failed");
+            return 0;
+        }
+
+        return 1;
+    }
+}
+
+extern "C" int fluid_domain_append(
+    void *handle,
+    const FluidParticle *particles,
+    const uint32_t *contentIDs,
+    uint32_t particleCount,
+    uint32_t *startOut,
+    char *errorOutput,
+    int errorCapacity
+) {
+    @autoreleasepool {
+        if (handle == nullptr) {
+            fluid_write_error(errorOutput, errorCapacity, @"fluid domain handle is required");
+            return 0;
+        }
+
+        SensoriumFluidDomain *domain = (__bridge SensoriumFluidDomain *)handle;
+        NSString *error = nil;
+        BOOL success = [domain
+            appendParticles:particles
+            contentIDs:contentIDs
+            count:particleCount
+            start:startOut
+            error:&error
+        ];
+
+        if (!success) {
+            fluid_write_error(errorOutput, errorCapacity, error ?: @"fluid domain append failed");
+            return 0;
+        }
+
+        return 1;
+    }
+}
+
+extern "C" int fluid_domain_advance(
+    void *handle,
+    FluidDiagnostics *diagnostics,
+    char *errorOutput,
+    int errorCapacity
+) {
+    @autoreleasepool {
+        if (handle == nullptr) {
+            fluid_write_error(errorOutput, errorCapacity, @"fluid domain handle is required");
+            return 0;
+        }
+
+        SensoriumFluidDomain *domain = (__bridge SensoriumFluidDomain *)handle;
+        NSString *error = nil;
+
+        if (![domain advanceResident:diagnostics error:&error]) {
+            fluid_write_error(errorOutput, errorCapacity, error ?: @"fluid domain advance failed");
+            return 0;
+        }
+
+        return 1;
+    }
+}
+
+extern "C" uint32_t fluid_domain_particle_count(void *handle) {
+    if (handle == nullptr) {
+        return 0u;
+    }
+
+    SensoriumFluidDomain *domain = (__bridge SensoriumFluidDomain *)handle;
+    return domain->_particleCount;
+}
+
+extern "C" int fluid_domain_read_particles(
+    void *handle,
+    FluidParticle *particles,
+    uint32_t start,
+    uint32_t count,
+    char *errorOutput,
+    int errorCapacity
+) {
+    @autoreleasepool {
+        if (handle == nullptr) {
+            fluid_write_error(errorOutput, errorCapacity, @"fluid domain handle is required");
+            return 0;
+        }
+
+        SensoriumFluidDomain *domain = (__bridge SensoriumFluidDomain *)handle;
+        NSString *error = nil;
+
+        if (![domain readParticles:particles start:start count:count error:&error]) {
+            fluid_write_error(errorOutput, errorCapacity, error ?: @"fluid particle read failed");
+            return 0;
+        }
+
+        return 1;
+    }
+}
+
+extern "C" int fluid_domain_read_spatial_ids(
+    void *handle,
+    uint32_t *ids,
+    uint32_t start,
+    uint32_t count,
+    char *errorOutput,
+    int errorCapacity
+) {
+    @autoreleasepool {
+        if (handle == nullptr) {
+            fluid_write_error(errorOutput, errorCapacity, @"fluid domain handle is required");
+            return 0;
+        }
+
+        SensoriumFluidDomain *domain = (__bridge SensoriumFluidDomain *)handle;
+        NSString *error = nil;
+
+        if (![domain readSpatialIDs:ids start:start count:count error:&error]) {
+            fluid_write_error(errorOutput, errorCapacity, error ?: @"spatial ID read failed");
             return 0;
         }
 

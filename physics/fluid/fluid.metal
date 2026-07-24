@@ -3462,4 +3462,388 @@ kernel void initialize_particle_properties(
     masses[gid] = mass;
 }
 
+// =============================================================================
+// Device-side thermo helpers (Planck, amplitude, inelastic merge)
+// =============================================================================
+
+struct PlanckExchangeParams {
+    uint num_particles;
+    float dt;
+    float conductivity;
+    float radius;
+};
+
+kernel void planck_exchange(
+    device float* heat                    [[buffer(0)]],
+    device float* energy                  [[buffer(1)]],
+    device const float* omega             [[buffer(2)]],
+    device const float* mass              [[buffer(3)]],
+    constant PlanckExchangeParams& p      [[buffer(4)]],
+    uint gid [[thread_position_in_grid]]
+) {
+    if (gid >= p.num_particles) {
+        return;
+    }
+
+    float m = mass[gid];
+    float q = heat[gid];
+    float e = energy[gid];
+    float w = omega[gid];
+
+    if (!(m > 0.0f)) {
+        heat[gid] = qnan_f();
+        energy[gid] = qnan_f();
+        return;
+    }
+
+    float temperature = q / m;
+    float ratio = w / max(temperature, 1.0e-20f);
+    float equilibrium = 0.0f;
+
+    if (ratio < 1.0e-4f) {
+        equilibrium = temperature;
+    } else if (ratio > 50.0f) {
+        equilibrium = w * exp(-ratio);
+    } else {
+        float capped = min(ratio, 80.0f);
+        equilibrium = w / (exp(capped) - 1.0f);
+    }
+
+    if (!isfinite(equilibrium) || equilibrium < 0.0f) {
+        equilibrium = 0.0f;
+    }
+
+    float relaxation = m / (4.0f * M_PI_F * p.conductivity * p.radius);
+    float alpha = 1.0f - exp(-p.dt / relaxation);
+    float exchanged = alpha * (equilibrium - e);
+    exchanged = min(exchanged, q);
+    exchanged = max(exchanged, -e);
+    e += exchanged;
+    q -= exchanged;
+
+    if (!isfinite(e) || !isfinite(q) || e < 0.0f || q < 0.0f) {
+        heat[gid] = qnan_f();
+        energy[gid] = qnan_f();
+        return;
+    }
+
+    heat[gid] = q;
+    energy[gid] = e;
+}
+
+kernel void particle_amplitude_from_energy(
+    device const float* energy            [[buffer(0)]],
+    device float* amplitude               [[buffer(1)]],
+    constant uint& num_particles          [[buffer(2)]],
+    uint gid [[thread_position_in_grid]]
+) {
+    if (gid >= num_particles) {
+        return;
+    }
+
+    amplitude[gid] = sqrt(max(energy[gid], 1.0e-8f));
+}
+
+struct MergeParams {
+    uint num_particles;
+    uint padded;
+    uint grid_x;
+    uint grid_y;
+    uint grid_z;
+    float inv_spacing;
+};
+
+inline uint merge_morton_part(uint value) {
+    value &= 0x3FFu;
+    value = (value | (value << 16u)) & 0x030000FFu;
+    value = (value | (value << 8u)) & 0x0300F00Fu;
+    value = (value | (value << 4u)) & 0x030C30C3u;
+    value = (value | (value << 2u)) & 0x09249249u;
+    return value;
+}
+
+inline uint merge_morton3(uint ix, uint iy, uint iz) {
+    return merge_morton_part(ix) |
+        (merge_morton_part(iy) << 1u) |
+        (merge_morton_part(iz) << 2u);
+}
+
+kernel void merge_compute_keys(
+    device const float* position          [[buffer(0)]],
+    device const uint* content            [[buffer(1)]],
+    device ulong* keys                    [[buffer(2)]],
+    constant MergeParams& p               [[buffer(3)]],
+    uint gid [[thread_position_in_grid]]
+) {
+    if (gid >= p.padded) {
+        return;
+    }
+
+    if (gid >= p.num_particles) {
+        keys[gid] = 0xFFFFFFFFFFFFFFFFull;
+        return;
+    }
+
+    float3 pos = float3(position[gid * 3u], position[gid * 3u + 1u], position[gid * 3u + 2u]);
+    int ix = int(floor(pos.x * p.inv_spacing)) % int(p.grid_x);
+    int iy = int(floor(pos.y * p.inv_spacing)) % int(p.grid_y);
+    int iz = int(floor(pos.z * p.inv_spacing)) % int(p.grid_z);
+
+    if (ix < 0) {
+        ix += int(p.grid_x);
+    }
+
+    if (iy < 0) {
+        iy += int(p.grid_y);
+    }
+
+    if (iz < 0) {
+        iz += int(p.grid_z);
+    }
+
+    ulong morton = (ulong)merge_morton3(uint(ix), uint(iy), uint(iz));
+    ulong token = (ulong)(content[gid] & 0xFFFFu);
+    keys[gid] = (morton << 16u) | token;
+}
+
+kernel void bitonic_fill_indices(
+    device uint* indices                  [[buffer(0)]],
+    constant uint& padded                 [[buffer(1)]],
+    uint gid [[thread_position_in_grid]]
+) {
+    if (gid >= padded) {
+        return;
+    }
+
+    indices[gid] = gid;
+}
+
+kernel void bitonic_compare_exchange(
+    device uint* indices                  [[buffer(0)]],
+    device const ulong* keys              [[buffer(1)]],
+    constant uint& j                      [[buffer(2)]],
+    constant uint& k                      [[buffer(3)]],
+    constant uint& padded                 [[buffer(4)]],
+    uint gid [[thread_position_in_grid]]
+) {
+    uint ixj = gid ^ j;
+
+    if (ixj <= gid || gid >= padded || ixj >= padded) {
+        return;
+    }
+
+    uint ai = indices[gid];
+    uint bi = indices[ixj];
+    ulong ka = keys[ai];
+    ulong kb = keys[bi];
+    bool ascending = ((gid & k) == 0u);
+    bool should_swap = ascending ? (ka > kb) : (ka < kb);
+
+    if (should_swap) {
+        indices[gid] = bi;
+        indices[ixj] = ai;
+    }
+}
+
+kernel void apply_crystallization_clamp(
+    device const uint* clamped            [[buffer(0)]],
+    device const float* position_in       [[buffer(1)]],
+    device const float* velocity_in       [[buffer(2)]],
+    device const float* heat_in           [[buffer(3)]],
+    device const float* energy_in         [[buffer(4)]],
+    device const float* omega_in          [[buffer(5)]],
+    device float* position_out            [[buffer(6)]],
+    device float* velocity_out            [[buffer(7)]],
+    device float* heat_out                [[buffer(8)]],
+    device float* energy_out              [[buffer(9)]],
+    device float* omega_out               [[buffer(10)]],
+    constant uint& num_particles          [[buffer(11)]],
+    uint gid [[thread_position_in_grid]]
+) {
+    if (gid >= num_particles) {
+        return;
+    }
+
+    if (clamped[gid] == 0u) {
+        return;
+    }
+
+    uint base = gid * 3u;
+    position_out[base] = position_in[base];
+    position_out[base + 1u] = position_in[base + 1u];
+    position_out[base + 2u] = position_in[base + 2u];
+    velocity_out[base] = velocity_in[base];
+    velocity_out[base + 1u] = velocity_in[base + 1u];
+    velocity_out[base + 2u] = velocity_in[base + 2u];
+    heat_out[gid] = heat_in[gid];
+    energy_out[gid] = energy_in[gid];
+    omega_out[gid] = omega_in[gid];
+}
+
+kernel void compute_spatial_token_ids(
+    device const float* position          [[buffer(0)]],
+    device const uint* content            [[buffer(1)]],
+    device uint* cell_morton              [[buffer(2)]],
+    device uint* spatial_token_ids        [[buffer(3)]],
+    constant MergeParams& p               [[buffer(4)]],
+    uint gid [[thread_position_in_grid]]
+) {
+    if (gid >= p.num_particles) {
+        return;
+    }
+
+    float3 pos = float3(position[gid * 3u], position[gid * 3u + 1u], position[gid * 3u + 2u]);
+    int ix = int(floor(pos.x * p.inv_spacing)) % int(p.grid_x);
+    int iy = int(floor(pos.y * p.inv_spacing)) % int(p.grid_y);
+    int iz = int(floor(pos.z * p.inv_spacing)) % int(p.grid_z);
+
+    if (ix < 0) {
+        ix += int(p.grid_x);
+    }
+
+    if (iy < 0) {
+        iy += int(p.grid_y);
+    }
+
+    if (iz < 0) {
+        iz += int(p.grid_z);
+    }
+
+    uint morton = merge_morton3(uint(ix), uint(iy), uint(iz));
+    uint byte_value = content[gid] & 0xFFu;
+    cell_morton[gid] = morton;
+    spatial_token_ids[gid] = (morton << 8u) | byte_value;
+}
+
+kernel void merge_reduce_runs(
+    device const uint* sorted_idx         [[buffer(0)]],
+    device const ulong* keys              [[buffer(1)]],
+    device const float* position          [[buffer(2)]],
+    device const float* velocity          [[buffer(3)]],
+    device const float* mass              [[buffer(4)]],
+    device const float* heat              [[buffer(5)]],
+    device const float* energy            [[buffer(6)]],
+    device const float* phase             [[buffer(7)]],
+    device const float* omega             [[buffer(8)]],
+    device const uint* content            [[buffer(9)]],
+    device const uint* clamped            [[buffer(10)]],
+    device float* out_position            [[buffer(11)]],
+    device float* out_velocity            [[buffer(12)]],
+    device float* out_mass                [[buffer(13)]],
+    device float* out_heat                [[buffer(14)]],
+    device float* out_energy              [[buffer(15)]],
+    device float* out_phase               [[buffer(16)]],
+    device float* out_omega               [[buffer(17)]],
+    device float* out_amplitude           [[buffer(18)]],
+    device uint* out_content              [[buffer(19)]],
+    device uint* out_clamped              [[buffer(20)]],
+    device atomic_uint* out_count         [[buffer(21)]],
+    constant MergeParams& p               [[buffer(22)]],
+    uint gid [[thread_position_in_grid]]
+) {
+    if (gid >= p.num_particles) {
+        return;
+    }
+
+    uint src = sorted_idx[gid];
+
+    if (src >= p.num_particles) {
+        return;
+    }
+
+    ulong key = keys[src];
+
+    if (gid > 0u) {
+        uint prev = sorted_idx[gid - 1u];
+
+        if (prev < p.num_particles && keys[prev] == key) {
+            return;
+        }
+    }
+
+    float px = 0.0f;
+    float py = 0.0f;
+    float pz = 0.0f;
+    float mx = 0.0f;
+    float my = 0.0f;
+    float mz = 0.0f;
+    float mass_sum = 0.0f;
+    float heat_sum = 0.0f;
+    float energy_sum = 0.0f;
+    float sin_phase = 0.0f;
+    float cos_phase = 0.0f;
+    float omega_mass = 0.0f;
+    float ke_before = 0.0f;
+    uint token = 0u;
+    uint clamped_any = 0u;
+
+    for (uint cursor = gid; cursor < p.num_particles; cursor++) {
+        uint index = sorted_idx[cursor];
+
+        if (index >= p.num_particles || keys[index] != key) {
+            break;
+        }
+
+        float m = mass[index];
+
+        if (!(m > 0.0f)) {
+            continue;
+        }
+
+        uint base = index * 3u;
+        float vx = velocity[base];
+        float vy = velocity[base + 1u];
+        float vz = velocity[base + 2u];
+        px += m * position[base];
+        py += m * position[base + 1u];
+        pz += m * position[base + 2u];
+        mx += m * vx;
+        my += m * vy;
+        mz += m * vz;
+        mass_sum += m;
+        heat_sum += heat[index];
+        energy_sum += energy[index];
+        sin_phase += m * sin(phase[index]);
+        cos_phase += m * cos(phase[index]);
+        omega_mass += m * omega[index];
+        ke_before += 0.5f * m * (vx * vx + vy * vy + vz * vz);
+        token = content[index] & 0xFFFFu;
+        // Sensorium: if any member was clamped, the merged particle stays clamped.
+        clamped_any = clamped_any | clamped[index];
+    }
+
+    if (!(mass_sum > 0.0f)) {
+        return;
+    }
+
+    float inv_mass = 1.0f / mass_sum;
+    float vx = mx * inv_mass;
+    float vy = my * inv_mass;
+    float vz = mz * inv_mass;
+    float ke_after = 0.5f * mass_sum * (vx * vx + vy * vy + vz * vz);
+    float lost = max(ke_before - ke_after, 0.0f);
+    float out_phase_value = atan2(sin_phase, cos_phase);
+
+    if (out_phase_value < 0.0f) {
+        out_phase_value += 2.0f * M_PI_F;
+    }
+
+    uint slot = atomic_fetch_add_explicit(out_count, 1u, memory_order_relaxed);
+    uint base = slot * 3u;
+    out_position[base] = px * inv_mass;
+    out_position[base + 1u] = py * inv_mass;
+    out_position[base + 2u] = pz * inv_mass;
+    out_velocity[base] = vx;
+    out_velocity[base + 1u] = vy;
+    out_velocity[base + 2u] = vz;
+    out_mass[slot] = mass_sum;
+    out_heat[slot] = heat_sum + lost;
+    out_energy[slot] = energy_sum;
+    out_phase[slot] = out_phase_value;
+    out_omega[slot] = omega_mass * inv_mass;
+    out_amplitude[slot] = sqrt(max(energy_sum, 1.0e-8f));
+    out_content[slot] = token;
+    out_clamped[slot] = clamped_any;
+}
+
 

@@ -15,6 +15,8 @@ typedef struct FluidConfig {
     float max_delta;
 	float omega_min;
 	float omega_max;
+	/* Newtonian G in ω-natural simulation units (CODATA→UnitSystem). */
+	float gravity_g;
 } FluidConfig;
 
 typedef struct FluidParticle {
@@ -76,6 +78,57 @@ int fluid_domain_step(
     FluidParticle *particles,
     uint32_t particle_count,
     FluidDiagnostics *diagnostics,
+    char *error_out,
+    int error_capacity
+);
+
+/*
+fluid_domain_append packs one batch through Shared staging and blits it into
+Private resident Metal storage without advancing physics. content_ids are
+Sensorium content identities for inelastic merge. Evolved history grows by GPU
+blit, not host re-upload of the full tape.
+*/
+int fluid_domain_append(
+    void *handle,
+    const FluidParticle *particles,
+    const uint32_t *content_ids,
+    uint32_t particle_count,
+    uint32_t *start_out,
+    char *error_out,
+    int error_capacity
+);
+
+/*
+fluid_domain_advance steps the resident particle population and fields without
+re-uploading host state.
+*/
+int fluid_domain_advance(
+    void *handle,
+    FluidDiagnostics *diagnostics,
+    char *error_out,
+    int error_capacity
+);
+
+uint32_t fluid_domain_particle_count(void *handle);
+
+int fluid_domain_read_particles(
+    void *handle,
+    FluidParticle *particles,
+    uint32_t start,
+    uint32_t count,
+    char *error_out,
+    int error_capacity
+);
+
+/*
+fluid_domain_read_spatial_ids copies post-merge Morton spatial token IDs
+((cell_morton << 8) | byte) for one resident range.
+*/
+int fluid_domain_read_spatial_ids(
+    void *handle,
+    uint32_t *ids,
+    uint32_t start,
+    uint32_t count,
     char *error_out,
     int error_capacity
 );

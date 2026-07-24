@@ -7,7 +7,7 @@ package fluid
 /*
 #cgo CFLAGS: -fobjc-arc -I${SRCDIR}
 #cgo CXXFLAGS: -x objective-c++ -std=c++17 -fobjc-arc -I${SRCDIR}
-#cgo LDFLAGS: -framework Metal -framework Foundation -framework CoreFoundation
+#cgo LDFLAGS: -framework Metal -framework Foundation -framework CoreFoundation -framework Accelerate
 #include "bridge.h"
 */
 import "C"
@@ -33,6 +33,20 @@ func NewDomain(config Config) (*Domain, error) {
 		return nil, err
 	}
 
+	// Sensorium Domain.base medium: dry air γ=1.4, M=0.02897, L=1m → ω-natural G.
+	si := DefaultSIConstants()
+	units, err := OmegaNaturalUnitSystem(1.4, 0.02897, 1, si)
+
+	if err != nil {
+		return nil, err
+	}
+
+	physical, err := ConstantsFromSI(units, si)
+
+	if err != nil {
+		return nil, err
+	}
+
 	bridgeConfig := C.FluidConfig{
 		grid_x:    C.uint32_t(config.Grid.X),
 		grid_y:    C.uint32_t(config.Grid.Y),
@@ -41,6 +55,7 @@ func NewDomain(config Config) (*Domain, error) {
 		max_delta: C.float(config.MaxDelta),
 		omega_min: C.float(config.OmegaMin),
 		omega_max: C.float(config.OmegaMax),
+		gravity_g: C.float(physical.G),
 	}
 	errorBuffer := make([]byte, 4096)
 	handle := C.fluid_domain_new(
@@ -63,10 +78,11 @@ func NewDomain(config Config) (*Domain, error) {
 }
 
 /*
-Step advances gas thermodynamics, omega-wave coupling, and spatial pilot-wave
-transport in Sensorium order. Particle state is updated in place; each call
-supplies the complete current population while resident gas and wave fields
-survive changes in population size.
+Step is the legacy one-shot path: replace the resident population with the
+supplied batch, advance once (including inelastic merge), and write evolved
+state back into particles. Merge may compact the live prefix; callers that
+re-step must reslice to ParticleCount(). Streaming callers should use
+Append + Advance with real content IDs instead.
 */
 func (domain *Domain) Step(particles []Particle) (Diagnostics, error) {
 	if domain == nil || domain.handle == nil {
@@ -77,6 +93,174 @@ func (domain *Domain) Step(particles []Particle) (Diagnostics, error) {
 		return Diagnostics{}, err
 	}
 
+	bridgeParticles := bridgeFromParticles(particles)
+	var bridgeDiagnostics C.FluidDiagnostics
+	errorBuffer := make([]byte, 4096)
+	result := C.fluid_domain_step(
+		unsafe.Pointer(domain.handle),
+		&bridgeParticles[0],
+		C.uint32_t(len(bridgeParticles)),
+		&bridgeDiagnostics,
+		(*C.char)(unsafe.Pointer(&errorBuffer[0])),
+		C.int(len(errorBuffer)),
+	)
+
+	if result == 0 {
+		return Diagnostics{}, fmt.Errorf("fluid: %s", cString(errorBuffer))
+	}
+
+	copyBridgeToParticles(bridgeParticles, particles)
+	return diagnosticsFromBridge(bridgeDiagnostics), nil
+}
+
+/*
+Append packs one batch into Shared staging and blits it into Private resident
+Metal storage without advancing physics. contentIDs are Sensorium content
+identities used for inelastic merge (universal content_token_ids). Evolved
+history grows by GPU blit, not host re-upload. Returns the starting index of
+the appended range.
+*/
+func (domain *Domain) Append(particles []Particle, contentIDs []uint32) (int, error) {
+	if domain == nil || domain.handle == nil {
+		return 0, fmt.Errorf("fluid: domain is closed")
+	}
+
+	if err := validateParticles(particles, domain.config); err != nil {
+		return 0, err
+	}
+
+	if len(contentIDs) != len(particles) {
+		return 0, fmt.Errorf("fluid: content ID count must match particle count")
+	}
+
+	bridgeParticles := bridgeFromParticles(particles)
+	var start C.uint32_t
+	errorBuffer := make([]byte, 4096)
+	result := C.fluid_domain_append(
+		unsafe.Pointer(domain.handle),
+		&bridgeParticles[0],
+		(*C.uint32_t)(unsafe.Pointer(&contentIDs[0])),
+		C.uint32_t(len(bridgeParticles)),
+		&start,
+		(*C.char)(unsafe.Pointer(&errorBuffer[0])),
+		C.int(len(errorBuffer)),
+	)
+
+	if result == 0 {
+		return 0, fmt.Errorf("fluid: %s", cString(errorBuffer))
+	}
+
+	return int(start), nil
+}
+
+/*
+Advance runs the Sensorium manifold physics graph without re-uploading history:
+thermo.step → omegawave.step → quantum_flow.step (project / smooth / pilot).
+*/
+func (domain *Domain) Advance() (Diagnostics, error) {
+	if domain == nil || domain.handle == nil {
+		return Diagnostics{}, fmt.Errorf("fluid: domain is closed")
+	}
+
+	var bridgeDiagnostics C.FluidDiagnostics
+	errorBuffer := make([]byte, 4096)
+	result := C.fluid_domain_advance(
+		unsafe.Pointer(domain.handle),
+		&bridgeDiagnostics,
+		(*C.char)(unsafe.Pointer(&errorBuffer[0])),
+		C.int(len(errorBuffer)),
+	)
+
+	if result == 0 {
+		return Diagnostics{}, fmt.Errorf("fluid: %s", cString(errorBuffer))
+	}
+
+	return diagnosticsFromBridge(bridgeDiagnostics), nil
+}
+
+/*
+ParticleCount returns the resident population size in Metal storage.
+*/
+func (domain *Domain) ParticleCount() int {
+	if domain == nil || domain.handle == nil {
+		return 0
+	}
+
+	return int(C.fluid_domain_particle_count(unsafe.Pointer(domain.handle)))
+}
+
+/*
+ReadParticles copies one resident range out of Metal storage after advance.
+*/
+func (domain *Domain) ReadParticles(start, count int) ([]Particle, error) {
+	if domain == nil || domain.handle == nil {
+		return nil, fmt.Errorf("fluid: domain is closed")
+	}
+
+	if start < 0 || count < 0 {
+		return nil, fmt.Errorf("fluid: particle read range is invalid")
+	}
+
+	if count == 0 {
+		return nil, nil
+	}
+
+	bridgeParticles := make([]C.FluidParticle, count)
+	errorBuffer := make([]byte, 4096)
+	result := C.fluid_domain_read_particles(
+		unsafe.Pointer(domain.handle),
+		&bridgeParticles[0],
+		C.uint32_t(start),
+		C.uint32_t(count),
+		(*C.char)(unsafe.Pointer(&errorBuffer[0])),
+		C.int(len(errorBuffer)),
+	)
+
+	if result == 0 {
+		return nil, fmt.Errorf("fluid: %s", cString(errorBuffer))
+	}
+
+	particles := make([]Particle, count)
+	copyBridgeToParticles(bridgeParticles, particles)
+	return particles, nil
+}
+
+/*
+ReadSpatialIDs copies post-merge Morton spatial token IDs for one resident range.
+Each ID is (cell_morton << 8) | (content & 0xFF), matching Sensorium thermo.step.
+*/
+func (domain *Domain) ReadSpatialIDs(start, count int) ([]uint32, error) {
+	if domain == nil || domain.handle == nil {
+		return nil, fmt.Errorf("fluid: domain is closed")
+	}
+
+	if start < 0 || count < 0 {
+		return nil, fmt.Errorf("fluid: spatial ID read range is invalid")
+	}
+
+	if count == 0 {
+		return nil, nil
+	}
+
+	ids := make([]uint32, count)
+	errorBuffer := make([]byte, 4096)
+	result := C.fluid_domain_read_spatial_ids(
+		unsafe.Pointer(domain.handle),
+		(*C.uint32_t)(unsafe.Pointer(&ids[0])),
+		C.uint32_t(start),
+		C.uint32_t(count),
+		(*C.char)(unsafe.Pointer(&errorBuffer[0])),
+		C.int(len(errorBuffer)),
+	)
+
+	if result == 0 {
+		return nil, fmt.Errorf("fluid: %s", cString(errorBuffer))
+	}
+
+	return ids, nil
+}
+
+func bridgeFromParticles(particles []Particle) []C.FluidParticle {
 	bridgeParticles := make([]C.FluidParticle, len(particles))
 
 	for index, particle := range particles {
@@ -95,21 +279,10 @@ func (domain *Domain) Step(particles []Particle) (Diagnostics, error) {
 		}
 	}
 
-	var bridgeDiagnostics C.FluidDiagnostics
-	errorBuffer := make([]byte, 4096)
-	result := C.fluid_domain_step(
-		unsafe.Pointer(domain.handle),
-		&bridgeParticles[0],
-		C.uint32_t(len(bridgeParticles)),
-		&bridgeDiagnostics,
-		(*C.char)(unsafe.Pointer(&errorBuffer[0])),
-		C.int(len(errorBuffer)),
-	)
+	return bridgeParticles
+}
 
-	if result == 0 {
-		return Diagnostics{}, fmt.Errorf("fluid: %s", cString(errorBuffer))
-	}
-
+func copyBridgeToParticles(bridgeParticles []C.FluidParticle, particles []Particle) {
 	for index, particle := range bridgeParticles {
 		particles[index] = Particle{
 			Position: Vector{
@@ -129,7 +302,9 @@ func (domain *Domain) Step(particles []Particle) (Diagnostics, error) {
 			Omega:  float32(particle.omega),
 		}
 	}
+}
 
+func diagnosticsFromBridge(bridgeDiagnostics C.FluidDiagnostics) Diagnostics {
 	return Diagnostics{
 		CFLRate:      float32(bridgeDiagnostics.cfl_rate),
 		DeltaAdv:     float32(bridgeDiagnostics.delta_adv),
@@ -140,7 +315,7 @@ func (domain *Domain) Step(particles []Particle) (Diagnostics, error) {
 		PsiRMS:       float32(bridgeDiagnostics.psi_rms),
 		PsiDeltaRMS:  float32(bridgeDiagnostics.psi_delta_rms),
 		GuidanceRMS:  float32(bridgeDiagnostics.guidance_rms),
-	}, nil
+	}
 }
 
 /*

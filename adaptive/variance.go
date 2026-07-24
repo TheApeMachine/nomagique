@@ -1,6 +1,8 @@
 package adaptive
 
-import "math"
+import (
+	"github.com/theapemachine/errnie"
+)
 
 /*
 Variance tracks an adaptive mean and variance from the observed sample stream.
@@ -29,7 +31,9 @@ func NewVariance() *Variance {
 }
 
 /*
-Measure adds one sample and returns adaptive variance when ready.
+Measure adds one sample and returns sample variance when it is identifiable.
+Sample variance requires two observations; a single point cannot estimate
+dispersion around its own mean.
 */
 func (variance *Variance) Measure(sample float64) (VarianceOutput, error) {
 	if err := finiteAdaptive("variance", sample); err != nil {
@@ -43,9 +47,8 @@ func (variance *Variance) Measure(sample float64) (VarianceOutput, error) {
 		variance.m2 = 0
 
 		return VarianceOutput{
-			Value: 0,
 			Mean:  variance.mean,
-			Ready: true,
+			Ready: false,
 			Count: variance.count,
 		}, nil
 	}
@@ -54,11 +57,18 @@ func (variance *Variance) Measure(sample float64) (VarianceOutput, error) {
 	variance.mean += delta / float64(variance.count)
 	delta2 := sample - variance.mean
 	variance.m2 += delta * delta2
-
 	value := variance.m2 / float64(variance.count-1)
 
-	if value < 0 || math.IsNaN(value) || math.IsInf(value, 0) {
-		value = 0
+	if err := finiteAdaptive("variance", value); err != nil {
+		return VarianceOutput{}, err
+	}
+
+	if value < 0 {
+		return VarianceOutput{}, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"variance: sample variance must be non-negative",
+			nil,
+		))
 	}
 
 	return VarianceOutput{

@@ -148,3 +148,21 @@ func (process *Process) Outcome(symbolName string) (Outcome, bool) {
 
 	return model.lastOutcome, true
 }
+
+/*
+AwaitFit waits for an in-flight asynchronous parameter fit for one symbol.
+It returns whether a completed epoch is pending publication on the next Measure.
+*/
+func (process *Process) AwaitFit(symbolName string) bool {
+	if process == nil || symbolName == "" {
+		return false
+	}
+
+	model, ok := process.symbols[symbolName]
+
+	if !ok {
+		return false
+	}
+
+	return model.awaitFit()
+}

@@ -1,0 +1,208 @@
+package excitation
+
+import (
+	"fmt"
+	"math"
+	"time"
+
+	"github.com/theapemachine/nomagique/hawkes"
+)
+
+func (symbol *symbol) computeFit(
+	_ hawkes.FitContext,
+	stream hawkes.ArrivalStream,
+	horizon time.Time,
+	prior hawkes.BivariateFit,
+) (fitEpoch, bool) {
+	estimator := hawkes.NewBivariateEstimator(prior)
+	fit := estimator.Fit(stream, horizon)
+
+	if !fit.Valid() {
+		return fitEpoch{}, false
+	}
+
+	selfOnly := estimator.FitSelfOnly(stream, horizon)
+
+	if !selfOnly.Valid() {
+		return fitEpoch{}, false
+	}
+
+	fullLikelihood := fit.LogLikelihood(stream, horizon)
+	selfLikelihood := selfOnly.LogLikelihood(stream, horizon)
+
+	if selfLikelihood > fullLikelihood {
+		fit = selfOnly
+	}
+
+	_, _, immediateReady := fit.ImmediateOffspring()
+	_, _, totalReady := fit.TotalDescendants()
+
+	if !immediateReady || !totalReady {
+		return fitEpoch{}, false
+	}
+
+	observedFrom, _, _ := stream.Bounds()
+
+	return fitEpoch{
+		model:        fit,
+		restricted:   selfOnly,
+		prior:        prior,
+		observedFrom: observedFrom,
+		at:           horizon,
+		eventCount:   len(stream.BuyTimes()) + len(stream.SellTimes()),
+	}, true
+}
+
+func (symbol *symbol) publish(
+	epoch *fitEpoch,
+	context hawkes.FitContext,
+	stream hawkes.ArrivalStream,
+	horizon time.Time,
+) Outcome {
+	symbol.fitPrior = epoch.prior
+	symbol.model = epoch.model
+	symbol.restricted = epoch.restricted
+	symbol.hasFit = true
+	symbol.fitObservedFrom = epoch.observedFrom
+	symbol.fitAt = epoch.at
+	symbol.schedule.Reset(epoch.eventCount)
+
+	outcome := symbol.evaluate(
+		context,
+		stream,
+		horizon,
+		epoch.model,
+		epoch.restricted,
+		true,
+	)
+	outcome.FitObservedFrom = symbol.fitObservedFrom
+	outcome.FitAt = symbol.fitAt
+
+	return outcome
+}
+
+func (symbol *symbol) project(
+	context hawkes.FitContext,
+	stream hawkes.ArrivalStream,
+	horizon time.Time,
+) Outcome {
+	outcome := symbol.evaluate(
+		context,
+		stream,
+		horizon,
+		symbol.model,
+		symbol.restricted,
+		false,
+	)
+	outcome.FitObservedFrom = symbol.fitObservedFrom
+	outcome.FitAt = symbol.fitAt
+	outcome.Readiness.Reason = fmt.Sprintf(
+		"conditional intensity uses retained fit; %d changed events remain before refit; %s",
+		symbol.schedule.Remaining(),
+		forecastPendingReason,
+	)
+
+	return outcome
+}
+
+func (symbol *symbol) evaluate(
+	context hawkes.FitContext,
+	stream hawkes.ArrivalStream,
+	horizon time.Time,
+	model hawkes.BivariateFit,
+	restricted hawkes.BivariateFit,
+	modelUpdated bool,
+) Outcome {
+	fit := model.WithIntensitiesAt(stream, horizon)
+	fullLikelihood := fit.LogLikelihood(stream, horizon)
+	selfLikelihood := restricted.WithIntensitiesAt(stream, horizon).
+		LogLikelihood(stream, horizon)
+	poisson := context.PoissonFit().WithIntensitiesAt(stream, horizon)
+	immediateBuy, immediateSell, _ := model.ImmediateOffspring()
+	totalBuy, totalSell, _ := model.TotalDescendants()
+	outcome := symbol.outcome(context, stream, horizon, fit)
+	outcome.HawkesPoissonLogLikelihoodDelta =
+		fullLikelihood - poisson.LogLikelihood(stream, horizon)
+	outcome.CrossSelfLogLikelihoodDelta =
+		fullLikelihood - selfLikelihood
+	outcome.ImmediateBuyOffspring = immediateBuy
+	outcome.ImmediateSellOffspring = immediateSell
+	outcome.TotalBuyDescendants = totalBuy
+	outcome.TotalSellDescendants = totalSell
+	outcome.Maturity = 1
+	outcome.Readiness = Readiness{
+		Observation:  true,
+		Intensity:    true,
+		HawkesFit:    true,
+		ModelUpdated: modelUpdated,
+		Reason:       forecastPendingReason,
+	}
+
+	return outcome
+}
+
+func (symbol *symbol) outcome(
+	context hawkes.FitContext,
+	stream hawkes.ArrivalStream,
+	horizon time.Time,
+	fit hawkes.BivariateFit,
+) Outcome {
+	observedFrom, _, _ := stream.Bounds()
+	buyCount := len(stream.BuyTimes())
+	sellCount := len(stream.SellTimes())
+	eventCount := buyCount + sellCount
+	maturity := math.Min(
+		float64(eventCount)/float64(context.MinFitEvents),
+		math.Min(
+			float64(buyCount)/float64(context.MinPerSide),
+			float64(sellCount)/float64(context.MinPerSide),
+		),
+	)
+	span := horizon.Sub(observedFrom)
+	buyRate := float64(buyCount) / span.Seconds()
+	sellRate := float64(sellCount) / span.Seconds()
+
+	if maturity > 1 {
+		maturity = 1
+	}
+
+	return Outcome{
+		Fit:              fit,
+		ObservedFrom:     observedFrom,
+		At:               horizon,
+		Horizon:          horizon.Sub(observedFrom),
+		EventCount:       eventCount,
+		BuyEventCount:    buyCount,
+		SellEventCount:   sellCount,
+		BuyArrivalRate:   buyRate,
+		SellArrivalRate:  sellRate,
+		MinimumFitEvents: context.MinFitEvents,
+		Maturity:         maturity,
+	}
+}
+
+func (symbol *symbol) context(
+	stream hawkes.ArrivalStream,
+	horizon time.Time,
+) (hawkes.FitContext, hawkes.ArrivalStream, bool) {
+	context, ready := hawkes.NewObservationContext(stream, horizon)
+
+	if !ready {
+		return hawkes.FitContext{}, hawkes.ArrivalStream{}, false
+	}
+
+	observed := stream.BetweenInto(
+		horizon.Add(-context.TradeWindow),
+		horizon,
+		symbol.adaptive,
+	)
+
+	if len(observed.BuyTimes()) == len(stream.BuyTimes()) &&
+		len(observed.SellTimes()) == len(stream.SellTimes()) {
+		return context, stream, true
+	}
+
+	context, ready = hawkes.NewObservationContext(observed, horizon)
+
+	return context, observed, ready
+}

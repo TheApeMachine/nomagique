@@ -13,10 +13,9 @@ func TestVariance_Measure(t *testing.T) {
 		Convey("When the first sample arrives", func() {
 			first, err := variance.Measure(10)
 
-			Convey("Then it reports exactly zero variance around itself, ready", func() {
+			Convey("Then it is not ready until variance is identifiable", func() {
 				So(err, ShouldBeNil)
-				So(first.Ready, ShouldBeTrue)
-				So(first.Value, ShouldEqual, 0)
+				So(first.Ready, ShouldBeFalse)
 				So(first.Count, ShouldEqual, 1)
 			})
 		})

@@ -140,7 +140,16 @@ func (mapper *Mapper) apply(
 
 	ema, exists := mapper.emas[outputKey]
 	if !exists {
-		ema = adaptive.NewEMA()
+		created, constructErr := adaptive.NewEMA(adaptive.EMAConfig{
+			Period:    20,
+			Smoothing: 2,
+		})
+
+		if constructErr != nil {
+			return 0, constructErr
+		}
+
+		ema = created
 		mapper.emas[outputKey] = ema
 	}
 

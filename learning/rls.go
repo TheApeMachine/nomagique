@@ -23,17 +23,35 @@ type RLSSample struct {
 }
 
 /*
-RLSOutput reports the latest prediction and retained linear state.
+RLSOutput reports the hot-path prediction and scalar update diagnostics.
+Coefficient and covariance matrices are available only through Snapshot so the
+streaming path stays linear in feature dimension.
 */
 type RLSOutput struct {
-	Value              float64
+	Value      float64
+	Innovation float64
+	Reset      bool
+}
+
+/*
+RLSSnapshot retains coefficients and the reconstructed covariance for inspection.
+*/
+type RLSSnapshot struct {
 	Beta               []float64
 	Covariance         []float64
 	CovarianceDiagonal []float64
 }
 
 /*
-RLS is an online recursive-least-squares learner.
+RLSObserveOutput reports diagnostics from a training step that does not forecast.
+*/
+type RLSObserveOutput struct {
+	Innovation float64
+	Reset      bool
+}
+
+/*
+RLS is an online square-root recursive-least-squares learner.
 */
 type RLS struct {
 	config  RLSConfig
@@ -60,15 +78,12 @@ func NewRLS(config RLSConfig) (*RLS, error) {
 }
 
 /*
-Measure observes one sample and returns the current prediction.
+Measure predicts with the retained coefficients, then observes the target so
+the returned Value is a true prior forecast rather than a post-hoc fit.
 */
 func (rls *RLS) Measure(sample RLSSample) (RLSOutput, error) {
 	if rls == nil || rls.session == nil {
 		return RLSOutput{}, fmt.Errorf("learning: rls session required")
-	}
-
-	if err := rls.session.observe(sample.Features, sample.Target); err != nil {
-		return RLSOutput{}, fmt.Errorf("learning: rls observe failed: %w", err)
 	}
 
 	prediction, err := rls.session.predict(sample.Features)
@@ -77,12 +92,34 @@ func (rls *RLS) Measure(sample RLSSample) (RLSOutput, error) {
 		return RLSOutput{}, fmt.Errorf("learning: rls predict failed: %w", err)
 	}
 
+	observed, err := rls.session.observe(sample.Features, sample.Target)
+
+	if err != nil {
+		return RLSOutput{}, fmt.Errorf("learning: rls observe failed: %w", err)
+	}
+
 	return RLSOutput{
-		Value:              prediction,
-		Beta:               append([]float64(nil), rls.session.beta...),
-		Covariance:         flattenCovariance(rls.session.covariance),
-		CovarianceDiagonal: covarianceDiagonal(rls.session.covariance),
+		Value:      prediction,
+		Innovation: observed.Innovation,
+		Reset:      observed.Reset,
 	}, nil
+}
+
+/*
+Observe updates retained coefficients from one labeled sample without forecasting.
+*/
+func (rls *RLS) Observe(sample RLSSample) (RLSObserveOutput, error) {
+	if rls == nil || rls.session == nil {
+		return RLSObserveOutput{}, fmt.Errorf("learning: rls session required")
+	}
+
+	observed, err := rls.session.observe(sample.Features, sample.Target)
+
+	if err != nil {
+		return RLSObserveOutput{}, fmt.Errorf("learning: rls observe failed: %w", err)
+	}
+
+	return observed, nil
 }
 
 /*
@@ -102,11 +139,19 @@ func (rls *RLS) Predict(features []float64) (RLSOutput, error) {
 	}
 
 	return RLSOutput{
-		Value:              prediction,
-		Beta:               append([]float64(nil), rls.session.beta...),
-		Covariance:         flattenCovariance(rls.session.covariance),
-		CovarianceDiagonal: covarianceDiagonal(rls.session.covariance),
+		Value: prediction,
 	}, nil
+}
+
+/*
+Snapshot copies coefficients and the reconstructed covariance for diagnostics.
+*/
+func (rls *RLS) Snapshot() (RLSSnapshot, error) {
+	if rls == nil || rls.session == nil {
+		return RLSSnapshot{}, fmt.Errorf("learning: rls session required")
+	}
+
+	return rls.session.snapshot(), nil
 }
 
 type rlsSession struct {
@@ -114,7 +159,10 @@ type rlsSession struct {
 	initialVariance  float64
 	forgettingFactor float64
 	beta             []float64
-	covariance       [][]float64
+	root             []float64
+	design           []float64
+	factor           []float64
+	gain             []float64
 }
 
 func (rls *RLS) loadSession() (*rlsSession, error) {
@@ -137,172 +185,112 @@ func (rls *RLS) loadSession() (*rlsSession, error) {
 	}
 
 	size := config.Dimension + 1
-
-	return &rlsSession{
+	session := &rlsSession{
 		dimension:        config.Dimension,
 		initialVariance:  config.InitialVariance,
 		forgettingFactor: config.ForgettingFactor,
 		beta:             make([]float64, size),
-		covariance:       newRLSCovariance(size, config.InitialVariance),
+		root:             make([]float64, size*size),
+		design:           make([]float64, size),
+		factor:           make([]float64, size),
+		gain:             make([]float64, size),
+	}
+	session.resetState()
+
+	return session, nil
+}
+
+func (session *rlsSession) resetState() {
+	size := session.dimension + 1
+	scale := math.Sqrt(session.initialVariance)
+
+	for index := range session.beta {
+		session.beta[index] = 0
+	}
+
+	for index := range session.root {
+		session.root[index] = 0
+	}
+
+	for row := 0; row < size; row++ {
+		session.root[row*size+row] = scale
+	}
+}
+
+func (session *rlsSession) observe(
+	features []float64,
+	target float64,
+) (RLSObserveOutput, error) {
+	innovation, err := session.observeOnce(features, target)
+
+	if err == nil {
+		return RLSObserveOutput{Innovation: innovation}, nil
+	}
+
+	session.resetState()
+
+	innovation, retry := session.observeOnce(features, target)
+
+	if retry != nil {
+		session.resetState()
+
+		return RLSObserveOutput{Reset: true}, fmt.Errorf(
+			"learning: rls observe failed after state reset: %w",
+			retry,
+		)
+	}
+
+	return RLSObserveOutput{
+		Innovation: innovation,
+		Reset:      true,
 	}, nil
 }
 
-func newRLSCovariance(size int, initialVariance float64) [][]float64 {
-	covariance := make([][]float64, size)
-
-	for row := 0; row < size; row++ {
-		covariance[row] = make([]float64, size)
-		covariance[row][row] = initialVariance
-	}
-
-	return covariance
-}
-
-func flattenCovariance(covariance [][]float64) []float64 {
-	size := len(covariance)
-	flat := make([]float64, size*size)
-
-	for row := 0; row < size; row++ {
-		for col := 0; col < size; col++ {
-			flat[row*size+col] = covariance[row][col]
-		}
-	}
-
-	return flat
-}
-
-func covarianceDiagonal(covariance [][]float64) []float64 {
-	diagonal := make([]float64, len(covariance))
-
-	for row := range covariance {
-		diagonal[row] = covariance[row][row]
-	}
-
-	return diagonal
-}
-
-func (session *rlsSession) resetCovariance() {
-	size := session.dimension + 1
-
-	for row := 0; row < size; row++ {
-		for col := 0; col < size; col++ {
-			session.covariance[row][col] = 0
-		}
-
-		session.covariance[row][row] = session.initialVariance
-	}
-}
-
-func (session *rlsSession) stabilizeCovariance() {
-	size := len(session.covariance)
-	diagonalFloor := session.initialVariance * rlsCovarianceFloorScale()
-
-	for row := 0; row < size; row++ {
-		for col := row + 1; col < size; col++ {
-			averaged := (session.covariance[row][col] + session.covariance[col][row]) * 0.5
-			session.covariance[row][col] = averaged
-			session.covariance[col][row] = averaged
-		}
-
-		if session.covariance[row][row] < diagonalFloor {
-			session.covariance[row][row] = diagonalFloor
-		}
-	}
-}
-
-func rlsCovarianceFloorScale() float64 {
-	radicand := math.Nextafter(1, 2) - 1
-	scale := math.Max(1, math.Abs(radicand))
-	tolerance := 32 * radicand * scale
-
-	if radicand < -tolerance {
-		panic("learning: machine-epsilon radicand is negative beyond tolerance")
-	}
-
-	return math.Sqrt(math.Max(0, radicand))
-}
-
-func (session *rlsSession) applyForgetting() error {
-	if session.forgettingFactor >= 1 {
-		return nil
-	}
-
-	scale := 1 / session.forgettingFactor
-
-	for row := range session.covariance {
-		for col := range session.covariance[row] {
-			session.covariance[row][col] *= scale
-		}
-	}
-
-	return nil
-}
-
-func (session *rlsSession) observe(features []float64, target float64) error {
-	for attempt := 0; attempt < 2; attempt++ {
-		err := session.observeOnce(features, target)
-
-		if err == nil {
-			session.stabilizeCovariance()
-
-			return nil
-		}
-
-		session.resetCovariance()
-
-		if attempt == 1 {
-			return err
-		}
-	}
-
-	return fmt.Errorf("learning: rls observe failed after covariance repair")
-}
-
-func (session *rlsSession) observeOnce(features []float64, target float64) error {
-	if err := session.applyForgetting(); err != nil {
-		return err
-	}
-
+func (session *rlsSession) observeOnce(features []float64, target float64) (float64, error) {
 	if !finite(target) {
-		return fmt.Errorf("learning: rls target must be finite")
+		return 0, fmt.Errorf("learning: rls target must be finite")
 	}
 
 	if len(features) != session.dimension {
-		return fmt.Errorf(
+		return 0, fmt.Errorf(
 			"learning: rls expected %d features, got %d",
 			session.dimension,
 			len(features),
 		)
 	}
 
-	design := make([]float64, session.dimension+1)
+	size := session.dimension + 1
+	design := session.design
 	design[0] = 1
 
 	for index, feature := range features {
 		if !finite(feature) {
-			return fmt.Errorf("learning: rls feature[%d] must be finite", index)
+			return 0, fmt.Errorf("learning: rls feature[%d] must be finite", index)
 		}
 
 		design[index+1] = feature
 	}
 
-	size := len(design)
-	px := make([]float64, size)
+	factor := session.factor
 
 	for row := 0; row < size; row++ {
+		sum := 0.0
+
 		for col := 0; col < size; col++ {
-			px[row] += session.covariance[row][col] * design[col]
+			sum += session.root[col*size+row] * design[col]
 		}
+
+		factor[row] = sum
 	}
 
-	denominator := 1.0
+	alpha := session.forgettingFactor
 
 	for index := 0; index < size; index++ {
-		denominator += design[index] * px[index]
+		alpha += factor[index] * factor[index]
 	}
 
-	if denominator <= 0 {
-		return fmt.Errorf("learning: rls denominator must be positive")
+	if alpha <= 0 || !finite(alpha) {
+		return 0, fmt.Errorf("learning: rls denominator must be positive")
 	}
 
 	prediction := 0.0
@@ -313,16 +301,56 @@ func (session *rlsSession) observeOnce(features []float64, target float64) error
 
 	innovation := target - prediction
 
+	if !finite(innovation) {
+		return 0, fmt.Errorf("learning: rls innovation must be finite")
+	}
+
+	gain := session.gain
+
 	for row := 0; row < size; row++ {
-		gain := px[row] / denominator
-		session.beta[row] += gain * innovation
+		sum := 0.0
 
 		for col := 0; col < size; col++ {
-			session.covariance[row][col] -= gain * px[col]
+			sum += session.root[row*size+col] * factor[col]
+		}
+
+		gain[row] = sum / alpha
+		session.beta[row] += gain[row] * innovation
+
+		if !finite(session.beta[row]) {
+			return 0, fmt.Errorf("learning: rls coefficient must stay finite")
 		}
 	}
 
-	return nil
+	lambda := session.forgettingFactor
+	rootLambda := math.Sqrt(lambda)
+	gammaDenom := alpha + rootLambda*math.Sqrt(alpha)
+
+	if gammaDenom <= 0 || !finite(gammaDenom) {
+		return 0, fmt.Errorf("learning: rls square-root update denominator invalid")
+	}
+
+	gamma := 1 / gammaDenom
+	scale := 1.0
+
+	if lambda < 1 {
+		scale = 1 / rootLambda
+	}
+
+	for row := 0; row < size; row++ {
+		scaledGain := gamma * gain[row] * alpha
+
+		for col := 0; col < size; col++ {
+			updated := session.root[row*size+col] - scaledGain*factor[col]
+			session.root[row*size+col] = scale * updated
+
+			if !finite(session.root[row*size+col]) {
+				return 0, fmt.Errorf("learning: rls square-root factor must stay finite")
+			}
+		}
+	}
+
+	return innovation, nil
 }
 
 func (session *rlsSession) predict(features []float64) (float64, error) {
@@ -349,4 +377,30 @@ func (session *rlsSession) predict(features []float64) (float64, error) {
 	}
 
 	return forecast, nil
+}
+
+func (session *rlsSession) snapshot() RLSSnapshot {
+	size := session.dimension + 1
+	covariance := make([]float64, size*size)
+	diagonal := make([]float64, size)
+
+	for row := 0; row < size; row++ {
+		for col := 0; col < size; col++ {
+			sum := 0.0
+
+			for index := 0; index < size; index++ {
+				sum += session.root[row*size+index] * session.root[col*size+index]
+			}
+
+			covariance[row*size+col] = sum
+		}
+
+		diagonal[row] = covariance[row*size+row]
+	}
+
+	return RLSSnapshot{
+		Beta:               append([]float64(nil), session.beta...),
+		Covariance:         covariance,
+		CovarianceDiagonal: diagonal,
+	}
 }

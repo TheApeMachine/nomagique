@@ -2,6 +2,7 @@ package algorithm
 
 import (
 	"testing"
+	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/nomagique/algorithm/book/flow"
@@ -124,7 +125,8 @@ func TestDecaySample_MeasureTrade(t *testing.T) {
 			Symbol:   "BTC/USD",
 			Price:    100,
 			Quantity: 2,
-			Side:     "buy",
+			Side:     flow.TradeBuy,
+			At:       time.Unix(1, 0),
 		})
 
 		Convey("It should retain pressure without scoring absent book inputs", func() {
@@ -145,7 +147,8 @@ func TestDecaySample_MeasureTrade(t *testing.T) {
 			Symbol:   "BTC/USD",
 			Price:    100,
 			Quantity: 2,
-			Side:     "buy",
+			Side:     flow.TradeBuy,
+			At:       time.Unix(1, 0),
 		})
 
 		Convey("It should expose the trade pressure on that trade event", func() {
@@ -192,7 +195,8 @@ func BenchmarkDecaySampleMeasureTrade(b *testing.B) {
 		Symbol:   "BTC/USD",
 		Price:    100,
 		Quantity: 2,
-		Side:     "buy",
+		Side:     flow.TradeBuy,
+		At:       time.Unix(1, 0),
 	}
 
 	b.ReportAllocs()

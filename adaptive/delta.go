@@ -30,6 +30,7 @@ func NewDelta() *Delta {
 
 /*
 Measure adds one sample and returns absolute change normalized by running range.
+A delta is identifiable only after two observations establish a prior sample.
 */
 func (delta *Delta) Measure(sample float64) (DeltaOutput, error) {
 	if err := finiteAdaptive("delta", sample); err != nil {
@@ -42,12 +43,8 @@ func (delta *Delta) Measure(sample float64) (DeltaOutput, error) {
 		delta.prev = sample
 		delta.count = 1
 
-		// No prior observation exists, so the observed range before this
-		// sample was empty. This single reading defines the entirety of
-		// that range, making the normalized change maximal by definition.
 		return DeltaOutput{
-			Value: 1,
-			Ready: true,
+			Ready: false,
 			Count: delta.count,
 		}, nil
 	}

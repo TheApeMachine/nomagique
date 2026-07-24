@@ -2,6 +2,7 @@ package quality
 
 import (
 	"testing"
+	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/nomagique/algorithm/book/flow"
@@ -90,7 +91,8 @@ func TestSample_MeasureTrade(t *testing.T) {
 			Symbol:   "BTC/USD",
 			Price:    100,
 			Quantity: 1,
-			Side:     "buy",
+			Side:     flow.TradeBuy,
+			At:       time.Unix(1, 0),
 		})
 
 		Convey("It should stay not-ready, since there is no book to score yet", func() {
@@ -113,7 +115,8 @@ func TestSample_MeasureTrade(t *testing.T) {
 			Symbol:   "BTC/USD",
 			Price:    100,
 			Quantity: 1,
-			Side:     "buy",
+			Side:     flow.TradeBuy,
+			At:       time.Unix(1, 0),
 		})
 
 		Convey("It should reach a non-dead-end reading, not the old always-false path", func() {
@@ -135,7 +138,8 @@ func BenchmarkSample_MeasureTrade(b *testing.B) {
 		Symbol:   "BTC/USD",
 		Price:    100,
 		Quantity: 1,
-		Side:     "buy",
+		Side:     flow.TradeBuy,
+		At:       time.Unix(1, 0),
 	}
 
 	b.ReportAllocs()

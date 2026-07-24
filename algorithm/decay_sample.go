@@ -76,13 +76,16 @@ func (decaySample *DecaySample) MeasureTrade(
 		))
 	}
 
-	if input.Price <= 0 || input.Quantity <= 0 ||
-		(input.Side != "buy" && input.Side != "sell") {
+	if input.Price <= 0 || input.Quantity <= 0 {
 		return equation.DecayInput{}, false, 0, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"decay-sample: trade price, quantity, and side required",
 			nil,
 		))
+	}
+
+	if err := input.Side.Validate(); err != nil {
+		return equation.DecayInput{}, false, 0, err
 	}
 
 	window := decaySample.window(input.Symbol)

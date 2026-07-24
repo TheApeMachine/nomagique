@@ -18,7 +18,7 @@ type Frame struct {
 	touchCancelAsk float64
 }
 
-func FrameAdd(frame *Frame, side byte, quantity float64) {
+func FrameAdd(frame *Frame, side flow.Side, quantity float64) {
 	if side == flow.SideBid {
 		frame.addBid += quantity
 
@@ -28,7 +28,7 @@ func FrameAdd(frame *Frame, side byte, quantity float64) {
 	frame.addAsk += quantity
 }
 
-func FrameFill(frame *Frame, side byte, quantity float64) {
+func FrameFill(frame *Frame, side flow.Side, quantity float64) {
 	if side == flow.SideBid {
 		frame.fillBid += quantity
 
@@ -40,7 +40,7 @@ func FrameFill(frame *Frame, side byte, quantity float64) {
 
 func FrameCancel(
 	frame *Frame,
-	side byte,
+	side flow.Side,
 	quantity float64,
 	touch bool,
 ) {

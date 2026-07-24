@@ -55,7 +55,7 @@ func TestBook_Configure(testingTB *testing.T) {
 
 		Convey("It should clear levels when the lattice truly changes", func() {
 			So(book.Configure(BookInput{TickSize: 0.1}), ShouldBeNil)
-			So(book.tickSize, ShouldEqual, 0.1)
+			So(book.TickSize(), ShouldEqual, 0.1)
 			So(book.bids.Len(), ShouldEqual, 0)
 			So(book.asks.Len(), ShouldEqual, 0)
 		})

@@ -11,11 +11,6 @@ import (
 	"gonum.org/v1/gonum/stat"
 )
 
-const (
-	SideBid byte = 'b'
-	SideAsk byte = 'a'
-)
-
 /*
 CancelFillRatio returns cancel volume divided by matched fill volume.
 */
@@ -130,7 +125,11 @@ type SideFlowLedger struct {
 	CancelAsk float64
 }
 
-func (ledger *SideFlowLedger) AddDepth(side byte, delta float64) {
+func (ledger *SideFlowLedger) AddDepth(side Side, delta float64) {
+	if err := side.Validate(); err != nil {
+		return
+	}
+
 	if side == SideBid {
 		ledger.BidDepth = maxFloat(0, ledger.BidDepth+delta)
 
@@ -140,7 +139,7 @@ func (ledger *SideFlowLedger) AddDepth(side byte, delta float64) {
 	ledger.AskDepth = maxFloat(0, ledger.AskDepth+delta)
 }
 
-func (ledger *SideFlowLedger) SideDepth(side byte) float64 {
+func (ledger *SideFlowLedger) SideDepth(side Side) float64 {
 	if side == SideBid {
 		return ledger.BidDepth
 	}
@@ -148,7 +147,11 @@ func (ledger *SideFlowLedger) SideDepth(side byte) float64 {
 	return ledger.AskDepth
 }
 
-func (ledger *SideFlowLedger) ApplyFlow(side byte, fill, cancel, alpha float64) {
+func (ledger *SideFlowLedger) ApplyFlow(side Side, fill, cancel, alpha float64) {
+	if err := side.Validate(); err != nil {
+		return
+	}
+
 	if alpha <= 0 {
 		if side == SideBid {
 			ledger.FillBid = fill

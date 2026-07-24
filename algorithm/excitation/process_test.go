@@ -138,7 +138,7 @@ func TestProcess_Measure(t *testing.T) {
 		So(ready, ShouldBeTrue)
 		So(initial.Readiness.ModelUpdated, ShouldBeTrue)
 
-		Convey("It should refit at the square-root sampling-error scale", func() {
+		Convey("It should refit asynchronously at the square-root sampling-error scale", func() {
 			var outcome Outcome
 
 			for added := 1; added <= 4; added++ {
@@ -157,6 +157,16 @@ func TestProcess_Measure(t *testing.T) {
 				}
 			}
 
+			So(outcome.Readiness.ModelUpdated, ShouldBeFalse)
+			So(process.AwaitFit("ALT/EUR"), ShouldBeTrue)
+
+			outcome, ready, err = process.Measure(Input{
+				Symbol:  "ALT/EUR",
+				Horizon: horizon,
+				Stream:  stream,
+			})
+			So(err, ShouldBeNil)
+			So(ready, ShouldBeTrue)
 			So(outcome.Readiness.ModelUpdated, ShouldBeTrue)
 		})
 	})

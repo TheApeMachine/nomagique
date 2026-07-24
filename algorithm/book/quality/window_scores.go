@@ -7,7 +7,7 @@ import (
 	"github.com/theapemachine/nomagique/algorithm/book/flow"
 )
 
-func (window *Window) sideBook(side byte) *sync.Map {
+func (window *Window) sideBook(side flow.Side) *sync.Map {
 	if side == flow.SideBid {
 		return window.bids
 	}
@@ -15,7 +15,7 @@ func (window *Window) sideBook(side byte) *sync.Map {
 	return window.asks
 }
 
-func (window *Window) sideOrders(side byte) *sync.Map {
+func (window *Window) sideOrders(side flow.Side) *sync.Map {
 	if side == flow.SideBid {
 		return window.bidOrders
 	}
@@ -23,7 +23,7 @@ func (window *Window) sideOrders(side byte) *sync.Map {
 	return window.askOrders
 }
 
-func (window *Window) isTouchPrice(side byte, price float64) bool {
+func (window *Window) isTouchPrice(side flow.Side, price float64) bool {
 	if side == flow.SideBid {
 		return price == window.bestBid()
 	}

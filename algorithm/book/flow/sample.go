@@ -1,7 +1,9 @@
 package flow
 
 import (
+	"math"
 	"sync"
+	"time"
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/equation"
@@ -10,10 +12,12 @@ import (
 
 /*
 Sample accumulates book and trade frames into the feature batch expects.
-Decay rate and history windows are derived from observed spread and imbalance history.
+Each symbol is owned by one serial window so concurrent first-use cannot fork
+state, and book updates commit both sides atomically before features run.
 */
 type Sample struct {
-	windows         *sync.Map
+	mu              sync.Mutex
+	windows         map[string]*Window
 	historyCapacity int
 }
 
@@ -37,31 +41,62 @@ type BookInput struct {
 }
 
 /*
+TradeSide identifies aggressive trade direction.
+*/
+type TradeSide string
+
+const (
+	TradeBuy  TradeSide = "buy"
+	TradeSell TradeSide = "sell"
+)
+
+/*
+Validate reports whether the trade side is executable.
+*/
+func (side TradeSide) Validate() error {
+	if side == TradeBuy || side == TradeSell {
+		return nil
+	}
+
+	return errnie.Error(errnie.Err(
+		errnie.Validation,
+		"-sample: trade side must be buy or sell",
+		nil,
+	))
+}
+
+/*
 TradeInput is one trade update for a symbol.
 */
 type TradeInput struct {
 	Symbol   string
 	Price    float64
 	Quantity float64
-	Side     string
+	Side     TradeSide
+	At       time.Time
 }
 
+/*
+Window retains one symbol's book and rolling imbalance history.
+*/
 type Window struct {
-	book            *Book
-	weightedHist    []float64
-	level1Hist      []float64
-	flatHist        []float64
-	tradePressure   float64
-	tradeFrameCount int
-	lastMid         float64
-	lastSpread      float64
-	touchDepth      float64
-	flatOK          float64
-	touchCancelBid  float64
-	touchCancelAsk  float64
-	frameAddBid     float64
-	frameAddAsk     float64
-	observations    int
+	book           *Book
+	weightedHist   []float64
+	level1Hist     []float64
+	flatHist       []float64
+	tradePressure  float64
+	tradeAt        time.Time
+	tradeGapSum    float64
+	tradeGaps      int
+	lastMid        float64
+	lastSpread     float64
+	touchDepth     float64
+	flatOK         bool
+	touchCancelBid float64
+	touchCancelAsk float64
+	frameAddBid    float64
+	frameAddAsk    float64
+	observations   int
 }
 
 /*
@@ -78,7 +113,7 @@ func NewSample(historyCapacity int) (*Sample, error) {
 	}
 
 	return &Sample{
-		windows:         &sync.Map{},
+		windows:         map[string]*Window{},
 		historyCapacity: historyCapacity,
 	}, nil
 }
@@ -87,9 +122,12 @@ func NewSample(historyCapacity int) (*Sample, error) {
 MeasureBook observes one book update and returns book-flow input, whether the
 book is valid enough to score, and a confidence maturity for that reading.
 */
-func (s *Sample) MeasureBook(
+func (sample *Sample) MeasureBook(
 	input BookInput,
 ) (equation.BookflowInput, bool, float64, error) {
+	sample.mu.Lock()
+	defer sample.mu.Unlock()
+
 	if input.Symbol == "" {
 		return equation.BookflowInput{}, false, 0, errnie.Error(errnie.Err(
 			errnie.Validation,
@@ -98,24 +136,27 @@ func (s *Sample) MeasureBook(
 		))
 	}
 
-	window := s.window(input.Symbol)
+	window := sample.window(input.Symbol)
 
-	if err := s.ingestBook(input, window); err != nil {
+	if err := sample.ingestBook(input, window); err != nil {
 		return equation.BookflowInput{}, false, 0, err
 	}
 
-	input2, ready, err := s.features(window)
+	input2, ready, err := sample.features(window)
 
-	return input2, ready, s.maturity(window), err
+	return input2, ready, sample.maturity(window), err
 }
 
 /*
 MeasureTrade observes one trade update and returns book-flow input, whether
 the book is valid enough to score, and a confidence maturity for that reading.
 */
-func (s *Sample) MeasureTrade(
+func (sample *Sample) MeasureTrade(
 	input TradeInput,
 ) (equation.BookflowInput, bool, float64, error) {
+	sample.mu.Lock()
+	defer sample.mu.Unlock()
+
 	if input.Symbol == "" {
 		return equation.BookflowInput{}, false, 0, errnie.Error(errnie.Err(
 			errnie.Validation,
@@ -132,42 +173,55 @@ func (s *Sample) MeasureTrade(
 		))
 	}
 
-	window := s.window(input.Symbol)
-	s.ingestTrade(input, window)
+	if err := input.Side.Validate(); err != nil {
+		return equation.BookflowInput{}, false, 0, err
+	}
 
-	output, ready, err := s.features(window)
+	if input.At.IsZero() {
+		return equation.BookflowInput{}, false, 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"-sample: trade timestamp required",
+			nil,
+		))
+	}
 
-	return output, ready, s.maturity(window), err
+	window := sample.window(input.Symbol)
+
+	if err := sample.ingestTrade(input, window); err != nil {
+		return equation.BookflowInput{}, false, 0, err
+	}
+
+	output, ready, err := sample.features(window)
+
+	return output, ready, sample.maturity(window), err
 }
 
 /*
 maturity reports a monotonically increasing, asymptotic confidence in the
-window's history-derived thresholds as more book observations accumulate. It
-never gates emission — features() already emits a defined value from the
-first observation — it only communicates how much evidence backs it so far.
+window's history-derived thresholds as more book observations accumulate.
 */
-func (s *Sample) maturity(window *Window) float64 {
+func (sample *Sample) maturity(window *Window) float64 {
 	observations := float64(window.observations)
 
 	return observations / (observations + 1)
 }
 
-func (s *Sample) window(symbol string) *Window {
-	existing, ok := s.windows.Load(symbol)
+func (sample *Sample) window(symbol string) *Window {
+	existing, ok := sample.windows[symbol]
 
 	if ok {
-		return existing.(*Window)
+		return existing
 	}
 
 	window := &Window{
 		book: NewBook(),
 	}
-	s.windows.Store(symbol, window)
+	sample.windows[symbol] = window
 
 	return window
 }
 
-func (s *Sample) ingestBook(
+func (sample *Sample) ingestBook(
 	input BookInput,
 	window *Window,
 ) error {
@@ -180,13 +234,7 @@ func (s *Sample) ingestBook(
 		return err
 	}
 
-	bidFrame, err := window.book.ApplyLevels(input.Bids, SideBid)
-
-	if err != nil {
-		return err
-	}
-
-	askFrame, err := window.book.ApplyLevels(input.Asks, SideAsk)
+	bidFrame, askFrame, err := window.book.ApplyBook(input.Bids, input.Asks)
 
 	if err != nil {
 		return err
@@ -196,13 +244,13 @@ func (s *Sample) ingestBook(
 	window.touchCancelAsk = askFrame.touchCancel
 	window.frameAddBid = bidFrame.frameAdd
 	window.frameAddAsk = askFrame.frameAdd
-	mid := window.book.Mid()
-	spread := window.book.Spread()
 
-	if mid <= 0 || spread <= 0 {
+	if !window.book.TwoSided() {
 		return nil
 	}
 
+	mid := window.book.Mid()
+	spread := window.book.Spread()
 	decayRate := DecayRate(mid, spread)
 	touchDepth := window.book.TouchDepth()
 	toxicBid := ToxicPenalty(window.touchCancelBid, window.frameAddBid, touchDepth)
@@ -210,22 +258,6 @@ func (s *Sample) ingestBook(
 	weighted := window.book.Imbalance(mid, decayRate, false, 0, toxicBid, toxicAsk)
 	level1 := window.book.Imbalance(mid, decayRate, true, 0, toxicBid, toxicAsk)
 	flatDepth, err := window.book.FlatDepth()
-
-	window.lastMid = mid
-	window.lastSpread = spread
-	window.touchDepth = touchDepth
-	window.flatOK = 1
-	window.observations++
-	window.weightedHist = utils.AppendRingFloat(
-		window.weightedHist,
-		weighted,
-		s.historyCapacity,
-	)
-	window.level1Hist = utils.AppendRingFloat(
-		window.level1Hist,
-		level1,
-		s.historyCapacity,
-	)
 
 	if err != nil {
 		return errnie.Error(errnie.Err(
@@ -235,53 +267,95 @@ func (s *Sample) ingestBook(
 		))
 	}
 
-	if flatDepth > 0 {
-		window.flatOK = 1
-	}
-
 	flat := window.book.Imbalance(mid, decayRate, false, flatDepth, toxicBid, toxicAsk)
+	window.lastMid = mid
+	window.lastSpread = spread
+	window.touchDepth = touchDepth
+	window.flatOK = flatDepth > 0
+	window.observations++
+	window.weightedHist = utils.AppendRingFloat(
+		window.weightedHist,
+		weighted,
+		sample.historyCapacity,
+	)
+	window.level1Hist = utils.AppendRingFloat(
+		window.level1Hist,
+		level1,
+		sample.historyCapacity,
+	)
 	window.flatHist = utils.AppendRingFloat(
 		window.flatHist,
 		flat,
-		s.historyCapacity,
+		sample.historyCapacity,
 	)
 
 	return nil
 }
 
-func (s *Sample) ingestTrade(
+func (sample *Sample) ingestTrade(
 	input TradeInput,
 	window *Window,
-) {
+) error {
 	notional := input.Price * input.Quantity
 	signedNotional := notional
 
-	if input.Side == "sell" {
+	if input.Side == TradeSell {
 		signedNotional = -notional
 	}
 
-	window.tradeFrameCount++
-	smoothing := 2.0 / float64(window.tradeFrameCount+1)
+	if window.tradeAt.IsZero() {
+		window.tradePressure = signedNotional
+		window.tradeAt = input.At
 
-	if smoothing > 1 {
-		smoothing = 1
+		return nil
 	}
 
-	window.tradePressure += smoothing * (signedNotional - window.tradePressure)
+	if input.At.Before(window.tradeAt) {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"-sample: trade timestamp must not regress",
+			nil,
+		))
+	}
+
+	elapsed := input.At.Sub(window.tradeAt).Seconds()
+
+	if elapsed < 0 {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"-sample: trade timestamp must not regress",
+			nil,
+		))
+	}
+
+	window.tradeGaps++
+	window.tradeGapSum += elapsed
+	halfLife := window.tradeGapSum / float64(window.tradeGaps)
+
+	if halfLife <= 0 {
+		window.tradePressure = signedNotional
+		window.tradeAt = input.At
+
+		return nil
+	}
+
+	alpha := 1 - math.Exp(-math.Ln2*elapsed/halfLife)
+	window.tradePressure += alpha * (signedNotional - window.tradePressure)
+	window.tradeAt = input.At
+
+	return nil
 }
 
-func (s *Sample) features(
+func (sample *Sample) features(
 	window *Window,
 ) (equation.BookflowInput, bool, error) {
-	historyCount := len(window.weightedHist)
-
-	if historyCount == 0 {
+	if !window.book.TwoSided() || len(window.weightedHist) == 0 {
 		return equation.BookflowInput{
 			Mid:           window.lastMid,
 			Spread:        window.lastSpread,
 			TouchDepth:    window.touchDepth,
 			TradePressure: window.tradePressure,
-		}, true, nil
+		}, false, nil
 	}
 
 	weighted := window.weightedHist[len(window.weightedHist)-1]
@@ -292,13 +366,13 @@ func (s *Sample) features(
 		Weighted:        weighted,
 		Level1:          level1,
 		Flat:            flat,
-		FlatOK:          window.flatOK > 0,
+		FlatOK:          window.flatOK,
 		Mid:             window.lastMid,
 		Spread:          window.lastSpread,
 		TouchDepth:      window.touchDepth,
 		TradePressure:   window.tradePressure,
-		WeightedHistory: append([]float64(nil), window.weightedHist...),
-		Level1History:   append([]float64(nil), window.level1Hist...),
-		FlatHistory:     append([]float64(nil), window.flatHist...),
+		WeightedHistory: window.weightedHist,
+		Level1History:   window.level1Hist,
+		FlatHistory:     window.flatHist,
 	}, true, nil
 }

@@ -22,14 +22,15 @@ type ForecastOutput struct {
 
 /*
 Forecaster learns a multiplicative scale from predicted-vs-actual outcomes.
+Residual mean and variance are tracked online so a zero residual span is a
+valid zero-surprise condition rather than a validation failure.
 */
 type Forecaster struct {
 	scale       float64
 	trust       float64
-	prev        float64
-	minimum     float64
-	maximum     float64
 	rate        float64
+	mean        float64
+	m2          float64
 	weightCount int
 	count       int
 }
@@ -52,56 +53,89 @@ func (forecaster *Forecaster) Measure(pair LearningPair) (ForecastOutput, error)
 	}
 
 	residual := actual - predicted
-	derived := forecaster.scale
 
 	if forecaster.count == 0 {
 		forecaster.scale = 1
-		forecaster.prev = predicted
-		forecaster.minimum = residual
-		forecaster.maximum = residual
 		forecaster.trust = 1
+		forecaster.mean = residual
+		forecaster.m2 = 0
 		forecaster.weightCount = 1
 		forecaster.count = 1
-		derived = forecaster.scale
+
+		return ForecastOutput{
+			Value:       forecaster.scale,
+			Predicted:   predicted,
+			Actual:      actual,
+			Scale:       forecaster.scale,
+			Trust:       forecaster.trust,
+			Rate:        0,
+			Count:       forecaster.count,
+			WeightCount: forecaster.weightCount,
+		}, nil
 	}
+
+	forecaster.weightCount++
+	delta := residual - forecaster.mean
+	forecaster.mean += delta / float64(forecaster.weightCount)
+	forecaster.m2 += delta * (residual - forecaster.mean)
+
+	variance := 0.0
 
 	if forecaster.weightCount > 1 {
-		forecaster.minimum = math.Min(forecaster.minimum, residual)
-		forecaster.maximum = math.Max(forecaster.maximum, residual)
-		forecaster.weightCount++
+		variance = forecaster.m2 / float64(forecaster.weightCount-1)
 	}
 
-	if forecaster.weightCount == 1 && residual != forecaster.minimum {
-		forecaster.minimum = math.Min(forecaster.minimum, residual)
-		forecaster.maximum = math.Max(forecaster.maximum, residual)
-		forecaster.weightCount = 2
+	if variance < 0 || math.IsNaN(variance) || math.IsInf(variance, 0) {
+		return ForecastOutput{}, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"forecast: residual variance must be finite and non-negative",
+			nil,
+		))
 	}
 
-	span := forecaster.maximum - forecaster.minimum
+	surprise := 0.0
 
-	if forecaster.count > 1 || forecaster.weightCount > 1 {
-		if span == 0 {
-			return ForecastOutput{}, errnie.Error(errnie.Err(
-				errnie.Validation,
-				"forecast: residual span is zero",
-				nil,
-			))
-		}
+	if variance > 0 {
+		surprise = math.Abs(residual-forecaster.mean) / math.Sqrt(variance)
+	}
 
-		surprise := absExact(residual) / span
-		forecaster.rate = surprise
-		targetTrust := math.Max(0, 1-surprise)
-		forecaster.trust += surprise * (targetTrust - forecaster.trust)
-		forecaster.prev = predicted
-		learningRate := surprise * (1 - forecaster.trust)
-		targetScale := actual / predicted
-		forecaster.scale += learningRate * (targetScale - forecaster.scale)
-		forecaster.count++
-		derived = forecaster.scale
+	forecaster.rate = surprise
+	targetTrust := math.Max(0, 1-surprise)
+	forecaster.trust += surprise * (targetTrust - forecaster.trust)
+	learningRate := surprise * (1 - forecaster.trust)
+	magnitudePredicted := math.Abs(predicted)
+	magnitudeActual := math.Abs(actual)
+
+	if magnitudePredicted <= 0 {
+		return ForecastOutput{}, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"forecast: predicted magnitude must be positive for log-ratio scale",
+			nil,
+		))
+	}
+
+	if magnitudeActual <= 0 {
+		return ForecastOutput{}, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"forecast: actual magnitude must be positive for log-ratio scale",
+			nil,
+		))
+	}
+
+	targetScale := math.Exp(math.Log(magnitudeActual) - math.Log(magnitudePredicted))
+	forecaster.scale += learningRate * (targetScale - forecaster.scale)
+	forecaster.count++
+
+	if !finite(forecaster.scale) {
+		return ForecastOutput{}, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"forecast: scale must stay finite",
+			nil,
+		))
 	}
 
 	return ForecastOutput{
-		Value:       derived,
+		Value:       forecaster.scale,
 		Predicted:   predicted,
 		Actual:      actual,
 		Scale:       forecaster.scale,

@@ -179,7 +179,16 @@ func (extractor *FeatureExtractor) transform(
 
 	ema, exists := extractor.emas[key]
 	if !exists {
-		ema = adaptive.NewEMA()
+		created, constructErr := adaptive.NewEMA(adaptive.EMAConfig{
+			Period:    20,
+			Smoothing: 2,
+		})
+
+		if constructErr != nil {
+			return 0, constructErr
+		}
+
+		ema = created
 		extractor.emas[key] = ema
 	}
 

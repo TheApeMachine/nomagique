@@ -32,23 +32,32 @@ func TestRLSMeasure(testingTB *testing.T) {
 		So(err, ShouldBeNil)
 
 		for _, feature := range []float64{1, 2, 3, 4, 5} {
-			_, err = stage.Measure(RLSSample{
+			prior, measureErr := stage.Predict([]float64{feature})
+			So(measureErr, ShouldBeNil)
+
+			output, measureErr := stage.Measure(RLSSample{
 				Features: []float64{feature},
 				Target:   2*feature + 1,
 			})
-			So(err, ShouldBeNil)
+			So(measureErr, ShouldBeNil)
+			So(output.Value, ShouldEqual, prior.Value)
 		}
 
+		before, err := stage.Predict([]float64{0.5})
+		So(err, ShouldBeNil)
 		output, err := stage.Measure(RLSSample{
 			Features: []float64{0.5},
 			Target:   2,
 		})
+		snapshot, snapErr := stage.Snapshot()
 
-		Convey("It should retain coefficients and produce finite forecasts", func() {
+		Convey("It should forecast before observing and retain finite state", func() {
 			So(err, ShouldBeNil)
+			So(snapErr, ShouldBeNil)
+			So(output.Value, ShouldEqual, before.Value)
 			So(math.IsNaN(output.Value), ShouldBeFalse)
-			So(len(output.Beta), ShouldEqual, 2)
-			So(len(output.CovarianceDiagonal), ShouldEqual, 2)
+			So(len(snapshot.Beta), ShouldEqual, 2)
+			So(len(snapshot.CovarianceDiagonal), ShouldEqual, 2)
 		})
 	})
 }
@@ -59,7 +68,7 @@ func TestRLSPredict(testingTB *testing.T) {
 		So(err, ShouldBeNil)
 
 		for _, feature := range []float64{1, 2, 3, 4, 5} {
-			_, err = stage.Measure(RLSSample{
+			_, err = stage.Observe(RLSSample{
 				Features: []float64{feature},
 				Target:   2*feature + 1,
 			})
@@ -69,12 +78,36 @@ func TestRLSPredict(testingTB *testing.T) {
 		before, err := stage.Predict([]float64{6})
 		So(err, ShouldBeNil)
 		after, err := stage.Predict([]float64{6})
+		beforeSnap, err := stage.Snapshot()
+		So(err, ShouldBeNil)
+		afterSnap, err := stage.Snapshot()
 
 		Convey("It should predict without changing retained state", func() {
 			So(err, ShouldBeNil)
 			So(after.Value, ShouldEqual, before.Value)
-			So(after.Beta, ShouldResemble, before.Beta)
-			So(after.Covariance, ShouldResemble, before.Covariance)
+			So(afterSnap.Beta, ShouldResemble, beforeSnap.Beta)
+			So(afterSnap.Covariance, ShouldResemble, beforeSnap.Covariance)
+		})
+	})
+}
+
+func TestRLSObserveResetsTogether(testingTB *testing.T) {
+	Convey("Given a learner forced through an unrecoverable update", testingTB, func() {
+		stage, err := NewRLS(RLSConfig{Dimension: 1, InitialVariance: 1})
+		So(err, ShouldBeNil)
+
+		_, err = stage.Observe(RLSSample{
+			Features: []float64{math.Inf(1)},
+			Target:   1,
+		})
+
+		Convey("It should reject non-finite features without retaining half-reset state", func() {
+			So(err, ShouldNotBeNil)
+			snapshot, snapErr := stage.Snapshot()
+			So(snapErr, ShouldBeNil)
+			So(snapshot.Beta, ShouldResemble, []float64{0, 0})
+			So(snapshot.CovarianceDiagonal[0], ShouldEqual, 1)
+			So(snapshot.CovarianceDiagonal[1], ShouldEqual, 1)
 		})
 	})
 }

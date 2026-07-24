@@ -1,10 +1,16 @@
 package adaptive
 
+import (
+	"github.com/theapemachine/errnie"
+)
+
 /*
-Accumulator integrates signed signal strength into a level with no bounds.
+Accumulator integrates signed signal strength into a level with compensated
+summation so long streams retain low-order contributions and reject overflow.
 */
 type Accumulator struct {
 	total float64
+	carry float64
 	count int
 }
 
@@ -32,7 +38,20 @@ func (accumulator *Accumulator) Measure(sample float64) (AccumulatorOutput, erro
 		return AccumulatorOutput{}, err
 	}
 
-	accumulator.total += sample
+	compensated := sample - accumulator.carry
+	next := accumulator.total + compensated
+	carry := next - accumulator.total - compensated
+
+	if err := finiteAdaptive("accumulator", next); err != nil {
+		return AccumulatorOutput{}, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"accumulator: sum overflowed to non-finite",
+			err,
+		))
+	}
+
+	accumulator.carry = carry
+	accumulator.total = next
 	accumulator.count++
 
 	return AccumulatorOutput{

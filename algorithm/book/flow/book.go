@@ -2,29 +2,70 @@ package flow
 
 import (
 	"math"
-	"sync"
+	"math/big"
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/statistic"
 )
 
+/*
+Side identifies one book side. Values other than bid or ask are rejected before
+any resting state is touched.
+*/
+type Side byte
+
+const (
+	SideBid Side = 'b'
+	SideAsk Side = 'a'
+)
+
+/*
+Validate reports whether the side is an executable book side.
+*/
+func (side Side) Validate() error {
+	if side == SideBid || side == SideAsk {
+		return nil
+	}
+
+	return errnie.Error(errnie.Err(
+		errnie.Validation,
+		"-sample: book side must be bid or ask",
+		nil,
+	))
+}
+
+/*
+Book is a single-owner integer-tick order book with cached best and depth.
+*/
 type Book struct {
-	tickSize float64
-	bids     *SideBook
-	asks     *SideBook
+	tick *big.Rat
+	bids *SideBook
+	asks *SideBook
 }
 
+/*
+SideBook retains one side's resting levels in tick order.
+*/
 type SideBook struct {
-	side   byte
-	levels *sync.Map
-	ticks  []int64
+	side    Side
+	levels  map[int64]float64
+	ordered []int64
+	best    int64
+	hasBest bool
+	depth   float64
 }
 
+/*
+Frame accumulates touch-cancel and add volume for one atomic side update.
+*/
 type Frame struct {
 	touchCancel float64
 	frameAdd    float64
 }
 
+/*
+NewBook returns an empty two-sided book.
+*/
 func NewBook() *Book {
 	return &Book{
 		bids: NewSideBook(SideBid),
@@ -32,10 +73,13 @@ func NewBook() *Book {
 	}
 }
 
-func NewSideBook(side byte) *SideBook {
+/*
+NewSideBook returns one empty side ledger.
+*/
+func NewSideBook(side Side) *SideBook {
 	return &SideBook{
 		side:   side,
-		levels: &sync.Map{},
+		levels: map[int64]float64{},
 	}
 }
 
@@ -45,59 +89,78 @@ economic tick are ignored; a true increment change clears resting levels and
 adopts the new lattice so instrument refreshes cannot poison an active book.
 */
 func (book *Book) Configure(input BookInput) error {
-	tickSize := input.TickSize
+	tick, err := parseTickSize(input.TickSize)
 
-	if tickSize <= 0 || math.IsNaN(tickSize) || math.IsInf(tickSize, 0) {
-		return errnie.Error(errnie.Err(
-			errnie.Validation,
-			"-sample: positive finite tick size required",
-			nil,
-		))
+	if err != nil {
+		return err
 	}
 
-	if book.tickSize == 0 {
-		book.tickSize = tickSize
+	if book.tick == nil {
+		book.tick = tick
 
 		return nil
 	}
 
-	if sameTickSize(book.tickSize, tickSize) {
+	if book.tick.Cmp(tick) == 0 {
 		return nil
 	}
 
 	book.bids = NewSideBook(SideBid)
 	book.asks = NewSideBook(SideAsk)
-	book.tickSize = tickSize
+	book.tick = tick
 
 	return nil
 }
 
 /*
-sameTickSize reports whether two positive float ticks describe the same lattice
-after decimal→float conversion, without a fixed absolute epsilon.
+TickSize returns the configured lattice as float64 for price projection.
 */
-func sameTickSize(left, right float64) bool {
-	if left == right {
-		return true
+func (book *Book) TickSize() float64 {
+	if book.tick == nil {
+		return 0
 	}
 
-	if left <= 0 || right <= 0 {
-		return false
+	value, _ := book.tick.Float64()
+
+	return value
+}
+
+/*
+ApplyLevels validates an entire side batch, then applies it atomically.
+*/
+func (book *Book) ApplyLevels(levels []BookLevel, side Side) (Frame, error) {
+	if err := side.Validate(); err != nil {
+		return Frame{}, err
 	}
 
-	return math.Round(left/right) == 1 && math.Round(right/left) == 1
+	return book.side(side).Apply(levels, book.TickSize())
 }
 
-func (book *Book) ApplyLevels(
-	levels []BookLevel,
-	side byte,
-) (Frame, error) {
-	return book.side(side).Apply(levels, book.tickSize)
+/*
+ApplyBook validates and applies both sides as one book transaction.
+*/
+func (book *Book) ApplyBook(bids, asks []BookLevel) (Frame, Frame, error) {
+	bidOps, err := book.bids.prepare(bids)
+
+	if err != nil {
+		return Frame{}, Frame{}, err
+	}
+
+	askOps, err := book.asks.prepare(asks)
+
+	if err != nil {
+		return Frame{}, Frame{}, err
+	}
+
+	return book.bids.commit(bidOps), book.asks.commit(askOps), nil
 }
 
+/*
+Mid returns the two-sided midpoint, or zero when either side is empty.
+*/
 func (book *Book) Mid() float64 {
-	bestBid := book.bids.Best(book.tickSize)
-	bestAsk := book.asks.Best(book.tickSize)
+	bestBid := book.bids.Best(book.TickSize())
+	bestAsk := book.asks.Best(book.TickSize())
 
 	if bestBid <= 0 || bestAsk <= 0 {
 		return 0
@@ -106,9 +169,12 @@ func (book *Book) Mid() float64 {
 	return (bestBid + bestAsk) / 2
 }
 
+/*
+Spread returns the two-sided spread, or zero when the book is not marketable.
+*/
 func (book *Book) Spread() float64 {
-	bestBid := book.bids.Best(book.tickSize)
-	bestAsk := book.asks.Best(book.tickSize)
+	bestBid := book.bids.Best(book.TickSize())
+	bestAsk := book.asks.Best(book.TickSize())
 
 	if bestBid <= 0 || bestAsk <= 0 || bestAsk <= bestBid {
 		return 0
@@ -117,14 +183,34 @@ func (book *Book) Spread() float64 {
 	return bestAsk - bestBid
 }
 
+/*
+TwoSided reports whether both sides have a positive marketable touch.
+*/
+func (book *Book) TwoSided() bool {
+	return book.Mid() > 0 && book.Spread() > 0
+}
+
+/*
+TouchDepth returns combined touch quantity.
+*/
 func (book *Book) TouchDepth() float64 {
 	return book.bids.TouchQty() + book.asks.TouchQty()
 }
 
-func (book *Book) SideDepth(side byte) float64 {
+/*
+SideDepth returns total resting quantity on one validated side.
+*/
+func (book *Book) SideDepth(side Side) float64 {
+	if err := side.Validate(); err != nil {
+		return 0
+	}
+
 	return book.side(side).Depth()
 }
 
+/*
+FlatDepth resolves how many near-touch levels participate in flat imbalance.
+*/
 func (book *Book) FlatDepth() (int, error) {
 	levelCount := book.bids.Len() + book.asks.Len()
 
@@ -159,6 +245,9 @@ func (book *Book) FlatDepth() (int, error) {
 	return flatDepth, nil
 }
 
+/*
+Imbalance computes signed depth pressure around the current midpoint.
+*/
 func (book *Book) Imbalance(
 	mid float64,
 	decayRate float64,
@@ -195,7 +284,7 @@ func (book *Book) Imbalance(
 	return (bidWeight - askWeight) / total
 }
 
-func (book *Book) side(side byte) *SideBook {
+func (book *Book) side(side Side) *SideBook {
 	if side == SideBid {
 		return book.bids
 	}
@@ -203,207 +292,3 @@ func (book *Book) side(side byte) *SideBook {
 	return book.asks
 }
 
-func (sideBook *SideBook) Apply(
-	levels []BookLevel,
-	tickSize float64,
-) (Frame, error) {
-	frame := Frame{}
-
-	for _, level := range levels {
-		tick, err := LevelTick(level)
-
-		if err != nil {
-			return Frame{}, err
-		}
-
-		if math.IsNaN(level.Quantity) || math.IsInf(level.Quantity, 0) || level.Quantity < 0 {
-			return Frame{}, errnie.Error(errnie.Err(
-				errnie.Validation,
-				"-sample: level quantity must be finite and non-negative",
-				nil,
-			))
-		}
-
-		previousQty := 0.0
-
-		if previous, ok := sideBook.levels.Load(tick); ok {
-			previousQty = previous.(float64)
-		}
-
-		touch := sideBook.isTouchTick(tick)
-
-		if level.Quantity == 0 {
-			sideBook.levels.Delete(tick)
-
-			if previousQty > 0 && touch {
-				frame.touchCancel += previousQty
-			}
-
-			continue
-		}
-
-		delta := level.Quantity - previousQty
-		sideBook.levels.Store(tick, level.Quantity)
-
-		if delta <= 0 {
-			if touch {
-				frame.touchCancel += -delta
-			}
-
-			continue
-		}
-
-		frame.frameAdd += delta
-	}
-
-	return frame, nil
-}
-
-func (sideBook *SideBook) Best(tickSize float64) float64 {
-	tick, ok := sideBook.bestTick()
-
-	if !ok {
-		return 0
-	}
-
-	return TickPrice(tick, tickSize)
-}
-
-func (sideBook *SideBook) TouchQty() float64 {
-	tick, ok := sideBook.bestTick()
-
-	if !ok {
-		return 0
-	}
-
-	qty, ok := sideBook.levels.Load(tick)
-
-	if !ok {
-		return 0
-	}
-
-	return qty.(float64)
-}
-
-func (sideBook *SideBook) Depth() float64 {
-	depth := 0.0
-
-	sideBook.levels.Range(func(key, value any) bool {
-		depth += value.(float64)
-
-		return true
-	})
-
-	return depth
-}
-
-func (sideBook *SideBook) SideWeight(
-	midTick float64,
-	decayRate float64,
-	touchOnly bool,
-	flatDepth int,
-) float64 {
-	if touchOnly {
-		return sideBook.TouchQty()
-	}
-
-	weight := 0.0
-	remaining := flatDepth
-	ticks := sideBook.sortedTicks(midTick)
-
-	for _, tick := range ticks {
-		if flatDepth > 0 {
-			if remaining <= 0 {
-				break
-			}
-
-			remaining--
-		}
-
-		distance := math.Abs(float64(tick)-midTick) / midTick
-		kernel := math.Exp(-decayRate * distance)
-		qty, ok := sideBook.levels.Load(tick)
-
-		if !ok {
-			continue
-		}
-
-		weight += qty.(float64) * kernel
-	}
-
-	return weight
-}
-
-func (sideBook *SideBook) Len() int {
-	count := 0
-
-	sideBook.levels.Range(func(key, value any) bool {
-		count++
-
-		return true
-	})
-
-	return count
-}
-
-func (sideBook *SideBook) bestTick() (int64, bool) {
-	var bestTick int64
-	ok := false
-
-	sideBook.levels.Range(func(key, value any) bool {
-		tick := key.(int64)
-
-		if !ok {
-			bestTick = tick
-			ok = true
-
-			return true
-		}
-
-		if sideBook.side == SideBid && tick > bestTick {
-			bestTick = tick
-		}
-
-		if sideBook.side == SideAsk && tick < bestTick {
-			bestTick = tick
-		}
-
-		return true
-	})
-
-	return bestTick, ok
-}
-
-func (sideBook *SideBook) sortedTicks(midTick float64) []int64 {
-	sideBook.ticks = sideBook.ticks[:0]
-
-	sideBook.levels.Range(func(key, value any) bool {
-		sideBook.ticks = append(sideBook.ticks, key.(int64))
-
-		return true
-	})
-
-	for left := 1; left < len(sideBook.ticks); left++ {
-		cursor := sideBook.ticks[left]
-
-		for index := left - 1; index >= 0; index-- {
-			leftDistance := math.Abs(float64(sideBook.ticks[index]) - midTick)
-			cursorDistance := math.Abs(float64(cursor) - midTick)
-
-			if leftDistance <= cursorDistance {
-				break
-			}
-
-			sideBook.ticks[index+1] = sideBook.ticks[index]
-			sideBook.ticks[index] = cursor
-		}
-	}
-
-	return sideBook.ticks
-}
-
-func (sideBook *SideBook) isTouchTick(tick int64) bool {
-	bestTick, ok := sideBook.bestTick()
-
-	return ok && bestTick == tick
-}

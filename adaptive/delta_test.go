@@ -13,10 +13,9 @@ func TestDelta_Measure(t *testing.T) {
 		Convey("When the first sample arrives", func() {
 			first, err := delta.Measure(10)
 
-			Convey("Then it emits the maximal normalized change immediately", func() {
+			Convey("Then it is not ready until a prior observation exists", func() {
 				So(err, ShouldBeNil)
-				So(first.Ready, ShouldBeTrue)
-				So(first.Value, ShouldEqual, 1)
+				So(first.Ready, ShouldBeFalse)
 				So(first.Count, ShouldEqual, 1)
 			})
 		})

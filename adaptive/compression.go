@@ -1,10 +1,22 @@
 package adaptive
 
+import (
+	"github.com/theapemachine/errnie"
+)
+
 /*
 Compression scores how far below the running baseline the current sample sits.
+It tracks an explicit initialization flag so zero or negative samples cannot
+silently re-seed the baseline after the series has already started.
 */
 type Compression struct {
-	baselines map[string]float64
+	series map[string]*compressionSeries
+}
+
+type compressionSeries struct {
+	initialized bool
+	baseline    float64
+	count       int
 }
 
 /*
@@ -21,7 +33,7 @@ NewCompression returns a typed compression tracker.
 */
 func NewCompression() *Compression {
 	return &Compression{
-		baselines: map[string]float64{},
+		series: map[string]*compressionSeries{},
 	}
 }
 
@@ -34,39 +46,58 @@ func (compression *Compression) Measure(sample float64) (CompressionOutput, erro
 
 /*
 MeasureSeries adds one sample and compares it against the series baseline.
+Compression is defined on strictly positive magnitudes so the baseline remains
+a valid divisor for relative drawdown.
 */
 func (compression *Compression) MeasureSeries(series string, sample float64) (CompressionOutput, error) {
 	if err := finiteAdaptive("compression", sample); err != nil {
 		return CompressionOutput{}, err
 	}
 
+	if sample <= 0 {
+		return CompressionOutput{}, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"compression: sample must be positive",
+			nil,
+		))
+	}
+
 	if series == "" {
 		series = "default"
 	}
 
-	baseline := compression.baselines[series]
+	state := compression.series[series]
 
-	if baseline <= 0 {
-		compression.baselines[series] = sample
+	if state == nil {
+		state = &compressionSeries{}
+		compression.series[series] = state
+	}
+
+	if !state.initialized {
+		state.initialized = true
+		state.baseline = sample
+		state.count = 1
 
 		return CompressionOutput{
 			Ready: true,
-			Count: 1,
+			Count: state.count,
 		}, nil
 	}
 
-	if sample > baseline {
-		compression.baselines[series] = sample
+	state.count++
+
+	if sample > state.baseline {
+		state.baseline = sample
 
 		return CompressionOutput{
 			Ready: true,
-			Count: 1,
+			Count: state.count,
 		}, nil
 	}
 
 	return CompressionOutput{
-		Value: (baseline - sample) / baseline,
+		Value: (state.baseline - sample) / state.baseline,
 		Ready: true,
-		Count: 1,
+		Count: state.count,
 	}, nil
 }

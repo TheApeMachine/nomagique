@@ -6,36 +6,30 @@ import (
 	"github.com/theapemachine/errnie"
 )
 
-const (
-	defaultFracDiffMaxLag = 2048
-)
-
 /*
-FracDiff applies a fractional differencing filter to recent samples.
+FracDiff applies a fractional differencing filter with a configured order.
 */
 type FracDiff struct {
 	history []float64
 	weights []float64
 	maxLag  int
-	min     float64
-	max     float64
-	prev    float64
 	order   float64
 	width   int
 	head    int
 	count   int
-	ready   bool
 }
 
 /*
-FracDiffConfig controls bounded fractional-difference memory.
+FracDiffConfig controls bounded fractional-difference memory and kernel order.
 */
 type FracDiffConfig struct {
-	MaxLag int
+	MaxLag           int
+	Order            float64
+	WeightThreshold  float64
 }
 
 /*
-FracDiffOutput reports the latest adaptive fractional difference.
+FracDiffOutput reports the latest fractional difference.
 */
 type FracDiffOutput struct {
 	Value float64
@@ -45,80 +39,74 @@ type FracDiffOutput struct {
 
 /*
 NewFracDiff returns a typed fractional-difference tracker.
+Order and weight threshold are fixed at construction so the kernel does not
+reinterpret history when sample units change.
 */
-func NewFracDiff(configs ...FracDiffConfig) *FracDiff {
-	config := FracDiffConfig{MaxLag: defaultFracDiffMaxLag}
+func NewFracDiff(configs ...FracDiffConfig) (*FracDiff, error) {
+	config := FracDiffConfig{}
 
 	if len(configs) > 0 {
 		config = configs[0]
 	}
 
 	if config.MaxLag <= 0 {
-		config.MaxLag = defaultFracDiffMaxLag
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"fracdiff: positive max lag required",
+			nil,
+		))
 	}
 
-	return &FracDiff{
-		maxLag: config.MaxLag,
+	if config.Order <= 0 || config.Order > 1 {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"fracdiff: order must be in (0,1]",
+			nil,
+		))
 	}
+
+	if config.WeightThreshold <= 0 {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"fracdiff: positive weight threshold required",
+			nil,
+		))
+	}
+
+	weights, width := buildFracDiffWeights(
+		config.Order,
+		config.WeightThreshold,
+		nil,
+		config.MaxLag,
+	)
+
+	return &FracDiff{
+		history: make([]float64, config.MaxLag+1),
+		weights: weights,
+		maxLag:  config.MaxLag,
+		order:   config.Order,
+		width:   width,
+	}, nil
 }
 
 /*
-Measure adds one sample and returns the adaptive fractional difference when ready.
+Measure adds one sample and returns the fractional difference when the kernel
+has enough history to evaluate.
 */
 func (fractional *FracDiff) Measure(sample float64) (FracDiffOutput, error) {
 	if err := finiteAdaptive("fracdiff", sample); err != nil {
 		return FracDiffOutput{}, err
 	}
 
-	if !fractional.ready {
-		capacity := fractional.capacity()
-		fractional.history = make([]float64, capacity)
-		fractional.history[0] = sample
-		fractional.min = sample
-		fractional.max = sample
-		fractional.prev = sample
-		fractional.order = 0
-		fractional.width = 1
-		fractional.head = 0
-		fractional.count = 1
-		fractional.weights = make([]float64, capacity)
-		fractional.weights[0] = 1
-		fractional.weights = fractional.weights[:1]
-		fractional.ready = true
-
-		return FracDiffOutput{
-			Ready: false,
-			Count: fractional.count,
-		}, nil
-	}
-
-	fractional.min = math.Min(fractional.min, sample)
-	fractional.max = math.Max(fractional.max, sample)
-	span := fractional.max - fractional.min
-
-	if span == 0 {
-		fractional.pushHistory(sample)
-
-		return FracDiffOutput{
-			Ready: false,
-			Count: fractional.count,
-		}, nil
-	}
-
-	rate := math.Abs(sample-fractional.prev) / span
-	order := fracDiffOrder(rate, span)
-	smoothedOrder := order
-
-	if fractional.count > 1 {
-		smoothedOrder = 0.95*fractional.order + 0.05*order
-	}
-
-	if fractional.count == 1 || math.Abs(smoothedOrder-fractional.order) > 0.01 {
-		fractional.rebuildWeights(smoothedOrder, span)
-	}
-
 	fractional.pushHistory(sample)
-	fractional.prev = sample
+
+	if fractional.count < fractional.width {
+		return FracDiffOutput{
+			Ready: false,
+			Count: fractional.count,
+		}, nil
+	}
+
 	value := fractional.outputSum()
 
 	if err := finiteAdaptive("fracdiff", value); err != nil {
@@ -132,69 +120,24 @@ func (fractional *FracDiff) Measure(sample float64) (FracDiffOutput, error) {
 	}, nil
 }
 
-func (fractional *FracDiff) rebuildWeights(order float64, span float64) {
-	if order == fractional.order && fractional.width > 0 {
-		return
-	}
-
-	fractional.order = order
-	weights := fractional.weights[:0]
-	weights, width := buildFracDiffWeights(
-		order,
-		span,
-		fractional.prev,
-		weights,
-		fractional.maxLagForSpan(span),
-	)
-	fractional.width = width
-	fractional.weights = weights[:width]
-}
-
-func (fractional *FracDiff) capacity() int {
-	return fractional.configuredMaxLag() + 1
-}
-
-func (fractional *FracDiff) maxLagForSpan(span float64) int {
-	maxLag := fractional.configuredMaxLag()
-	lag := fracDiffMaxLag(span)
-
-	if lag > maxLag {
-		return maxLag
-	}
-
-	return lag
-}
-
-func (fractional *FracDiff) configuredMaxLag() int {
-	if fractional.maxLag <= 0 {
-		return defaultFracDiffMaxLag
-	}
-
-	return fractional.maxLag
-}
-
 func (fractional *FracDiff) pushHistory(sample float64) {
-	if len(fractional.history) == 0 {
+	if fractional.count < len(fractional.history) {
+		fractional.history[fractional.count] = sample
+		fractional.head = fractional.count
+		fractional.count++
+
 		return
 	}
 
 	fractional.head = (fractional.head + 1) % len(fractional.history)
 	fractional.history[fractional.head] = sample
-
-	if fractional.count < len(fractional.history) {
-		fractional.count++
-	}
+	fractional.count++
 }
 
 func (fractional *FracDiff) outputSum() float64 {
 	sum := 0.0
-	limit := fractional.width
 
-	if fractional.count < limit {
-		limit = fractional.count
-	}
-
-	for lag := 0; lag < limit; lag++ {
+	for lag := 0; lag < fractional.width; lag++ {
 		index := fractional.head - lag
 
 		if index < 0 {
@@ -208,18 +151,53 @@ func (fractional *FracDiff) outputSum() float64 {
 }
 
 /*
-FractionalDifferenceValue applies the same binomial fractional-difference
-kernel as FracDiff to an already normalized sample series.
+FractionalDifferenceValue applies a configured binomial fractional-difference
+kernel to an already ordered sample series.
 */
-func FractionalDifferenceValue(samples []float64) (float64, bool, error) {
-	if len(samples) < 3 {
+func FractionalDifferenceValue(
+	samples []float64,
+	config FracDiffConfig,
+) (float64, bool, error) {
+	if config.MaxLag <= 0 {
+		return 0, false, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"fracdiff: positive max lag required",
+			nil,
+		))
+	}
+
+	if config.Order <= 0 || config.Order > 1 {
+		return 0, false, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"fracdiff: order must be in (0,1]",
+			nil,
+		))
+	}
+
+	if config.WeightThreshold <= 0 {
+		return 0, false, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"fracdiff: positive weight threshold required",
+			nil,
+		))
+	}
+
+	weights, width := buildFracDiffWeights(
+		config.Order,
+		config.WeightThreshold,
+		nil,
+		config.MaxLag,
+	)
+
+	if len(samples) < width {
 		return 0, false, nil
 	}
 
-	minValue := samples[0]
-	maxValue := samples[0]
+	value := 0.0
 
-	for _, sample := range samples {
+	for lag := 0; lag < width; lag++ {
+		sample := samples[len(samples)-1-lag]
+
 		if math.IsNaN(sample) || math.IsInf(sample, 0) {
 			return 0, false, errnie.Error(errnie.Err(
 				errnie.Validation,
@@ -228,31 +206,7 @@ func FractionalDifferenceValue(samples []float64) (float64, bool, error) {
 			))
 		}
 
-		minValue = math.Min(minValue, sample)
-		maxValue = math.Max(maxValue, sample)
-	}
-
-	span := maxValue - minValue
-
-	if span <= 0 {
-		return 0, false, nil
-	}
-
-	tail := samples[len(samples)-1]
-	prev := samples[len(samples)-2]
-	rate := math.Abs(tail-prev) / span
-	order := fracDiffOrder(rate, span)
-	weights, width := buildFracDiffWeights(
-		order,
-		span,
-		prev,
-		nil,
-		fracDiffLagLimit(span, defaultFracDiffMaxLag),
-	)
-	value := 0.0
-
-	for lag := 0; lag < width && lag < len(samples); lag++ {
-		value += weights[lag] * samples[len(samples)-1-lag]
+		value += weights[lag] * sample
 	}
 
 	if math.IsNaN(value) || math.IsInf(value, 0) {
@@ -266,38 +220,12 @@ func FractionalDifferenceValue(samples []float64) (float64, bool, error) {
 	return value, true, nil
 }
 
-func fracDiffWeightThreshold(span float64, reference float64) float64 {
-	if span > 0 {
-		return 1 / span
-	}
-
-	if reference > 0 {
-		return 1 / reference
-	}
-
-	return 1
-}
-
-func fracDiffOrder(rate float64, span float64) float64 {
-	if rate <= 0 {
-		return 1 / (span + 1)
-	}
-
-	if rate >= 1 {
-		return 1 - 1/(span+1)
-	}
-
-	return rate
-}
-
 func buildFracDiffWeights(
 	order float64,
-	span float64,
-	reference float64,
+	threshold float64,
 	scratch []float64,
 	maxLag int,
 ) ([]float64, int) {
-	threshold := fracDiffWeightThreshold(span, reference)
 	weights := scratch
 
 	if cap(weights) < 1 {
@@ -321,26 +249,4 @@ func buildFracDiffWeights(
 	}
 
 	return weights, width
-}
-
-func fracDiffLagLimit(span float64, maxLag int) int {
-	lag := fracDiffMaxLag(span)
-
-	if maxLag <= 0 {
-		maxLag = defaultFracDiffMaxLag
-	}
-
-	if lag > maxLag {
-		return maxLag
-	}
-
-	return lag
-}
-
-func fracDiffMaxLag(span float64) int {
-	if span < 1 {
-		return 1
-	}
-
-	return int(span) + 1
 }

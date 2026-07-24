@@ -112,14 +112,18 @@ func TestTypedAdaptiveDistributionStages(t *testing.T) {
 }
 
 func TestTypedAdaptiveTemporalStages(t *testing.T) {
-	logReturn := NewLogReturn(LogReturnConfig{ReturnLag: 1, LongWindow: 3})
+	logReturn, err := NewLogReturn(LogReturnConfig{ReturnLag: 1, MaxSeries: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	first, err := logReturn.Measure(LogReturnSample{Value: 100, At: time.Unix(1, 0)})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if !first.Ready || first.Value != 0 {
-		t.Fatalf("first log return = %+v, want ready zero return", first)
+	if first.Ready || first.Value != 0 {
+		t.Fatalf("first log return = %+v, want not-ready zero return", first)
 	}
 
 	second, err := logReturn.Measure(LogReturnSample{Value: 110, At: time.Unix(2, 0)})
@@ -148,24 +152,38 @@ func TestTypedAdaptiveTemporalStages(t *testing.T) {
 }
 
 func TestTypedFracDiffAndHysteresis(t *testing.T) {
-	fractional := NewFracDiff()
-	_, _ = fractional.Measure(10)
-	fracOutput, err := fractional.Measure(11)
+	fractional, err := NewFracDiff(FracDiffConfig{
+		MaxLag:          8,
+		Order:           0.5,
+		WeightThreshold: 0.05,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if !fracOutput.Ready || fracOutput.Value == 0 {
-		t.Fatalf("fracdiff = %+v, want nonzero ready output", fracOutput)
+	var fracOutput FracDiffOutput
+
+	for _, sample := range []float64{10, 11, 12, 13, 14, 15, 16, 17, 18} {
+		fracOutput, err = fractional.Measure(sample)
+		if err != nil {
+			t.Fatal(err)
+		}
 	}
 
-	value, ready, err := FractionalDifferenceValue([]float64{0, 0.25, 0.5, 1})
+	if !fracOutput.Ready {
+		t.Fatalf("fracdiff = %+v, want ready output", fracOutput)
+	}
+
+	value, ready, err := FractionalDifferenceValue(
+		[]float64{0, 0.25, 0.5, 1, 1.25, 1.5},
+		FracDiffConfig{MaxLag: 8, Order: 0.5, WeightThreshold: 0.05},
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if !ready || value == 0 {
-		t.Fatalf("fractional difference = %v ready %v, want nonzero ready", value, ready)
+	if !ready {
+		t.Fatalf("fractional difference = %v ready %v, want ready", value, ready)
 	}
 
 	hysteresis := NewHysteresis(HysteresisConfig{Window: 2, Threshold: 0.5})

@@ -59,12 +59,18 @@ func NewLogReturnZScore(
 		))
 	}
 
+	logReturn, err := adaptive.NewLogReturn(adaptive.LogReturnConfig{
+		ReturnLag: config.ReturnLag,
+		MaxSeries: 1,
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
 	return &LogReturnZScore{
-		priceRing: statistic.NewPriceRing(),
-		logReturn: adaptive.NewLogReturn(adaptive.LogReturnConfig{
-			ReturnLag:  config.ReturnLag,
-			LongWindow: config.LongWindow,
-		}),
+		priceRing:     statistic.NewPriceRing(),
+		logReturn:     logReturn,
 		rollingZScore: statistic.NewRollingZScore(),
 		positiveOnly:  adaptive.NewPositiveOnly(config.PositiveOnly),
 	}, nil

@@ -2,6 +2,7 @@ package flow
 
 import (
 	"testing"
+	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/nomagique/equation"
@@ -78,6 +79,23 @@ func TestBookflowSample_MeasureBook(testingTB *testing.T) {
 		})
 	})
 
+	Convey("Given a trade before any two-sided book", testingTB, func() {
+		sample, constructErr := NewSample(sampleTestHistoryCapacity)
+		So(constructErr, ShouldBeNil)
+		_, ok, _, err := sample.MeasureTrade(TradeInput{
+			Symbol:   "BTC/USD",
+			Side:     TradeBuy,
+			Price:    100,
+			Quantity: 2,
+			At:       time.Unix(1, 0),
+		})
+
+		Convey("It should refuse readiness without market context", func() {
+			So(err, ShouldBeNil)
+			So(ok, ShouldBeFalse)
+		})
+	})
+
 	Convey("Given repeated prices that resolve to the same exchange tick", testingTB, func() {
 		sample, constructErr := NewSample(sampleTestHistoryCapacity)
 		So(constructErr, ShouldBeNil)
@@ -105,17 +123,16 @@ func TestBookflowSample_MeasureBook(testingTB *testing.T) {
 		})
 		So(err, ShouldBeNil)
 
-		windowValue, found := sample.windows.Load("BTC/USD")
-		So(found, ShouldBeTrue)
-		window := windowValue.(*Window)
+		window := sample.windows["BTC/USD"]
 
 		Convey("It should update the existing integer price tick", func() {
 			So(window.book.bids.Len(), ShouldEqual, 1)
-
-			qtyValue, qtyFound := window.book.bids.levels.Load(int64(1001))
-			So(qtyFound, ShouldBeTrue)
-			So(qtyValue.(float64), ShouldEqual, 18)
+			So(window.book.bids.levels[int64(1001)], ShouldEqual, 18)
 		})
+	})
+
+	Convey("Given materially different tick sizes", testingTB, func() {
+		So(sameTickSize(1.0, 1.49), ShouldBeFalse)
 	})
 
 	Convey("Given a book frame without symbol", testingTB, func() {
@@ -141,15 +158,32 @@ func TestBookflowSample_MeasureTrade(testingTB *testing.T) {
 
 		input, ok, _, err := sample.MeasureTrade(TradeInput{
 			Symbol:   "BTC/USD",
-			Side:     "buy",
+			Side:     TradeBuy,
 			Price:    100,
 			Quantity: 2,
+			At:       time.Unix(1, 0),
 		})
 
 		Convey("It should update the sampled trade pressure", func() {
 			So(err, ShouldBeNil)
 			So(ok, ShouldBeTrue)
 			So(input.TradePressure, ShouldBeGreaterThan, 0)
+		})
+	})
+
+	Convey("Given an invalid trade side", testingTB, func() {
+		sample, constructErr := NewSample(sampleTestHistoryCapacity)
+		So(constructErr, ShouldBeNil)
+		_, _, _, err := sample.MeasureTrade(TradeInput{
+			Symbol:   "BTC/USD",
+			Side:     "hold",
+			Price:    100,
+			Quantity: 2,
+			At:       time.Unix(1, 0),
+		})
+
+		Convey("It should reject the side before mutating state", func() {
+			So(err, ShouldNotBeNil)
 		})
 	})
 }
@@ -190,7 +224,7 @@ func bookflowBookInput() BookInput {
 func bookflowTestLevel(price float64, tickSize float64, quantity float64) BookLevel {
 	return BookLevel{
 		Price:    price,
-		Ticks:    int64(price),
+		Ticks:    int64(price / tickSize),
 		Quantity: quantity,
 	}
 }

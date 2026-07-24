@@ -41,6 +41,20 @@ func TestForecasterMeasure(testingTB *testing.T) {
 		})
 	})
 
+	Convey("Given repeated equal residuals", testingTB, func() {
+		forecaster := Forecast()
+		_, err := forecaster.Measure(LearningPair{Predicted: 10, Actual: 12})
+		So(err, ShouldBeNil)
+
+		output, err := forecaster.Measure(LearningPair{Predicted: 10, Actual: 12})
+
+		Convey("It should treat zero residual variance as zero surprise", func() {
+			So(err, ShouldBeNil)
+			So(output.Rate, ShouldEqual, 0)
+			So(output.Scale, ShouldEqual, 1)
+		})
+	})
+
 	Convey("Given zero predicted", testingTB, func() {
 		forecaster := Forecast()
 		_, err := forecaster.Measure(LearningPair{Predicted: 0, Actual: 10})

@@ -134,7 +134,7 @@ func (window *Window) maturity() float64 {
 
 func (window *Window) observeLevels(
 	levels []flow.BookLevel,
-	side byte,
+	side flow.Side,
 	frame *Frame,
 ) {
 	book := window.sideBook(side)
@@ -182,7 +182,7 @@ func (window *Window) observeLevels(
 
 func (window *Window) observeOrderEvents(
 	events []OrderEvent,
-	side byte,
+	side flow.Side,
 	frame *Frame,
 ) {
 	for _, event := range events {
@@ -221,7 +221,7 @@ func (window *Window) observeOrderEvents(
 }
 
 func (window *Window) upsertOrder(
-	side byte,
+	side flow.Side,
 	orderID string,
 	price float64,
 	quantity float64,
@@ -270,7 +270,7 @@ func (window *Window) upsertOrder(
 }
 
 func (window *Window) deleteOrder(
-	side byte,
+	side flow.Side,
 	orderID string,
 	price float64,
 	quantity float64,

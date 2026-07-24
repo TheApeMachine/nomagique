@@ -110,7 +110,7 @@ func (window *decayWindow) ingestTrade(input flow.TradeInput) error {
 	notional := input.Price * input.Quantity
 	signedNotional := notional
 
-	if input.Side == "sell" {
+	if input.Side == flow.TradeSell {
 		signedNotional = -notional
 	}
 

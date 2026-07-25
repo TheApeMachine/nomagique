@@ -304,6 +304,12 @@ static float fluid_debug_float(uint32_t word) {
 
     id<MTLBuffer> _debugHead;
     id<MTLBuffer> _debugWords;
+
+    // GPU display: XZ projection scratch, extents, and Shared RGBA8 output.
+    id<MTLBuffer> _displayRho;
+    id<MTLBuffer> _displayPsi;
+    id<MTLBuffer> _displayExtents;
+    id<MTLBuffer> _displayRGBA;
 }
 
 - (instancetype)initWithConfig:(const FluidConfig *)config
@@ -345,8 +351,20 @@ static float fluid_debug_float(uint32_t word) {
               guidanceZ:(float *)guidanceZ
                   count:(uint32_t)count
                   error:(NSString **)error;
+- (BOOL)readDisplay:(uint8_t *)rgba
+              count:(uint32_t)byteCount
+              stats:(FluidDisplayStats *)stats
+              error:(NSString **)error;
 
 @end
+
+struct DisplayParams {
+    uint32_t grid_x;
+    uint32_t grid_y;
+    uint32_t grid_z;
+    float inv_spacing;
+    uint32_t num_particles;
+};
 
 @implementation SensoriumFluidDomain
 
@@ -442,6 +460,13 @@ static float fluid_debug_float(uint32_t word) {
     _debugHead = [self buffer:sizeof(uint32_t)];
     _debugWords = [self buffer:(size_t)FluidDebugCapacity * 6u * sizeof(uint32_t)];
     *(uint32_t *)_modeCountBuffer.contents = _modeCount;
+
+    size_t projectionBytes = (size_t)_config.grid_x * (size_t)_config.grid_z * sizeof(float);
+    size_t displayBytes = (size_t)_config.grid_x * (size_t)_config.grid_z * 4u;
+    _displayRho = [self buffer:projectionBytes];
+    _displayPsi = [self buffer:projectionBytes];
+    _displayExtents = [self buffer:6u * sizeof(uint32_t)];
+    _displayRGBA = [self buffer:displayBytes];
 
     uint32_t *binStarts = (uint32_t *)_binStarts.contents;
     uint32_t *binned = (uint32_t *)_binnedIndex.contents;
@@ -2857,6 +2882,116 @@ Advance without inventing a parallel particle store.
     return YES;
 }
 
+- (BOOL)readDisplay:(uint8_t *)rgba
+              count:(uint32_t)byteCount
+              stats:(FluidDisplayStats *)stats
+              error:(NSString **)error {
+    uint32_t width = _config.grid_x;
+    uint32_t height = _config.grid_z;
+    uint32_t expected = width * height * 4u;
+
+    if (_particleCount == 0u || !_waveInitialized) {
+        if (error != nil) {
+            *error = @"resident fluid display is unavailable before the first step";
+        }
+
+        return NO;
+    }
+
+    if (rgba == nullptr || stats == nullptr || byteCount != expected ||
+        _displayRho == nil || _displayPsi == nil || _displayExtents == nil ||
+        _displayRGBA == nil) {
+        if (error != nil) {
+            *error = @"fluid display buffers do not match the X-Z lattice";
+        }
+
+        return NO;
+    }
+
+    id<MTLComputePipelineState> project = [self pipeline:@"display_project_xz" error:error];
+    id<MTLComputePipelineState> colormap = [self pipeline:@"display_colormap" error:error];
+    id<MTLComputePipelineState> splat = [self pipeline:@"display_splat_particles" error:error];
+
+    if (project == nil || colormap == nil || splat == nil) {
+        return NO;
+    }
+
+    uint32_t *extents = (uint32_t *)_displayExtents.contents;
+    extents[0] = 0u;
+    extents[1] = 0u;
+    extents[2] = 0x7F800000u;
+    extents[3] = 0x7F800000u;
+    extents[4] = 0u;
+    extents[5] = 0u;
+
+    DisplayParams params{
+        _config.grid_x,
+        _config.grid_y,
+        _config.grid_z,
+        1.0f / _config.spacing,
+        _particleCount,
+    };
+    uint32_t cells = width * height;
+    id<MTLCommandBuffer> command = nil;
+    id<MTLComputeCommandEncoder> encoder = [self encoder:project command:&command];
+    [encoder setBuffer:_density offset:0 atIndex:0];
+    [encoder setBuffer:_spatialPsiReal offset:0 atIndex:1];
+    [encoder setBuffer:_spatialPsiImaginary offset:0 atIndex:2];
+    [encoder setBuffer:_displayRho offset:0 atIndex:3];
+    [encoder setBuffer:_displayPsi offset:0 atIndex:4];
+    [encoder setBuffer:_displayExtents offset:0 atIndex:5];
+    [encoder setBytes:&params length:sizeof(params) atIndex:6];
+    [self dispatch:encoder count:cells pipeline:project];
+    [encoder endEncoding];
+
+    encoder = [command computeCommandEncoder];
+    [encoder setComputePipelineState:colormap];
+    [encoder setBuffer:_displayRho offset:0 atIndex:0];
+    [encoder setBuffer:_displayPsi offset:0 atIndex:1];
+    [encoder setBuffer:_displayExtents offset:0 atIndex:2];
+    [encoder setBuffer:_displayRGBA offset:0 atIndex:3];
+    [encoder setBytes:&params length:sizeof(params) atIndex:4];
+    [self dispatch:encoder count:cells pipeline:colormap];
+    [encoder endEncoding];
+
+    encoder = [command computeCommandEncoder];
+    [encoder setComputePipelineState:splat];
+    [encoder setBuffer:_position offset:0 atIndex:0];
+    [encoder setBuffer:_energy offset:0 atIndex:1];
+    [encoder setBuffer:_displayRGBA offset:0 atIndex:2];
+    [encoder setBytes:&params length:sizeof(params) atIndex:3];
+    [self dispatch:encoder count:_particleCount pipeline:splat];
+
+    if (![self finish:encoder command:command error:error]) {
+        return NO;
+    }
+
+    std::memcpy(rgba, _displayRGBA.contents, expected);
+    float rhoMax = 0.0f;
+    float psiMax = 0.0f;
+    std::memcpy(&rhoMax, &extents[0], sizeof(float));
+    std::memcpy(&psiMax, &extents[1], sizeof(float));
+
+    if (!std::isfinite(rhoMax) || rhoMax < 0.0f) {
+        rhoMax = 0.0f;
+    }
+
+    if (!std::isfinite(psiMax) || psiMax < 0.0f) {
+        psiMax = 0.0f;
+    }
+
+    *stats = FluidDisplayStats{
+        width,
+        height,
+        extents[4],
+        extents[5],
+        rhoMax,
+        psiMax,
+    };
+
+    return YES;
+}
+
 @end
 
 extern "C" void *fluid_domain_new(
@@ -3154,6 +3289,32 @@ extern "C" int fluid_domain_read_projection(
 
         if (!success) {
             fluid_write_error(errorOutput, errorCapacity, error ?: @"fluid projection failed");
+            return 0;
+        }
+
+        return 1;
+    }
+}
+
+extern "C" int fluid_domain_read_display(
+    void *handle,
+    uint8_t *rgba,
+    uint32_t byteCount,
+    FluidDisplayStats *stats,
+    char *errorOutput,
+    int errorCapacity
+) {
+    @autoreleasepool {
+        if (handle == nullptr) {
+            fluid_write_error(errorOutput, errorCapacity, @"fluid domain handle is required");
+            return 0;
+        }
+
+        SensoriumFluidDomain *domain = (__bridge SensoriumFluidDomain *)handle;
+        NSString *error = nil;
+
+        if (![domain readDisplay:rgba count:byteCount stats:stats error:&error]) {
+            fluid_write_error(errorOutput, errorCapacity, error ?: @"fluid display failed");
             return 0;
         }
 

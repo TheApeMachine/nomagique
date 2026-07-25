@@ -3846,4 +3846,264 @@ kernel void merge_reduce_runs(
     out_clamped[slot] = clamped_any;
 }
 
+// =============================================================================
+// Display: XZ project → colormap → particle splat → RGBA8
+// =============================================================================
+// Host reads one Shared uchar4 buffer. Extents layout (uint words):
+//   0 rho_max_bits  1 psi_max_bits  2 rho_min_bits  3 psi_min_bits
+//   4 rho_occupied  5 psi_occupied
+// =============================================================================
+
+struct DisplayParams {
+    uint32_t grid_x;
+    uint32_t grid_y;
+    uint32_t grid_z;
+    float inv_spacing;
+    uint32_t num_particles;
+};
+
+inline float display_unit(float sample, float minimum, float maximum) {
+    if (!isfinite(sample)) {
+        return 0.0f;
+    }
+
+    float span = maximum - minimum;
+
+    if (!(span > 0.0f)) {
+        return sample > 0.0f ? 1.0f : 0.0f;
+    }
+
+    float unit = clamp((sample - minimum) / span, 0.0f, 1.0f);
+
+    return unit > 0.0f ? pow(unit, 0.55f) : 0.0f;
+}
+
+inline float3 display_mix3(float3 left, float3 right, float unit) {
+    return left * (1.0f - unit) + right * unit;
+}
+
+inline float3 display_cmap(float unit) {
+    float3 c0 = float3(14.0f, 12.0f, 10.0f);
+    float3 c1 = float3(26.0f, 34.0f, 50.0f);
+    float3 c2 = float3(42.0f, 106.0f, 129.0f);
+    float3 c3 = float3(232.0f, 163.0f, 61.0f);
+    float3 c4 = float3(246.0f, 214.0f, 159.0f);
+
+    if (unit < 0.4f) {
+        return display_mix3(c0, c1, unit / 0.4f);
+    }
+
+    if (unit < 0.6f) {
+        return display_mix3(c1, c2, (unit - 0.4f) / 0.2f);
+    }
+
+    if (unit < 0.8f) {
+        return display_mix3(c2, c3, (unit - 0.6f) / 0.2f);
+    }
+
+    return display_mix3(c3, c4, (unit - 0.8f) / 0.2f);
+}
+
+inline void display_atomic_max_bits(device atomic_uint* slot, float value) {
+    if (!(value > 0.0f) || !isfinite(value)) {
+        return;
+    }
+
+    uint bits = as_type<uint>(value);
+    uint previous = atomic_load_explicit(slot, memory_order_relaxed);
+
+    while (bits > previous) {
+        if (atomic_compare_exchange_weak_explicit(
+                slot, &previous, bits, memory_order_relaxed, memory_order_relaxed
+            )) {
+            return;
+        }
+    }
+}
+
+inline void display_atomic_min_bits(device atomic_uint* slot, float value) {
+    if (!isfinite(value)) {
+        return;
+    }
+
+    uint bits = as_type<uint>(value);
+    uint previous = atomic_load_explicit(slot, memory_order_relaxed);
+
+    while (bits < previous) {
+        if (atomic_compare_exchange_weak_explicit(
+                slot, &previous, bits, memory_order_relaxed, memory_order_relaxed
+            )) {
+            return;
+        }
+    }
+}
+
+/*
+display_project_xz max-projects density and |ψ|² over Y onto the XZ lattice and
+updates shared min/max/occupied extents for colormap normalization.
+*/
+kernel void display_project_xz(
+    device const float* density [[buffer(0)]],
+    device const float* psi_real [[buffer(1)]],
+    device const float* psi_imag [[buffer(2)]],
+    device float* rho_proj [[buffer(3)]],
+    device float* psi_proj [[buffer(4)]],
+    device atomic_uint* extents [[buffer(5)]],
+    constant DisplayParams& p [[buffer(6)]],
+    uint gid [[thread_position_in_grid]]
+) {
+    uint width = p.grid_x;
+    uint height = p.grid_z;
+    uint cells = width * height;
+
+    if (gid >= cells) {
+        return;
+    }
+
+    uint x = gid % width;
+    uint z = gid / width;
+    float maximumDensity = 0.0f;
+    float maximumPsi = 0.0f;
+    uint strideX = p.grid_y * p.grid_z;
+
+    for (uint y = 0u; y < p.grid_y; y++) {
+        uint cell = x * strideX + y * p.grid_z + z;
+        maximumDensity = max(maximumDensity, density[cell]);
+        float real = psi_real[cell];
+        float imag = psi_imag[cell];
+        maximumPsi = max(maximumPsi, real * real + imag * imag);
+    }
+
+    rho_proj[gid] = maximumDensity;
+    psi_proj[gid] = maximumPsi;
+    display_atomic_min_bits(extents + 2u, maximumDensity);
+    display_atomic_min_bits(extents + 3u, maximumPsi);
+
+    if (maximumDensity > 0.0f) {
+        atomic_fetch_add_explicit(extents + 4u, 1u, memory_order_relaxed);
+        display_atomic_max_bits(extents + 0u, maximumDensity);
+    }
+
+    if (maximumPsi > 0.0f) {
+        atomic_fetch_add_explicit(extents + 5u, 1u, memory_order_relaxed);
+        display_atomic_max_bits(extents + 1u, maximumPsi);
+    }
+}
+
+/*
+display_colormap normalizes projected ρ / |ψ|² and writes the gas-mixed cmap into
+the Shared RGBA8 display buffer (X fastest, Z as row).
+*/
+kernel void display_colormap(
+    device const float* rho_proj [[buffer(0)]],
+    device const float* psi_proj [[buffer(1)]],
+    device const uint* extents [[buffer(2)]],
+    device uchar4* rgba [[buffer(3)]],
+    constant DisplayParams& p [[buffer(4)]],
+    uint gid [[thread_position_in_grid]]
+) {
+    uint cells = p.grid_x * p.grid_z;
+
+    if (gid >= cells) {
+        return;
+    }
+
+    float rhoMax = as_type<float>(extents[0]);
+    float psiMax = as_type<float>(extents[1]);
+    float rhoMin = as_type<float>(extents[2]);
+    float psiMin = as_type<float>(extents[3]);
+
+    if (!(rhoMax > 0.0f) || !isfinite(rhoMin) || isinf(rhoMin)) {
+        rhoMin = 0.0f;
+        rhoMax = 0.0f;
+    }
+
+    if (!(psiMax > 0.0f) || !isfinite(psiMin) || isinf(psiMin)) {
+        psiMin = 0.0f;
+        psiMax = 0.0f;
+    }
+
+    float primary = display_unit(psi_proj[gid], psiMin, psiMax);
+    float gas = display_unit(rho_proj[gid], rhoMin, rhoMax);
+    float3 color = display_cmap(primary);
+    float mix = gas * 0.38f;
+    color = color * (1.0f - mix) + float3(48.0f, 168.0f, 196.0f) * mix;
+    rgba[gid] = uchar4(
+        (uchar)clamp(color.x, 0.0f, 255.0f),
+        (uchar)clamp(color.y, 0.0f, 255.0f),
+        (uchar)clamp(color.z, 0.0f, 255.0f),
+        255u
+    );
+}
+
+inline void display_blend_pixel(
+    device uchar4* rgba, uint width, uint height, int column, int row,
+    float weight, float3 tint
+) {
+    if (column < 0 || row < 0 || column >= (int)width || row >= (int)height) {
+        return;
+    }
+
+    uint offset = (uint)row * width + (uint)column;
+    float3 current = float3(rgba[offset].xyz);
+    float3 mixed = current * (1.0f - weight) + tint * weight;
+    rgba[offset] = uchar4(
+        (uchar)clamp(mixed.x, 0.0f, 255.0f),
+        (uchar)clamp(mixed.y, 0.0f, 255.0f),
+        (uchar)clamp(mixed.z, 0.0f, 255.0f),
+        255u
+    );
+}
+
+/*
+display_splat_particles paints resident oscillators as orange glow markers with a
+white core, matching the prior host bake (cell = floor(pos / spacing)).
+*/
+kernel void display_splat_particles(
+    device const float* position [[buffer(0)]],
+    device const float* energy [[buffer(1)]],
+    device uchar4* rgba [[buffer(2)]],
+    constant DisplayParams& p [[buffer(3)]],
+    uint gid [[thread_position_in_grid]]
+) {
+    if (gid >= p.num_particles) {
+        return;
+    }
+
+    float amplitude = sqrt(max(energy[gid], 0.0f));
+
+    if (!(amplitude > 0.0f) || !isfinite(amplitude)) {
+        return;
+    }
+
+    uint base = gid * 3u;
+    int column = (int)floor(position[base] * p.inv_spacing);
+    int row = (int)floor(position[base + 2u] * p.inv_spacing);
+    uint width = p.grid_x;
+    uint height = p.grid_z;
+
+    if (column < 0 || row < 0 || column >= (int)width || row >= (int)height) {
+        return;
+    }
+
+    float glow = min(amplitude, 1.0f);
+    float3 orange = float3(232.0f, 163.0f, 61.0f);
+
+    for (int deltaRow = -1; deltaRow <= 1; deltaRow++) {
+        for (int deltaColumn = -1; deltaColumn <= 1; deltaColumn++) {
+            float weight = glow * 0.35f;
+
+            if (deltaRow == 0 && deltaColumn == 0) {
+                weight = 1.0f;
+            }
+
+            display_blend_pixel(
+                rgba, width, height, column + deltaColumn, row + deltaRow,
+                weight, orange
+            );
+        }
+    }
+
+    rgba[(uint)row * width + (uint)column] = uchar4(255u, 255u, 255u, 255u);
+}
 

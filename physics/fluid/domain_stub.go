@@ -85,6 +85,13 @@ func (domain *Domain) Projection() (Projection, error) {
 }
 
 /*
+Display reports that no Metal domain exists on this platform.
+*/
+func (domain *Domain) Display() ([]byte, DisplayStats, error) {
+	return nil, DisplayStats{}, fmt.Errorf("fluid: Metal domain requires darwin with cgo")
+}
+
+/*
 Close is a no-op because a non-Metal domain cannot be constructed.
 */
 func (domain *Domain) Close() error {

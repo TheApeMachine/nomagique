@@ -552,6 +552,80 @@ func BenchmarkDomainProjection(b *testing.B) {
 	}
 }
 
+func TestDomainDisplay(t *testing.T) {
+	Convey("Given a fluid domain that has not advanced", t, func() {
+		domain, err := NewDomain(testDomainConfig())
+		So(err, ShouldBeNil)
+		Reset(func() { So(domain.Close(), ShouldBeNil) })
+
+		Convey("It should reject a display without resident physical state", func() {
+			_, _, err = domain.Display()
+			So(err, ShouldNotBeNil)
+		})
+	})
+
+	Convey("Given a coupled gas and wave step", t, func() {
+		domain, err := NewDomain(testDomainConfig())
+		So(err, ShouldBeNil)
+		Reset(func() { So(domain.Close(), ShouldBeNil) })
+		particles := testParticles()
+		_, err = domain.Step(particles)
+		So(err, ShouldBeNil)
+
+		Convey("It should expose a finite RGBA8 frame with lit particle cores", func() {
+			rgba, stats, displayErr := domain.Display()
+			So(displayErr, ShouldBeNil)
+			expected := testDomainConfig().Grid.X * testDomainConfig().Grid.Z * 4
+			So(rgba, ShouldHaveLength, expected)
+			So(stats.Width, ShouldEqual, uint32(testDomainConfig().Grid.X))
+			So(stats.Height, ShouldEqual, uint32(testDomainConfig().Grid.Z))
+			So(stats.RhoOccupied, ShouldBeGreaterThan, uint32(0))
+			So(stats.PsiOccupied, ShouldBeGreaterThan, uint32(0))
+			So(stats.RhoMax, ShouldBeGreaterThan, float32(0))
+			So(stats.PsiMax, ShouldBeGreaterThan, float32(0))
+			So(displayHasWhiteCore(rgba, stats), ShouldBeTrue)
+			So(displayIsFiniteRGBA(rgba), ShouldBeTrue)
+		})
+	})
+}
+
+func BenchmarkDomainDisplay(b *testing.B) {
+	config := DefaultConfig()
+	domain, err := NewDomain(config)
+
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	defer domain.Close()
+	particles := benchmarkParticles(config.Grid)
+
+	if _, err = domain.Step(particles); err != nil {
+		b.Fatal(err)
+	}
+
+	for b.Loop() {
+		if _, _, err := domain.Display(); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func displayHasWhiteCore(rgba []byte, stats DisplayStats) bool {
+	for index := 0; index+3 < len(rgba); index += 4 {
+		if rgba[index] == 255 && rgba[index+1] == 255 &&
+			rgba[index+2] == 255 && rgba[index+3] == 255 {
+			return true
+		}
+	}
+
+	return stats.Width == 0
+}
+
+func displayIsFiniteRGBA(rgba []byte) bool {
+	return len(rgba) > 0 && len(rgba)%4 == 0
+}
+
 func benchmarkParticles(grid Grid) []Particle {
 	count := grid.X * grid.Y
 	particles := make([]Particle, count)

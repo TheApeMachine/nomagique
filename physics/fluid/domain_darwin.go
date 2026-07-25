@@ -470,6 +470,45 @@ func (domain *Domain) Projection() (Projection, error) {
 }
 
 /*
+Display runs the Metal project/colormap/splat pass and returns one Shared RGBA8
+frame plus occupancy stats. Particles stay Private on GPU; only the picture is
+read back.
+*/
+func (domain *Domain) Display() ([]byte, DisplayStats, error) {
+	if domain == nil || domain.handle == nil {
+		return nil, DisplayStats{}, fmt.Errorf("fluid: domain is closed")
+	}
+
+	width := domain.config.Grid.X
+	height := domain.config.Grid.Z
+	rgba := make([]byte, width*height*4)
+	var stats C.FluidDisplayStats
+	errorBuffer := make([]byte, 4096)
+	result := C.fluid_domain_read_display(
+		unsafe.Pointer(domain.handle),
+		(*C.uint8_t)(unsafe.Pointer(&rgba[0])),
+		C.uint32_t(len(rgba)),
+		&stats,
+		(*C.char)(unsafe.Pointer(&errorBuffer[0])),
+		C.int(len(errorBuffer)),
+	)
+	runtime.KeepAlive(rgba)
+
+	if result == 0 {
+		return nil, DisplayStats{}, fmt.Errorf("fluid: %s", cString(errorBuffer))
+	}
+
+	return rgba, DisplayStats{
+		Width:       uint32(stats.width),
+		Height:      uint32(stats.height),
+		RhoOccupied: uint32(stats.rho_occupied),
+		PsiOccupied: uint32(stats.psi_occupied),
+		RhoMax:      float32(stats.rho_max),
+		PsiMax:      float32(stats.psi_max),
+	}, nil
+}
+
+/*
 Close releases the resident Metal library, pipelines, and buffers.
 */
 func (domain *Domain) Close() error {

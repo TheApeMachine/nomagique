@@ -186,6 +186,18 @@ type Projection struct {
 }
 
 /*
+DisplayStats describes occupancy and maxima for one GPU-composited display frame.
+*/
+type DisplayStats struct {
+	Width       uint32
+	Height      uint32
+	RhoOccupied uint32
+	PsiOccupied uint32
+	RhoMax      float32
+	PsiMax      float32
+}
+
+/*
 Domain owns the resident Metal fields for the coupled thermodynamic and
 omega-wave implementation. Platform files provide the Metal handle.
 */

@@ -173,6 +173,32 @@ int fluid_domain_read_projection(
     int error_capacity
 );
 
+/*
+FluidDisplayStats describes one GPU-composited XZ RGBA8 frame: lattice size and
+field occupancy/maxima used by the UI meta panel.
+*/
+typedef struct FluidDisplayStats {
+    uint32_t width;
+    uint32_t height;
+    uint32_t rho_occupied;
+    uint32_t psi_occupied;
+    float rho_max;
+    float psi_max;
+} FluidDisplayStats;
+
+/*
+fluid_domain_read_display runs the Metal display pass (project, colormap, splat)
+and copies the Shared RGBA8 buffer plus stats to the host.
+*/
+int fluid_domain_read_display(
+    void *handle,
+    uint8_t *rgba,
+    uint32_t byte_count,
+    FluidDisplayStats *stats,
+    char *error_out,
+    int error_capacity
+);
+
 #ifdef __cplusplus
 }
 #endif

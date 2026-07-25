@@ -266,6 +266,31 @@ func TestDomainStep(t *testing.T) {
 		})
 	})
 
+	Convey("Given three resident particles with unequal contribution", t, func() {
+		domain, err := NewDomain(testDomainConfig())
+		So(err, ShouldBeNil)
+		Reset(func() { So(domain.Close(), ShouldBeNil) })
+
+		batch := []Particle{
+			{Mass: 1, Energy: 1, Heat: 1e-4, Omega: 1, Phase: 0.1},
+			{Mass: 1, Energy: 1, Heat: 1e-4, Omega: 1, Phase: 0.2},
+			{Mass: 0.01, Energy: 1e-6, Heat: 0, Omega: 1, Phase: 0.3},
+		}
+
+		Convey("Retain keeps selected indices and content identities", func() {
+			_, appendErr := domain.Append(batch, []uint32{1, 2, 3})
+			So(appendErr, ShouldBeNil)
+			So(domain.ParticleCount(), ShouldEqual, 3)
+			So(domain.Retain([]uint32{0, 1}), ShouldBeNil)
+			So(domain.ParticleCount(), ShouldEqual, 2)
+
+			resident, readErr := domain.ReadParticles(0, 2)
+			So(readErr, ShouldBeNil)
+			So(resident[0].Mass, ShouldEqual, float32(1))
+			So(resident[1].Mass, ShouldEqual, float32(1))
+		})
+	})
+
 	Convey("Given a shared market-scale particle population", t, func() {
 		config := DefaultConfig()
 		domain, err := NewDomain(config)

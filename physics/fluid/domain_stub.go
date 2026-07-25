@@ -43,6 +43,13 @@ func (domain *Domain) ParticleCount() int {
 }
 
 /*
+Retain reports that no Metal domain exists on this platform.
+*/
+func (domain *Domain) Retain(indices []uint32) error {
+	return fmt.Errorf("fluid: Metal domain requires darwin with cgo")
+}
+
+/*
 ReadParticles reports that no Metal domain exists on this platform.
 */
 func (domain *Domain) ReadParticles(start, count int) ([]Particle, error) {

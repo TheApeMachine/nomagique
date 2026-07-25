@@ -111,6 +111,18 @@ int fluid_domain_advance(
 
 uint32_t fluid_domain_particle_count(void *handle);
 
+/*
+fluid_domain_retain keeps only the listed resident indices (unique, in range),
+preserving content IDs and clamp state so streaming merge identities survive.
+*/
+int fluid_domain_retain(
+    void *handle,
+    const uint32_t *indices,
+    uint32_t count,
+    char *error_out,
+    int error_capacity
+);
+
 int fluid_domain_read_particles(
     void *handle,
     FluidParticle *particles,

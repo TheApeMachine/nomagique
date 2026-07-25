@@ -334,6 +334,9 @@ static float fluid_debug_float(uint32_t word) {
                 start:(uint32_t)start
                 count:(uint32_t)count
                 error:(NSString **)error;
+- (BOOL)retainParticles:(const uint32_t *)indices
+                  count:(uint32_t)count
+                  error:(NSString **)error;
 - (BOOL)readWave:(FluidWaveMode *)modes count:(uint32_t)count error:(NSString **)error;
 - (BOOL)read:(FluidReading *)reading error:(NSString **)error;
 - (BOOL)readProjection:(float *)density
@@ -1985,6 +1988,122 @@ static float fluid_debug_float(uint32_t word) {
     return YES;
 }
 
+/*
+retainParticles keeps only the listed resident indices, preserving SoA state and
+content IDs. Indices must be unique and in range. Used to drop inert mass after
+Advance without inventing a parallel particle store.
+*/
+- (BOOL)retainParticles:(const uint32_t *)indices
+                  count:(uint32_t)count
+                  error:(NSString **)error {
+    if (count > _particleCount) {
+        if (error != nil) {
+            *error = @"retain count exceeds resident population";
+        }
+
+        return NO;
+    }
+
+    if (count == 0u) {
+        _particleCount = 0u;
+        return YES;
+    }
+
+    if (indices == nullptr) {
+        if (error != nil) {
+            *error = @"retain indices are required";
+        }
+
+        return NO;
+    }
+
+    if (count == _particleCount) {
+        return YES;
+    }
+
+    if (![self pullParticles:error]) {
+        return NO;
+    }
+
+    std::vector<uint8_t> seen((size_t)_particleCount, 0u);
+    std::vector<float> position((size_t)count * 3u);
+    std::vector<float> velocity((size_t)count * 3u);
+    std::vector<float> mass(count);
+    std::vector<float> heat(count);
+    std::vector<float> energy(count);
+    std::vector<float> phase(count);
+    std::vector<float> omega(count);
+    std::vector<float> amplitude(count);
+    std::vector<uint32_t> content(count);
+    std::vector<uint32_t> clamped(count);
+
+    float *srcPosition = (float *)_hostPosition.contents;
+    float *srcVelocity = (float *)_hostVelocity.contents;
+    float *srcMass = (float *)_hostMass.contents;
+    float *srcHeat = (float *)_hostHeat.contents;
+    float *srcEnergy = (float *)_hostEnergy.contents;
+    float *srcPhase = (float *)_hostPhase.contents;
+    float *srcOmega = (float *)_hostOmega.contents;
+    float *srcAmplitude = (float *)_hostAmplitude.contents;
+    uint32_t *srcContent = (uint32_t *)_hostContent.contents;
+    uint32_t *srcClamped = (uint32_t *)_hostClamped.contents;
+
+    for (uint32_t out = 0; out < count; out++) {
+        uint32_t slot = indices[out];
+
+        if (slot >= _particleCount || seen[slot] != 0u) {
+            if (error != nil) {
+                *error = @"retain indices must be unique and in range";
+            }
+
+            return NO;
+        }
+
+        seen[slot] = 1u;
+        uint32_t base = slot * 3u;
+        uint32_t outBase = out * 3u;
+        position[outBase] = srcPosition[base];
+        position[outBase + 1u] = srcPosition[base + 1u];
+        position[outBase + 2u] = srcPosition[base + 2u];
+        velocity[outBase] = srcVelocity[base];
+        velocity[outBase + 1u] = srcVelocity[base + 1u];
+        velocity[outBase + 2u] = srcVelocity[base + 2u];
+        mass[out] = srcMass[slot];
+        heat[out] = srcHeat[slot];
+        energy[out] = srcEnergy[slot];
+        phase[out] = srcPhase[slot];
+        omega[out] = srcOmega[slot];
+        amplitude[out] = srcAmplitude[slot];
+        content[out] = srcContent[slot];
+        clamped[out] = srcClamped[slot];
+    }
+
+    std::memcpy(srcPosition, position.data(), position.size() * sizeof(float));
+    std::memcpy(srcVelocity, velocity.data(), velocity.size() * sizeof(float));
+    std::memcpy(srcMass, mass.data(), mass.size() * sizeof(float));
+    std::memcpy(srcHeat, heat.data(), heat.size() * sizeof(float));
+    std::memcpy(srcEnergy, energy.data(), energy.size() * sizeof(float));
+    std::memcpy(srcPhase, phase.data(), phase.size() * sizeof(float));
+    std::memcpy(srcOmega, omega.data(), omega.size() * sizeof(float));
+    std::memcpy(srcAmplitude, amplitude.data(), amplitude.size() * sizeof(float));
+    std::memcpy(srcContent, content.data(), content.size() * sizeof(uint32_t));
+    std::memcpy(srcClamped, clamped.data(), clamped.size() * sizeof(uint32_t));
+
+    _particleCount = count;
+
+    if (![self pushParticleRange:0u count:count error:error] ||
+        ![self blitFrom:_hostClamped sourceOffset:0 to:_clamped destinationOffset:0
+                 bytes:(size_t)count * sizeof(uint32_t) error:error]) {
+        return NO;
+    }
+
+    if (_particleCount == 0u || !_waveInitialized) {
+        return YES;
+    }
+
+    return [self computeSpatialIDs:error];
+}
+
 - (BOOL)readParticles:(FluidParticle *)particles
                 start:(uint32_t)start
                 count:(uint32_t)count
@@ -2868,6 +2987,31 @@ extern "C" uint32_t fluid_domain_particle_count(void *handle) {
 
     SensoriumFluidDomain *domain = (__bridge SensoriumFluidDomain *)handle;
     return domain->_particleCount;
+}
+
+extern "C" int fluid_domain_retain(
+    void *handle,
+    const uint32_t *indices,
+    uint32_t count,
+    char *errorOutput,
+    int errorCapacity
+) {
+    @autoreleasepool {
+        if (handle == nullptr) {
+            fluid_write_error(errorOutput, errorCapacity, @"fluid domain handle is required");
+            return 0;
+        }
+
+        SensoriumFluidDomain *domain = (__bridge SensoriumFluidDomain *)handle;
+        NSString *error = nil;
+
+        if (![domain retainParticles:indices count:count error:&error]) {
+            fluid_write_error(errorOutput, errorCapacity, error ?: @"fluid particle retain failed");
+            return 0;
+        }
+
+        return 1;
+    }
 }
 
 extern "C" int fluid_domain_read_particles(

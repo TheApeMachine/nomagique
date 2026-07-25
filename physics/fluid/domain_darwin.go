@@ -190,6 +190,49 @@ func (domain *Domain) ParticleCount() int {
 }
 
 /*
+Retain keeps only the listed resident indices, preserving content IDs so later
+Append/Advance merge identities remain valid. Indices must be unique and in
+range of the current ParticleCount.
+*/
+func (domain *Domain) Retain(indices []uint32) error {
+	if domain == nil || domain.handle == nil {
+		return fmt.Errorf("fluid: domain is closed")
+	}
+
+	if len(indices) == 0 {
+		errorBuffer := make([]byte, 4096)
+		result := C.fluid_domain_retain(
+			unsafe.Pointer(domain.handle),
+			nil,
+			0,
+			(*C.char)(unsafe.Pointer(&errorBuffer[0])),
+			C.int(len(errorBuffer)),
+		)
+
+		if result == 0 {
+			return fmt.Errorf("fluid: %s", cString(errorBuffer))
+		}
+
+		return nil
+	}
+
+	errorBuffer := make([]byte, 4096)
+	result := C.fluid_domain_retain(
+		unsafe.Pointer(domain.handle),
+		(*C.uint32_t)(unsafe.Pointer(&indices[0])),
+		C.uint32_t(len(indices)),
+		(*C.char)(unsafe.Pointer(&errorBuffer[0])),
+		C.int(len(errorBuffer)),
+	)
+
+	if result == 0 {
+		return fmt.Errorf("fluid: %s", cString(errorBuffer))
+	}
+
+	return nil
+}
+
+/*
 ReadParticles copies one resident range out of Metal storage after advance.
 */
 func (domain *Domain) ReadParticles(start, count int) ([]Particle, error) {

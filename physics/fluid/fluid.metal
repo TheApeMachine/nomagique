@@ -3878,36 +3878,108 @@ inline float display_unit(float sample, float minimum, float maximum) {
     return unit > 0.0f ? pow(unit, 0.55f) : 0.0f;
 }
 
+inline float display_project_sample(
+    device const float* field,
+    uint x,
+    uint z,
+    uint grid_x,
+    uint grid_y,
+    uint grid_z
+) {
+    uint stride_x = grid_y * grid_z;
+    float weighted = 0.0f;
+    float weight_sum = 0.0f;
+
+    for (int dx = -1; dx <= 1; dx++) {
+        uint sx = (uint)wrap_i32((int)x + dx, (int)grid_x);
+        float wx = (dx == 0) ? 1.0f : 0.5f;
+
+        for (int dz = -1; dz <= 1; dz++) {
+            uint sz = (uint)wrap_i32((int)z + dz, (int)grid_z);
+            float wz = (dz == 0) ? 1.0f : 0.5f;
+            float weight = wx * wz;
+            float maximum = 0.0f;
+
+            for (uint y = 0u; y < grid_y; y++) {
+                uint cell = sx * stride_x + y * grid_z + sz;
+                maximum = max(maximum, field[cell]);
+            }
+
+            weighted += maximum * weight;
+            weight_sum += weight;
+        }
+    }
+
+    return weighted / weight_sum;
+}
+
+inline float display_project_psi_sample(
+    device const float* psi_real,
+    device const float* psi_imag,
+    uint x,
+    uint z,
+    uint grid_x,
+    uint grid_y,
+    uint grid_z
+) {
+    uint stride_x = grid_y * grid_z;
+    float weighted = 0.0f;
+    float weight_sum = 0.0f;
+
+    for (int dx = -1; dx <= 1; dx++) {
+        uint sx = (uint)wrap_i32((int)x + dx, (int)grid_x);
+        float wx = (dx == 0) ? 1.0f : 0.5f;
+
+        for (int dz = -1; dz <= 1; dz++) {
+            uint sz = (uint)wrap_i32((int)z + dz, (int)grid_z);
+            float wz = (dz == 0) ? 1.0f : 0.5f;
+            float weight = wx * wz;
+            float maximum = 0.0f;
+
+            for (uint y = 0u; y < grid_y; y++) {
+                uint cell = sx * stride_x + y * grid_z + sz;
+                float real = psi_real[cell];
+                float imag = psi_imag[cell];
+                maximum = max(maximum, real * real + imag * imag);
+            }
+
+            weighted += maximum * weight;
+            weight_sum += weight;
+        }
+    }
+
+    return weighted / weight_sum;
+}
+
 inline float3 display_mix3(float3 left, float3 right, float unit) {
     return left * (1.0f - unit) + right * unit;
 }
 
 /*
 display_cmap maps a normalized [0,1] value to a smooth fluid colormap.
-The palette transitions from dark purple through blue, cyan, and green
-to yellow, producing the classic fluid simulation appearance.
+The palette matches the terminal mockup: near-black substrate, slate shadow,
+cyan pressure, amber excitation, and warm cream at the highest response.
 */
 inline float3 display_cmap(float unit) {
-    // Classic fluid simulation colormap: purple → blue → cyan → green → yellow
-    float3 c0 = float3(20.0f, 10.0f, 40.0f);    // dark purple
-    float3 c1 = float3(30.0f, 50.0f, 180.0f);  // blue
-    float3 c2 = float3(50.0f, 150.0f, 200.0f); // cyan
-    float3 c3 = float3(80.0f, 200.0f, 120.0f); // green
-    float3 c4 = float3(255.0f, 255.0f, 150.0f);// yellow
+    float3 c0 = float3(14.0f, 12.0f, 10.0f);
+    float3 c1 = float3(26.0f, 34.0f, 50.0f);
+    float3 c2 = float3(42.0f, 106.0f, 129.0f);
+    float3 c3 = float3(232.0f, 163.0f, 61.0f);
+    float3 c4 = float3(246.0f, 214.0f, 159.0f);
 
-    if (unit < 0.25f) {
-        return display_mix3(c0, c1, unit / 0.25f);
+    if (unit < 0.40f) {
+        return display_mix3(c0, c1, unit / 0.40f);
     }
 
-    if (unit < 0.50f) {
-        return display_mix3(c1, c2, (unit - 0.25f) / 0.25f);
+    if (unit < 0.60f) {
+        return display_mix3(c1, c2, (unit - 0.40f) / 0.20f);
     }
 
-    if (unit < 0.75f) {
-        return display_mix3(c2, c3, (unit - 0.50f) / 0.25f);
+    if (unit < 0.80f) {
+        return display_mix3(c2, c3, (unit - 0.60f) / 0.20f);
     }
 
-    return display_mix3(c3, c4, (unit - 0.75f) / 0.25f);
+    return display_mix3(c3, c4, (unit - 0.80f) / 0.20f);
 }
 
 inline void display_atomic_max_bits(device atomic_uint* slot, float value) {
@@ -3968,17 +4040,23 @@ kernel void display_project_xz(
 
     uint x = gid % width;
     uint z = gid / width;
-    float maximumDensity = 0.0f;
-    float maximumPsi = 0.0f;
-    uint strideX = p.grid_y * p.grid_z;
-
-    for (uint y = 0u; y < p.grid_y; y++) {
-        uint cell = x * strideX + y * p.grid_z + z;
-        maximumDensity = max(maximumDensity, density[cell]);
-        float real = psi_real[cell];
-        float imag = psi_imag[cell];
-        maximumPsi = max(maximumPsi, real * real + imag * imag);
-    }
+    float maximumDensity = display_project_sample(
+        density,
+        x,
+        z,
+        p.grid_x,
+        p.grid_y,
+        p.grid_z
+    );
+    float maximumPsi = display_project_psi_sample(
+        psi_real,
+        psi_imag,
+        x,
+        z,
+        p.grid_x,
+        p.grid_y,
+        p.grid_z
+    );
 
     rho_proj[gid] = maximumDensity;
     psi_proj[gid] = maximumPsi;
@@ -4033,14 +4111,10 @@ kernel void display_colormap(
     float gas = display_unit(rho_proj[gid], rhoMin, rhoMax);
     float3 color = display_cmap(primary);
 
-    // Blend gas density into the color for a richer fluid appearance.
-    float mix = gas * 0.35f;
-    float3 gasTint = float3(100.0f, 220.0f, 240.0f);
+    // Blend gas density as a cyan pressure wash, matching the WebGL fallback.
+    float mix = gas * 0.38f;
+    float3 gasTint = float3(48.0f, 168.0f, 196.0f);
     color = color * (1.0f - mix) + gasTint * mix;
-
-    // Apply subtle gamma correction for better visual contrast.
-    color = clamp(color, 0.0f, 255.0f);
-    color = pow(color / 255.0f, float3(0.9f)) * 255.0f;
 
     rgba[gid] = uchar4(
         (uchar)clamp(color.x, 0.0f, 255.0f),

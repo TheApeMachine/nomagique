@@ -2,7 +2,6 @@ package statistic
 
 import (
 	"math"
-	"sort"
 	"sync"
 
 	"github.com/theapemachine/errnie"
@@ -75,7 +74,17 @@ func (median *Median) MeasurePeers(member string, peers map[string]float64) (Sca
 		))
 	}
 
-	values := make([]float64, 0, len(peers))
+	ptr := scratchPool.Get().(*[]float64)
+	values := (*ptr)[:0]
+
+	if cap(values) < len(peers) {
+		values = make([]float64, 0, len(peers))
+	}
+
+	defer func() {
+		*ptr = values[:0]
+		scratchPool.Put(ptr)
+	}()
 
 	for peer, value := range peers {
 		if err := finiteStatistic("median", value); err != nil {
@@ -107,7 +116,7 @@ func (median *Median) MeasurePeers(member string, peers map[string]float64) (Sca
 		))
 	}
 
-	value, ok := MedianOf(values)
+	value, ok := MedianInPlace(values)
 
 	if !ok {
 		return ScalarOutput{}, errnie.Error(errnie.Err(
@@ -145,18 +154,74 @@ func MedianOf(values []float64) (float64, bool) {
 	}
 	sorted = append(sorted, values...)
 
-	sort.Float64s(sorted)
-	middle := len(sorted) / 2
-
-	var result float64
-	if len(sorted)%2 == 0 {
-		result = (sorted[middle-1] + sorted[middle]) / 2
-	} else {
-		result = sorted[middle]
-	}
-
+	result, ok := MedianInPlace(sorted)
 	*ptr = sorted[:0]
 	scratchPool.Put(ptr)
 
-	return result, true
+	return result, ok
+}
+
+/*
+MedianInPlace returns the median by partitioning values directly.
+It avoids the full sorting allocation/cost for callers that already own scratch.
+*/
+func MedianInPlace(values []float64) (float64, bool) {
+	if len(values) == 0 {
+		return 0, false
+	}
+
+	for _, value := range values {
+		if math.IsNaN(value) || math.IsInf(value, 0) {
+			return 0, false
+		}
+	}
+
+	middle := len(values) / 2
+	right := medianSelect(values, middle)
+
+	if len(values)%2 == 1 {
+		return right, true
+	}
+
+	left := medianSelect(values[:middle], middle-1)
+
+	return (left + right) / 2, true
+}
+
+func medianSelect(values []float64, target int) float64 {
+	left := 0
+	right := len(values) - 1
+
+	for left < right {
+		pivot := medianPartition(values, left, right)
+
+		if pivot == target {
+			break
+		}
+
+		if pivot < target {
+			left = pivot + 1
+			continue
+		}
+
+		right = pivot - 1
+	}
+
+	return values[target]
+}
+
+func medianPartition(values []float64, left int, right int) int {
+	pivot := values[right]
+	store := left
+
+	for index := left; index < right; index++ {
+		if values[index] < pivot {
+			values[store], values[index] = values[index], values[store]
+			store++
+		}
+	}
+
+	values[right], values[store] = values[store], values[right]
+
+	return store
 }

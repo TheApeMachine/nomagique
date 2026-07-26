@@ -14,6 +14,21 @@ Bookflow classifies weighted book imbalance with touch skew and trade pressure.
 type Bookflow struct{}
 
 /*
+bookflowBaseline carries the empirical depth gates computed once per measure.
+It keeps book-flow classification from re-copying and re-partitioning the same histories.
+*/
+type bookflowBaseline struct {
+	weightedThreshold float64
+	level1Threshold   float64
+	flatThreshold     float64
+	spoofContrast     float64
+	depthGate         float64
+	balancedDepth     bool
+	spoofReady        bool
+	thinningReady     bool
+}
+
+/*
 BookflowInput contains the float-only book-flow inputs.
 */
 type BookflowInput struct {
@@ -65,27 +80,25 @@ func (bookflow *Bookflow) Measure(input BookflowInput) (BookflowOutput, error) {
 		return BookflowOutput{}, nil
 	}
 
-	weightedThreshold := bookflowMedianAbsolute(input.WeightedHistory)
-	level1Threshold := bookflowMedianAbsolute(input.Level1History)
-	spoofContrast := bookflowSpoofContrast(input.WeightedHistory, input.Level1History)
-	spoofReady := len(input.WeightedHistory) >= minBookGateHistory &&
-		len(input.Level1History) >= minBookGateHistory
-	depthGate, balancedDepthHistory := bookflowThinningGate(
-		input.WeightedHistory,
-		input.FlatHistory,
-	)
-	thinningReady := len(input.WeightedHistory) >= minBookGateHistory &&
-		len(input.FlatHistory) >= minBookGateHistory
+	baseline := bookflowMeasureBaseline(input)
 
 	spoofed := bookflowIsSpoofSkew(
-		input.Weighted, input.Level1, weightedThreshold, level1Threshold,
-		spoofContrast, spoofReady,
+		input.Weighted,
+		input.Level1,
+		baseline.weightedThreshold,
+		baseline.level1Threshold,
+		baseline.spoofContrast,
+		baseline.spoofReady,
 	)
 
 	if input.FlatOK {
 		spoofed = spoofed || bookflowIsSpoofSkew(
-			input.Flat, input.Level1, weightedThreshold, level1Threshold,
-			spoofContrast, spoofReady,
+			input.Flat,
+			input.Level1,
+			baseline.weightedThreshold,
+			baseline.level1Threshold,
+			baseline.spoofContrast,
+			baseline.spoofReady,
 		)
 	}
 
@@ -93,14 +106,14 @@ func (bookflow *Bookflow) Measure(input BookflowInput) (BookflowOutput, error) {
 		input.Weighted,
 		input.Flat,
 		input.FlatOK,
-		depthGate,
-		thinningReady,
-		balancedDepthHistory,
+		baseline.depthGate,
+		baseline.thinningReady,
+		baseline.balancedDepth,
 	)
-	loadedThreshold := math.Max(weightedThreshold, level1Threshold)
+	loadedThreshold := math.Max(baseline.weightedThreshold, baseline.level1Threshold)
 	loaded := !spoofed && !thinning && input.Weighted*input.Level1 > 0 &&
-		math.Abs(input.Weighted) > weightedThreshold &&
-		math.Abs(input.Level1) > level1Threshold
+		math.Abs(input.Weighted) > baseline.weightedThreshold &&
+		math.Abs(input.Level1) > baseline.level1Threshold
 
 	category := bookflowClassify(spoofed, thinning, loaded)
 
@@ -129,9 +142,9 @@ func (bookflow *Bookflow) Measure(input BookflowInput) (BookflowOutput, error) {
 	thinScore := 0.0
 
 	if thinning {
-		thinScore = depthGate*math.Abs(input.Weighted) - math.Abs(input.Flat)
+		thinScore = baseline.depthGate*math.Abs(input.Weighted) - math.Abs(input.Flat)
 
-		if balancedDepthHistory {
+		if baseline.balancedDepth {
 			thinScore = math.Abs(input.Weighted) - math.Abs(input.Flat)
 		}
 	}
@@ -165,58 +178,60 @@ func (bookflow *Bookflow) Measure(input BookflowInput) (BookflowOutput, error) {
 	}, nil
 }
 
+/*
+bookflowMeasureBaseline computes every book-flow history statistic once.
+It prevents the classifier from repeatedly copying the same slices for each gate.
+*/
+func bookflowMeasureBaseline(input BookflowInput) bookflowBaseline {
+	baseline := bookflowBaseline{
+		weightedThreshold: bookflowMedianAbsolute(input.WeightedHistory),
+		level1Threshold:   bookflowMedianAbsolute(input.Level1History),
+		spoofReady: len(input.WeightedHistory) >= minBookGateHistory &&
+			len(input.Level1History) >= minBookGateHistory,
+		thinningReady: len(input.WeightedHistory) >= minBookGateHistory &&
+			len(input.FlatHistory) >= minBookGateHistory,
+	}
+
+	if len(input.FlatHistory) > 0 {
+		baseline.flatThreshold = bookflowMedianAbsolute(input.FlatHistory)
+	}
+
+	denominator := baseline.weightedThreshold + baseline.level1Threshold
+
+	if baseline.spoofReady && denominator > 0 {
+		baseline.spoofContrast = baseline.weightedThreshold / denominator
+	}
+
+	if !baseline.thinningReady {
+		return baseline
+	}
+
+	if baseline.weightedThreshold <= 0 {
+		baseline.balancedDepth = baseline.flatThreshold <= 0
+		return baseline
+	}
+
+	baseline.depthGate = baseline.flatThreshold / baseline.weightedThreshold
+
+	return baseline
+}
+
+/*
+bookflowMedianAbsolute returns a robust central absolute-depth gate.
+It uses statistic.MedianOf so caller-owned histories are never reordered.
+*/
 func bookflowMedianAbsolute(values []float64) float64 {
 	if len(values) == 0 {
 		return 0
 	}
 
-	absoluteValues := make([]float64, len(values))
-
-	for index, value := range values {
-		absoluteValues[index] = math.Abs(value)
-	}
-
-	median, ok := statistic.MedianOf(absoluteValues)
+	median, ok := statistic.MedianOf(values)
 
 	if !ok {
 		return 0
 	}
 
 	return median
-}
-
-func bookflowSpoofContrast(weightedHistory, level1History []float64) float64 {
-	if len(weightedHistory) < minBookGateHistory || len(level1History) < minBookGateHistory {
-		return 0
-	}
-
-	weightedMedian := bookflowMedianAbsolute(weightedHistory)
-	level1Median := bookflowMedianAbsolute(level1History)
-	denominator := weightedMedian + level1Median
-
-	if denominator <= 0 {
-		return 0
-	}
-
-	return weightedMedian / denominator
-}
-
-func bookflowThinningGate(
-	weightedHistory,
-	flatHistory []float64,
-) (float64, bool) {
-	if len(weightedHistory) < minBookGateHistory || len(flatHistory) < minBookGateHistory {
-		return 0, false
-	}
-
-	weightedMedian := bookflowMedianAbsolute(weightedHistory)
-	flatMedian := bookflowMedianAbsolute(flatHistory)
-
-	if weightedMedian <= 0 {
-		return 0, flatMedian <= 0
-	}
-
-	return flatMedian / weightedMedian, false
 }
 
 func bookflowLoadedPressureScale(weighted, tradePressure, weightedThreshold float64) float64 {

@@ -3882,26 +3882,32 @@ inline float3 display_mix3(float3 left, float3 right, float unit) {
     return left * (1.0f - unit) + right * unit;
 }
 
+/*
+display_cmap maps a normalized [0,1] value to a smooth fluid colormap.
+The palette transitions from dark purple through blue, cyan, and green
+to yellow, producing the classic fluid simulation appearance.
+*/
 inline float3 display_cmap(float unit) {
-    float3 c0 = float3(14.0f, 12.0f, 10.0f);
-    float3 c1 = float3(26.0f, 34.0f, 50.0f);
-    float3 c2 = float3(42.0f, 106.0f, 129.0f);
-    float3 c3 = float3(232.0f, 163.0f, 61.0f);
-    float3 c4 = float3(246.0f, 214.0f, 159.0f);
+    // Classic fluid simulation colormap: purple → blue → cyan → green → yellow
+    float3 c0 = float3(20.0f, 10.0f, 40.0f);    // dark purple
+    float3 c1 = float3(30.0f, 50.0f, 180.0f);  // blue
+    float3 c2 = float3(50.0f, 150.0f, 200.0f); // cyan
+    float3 c3 = float3(80.0f, 200.0f, 120.0f); // green
+    float3 c4 = float3(255.0f, 255.0f, 150.0f);// yellow
 
-    if (unit < 0.4f) {
-        return display_mix3(c0, c1, unit / 0.4f);
+    if (unit < 0.25f) {
+        return display_mix3(c0, c1, unit / 0.25f);
     }
 
-    if (unit < 0.6f) {
-        return display_mix3(c1, c2, (unit - 0.4f) / 0.2f);
+    if (unit < 0.50f) {
+        return display_mix3(c1, c2, (unit - 0.25f) / 0.25f);
     }
 
-    if (unit < 0.8f) {
-        return display_mix3(c2, c3, (unit - 0.6f) / 0.2f);
+    if (unit < 0.75f) {
+        return display_mix3(c2, c3, (unit - 0.50f) / 0.25f);
     }
 
-    return display_mix3(c3, c4, (unit - 0.8f) / 0.2f);
+    return display_mix3(c3, c4, (unit - 0.75f) / 0.25f);
 }
 
 inline void display_atomic_max_bits(device atomic_uint* slot, float value) {
@@ -4026,8 +4032,16 @@ kernel void display_colormap(
     float primary = display_unit(psi_proj[gid], psiMin, psiMax);
     float gas = display_unit(rho_proj[gid], rhoMin, rhoMax);
     float3 color = display_cmap(primary);
-    float mix = gas * 0.38f;
-    color = color * (1.0f - mix) + float3(48.0f, 168.0f, 196.0f) * mix;
+
+    // Blend gas density into the color for a richer fluid appearance.
+    float mix = gas * 0.35f;
+    float3 gasTint = float3(100.0f, 220.0f, 240.0f);
+    color = color * (1.0f - mix) + gasTint * mix;
+
+    // Apply subtle gamma correction for better visual contrast.
+    color = clamp(color, 0.0f, 255.0f);
+    color = pow(color / 255.0f, float3(0.9f)) * 255.0f;
+
     rgba[gid] = uchar4(
         (uchar)clamp(color.x, 0.0f, 255.0f),
         (uchar)clamp(color.y, 0.0f, 255.0f),
@@ -4087,23 +4101,25 @@ kernel void display_splat_particles(
     }
 
     float glow = min(amplitude, 1.0f);
-    float3 orange = float3(232.0f, 163.0f, 61.0f);
+    float3 orange = float3(255.0f, 200.0f, 80.0f);
+    float3 white = float3(255.0f, 250.0f, 220.0f);
 
-    for (int deltaRow = -1; deltaRow <= 1; deltaRow++) {
-        for (int deltaColumn = -1; deltaColumn <= 1; deltaColumn++) {
-            float weight = glow * 0.35f;
+    // Smooth Gaussian falloff for particle glow.
+    for (int deltaRow = -2; deltaRow <= 2; deltaRow++) {
+        for (int deltaColumn = -2; deltaColumn <= 2; deltaColumn++) {
+            float dist2 = (float)(deltaRow * deltaRow + deltaColumn * deltaColumn);
+            float weight = glow * exp(-dist2 * 0.4f) * 0.7f;
 
             if (deltaRow == 0 && deltaColumn == 0) {
                 weight = 1.0f;
             }
 
+            float3 tint = (deltaRow == 0 && deltaColumn == 0) ? white : orange;
             display_blend_pixel(
                 rgba, width, height, column + deltaColumn, row + deltaRow,
-                weight, orange
+                weight, tint
             );
         }
     }
-
-    rgba[(uint)row * width + (uint)column] = uchar4(255u, 255u, 255u, 255u);
 }
 

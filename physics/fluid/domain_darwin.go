@@ -15,6 +15,7 @@ import "C"
 import (
 	_ "embed"
 	"fmt"
+	"math"
 	"runtime"
 	"unsafe"
 )
@@ -479,8 +480,15 @@ func (domain *Domain) Display() ([]byte, DisplayStats, error) {
 		return nil, DisplayStats{}, fmt.Errorf("fluid: domain is closed")
 	}
 
-	width := domain.config.Grid.X
-	height := domain.config.Grid.Z
+	displayCells := uint64(domain.config.Grid.X) * uint64(domain.config.Grid.Y) * uint64(domain.config.Grid.Z)
+	displayAspect := float64(domain.config.Grid.X) / float64(domain.config.Grid.Z)
+	width := uint32(math.Round(math.Sqrt(float64(displayCells) * displayAspect)))
+
+	if width == 0 {
+		width = 1
+	}
+
+	height := uint32((displayCells + uint64(width) - 1) / uint64(width))
 	rgba := make([]byte, width*height*4)
 	var stats C.FluidDisplayStats
 	errorBuffer := make([]byte, 4096)
@@ -499,12 +507,14 @@ func (domain *Domain) Display() ([]byte, DisplayStats, error) {
 	}
 
 	return rgba, DisplayStats{
-		Width:       uint32(stats.width),
-		Height:      uint32(stats.height),
-		RhoOccupied: uint32(stats.rho_occupied),
-		PsiOccupied: uint32(stats.psi_occupied),
-		RhoMax:      float32(stats.rho_max),
-		PsiMax:      float32(stats.psi_max),
+		Width:            uint32(stats.width),
+		Height:           uint32(stats.height),
+		RhoOccupied:      uint32(stats.rho_occupied),
+		PsiOccupied:      uint32(stats.psi_occupied),
+		RhoMax:           float32(stats.rho_max),
+		PsiMax:           float32(stats.psi_max),
+		GuidanceOccupied: uint32(stats.guidance_occupied),
+		GuidanceMax:      float32(stats.guidance_max),
 	}, nil
 }
 

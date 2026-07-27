@@ -575,15 +575,18 @@ func TestDomainDisplay(t *testing.T) {
 		Convey("It should expose a finite RGBA8 frame with lit particle cores", func() {
 			rgba, stats, displayErr := domain.Display()
 			So(displayErr, ShouldBeNil)
-			expected := testDomainConfig().Grid.X * testDomainConfig().Grid.Z * 4
+			expected := int(stats.Width * stats.Height * 4)
+			brightPixels := displayBrightPixels(rgba)
 			So(rgba, ShouldHaveLength, expected)
-			So(stats.Width, ShouldEqual, uint32(testDomainConfig().Grid.X))
-			So(stats.Height, ShouldEqual, uint32(testDomainConfig().Grid.Z))
+			So(stats.Width, ShouldBeGreaterThan, uint32(testDomainConfig().Grid.X))
+			So(stats.Height, ShouldBeGreaterThan, uint32(testDomainConfig().Grid.Z))
 			So(stats.RhoOccupied, ShouldBeGreaterThan, uint32(0))
 			So(stats.PsiOccupied, ShouldBeGreaterThan, uint32(0))
 			So(stats.RhoMax, ShouldBeGreaterThan, float32(0))
 			So(stats.PsiMax, ShouldBeGreaterThan, float32(0))
-			So(displayHasWhiteCore(rgba, stats), ShouldBeTrue)
+			So(brightPixels, ShouldBeGreaterThan, 0)
+			So(brightPixels, ShouldBeLessThan, len(rgba)/12)
+			So(displayBlueArtifactPixels(rgba), ShouldEqual, 0)
 			So(displayIsFiniteRGBA(rgba), ShouldBeTrue)
 		})
 	})
@@ -611,15 +614,32 @@ func BenchmarkDomainDisplay(b *testing.B) {
 	}
 }
 
-func displayHasWhiteCore(rgba []byte, stats DisplayStats) bool {
+func displayBrightPixels(rgba []byte) int {
+	bright := 0
+
 	for index := 0; index+3 < len(rgba); index += 4 {
-		if rgba[index] == 255 && rgba[index+1] == 255 &&
-			rgba[index+2] == 255 && rgba[index+3] == 255 {
-			return true
+		if rgba[index] > 220 && rgba[index+1] > 180 && rgba[index+2] > 120 && rgba[index+3] == 255 {
+			bright++
 		}
 	}
 
-	return stats.Width == 0
+	return bright
+}
+
+func displayBlueArtifactPixels(rgba []byte) int {
+	blue := 0
+
+	for index := 0; index+3 < len(rgba); index += 4 {
+		red := int(rgba[index])
+		green := int(rgba[index+1])
+		blueChannel := int(rgba[index+2])
+
+		if blueChannel > red+80 && blueChannel > green+20 && red < 120 {
+			blue++
+		}
+	}
+
+	return blue
 }
 
 func displayIsFiniteRGBA(rgba []byte) bool {

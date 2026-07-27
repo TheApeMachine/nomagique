@@ -3886,9 +3886,9 @@ inline float display_sample(device const float* field, float2 position, uint wid
 }
 
 inline float3 display_color(float unit) {
-    float3 c0 = float3(14.0f, 12.0f, 10.0f), c1 = float3(26.0f, 34.0f, 50.0f);
-    float3 c2 = float3(42.0f, 106.0f, 129.0f), c3 = float3(232.0f, 163.0f, 61.0f);
-    float3 c4 = float3(246.0f, 214.0f, 159.0f);
+    float3 c0 = float3(12.0f, 10.0f, 8.0f), c1 = float3(28.0f, 22.0f, 14.0f);
+    float3 c2 = float3(78.0f, 52.0f, 24.0f), c3 = float3(216.0f, 141.0f, 44.0f);
+    float3 c4 = float3(248.0f, 221.0f, 160.0f);
     if (unit < .4f) return mix(c0, c1, unit/.4f);
     if (unit < .6f) return mix(c1, c2, (unit-.4f)/.2f);
     if (unit < .8f) return mix(c2, c3, (unit-.6f)/.2f);
@@ -3919,12 +3919,11 @@ kernel void display_project_xz(
         current_x += (re * (psi_imag[xp] - psi_imag[xm]) - im * (psi_real[xp] - psi_real[xm])) * central * p.spacing;
         current_z += (re * (psi_imag[zp] - psi_imag[zm]) - im * (psi_real[zp] - psi_real[zm])) * central * p.spacing;
     }
-    float inv = born_sum > 0.0f ? 1.0f / born_sum : 0.0f;
-    float vx = current_x * inv, vz = current_z * inv, speed = length(float2(vx, vz));
-    rho[gid] = density_sum; psi[gid] = born_sum; guide_x[gid] = vx; guide_z[gid] = vz;
+    float current_speed = length(float2(current_x, current_z));
+    rho[gid] = density_sum; psi[gid] = born_sum; guide_x[gid] = current_x; guide_z[gid] = current_z;
     if (density_sum > 0.0f) { display_max(extents, density_sum); atomic_fetch_add_explicit(extents + 4u, 1u, memory_order_relaxed); atomic_add_float_device(extents + 8u, density_sum); }
     if (born_sum > 0.0f) { display_max(extents + 1u, born_sum); atomic_fetch_add_explicit(extents + 5u, 1u, memory_order_relaxed); atomic_add_float_device(extents + 9u, born_sum); }
-    if (speed > 0.0f) { display_max(extents + 2u, speed); atomic_fetch_add_explicit(extents + 6u, 1u, memory_order_relaxed); atomic_add_float_device(extents + 10u, speed); }
+    if (current_speed > 0.0f) { display_max(extents + 2u, current_speed); atomic_fetch_add_explicit(extents + 6u, 1u, memory_order_relaxed); atomic_add_float_device(extents + 10u, current_speed); }
 }
 
 kernel void display_particle_stats(
@@ -3944,15 +3943,19 @@ kernel void display_splat_particles(
     if (!(maximum > 0.0f) || !(amplitude > 0.0f)) return;
     uint base = gid * 3u;
     float2 center = float2(position[base] * p.inv_spacing / p.grid_x * p.display_width, position[base+2] * p.inv_spacing / p.grid_z * p.display_height);
-    float sigma = 0.5f * sqrt((float)p.display_width / p.grid_x * (float)p.display_height / p.grid_z);
-    int support = (int)ceil(2.0f * sigma), cx = (int)floor(center.x), cz = (int)floor(center.y);
+    float cell_px = sqrt((float)p.display_width / p.grid_x * (float)p.display_height / p.grid_z);
+    float sigma_glow = max(0.75f, 0.25f * cell_px), sigma_core = max(0.75f, 0.16f * cell_px);
+    int support = (int)ceil(3.0f * sigma_glow), cx = (int)floor(center.x), cz = (int)floor(center.y);
+    float unit = amplitude / maximum;
     for (int dz = -support; dz <= support; dz++) for (int dx = -support; dx <= support; dx++) {
         int x = wrap_i32(cx + dx, (int)p.display_width), z = wrap_i32(cz + dz, (int)p.display_height);
         float2 d = float2((float)x + .5f, (float)z + .5f) - center;
-        float weight = amplitude / maximum * exp(-dot(d, d) / (2.0f * sigma * sigma));
+        float r2 = dot(d, d);
+        float weight = unit * exp(-r2 / (2.0f * sigma_glow * sigma_glow));
+        float core_weight = unit * exp(-r2 / (2.0f * sigma_core * sigma_core));
         uint index = (uint)z * p.display_width + (uint)x;
         atomic_add_float_device(glow + index, weight);
-        display_max(core + index, weight);
+        display_max(core + index, core_weight);
     }
 }
 
@@ -3968,18 +3971,19 @@ kernel void display_resolve(
     uint x = gid % p.display_width, z = gid / p.display_width;
     float2 position = (float2((float)x + .5f, (float)z + .5f) * float2(p.grid_x, p.grid_z) / float2(p.display_width, p.display_height)) - .5f;
     float r = display_sample(rho, position, p.grid_x, p.grid_z), q = display_sample(psi, position, p.grid_x, p.grid_z);
-    float2 velocity = float2(display_sample(guide_x, position, p.grid_x, p.grid_z), display_sample(guide_z, position, p.grid_x, p.grid_z));
-    float speed = length(velocity), ru = display_unit(r, as_type<float>(extents[8]), extents[4], as_type<float>(extents[0]));
+    float2 current = float2(display_sample(guide_x, position, p.grid_x, p.grid_z), display_sample(guide_z, position, p.grid_x, p.grid_z));
+    float flux = length(current), ru = display_unit(r, as_type<float>(extents[8]), extents[4], as_type<float>(extents[0]));
     float qu = display_unit(q, as_type<float>(extents[9]), extents[5], as_type<float>(extents[1]));
-    float gu = display_unit(speed, as_type<float>(extents[10]), extents[6], as_type<float>(extents[2]));
-    float3 color = display_color(qu); color = mix(color, float3(48.0f, 168.0f, 196.0f), ru * (1.0f - qu));
-    if (speed > 0.0f && gu > 0.0f && qu > 0.0f) {
-        float2 unit = velocity / speed, local = fract(position) - .5f;
+    float gu = display_unit(flux, as_type<float>(extents[10]), extents[6], as_type<float>(extents[2]));
+    float3 color = display_color(qu);
+    color = mix(color, float3(70.0f, 49.0f, 24.0f), ru * ru * (1.0f - qu));
+    if (flux > 0.0f && gu > 0.0f && qu > 0.0f) {
+        float2 unit = current / flux, local = fract(position) - .5f;
         float along = dot(local, unit), across = abs(unit.x * local.y - unit.y * local.x);
         float line = 1.0f - smoothstep(.02f, .10f, max(across, abs(along) - .30f));
         color = mix(color, float3(174.0f, 231.0f, 244.0f), line * gu * qu);
     }
-    color = mix(color, float3(255.0f, 200.0f, 80.0f), 1.0f - exp(-as_type<float>(glow[gid])));
-    color = mix(color, float3(255.0f, 250.0f, 220.0f), clamp(as_type<float>(core[gid]), 0.0f, 1.0f));
+    color = mix(color, float3(255.0f, 196.0f, 72.0f), 1.0f - exp(-0.65f * as_type<float>(glow[gid])));
+    color = mix(color, float3(255.0f, 248.0f, 218.0f), smoothstep(0.15f, 0.65f, as_type<float>(core[gid])));
     rgba[gid] = uchar4((uchar)clamp(color.x, 0.0f, 255.0f), (uchar)clamp(color.y, 0.0f, 255.0f), (uchar)clamp(color.z, 0.0f, 255.0f), 255u);
 }

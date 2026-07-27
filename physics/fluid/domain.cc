@@ -308,8 +308,16 @@ static float fluid_debug_float(uint32_t word) {
     // GPU display: XZ projection scratch, extents, and Shared RGBA8 output.
     id<MTLBuffer> _displayRho;
     id<MTLBuffer> _displayPsi;
+    id<MTLBuffer> _displayGuidanceX;
+    id<MTLBuffer> _displayGuidanceZ;
     id<MTLBuffer> _displayExtents;
+    id<MTLBuffer> _displayGlow;
+    id<MTLBuffer> _displayCore;
     id<MTLBuffer> _displayRGBA;
+    uint32_t _displayWidth;
+    uint32_t _displayHeight;
+    size_t _displayPixels;
+    size_t _displayBytes;
 }
 
 - (instancetype)initWithConfig:(const FluidConfig *)config
@@ -355,13 +363,15 @@ static float fluid_debug_float(uint32_t word) {
               count:(uint32_t)byteCount
               stats:(FluidDisplayStats *)stats
               error:(NSString **)error;
-
 @end
 
 struct DisplayParams {
     uint32_t grid_x;
     uint32_t grid_y;
     uint32_t grid_z;
+    uint32_t display_width;
+    uint32_t display_height;
+    float spacing;
     float inv_spacing;
     uint32_t num_particles;
 };
@@ -383,6 +393,12 @@ struct DisplayParams {
     _particleCount = 0u;
     _particleCapacity = 0u;
     _mergePadCapacity = 0u;
+    uint64_t displayCells = (uint64_t)config->grid_x * (uint64_t)config->grid_y * (uint64_t)config->grid_z;
+    double displayAspect = (double)config->grid_x / (double)config->grid_z;
+    _displayWidth = std::max((uint32_t)std::llround(std::sqrt(displayCells * displayAspect)), 1u);
+    _displayHeight = (uint32_t)((displayCells + _displayWidth - 1u) / _displayWidth);
+    _displayPixels = (size_t)_displayWidth * (size_t)_displayHeight;
+    _displayBytes = _displayPixels * 4u;
     _modeCount = fluid_mode_count(*config);
     _randomSeed = 1u;
     _fftSetup = nullptr;
@@ -462,11 +478,14 @@ struct DisplayParams {
     *(uint32_t *)_modeCountBuffer.contents = _modeCount;
 
     size_t projectionBytes = (size_t)_config.grid_x * (size_t)_config.grid_z * sizeof(float);
-    size_t displayBytes = (size_t)_config.grid_x * (size_t)_config.grid_z * 4u;
     _displayRho = [self buffer:projectionBytes];
     _displayPsi = [self buffer:projectionBytes];
-    _displayExtents = [self buffer:6u * sizeof(uint32_t)];
-    _displayRGBA = [self buffer:displayBytes];
+    _displayGuidanceX = [self buffer:projectionBytes];
+    _displayGuidanceZ = [self buffer:projectionBytes];
+    _displayExtents = [self buffer:12u * sizeof(uint32_t)];
+    _displayGlow = [self buffer:_displayPixels * sizeof(uint32_t)];
+    _displayCore = [self buffer:_displayPixels * sizeof(uint32_t)];
+    _displayRGBA = [self buffer:_displayBytes];
 
     uint32_t *binStarts = (uint32_t *)_binStarts.contents;
     uint32_t *binned = (uint32_t *)_binnedIndex.contents;
@@ -2886,112 +2905,52 @@ Advance without inventing a parallel particle store.
               count:(uint32_t)byteCount
               stats:(FluidDisplayStats *)stats
               error:(NSString **)error {
-    uint32_t width = _config.grid_x;
-    uint32_t height = _config.grid_z;
-    uint32_t expected = width * height * 4u;
+    uint32_t width = _displayWidth;
+    uint32_t height = _displayHeight;
+    uint32_t expected = (uint32_t)_displayBytes;
 
-    if (_particleCount == 0u || !_waveInitialized) {
-        if (error != nil) {
-            *error = @"resident fluid display is unavailable before the first step";
-        }
-
+    if (_particleCount == 0u || _waveInitialized == NO) {
+        if (error != nil) *error = @"resident fluid display is unavailable before the first step";
         return NO;
     }
 
-    if (rgba == nullptr || stats == nullptr || byteCount != expected ||
-        _displayRho == nil || _displayPsi == nil || _displayExtents == nil ||
-        _displayRGBA == nil) {
-        if (error != nil) {
-            *error = @"fluid display buffers do not match the X-Z lattice";
-        }
-
+    if (rgba == nullptr || stats == nullptr || byteCount != expected || _displayRho == nil || _displayPsi == nil || _displayGuidanceX == nil || _displayGuidanceZ == nil || _displayExtents == nil || _displayGlow == nil || _displayCore == nil || _displayRGBA == nil) {
+        if (error != nil) *error = @"fluid display buffers do not match derived display geometry";
         return NO;
     }
 
     id<MTLComputePipelineState> project = [self pipeline:@"display_project_xz" error:error];
-    id<MTLComputePipelineState> colormap = [self pipeline:@"display_colormap" error:error];
+    id<MTLComputePipelineState> particleStats = [self pipeline:@"display_particle_stats" error:error];
     id<MTLComputePipelineState> splat = [self pipeline:@"display_splat_particles" error:error];
+    id<MTLComputePipelineState> resolve = [self pipeline:@"display_resolve" error:error];
+    if (project == nil || particleStats == nil || splat == nil || resolve == nil) return NO;
 
-    if (project == nil || colormap == nil || splat == nil) {
-        return NO;
-    }
+    std::memset(_displayExtents.contents, 0, 12u * sizeof(uint32_t));
+    std::memset(_displayGlow.contents, 0, _displayPixels * sizeof(uint32_t));
+    std::memset(_displayCore.contents, 0, _displayPixels * sizeof(uint32_t));
 
-    uint32_t *extents = (uint32_t *)_displayExtents.contents;
-    extents[0] = 0u;
-    extents[1] = 0u;
-    extents[2] = 0x7F800000u;
-    extents[3] = 0x7F800000u;
-    extents[4] = 0u;
-    extents[5] = 0u;
-
-    DisplayParams params{
-        _config.grid_x,
-        _config.grid_y,
-        _config.grid_z,
-        1.0f / _config.spacing,
-        _particleCount,
-    };
-    uint32_t cells = width * height;
+    DisplayParams params{_config.grid_x, _config.grid_y, _config.grid_z, width, height, _config.spacing, 1.0f / _config.spacing, _particleCount};
+    uint32_t cells = _config.grid_x * _config.grid_z;
     id<MTLCommandBuffer> command = nil;
     id<MTLComputeCommandEncoder> encoder = [self encoder:project command:&command];
-    [encoder setBuffer:_density offset:0 atIndex:0];
-    [encoder setBuffer:_spatialPsiReal offset:0 atIndex:1];
-    [encoder setBuffer:_spatialPsiImaginary offset:0 atIndex:2];
-    [encoder setBuffer:_displayRho offset:0 atIndex:3];
-    [encoder setBuffer:_displayPsi offset:0 atIndex:4];
-    [encoder setBuffer:_displayExtents offset:0 atIndex:5];
-    [encoder setBytes:&params length:sizeof(params) atIndex:6];
-    [self dispatch:encoder count:cells pipeline:project];
-    [encoder endEncoding];
+    [encoder setBuffer:_density offset:0 atIndex:0]; [encoder setBuffer:_spatialPsiReal offset:0 atIndex:1]; [encoder setBuffer:_spatialPsiImaginary offset:0 atIndex:2]; [encoder setBuffer:_displayRho offset:0 atIndex:3]; [encoder setBuffer:_displayPsi offset:0 atIndex:4]; [encoder setBuffer:_displayGuidanceX offset:0 atIndex:5]; [encoder setBuffer:_displayGuidanceZ offset:0 atIndex:6]; [encoder setBuffer:_displayExtents offset:0 atIndex:7]; [encoder setBytes:&params length:sizeof(params) atIndex:8]; [self dispatch:encoder count:cells pipeline:project]; [encoder endEncoding];
 
-    encoder = [command computeCommandEncoder];
-    [encoder setComputePipelineState:colormap];
-    [encoder setBuffer:_displayRho offset:0 atIndex:0];
-    [encoder setBuffer:_displayPsi offset:0 atIndex:1];
-    [encoder setBuffer:_displayExtents offset:0 atIndex:2];
-    [encoder setBuffer:_displayRGBA offset:0 atIndex:3];
-    [encoder setBytes:&params length:sizeof(params) atIndex:4];
-    [self dispatch:encoder count:cells pipeline:colormap];
-    [encoder endEncoding];
+    encoder = [command computeCommandEncoder]; [encoder setComputePipelineState:particleStats]; [encoder setBuffer:_energy offset:0 atIndex:0]; [encoder setBuffer:_displayExtents offset:0 atIndex:1]; [encoder setBytes:&params length:sizeof(params) atIndex:2]; [self dispatch:encoder count:_particleCount pipeline:particleStats]; [encoder endEncoding];
 
-    encoder = [command computeCommandEncoder];
-    [encoder setComputePipelineState:splat];
-    [encoder setBuffer:_position offset:0 atIndex:0];
-    [encoder setBuffer:_energy offset:0 atIndex:1];
-    [encoder setBuffer:_displayRGBA offset:0 atIndex:2];
-    [encoder setBytes:&params length:sizeof(params) atIndex:3];
-    [self dispatch:encoder count:_particleCount pipeline:splat];
+    encoder = [command computeCommandEncoder]; [encoder setComputePipelineState:splat]; [encoder setBuffer:_position offset:0 atIndex:0]; [encoder setBuffer:_energy offset:0 atIndex:1]; [encoder setBuffer:_displayExtents offset:0 atIndex:2]; [encoder setBuffer:_displayGlow offset:0 atIndex:3]; [encoder setBuffer:_displayCore offset:0 atIndex:4]; [encoder setBytes:&params length:sizeof(params) atIndex:5]; [self dispatch:encoder count:_particleCount pipeline:splat]; [encoder endEncoding];
 
-    if (![self finish:encoder command:command error:error]) {
-        return NO;
-    }
+    encoder = [command computeCommandEncoder]; [encoder setComputePipelineState:resolve]; [encoder setBuffer:_displayRho offset:0 atIndex:0]; [encoder setBuffer:_displayPsi offset:0 atIndex:1]; [encoder setBuffer:_displayGuidanceX offset:0 atIndex:2]; [encoder setBuffer:_displayGuidanceZ offset:0 atIndex:3]; [encoder setBuffer:_displayExtents offset:0 atIndex:4]; [encoder setBuffer:_displayGlow offset:0 atIndex:5]; [encoder setBuffer:_displayCore offset:0 atIndex:6]; [encoder setBuffer:_displayRGBA offset:0 atIndex:7]; [encoder setBytes:&params length:sizeof(params) atIndex:8]; [self dispatch:encoder count:(uint32_t)_displayPixels pipeline:resolve];
+    if ([self finish:encoder command:command error:error] == NO) return NO;
 
-    std::memcpy(rgba, _displayRGBA.contents, expected);
-    float rhoMax = 0.0f;
-    float psiMax = 0.0f;
-    std::memcpy(&rhoMax, &extents[0], sizeof(float));
-    std::memcpy(&psiMax, &extents[1], sizeof(float));
-
-    if (!std::isfinite(rhoMax) || rhoMax < 0.0f) {
-        rhoMax = 0.0f;
-    }
-
-    if (!std::isfinite(psiMax) || psiMax < 0.0f) {
-        psiMax = 0.0f;
-    }
-
-    *stats = FluidDisplayStats{
-        width,
-        height,
-        extents[4],
-        extents[5],
-        rhoMax,
-        psiMax,
-    };
-
+    std::memcpy(rgba, _displayRGBA.contents, _displayBytes);
+    uint32_t *extents = (uint32_t *)_displayExtents.contents;
+    float rhoMax = fluid_debug_float(extents[0]), psiMax = fluid_debug_float(extents[1]), guidanceMax = fluid_debug_float(extents[2]);
+    if (std::isfinite(rhoMax) == false || rhoMax < 0.0f) rhoMax = 0.0f;
+    if (std::isfinite(psiMax) == false || psiMax < 0.0f) psiMax = 0.0f;
+    if (std::isfinite(guidanceMax) == false || guidanceMax < 0.0f) guidanceMax = 0.0f;
+    *stats = FluidDisplayStats{width, height, extents[4], extents[5], rhoMax, psiMax, extents[6], guidanceMax};
     return YES;
 }
-
 @end
 
 extern "C" void *fluid_domain_new(

@@ -15,6 +15,7 @@ import "C"
 import (
 	_ "embed"
 	"fmt"
+	"math"
 	"runtime"
 	"unsafe"
 )

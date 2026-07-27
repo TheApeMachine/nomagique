@@ -194,7 +194,9 @@ type DisplayStats struct {
 	RhoOccupied uint32
 	PsiOccupied uint32
 	RhoMax      float32
-	PsiMax      float32
+	PsiMax           float32
+	GuidanceOccupied uint32
+	GuidanceMax      float32
 }
 
 /*

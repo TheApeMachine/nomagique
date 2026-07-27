@@ -3847,353 +3847,139 @@ kernel void merge_reduce_runs(
 }
 
 // =============================================================================
-// Display: XZ project → colormap → particle splat → RGBA8
+// Display: GPU marginal projection, guidance current, and smooth particle planes
 // =============================================================================
-// Host reads one Shared uchar4 buffer. Extents layout (uint words):
-//   0 rho_max_bits  1 psi_max_bits  2 rho_min_bits  3 psi_min_bits
-//   4 rho_occupied  5 psi_occupied
-// =============================================================================
-
 struct DisplayParams {
     uint32_t grid_x;
     uint32_t grid_y;
     uint32_t grid_z;
+    uint32_t display_width;
+    uint32_t display_height;
+    float spacing;
     float inv_spacing;
     uint32_t num_particles;
 };
 
-inline float display_unit(float sample, float minimum, float maximum) {
-    if (!isfinite(sample)) {
-        return 0.0f;
-    }
-
-    float span = maximum - minimum;
-
-    if (!(span > 0.0f)) {
-        return sample > 0.0f ? 1.0f : 0.0f;
-    }
-
-    float unit = clamp((sample - minimum) / span, 0.0f, 1.0f);
-
-    return unit > 0.0f ? pow(unit, 0.55f) : 0.0f;
-}
-
-inline float display_project_sample(
-    device const float* field,
-    uint x,
-    uint z,
-    uint grid_x,
-    uint grid_y,
-    uint grid_z
-) {
-    uint stride_x = grid_y * grid_z;
-    float weighted = 0.0f;
-    float weight_sum = 0.0f;
-
-    for (int dx = -1; dx <= 1; dx++) {
-        uint sx = (uint)wrap_i32((int)x + dx, (int)grid_x);
-        float wx = (dx == 0) ? 1.0f : 0.5f;
-
-        for (int dz = -1; dz <= 1; dz++) {
-            uint sz = (uint)wrap_i32((int)z + dz, (int)grid_z);
-            float wz = (dz == 0) ? 1.0f : 0.5f;
-            float weight = wx * wz;
-            float maximum = 0.0f;
-
-            for (uint y = 0u; y < grid_y; y++) {
-                uint cell = sx * stride_x + y * grid_z + sz;
-                maximum = max(maximum, field[cell]);
-            }
-
-            weighted += maximum * weight;
-            weight_sum += weight;
-        }
-    }
-
-    return weighted / weight_sum;
-}
-
-inline float display_project_psi_sample(
-    device const float* psi_real,
-    device const float* psi_imag,
-    uint x,
-    uint z,
-    uint grid_x,
-    uint grid_y,
-    uint grid_z
-) {
-    uint stride_x = grid_y * grid_z;
-    float weighted = 0.0f;
-    float weight_sum = 0.0f;
-
-    for (int dx = -1; dx <= 1; dx++) {
-        uint sx = (uint)wrap_i32((int)x + dx, (int)grid_x);
-        float wx = (dx == 0) ? 1.0f : 0.5f;
-
-        for (int dz = -1; dz <= 1; dz++) {
-            uint sz = (uint)wrap_i32((int)z + dz, (int)grid_z);
-            float wz = (dz == 0) ? 1.0f : 0.5f;
-            float weight = wx * wz;
-            float maximum = 0.0f;
-
-            for (uint y = 0u; y < grid_y; y++) {
-                uint cell = sx * stride_x + y * grid_z + sz;
-                float real = psi_real[cell];
-                float imag = psi_imag[cell];
-                maximum = max(maximum, real * real + imag * imag);
-            }
-
-            weighted += maximum * weight;
-            weight_sum += weight;
-        }
-    }
-
-    return weighted / weight_sum;
-}
-
-inline float3 display_mix3(float3 left, float3 right, float unit) {
-    return left * (1.0f - unit) + right * unit;
-}
-
-/*
-display_cmap maps a normalized [0,1] value to a smooth fluid colormap.
-The palette matches the terminal mockup: near-black substrate, slate shadow,
-cyan pressure, amber excitation, and warm cream at the highest response.
-*/
-inline float3 display_cmap(float unit) {
-    float3 c0 = float3(14.0f, 12.0f, 10.0f);
-    float3 c1 = float3(26.0f, 34.0f, 50.0f);
-    float3 c2 = float3(42.0f, 106.0f, 129.0f);
-    float3 c3 = float3(232.0f, 163.0f, 61.0f);
-    float3 c4 = float3(246.0f, 214.0f, 159.0f);
-
-    if (unit < 0.40f) {
-        return display_mix3(c0, c1, unit / 0.40f);
-    }
-
-    if (unit < 0.60f) {
-        return display_mix3(c1, c2, (unit - 0.40f) / 0.20f);
-    }
-
-    if (unit < 0.80f) {
-        return display_mix3(c2, c3, (unit - 0.60f) / 0.20f);
-    }
-
-    return display_mix3(c3, c4, (unit - 0.80f) / 0.20f);
-}
-
-inline void display_atomic_max_bits(device atomic_uint* slot, float value) {
-    if (!(value > 0.0f) || !isfinite(value)) {
-        return;
-    }
-
-    uint bits = as_type<uint>(value);
-    uint previous = atomic_load_explicit(slot, memory_order_relaxed);
-
+inline void display_max(device atomic_uint* slot, float value) {
+    if (!(value > 0.0f) || !isfinite(value)) return;
+    uint bits = as_type<uint>(value), previous = atomic_load_explicit(slot, memory_order_relaxed);
     while (bits > previous) {
-        if (atomic_compare_exchange_weak_explicit(
-                slot, &previous, bits, memory_order_relaxed, memory_order_relaxed
-            )) {
-            return;
-        }
+        if (atomic_compare_exchange_weak_explicit(slot, &previous, bits, memory_order_relaxed, memory_order_relaxed)) return;
     }
 }
 
-inline void display_atomic_min_bits(device atomic_uint* slot, float value) {
-    if (!isfinite(value)) {
-        return;
-    }
-
-    uint bits = as_type<uint>(value);
-    uint previous = atomic_load_explicit(slot, memory_order_relaxed);
-
-    while (bits < previous) {
-        if (atomic_compare_exchange_weak_explicit(
-                slot, &previous, bits, memory_order_relaxed, memory_order_relaxed
-            )) {
-            return;
-        }
-    }
+inline float display_unit(float value, float total, uint count, float maximum) {
+    if (!(value > 0.0f) || !(maximum > 0.0f) || count == 0u) return 0.0f;
+    float mean = total / (float)count;
+    float span = asinh(maximum / mean);
+    return span > 0.0f ? clamp(asinh(value / mean) / span, 0.0f, 1.0f) : 1.0f;
 }
 
-/*
-display_project_xz max-projects density and |ψ|² over Y onto the XZ lattice and
-updates shared min/max/occupied extents for colormap normalization.
-*/
+inline float display_sample(device const float* field, float2 position, uint width, uint height) {
+    int x = (int)floor(position.x), z = (int)floor(position.y);
+    uint x0 = (uint)wrap_i32(x, (int)width), x1 = (uint)wrap_i32(x + 1, (int)width);
+    uint z0 = (uint)wrap_i32(z, (int)height), z1 = (uint)wrap_i32(z + 1, (int)height);
+    float2 f = fract(position);
+    float a = mix(field[z0 * width + x0], field[z0 * width + x1], f.x);
+    float b = mix(field[z1 * width + x0], field[z1 * width + x1], f.x);
+    return mix(a, b, f.y);
+}
+
+inline float3 display_color(float unit) {
+    float3 c0 = float3(14.0f, 12.0f, 10.0f), c1 = float3(26.0f, 34.0f, 50.0f);
+    float3 c2 = float3(42.0f, 106.0f, 129.0f), c3 = float3(232.0f, 163.0f, 61.0f);
+    float3 c4 = float3(246.0f, 214.0f, 159.0f);
+    if (unit < .4f) return mix(c0, c1, unit/.4f);
+    if (unit < .6f) return mix(c1, c2, (unit-.4f)/.2f);
+    if (unit < .8f) return mix(c2, c3, (unit-.6f)/.2f);
+    return mix(c3, c4, (unit-.8f)/.2f);
+}
+
+/* Integrates the complete 3D fields through Y and projects the Bohm current. */
 kernel void display_project_xz(
-    device const float* density [[buffer(0)]],
-    device const float* psi_real [[buffer(1)]],
-    device const float* psi_imag [[buffer(2)]],
-    device float* rho_proj [[buffer(3)]],
-    device float* psi_proj [[buffer(4)]],
-    device atomic_uint* extents [[buffer(5)]],
-    constant DisplayParams& p [[buffer(6)]],
-    uint gid [[thread_position_in_grid]]
-) {
-    uint width = p.grid_x;
-    uint height = p.grid_z;
-    uint cells = width * height;
-
-    if (gid >= cells) {
-        return;
-    }
-
-    uint x = gid % width;
-    uint z = gid / width;
-    float maximumDensity = display_project_sample(
-        density,
-        x,
-        z,
-        p.grid_x,
-        p.grid_y,
-        p.grid_z
-    );
-    float maximumPsi = display_project_psi_sample(
-        psi_real,
-        psi_imag,
-        x,
-        z,
-        p.grid_x,
-        p.grid_y,
-        p.grid_z
-    );
-
-    rho_proj[gid] = maximumDensity;
-    psi_proj[gid] = maximumPsi;
-    display_atomic_min_bits(extents + 2u, maximumDensity);
-    display_atomic_min_bits(extents + 3u, maximumPsi);
-
-    if (maximumDensity > 0.0f) {
-        atomic_fetch_add_explicit(extents + 4u, 1u, memory_order_relaxed);
-        display_atomic_max_bits(extents + 0u, maximumDensity);
-    }
-
-    if (maximumPsi > 0.0f) {
-        atomic_fetch_add_explicit(extents + 5u, 1u, memory_order_relaxed);
-        display_atomic_max_bits(extents + 1u, maximumPsi);
-    }
-}
-
-/*
-display_colormap normalizes projected ρ / |ψ|² and writes the gas-mixed cmap into
-the Shared RGBA8 display buffer (X fastest, Z as row).
-*/
-kernel void display_colormap(
-    device const float* rho_proj [[buffer(0)]],
-    device const float* psi_proj [[buffer(1)]],
-    device const uint* extents [[buffer(2)]],
-    device uchar4* rgba [[buffer(3)]],
-    constant DisplayParams& p [[buffer(4)]],
-    uint gid [[thread_position_in_grid]]
-) {
+    device const float* density [[buffer(0)]], device const float* psi_real [[buffer(1)]],
+    device const float* psi_imag [[buffer(2)]], device float* rho [[buffer(3)]],
+    device float* psi [[buffer(4)]], device float* guide_x [[buffer(5)]],
+    device float* guide_z [[buffer(6)]], device atomic_uint* extents [[buffer(7)]],
+    constant DisplayParams& p [[buffer(8)]], uint gid [[thread_position_in_grid]]) {
     uint cells = p.grid_x * p.grid_z;
-
-    if (gid >= cells) {
-        return;
+    if (gid >= cells) return;
+    uint x = gid % p.grid_x, z = gid / p.grid_x, stride = p.grid_y * p.grid_z;
+    float density_sum = 0.0f, born_sum = 0.0f, current_x = 0.0f, current_z = 0.0f;
+    float central = 0.5f * p.inv_spacing;
+    for (uint y = 0u; y < p.grid_y; y++) {
+        uint center = x * stride + y * p.grid_z + z;
+        uint xm = (uint)wrap_i32((int)x - 1, (int)p.grid_x) * stride + y * p.grid_z + z;
+        uint xp = (uint)wrap_i32((int)x + 1, (int)p.grid_x) * stride + y * p.grid_z + z;
+        uint zm = x * stride + y * p.grid_z + (uint)wrap_i32((int)z - 1, (int)p.grid_z);
+        uint zp = x * stride + y * p.grid_z + (uint)wrap_i32((int)z + 1, (int)p.grid_z);
+        float re = psi_real[center], im = psi_imag[center];
+        density_sum += max(density[center], 0.0f) * p.spacing;
+        born_sum += (re * re + im * im) * p.spacing;
+        current_x += (re * (psi_imag[xp] - psi_imag[xm]) - im * (psi_real[xp] - psi_real[xm])) * central * p.spacing;
+        current_z += (re * (psi_imag[zp] - psi_imag[zm]) - im * (psi_real[zp] - psi_real[zm])) * central * p.spacing;
     }
-
-    float rhoMax = as_type<float>(extents[0]);
-    float psiMax = as_type<float>(extents[1]);
-    float rhoMin = as_type<float>(extents[2]);
-    float psiMin = as_type<float>(extents[3]);
-
-    if (!(rhoMax > 0.0f) || !isfinite(rhoMin) || isinf(rhoMin)) {
-        rhoMin = 0.0f;
-        rhoMax = 0.0f;
-    }
-
-    if (!(psiMax > 0.0f) || !isfinite(psiMin) || isinf(psiMin)) {
-        psiMin = 0.0f;
-        psiMax = 0.0f;
-    }
-
-    float primary = display_unit(psi_proj[gid], psiMin, psiMax);
-    float gas = display_unit(rho_proj[gid], rhoMin, rhoMax);
-    float3 color = display_cmap(primary);
-
-    // Blend gas density as a cyan pressure wash, matching the WebGL fallback.
-    float mix = gas * 0.38f;
-    float3 gasTint = float3(48.0f, 168.0f, 196.0f);
-    color = color * (1.0f - mix) + gasTint * mix;
-
-    rgba[gid] = uchar4(
-        (uchar)clamp(color.x, 0.0f, 255.0f),
-        (uchar)clamp(color.y, 0.0f, 255.0f),
-        (uchar)clamp(color.z, 0.0f, 255.0f),
-        255u
-    );
+    float inv = born_sum > 0.0f ? 1.0f / born_sum : 0.0f;
+    float vx = current_x * inv, vz = current_z * inv, speed = length(float2(vx, vz));
+    rho[gid] = density_sum; psi[gid] = born_sum; guide_x[gid] = vx; guide_z[gid] = vz;
+    if (density_sum > 0.0f) { display_max(extents, density_sum); atomic_fetch_add_explicit(extents + 4u, 1u, memory_order_relaxed); atomic_add_float_device(extents + 8u, density_sum); }
+    if (born_sum > 0.0f) { display_max(extents + 1u, born_sum); atomic_fetch_add_explicit(extents + 5u, 1u, memory_order_relaxed); atomic_add_float_device(extents + 9u, born_sum); }
+    if (speed > 0.0f) { display_max(extents + 2u, speed); atomic_fetch_add_explicit(extents + 6u, 1u, memory_order_relaxed); atomic_add_float_device(extents + 10u, speed); }
 }
 
-inline void display_blend_pixel(
-    device uchar4* rgba, uint width, uint height, int column, int row,
-    float weight, float3 tint
-) {
-    if (column < 0 || row < 0 || column >= (int)width || row >= (int)height) {
-        return;
-    }
-
-    uint offset = (uint)row * width + (uint)column;
-    float3 current = float3(rgba[offset].xyz);
-    float3 mixed = current * (1.0f - weight) + tint * weight;
-    rgba[offset] = uchar4(
-        (uchar)clamp(mixed.x, 0.0f, 255.0f),
-        (uchar)clamp(mixed.y, 0.0f, 255.0f),
-        (uchar)clamp(mixed.z, 0.0f, 255.0f),
-        255u
-    );
+kernel void display_particle_stats(
+    device const float* energy [[buffer(0)]], device atomic_uint* extents [[buffer(1)]],
+    constant DisplayParams& p [[buffer(2)]], uint gid [[thread_position_in_grid]]) {
+    if (gid < p.num_particles) display_max(extents + 3u, sqrt(max(energy[gid], 0.0f)));
 }
 
-/*
-display_splat_particles paints resident oscillators as orange glow markers with a
-white core, matching the prior host bake (cell = floor(pos / spacing)).
-*/
+/* Accumulates continuous particle glows into a separate atomic plane. */
 kernel void display_splat_particles(
-    device const float* position [[buffer(0)]],
-    device const float* energy [[buffer(1)]],
-    device uchar4* rgba [[buffer(2)]],
-    constant DisplayParams& p [[buffer(3)]],
-    uint gid [[thread_position_in_grid]]
-) {
-    if (gid >= p.num_particles) {
-        return;
-    }
-
-    float amplitude = sqrt(max(energy[gid], 0.0f));
-
-    if (!(amplitude > 0.0f) || !isfinite(amplitude)) {
-        return;
-    }
-
+    device const float* position [[buffer(0)]], device const float* energy [[buffer(1)]],
+    device const uint* extents [[buffer(2)]], device atomic_uint* glow [[buffer(3)]],
+    device atomic_uint* core [[buffer(4)]], constant DisplayParams& p [[buffer(5)]],
+    uint gid [[thread_position_in_grid]]) {
+    if (gid >= p.num_particles) return;
+    float maximum = as_type<float>(extents[3]), amplitude = sqrt(max(energy[gid], 0.0f));
+    if (!(maximum > 0.0f) || !(amplitude > 0.0f)) return;
     uint base = gid * 3u;
-    int column = (int)floor(position[base] * p.inv_spacing);
-    int row = (int)floor(position[base + 2u] * p.inv_spacing);
-    uint width = p.grid_x;
-    uint height = p.grid_z;
-
-    if (column < 0 || row < 0 || column >= (int)width || row >= (int)height) {
-        return;
-    }
-
-    float glow = min(amplitude, 1.0f);
-    float3 orange = float3(255.0f, 200.0f, 80.0f);
-    float3 white = float3(255.0f, 250.0f, 220.0f);
-
-    // Smooth Gaussian falloff for particle glow.
-    for (int deltaRow = -2; deltaRow <= 2; deltaRow++) {
-        for (int deltaColumn = -2; deltaColumn <= 2; deltaColumn++) {
-            float dist2 = (float)(deltaRow * deltaRow + deltaColumn * deltaColumn);
-            float weight = glow * exp(-dist2 * 0.4f) * 0.7f;
-
-            if (deltaRow == 0 && deltaColumn == 0) {
-                weight = 1.0f;
-            }
-
-            float3 tint = (deltaRow == 0 && deltaColumn == 0) ? white : orange;
-            display_blend_pixel(
-                rgba, width, height, column + deltaColumn, row + deltaRow,
-                weight, tint
-            );
-        }
+    float2 center = float2(position[base] * p.inv_spacing / p.grid_x * p.display_width, position[base+2] * p.inv_spacing / p.grid_z * p.display_height);
+    float sigma = 0.5f * sqrt((float)p.display_width / p.grid_x * (float)p.display_height / p.grid_z);
+    int support = (int)ceil(2.0f * sigma), cx = (int)floor(center.x), cz = (int)floor(center.y);
+    for (int dz = -support; dz <= support; dz++) for (int dx = -support; dx <= support; dx++) {
+        int x = wrap_i32(cx + dx, (int)p.display_width), z = wrap_i32(cz + dz, (int)p.display_height);
+        float2 d = float2((float)x + .5f, (float)z + .5f) - center;
+        float weight = amplitude / maximum * exp(-dot(d, d) / (2.0f * sigma * sigma));
+        uint index = (uint)z * p.display_width + (uint)x;
+        atomic_add_float_device(glow + index, weight);
+        display_max(core + index, weight);
     }
 }
 
+/* One writer per output pixel: smooth scalar reconstruction plus direction glyphs. */
+kernel void display_resolve(
+    device const float* rho [[buffer(0)]], device const float* psi [[buffer(1)]],
+    device const float* guide_x [[buffer(2)]], device const float* guide_z [[buffer(3)]],
+    device const uint* extents [[buffer(4)]], device const uint* glow [[buffer(5)]],
+    device const uint* core [[buffer(6)]], device uchar4* rgba [[buffer(7)]],
+    constant DisplayParams& p [[buffer(8)]], uint gid [[thread_position_in_grid]]) {
+    uint pixels = p.display_width * p.display_height;
+    if (gid >= pixels) return;
+    uint x = gid % p.display_width, z = gid / p.display_width;
+    float2 position = (float2((float)x + .5f, (float)z + .5f) * float2(p.grid_x, p.grid_z) / float2(p.display_width, p.display_height)) - .5f;
+    float r = display_sample(rho, position, p.grid_x, p.grid_z), q = display_sample(psi, position, p.grid_x, p.grid_z);
+    float2 velocity = float2(display_sample(guide_x, position, p.grid_x, p.grid_z), display_sample(guide_z, position, p.grid_x, p.grid_z));
+    float speed = length(velocity), ru = display_unit(r, as_type<float>(extents[8]), extents[4], as_type<float>(extents[0]));
+    float qu = display_unit(q, as_type<float>(extents[9]), extents[5], as_type<float>(extents[1]));
+    float gu = display_unit(speed, as_type<float>(extents[10]), extents[6], as_type<float>(extents[2]));
+    float3 color = display_color(qu); color = mix(color, float3(48.0f, 168.0f, 196.0f), ru * (1.0f - qu));
+    if (speed > 0.0f && gu > 0.0f && qu > 0.0f) {
+        float2 unit = velocity / speed, local = fract(position) - .5f;
+        float along = dot(local, unit), across = abs(unit.x * local.y - unit.y * local.x);
+        float line = 1.0f - smoothstep(.02f, .10f, max(across, abs(along) - .30f));
+        color = mix(color, float3(174.0f, 231.0f, 244.0f), line * gu * qu);
+    }
+    color = mix(color, float3(255.0f, 200.0f, 80.0f), 1.0f - exp(-as_type<float>(glow[gid])));
+    color = mix(color, float3(255.0f, 250.0f, 220.0f), clamp(as_type<float>(core[gid]), 0.0f, 1.0f));
+    rgba[gid] = uchar4((uchar)clamp(color.x, 0.0f, 255.0f), (uchar)clamp(color.y, 0.0f, 255.0f), (uchar)clamp(color.z, 0.0f, 255.0f), 255u);
+}

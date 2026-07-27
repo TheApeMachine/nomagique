@@ -184,11 +184,13 @@ typedef struct FluidDisplayStats {
     uint32_t psi_occupied;
     float rho_max;
     float psi_max;
+    uint32_t guidance_occupied;
+    float guidance_max;
 } FluidDisplayStats;
 
 /*
-fluid_domain_read_display runs the Metal display pass (project, colormap, splat)
-and copies the Shared RGBA8 buffer plus stats to the host.
+fluid_domain_read_display runs the Metal display pass (project, particle stats,
+splat, resolve) and copies the Shared RGBA8 buffer plus stats to the host.
 */
 int fluid_domain_read_display(
     void *handle,

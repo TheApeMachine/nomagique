@@ -318,6 +318,7 @@ static float fluid_debug_float(uint32_t word) {
     uint32_t _displayHeight;
     size_t _displayPixels;
     size_t _displayBytes;
+    float _displayParticleMaximumEMA;
 }
 
 - (instancetype)initWithConfig:(const FluidConfig *)config
@@ -374,6 +375,7 @@ struct DisplayParams {
     float spacing;
     float inv_spacing;
     uint32_t num_particles;
+    float show_grid_overlay;
 };
 
 @implementation SensoriumFluidDomain
@@ -393,12 +395,11 @@ struct DisplayParams {
     _particleCount = 0u;
     _particleCapacity = 0u;
     _mergePadCapacity = 0u;
-    uint64_t displayCells = (uint64_t)config->grid_x * (uint64_t)config->grid_y * (uint64_t)config->grid_z;
-    double displayAspect = (double)config->grid_x / (double)config->grid_z;
-    _displayWidth = std::max((uint32_t)std::llround(std::sqrt(displayCells * displayAspect)), 1u);
-    _displayHeight = (uint32_t)((displayCells + _displayWidth - 1u) / _displayWidth);
+    _displayWidth = 64u;
+    _displayHeight = 64u;
     _displayPixels = (size_t)_displayWidth * (size_t)_displayHeight;
     _displayBytes = _displayPixels * 4u;
+    _displayParticleMaximumEMA = 0.0f;
     _modeCount = fluid_mode_count(*config);
     _randomSeed = 1u;
     _fftSetup = nullptr;
@@ -2905,6 +2906,7 @@ Advance without inventing a parallel particle store.
               count:(uint32_t)byteCount
               stats:(FluidDisplayStats *)stats
               error:(NSString **)error {
+    static constexpr float kDisplayParticleEMAAlpha = 0.08f;
     uint32_t width = _displayWidth;
     uint32_t height = _displayHeight;
     uint32_t expected = (uint32_t)_displayBytes;
@@ -2920,22 +2922,33 @@ Advance without inventing a parallel particle store.
     }
 
     id<MTLComputePipelineState> project = [self pipeline:@"display_project_xz" error:error];
+    id<MTLComputePipelineState> clear = [self pipeline:@"clear_display_buffers" error:error];
     id<MTLComputePipelineState> particleStats = [self pipeline:@"display_particle_stats" error:error];
     id<MTLComputePipelineState> splat = [self pipeline:@"display_splat_particles" error:error];
     id<MTLComputePipelineState> resolve = [self pipeline:@"display_resolve" error:error];
-    if (project == nil || particleStats == nil || splat == nil || resolve == nil) return NO;
+    if (clear == nil || project == nil || particleStats == nil || splat == nil || resolve == nil) return NO;
 
-    std::memset(_displayExtents.contents, 0, 12u * sizeof(uint32_t));
-    std::memset(_displayGlow.contents, 0, _displayPixels * sizeof(uint32_t));
-    std::memset(_displayCore.contents, 0, _displayPixels * sizeof(uint32_t));
-
-    DisplayParams params{_config.grid_x, _config.grid_y, _config.grid_z, width, height, _config.spacing, 1.0f / _config.spacing, _particleCount};
+    DisplayParams params{_config.grid_x, _config.grid_y, _config.grid_z, width, height, _config.spacing, 1.0f / _config.spacing, _particleCount, 1.0f};
     uint32_t cells = _config.grid_x * _config.grid_z;
     id<MTLCommandBuffer> command = nil;
-    id<MTLComputeCommandEncoder> encoder = [self encoder:project command:&command];
+    id<MTLComputeCommandEncoder> encoder = [self encoder:clear command:&command];
+    [encoder setBuffer:_displayExtents offset:0 atIndex:0]; [encoder setBuffer:_displayGlow offset:0 atIndex:1]; [encoder setBuffer:_displayCore offset:0 atIndex:2]; [encoder setBytes:&params length:sizeof(params) atIndex:3]; [self dispatch:encoder count:(uint32_t)_displayPixels pipeline:clear]; [encoder endEncoding];
+
+    encoder = [command computeCommandEncoder]; [encoder setComputePipelineState:project];
     [encoder setBuffer:_density offset:0 atIndex:0]; [encoder setBuffer:_spatialPsiReal offset:0 atIndex:1]; [encoder setBuffer:_spatialPsiImaginary offset:0 atIndex:2]; [encoder setBuffer:_displayRho offset:0 atIndex:3]; [encoder setBuffer:_displayPsi offset:0 atIndex:4]; [encoder setBuffer:_displayGuidanceX offset:0 atIndex:5]; [encoder setBuffer:_displayGuidanceZ offset:0 atIndex:6]; [encoder setBuffer:_displayExtents offset:0 atIndex:7]; [encoder setBytes:&params length:sizeof(params) atIndex:8]; [self dispatch:encoder count:cells pipeline:project]; [encoder endEncoding];
 
     encoder = [command computeCommandEncoder]; [encoder setComputePipelineState:particleStats]; [encoder setBuffer:_energy offset:0 atIndex:0]; [encoder setBuffer:_displayExtents offset:0 atIndex:1]; [encoder setBytes:&params length:sizeof(params) atIndex:2]; [self dispatch:encoder count:_particleCount pipeline:particleStats]; [encoder endEncoding];
+
+    uint32_t *extents = (uint32_t *)_displayExtents.contents;
+    float particleMaximum = fluid_debug_float(extents[3]);
+    if (std::isfinite(particleMaximum) == false || particleMaximum < 0.0f) particleMaximum = 0.0f;
+
+    if (_displayParticleMaximumEMA > 0.0f) {
+        particleMaximum = (1.0f - kDisplayParticleEMAAlpha) * _displayParticleMaximumEMA + kDisplayParticleEMAAlpha * particleMaximum;
+    }
+
+    _displayParticleMaximumEMA = particleMaximum;
+    std::memcpy(extents + 3u, &_displayParticleMaximumEMA, sizeof(_displayParticleMaximumEMA));
 
     encoder = [command computeCommandEncoder]; [encoder setComputePipelineState:splat]; [encoder setBuffer:_position offset:0 atIndex:0]; [encoder setBuffer:_energy offset:0 atIndex:1]; [encoder setBuffer:_displayExtents offset:0 atIndex:2]; [encoder setBuffer:_displayGlow offset:0 atIndex:3]; [encoder setBuffer:_displayCore offset:0 atIndex:4]; [encoder setBytes:&params length:sizeof(params) atIndex:5]; [self dispatch:encoder count:_particleCount pipeline:splat]; [encoder endEncoding];
 
@@ -2943,7 +2956,6 @@ Advance without inventing a parallel particle store.
     if ([self finish:encoder command:command error:error] == NO) return NO;
 
     std::memcpy(rgba, _displayRGBA.contents, _displayBytes);
-    uint32_t *extents = (uint32_t *)_displayExtents.contents;
     float rhoMax = fluid_debug_float(extents[0]), psiMax = fluid_debug_float(extents[1]), guidanceMax = fluid_debug_float(extents[2]);
     if (std::isfinite(rhoMax) == false || rhoMax < 0.0f) rhoMax = 0.0f;
     if (std::isfinite(psiMax) == false || psiMax < 0.0f) psiMax = 0.0f;

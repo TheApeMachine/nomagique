@@ -3858,6 +3858,7 @@ struct DisplayParams {
     float spacing;
     float inv_spacing;
     uint32_t num_particles;
+    float show_grid_overlay;
 };
 
 inline void display_max(device atomic_uint* slot, float value) {
@@ -3868,13 +3869,6 @@ inline void display_max(device atomic_uint* slot, float value) {
     }
 }
 
-inline float display_unit(float value, float total, uint count, float maximum) {
-    if (!(value > 0.0f) || !(maximum > 0.0f) || count == 0u) return 0.0f;
-    float mean = total / (float)count;
-    float span = asinh(maximum / mean);
-    return span > 0.0f ? clamp(asinh(value / mean) / span, 0.0f, 1.0f) : 1.0f;
-}
-
 inline float display_exposure(float value, float total, uint count, float gain) {
     if (!(value > 0.0f) || count == 0u) return 0.0f;
     float mean = total / (float)count;
@@ -3883,10 +3877,11 @@ inline float display_exposure(float value, float total, uint count, float gain) 
 }
 
 inline float display_sample(device const float* field, float2 position, uint width, uint height) {
-    int x = (int)floor(position.x), z = (int)floor(position.y);
+    float2 g = position - 0.5f;
+    int x = (int)floor(g.x), z = (int)floor(g.y);
     uint x0 = (uint)wrap_i32(x, (int)width), x1 = (uint)wrap_i32(x + 1, (int)width);
     uint z0 = (uint)wrap_i32(z, (int)height), z1 = (uint)wrap_i32(z + 1, (int)height);
-    float2 f = fract(position);
+    float2 f = g - floor(g);
     float a = mix(field[z0 * width + x0], field[z0 * width + x1], f.x);
     float b = mix(field[z1 * width + x0], field[z1 * width + x1], f.x);
     return mix(a, b, f.y);
@@ -3898,14 +3893,39 @@ inline float display_cell(device const float* field, float2 position, uint width
     return field[z * width + x];
 }
 
-inline float3 display_color(float unit) {
-    float3 c0 = float3(13.0f, 12.0f, 15.0f), c1 = float3(42.0f, 38.0f, 24.0f);
-    float3 c2 = float3(105.0f, 89.0f, 44.0f), c3 = float3(214.0f, 181.0f, 82.0f);
-    float3 c4 = float3(255.0f, 244.0f, 196.0f);
-    if (unit < .4f) return mix(c0, c1, unit/.4f);
-    if (unit < .6f) return mix(c1, c2, (unit-.4f)/.2f);
-    if (unit < .8f) return mix(c2, c3, (unit-.6f)/.2f);
-    return mix(c3, c4, (unit-.8f)/.2f);
+inline float3 display_color_linear(float unit) {
+    float3 c0 = float3(0.051f, 0.047f, 0.059f);
+    float3 c1 = float3(0.165f, 0.149f, 0.094f);
+    float3 c2 = float3(0.412f, 0.349f, 0.173f);
+    float3 c3 = float3(0.839f, 0.710f, 0.322f);
+    float3 c4 = float3(1.000f, 0.957f, 0.769f);
+
+    if (unit < 0.40f) return mix(c0, c1, unit / 0.40f);
+    if (unit < 0.60f) return mix(c1, c2, (unit - 0.40f) / 0.20f);
+    if (unit < 0.80f) return mix(c2, c3, (unit - 0.60f) / 0.20f);
+
+    return mix(c3, c4, (unit - 0.80f) / 0.20f);
+}
+
+kernel void clear_display_buffers(
+    device atomic_uint* extents [[buffer(0)]],
+    device atomic_uint* glow [[buffer(1)]],
+    device atomic_uint* core [[buffer(2)]],
+    constant DisplayParams& p [[buffer(3)]],
+    uint gid [[thread_position_in_grid]]) {
+    uint total_pixels = p.display_width * p.display_height;
+
+    if (gid == 0u) {
+        for (uint index = 0u; index < 12u; index++) {
+            atomic_store_explicit(&extents[index], 0u, memory_order_relaxed);
+        }
+    }
+
+    if (gid < total_pixels) {
+        uint zero_bits = as_type<uint>(0.0f);
+        atomic_store_explicit(&glow[gid], zero_bits, memory_order_relaxed);
+        atomic_store_explicit(&core[gid], zero_bits, memory_order_relaxed);
+    }
 }
 
 /* Integrates the complete 3D fields through Y and projects the Bohm current. */
@@ -3955,17 +3975,25 @@ kernel void display_splat_particles(
     float maximum = as_type<float>(extents[3]), amplitude = sqrt(max(energy[gid], 0.0f));
     if (!(maximum > 0.0f) || !(amplitude > 0.0f)) return;
     uint base = gid * 3u;
-    float2 center = float2(position[base] * p.inv_spacing / p.grid_x * p.display_width, position[base+2] * p.inv_spacing / p.grid_z * p.display_height);
-    float cell_px = sqrt((float)p.display_width / p.grid_x * (float)p.display_height / p.grid_z);
-    float sigma_glow = max(0.45f, 0.10f * cell_px), sigma_core = max(0.35f, 0.055f * cell_px);
-    int support = (int)ceil(3.0f * sigma_glow), cx = (int)floor(center.x), cz = (int)floor(center.y);
-    float unit = amplitude / maximum;
+    float2 norm_pos = float2(
+        position[base + 0u] * p.inv_spacing / (float)p.grid_x,
+        position[base + 2u] * p.inv_spacing / (float)p.grid_z
+    );
+    float2 center = norm_pos * float2((float)p.display_width, (float)p.display_height);
+
+    const float sigma_glow = 0.60f;
+    const float sigma_core = 0.35f;
+    const int support = 1;
+
+    int cx = (int)floor(center.x), cz = (int)floor(center.y);
+    float unit = clamp(amplitude / maximum, 0.0f, 1.0f);
+
     for (int dz = -support; dz <= support; dz++) for (int dx = -support; dx <= support; dx++) {
         int x = wrap_i32(cx + dx, (int)p.display_width), z = wrap_i32(cz + dz, (int)p.display_height);
         float2 d = float2((float)x + .5f, (float)z + .5f) - center;
         float r2 = dot(d, d);
-        float weight = 0.28f * unit * exp(-r2 / (2.0f * sigma_glow * sigma_glow));
-        float core_weight = 0.55f * unit * exp(-r2 / (2.0f * sigma_core * sigma_core));
+        float weight = 0.35f * unit * exp(-r2 / (2.0f * sigma_glow * sigma_glow));
+        float core_weight = 0.70f * unit * exp(-r2 / (2.0f * sigma_core * sigma_core));
         uint index = (uint)z * p.display_width + (uint)x;
         atomic_add_float_device(glow + index, weight);
         display_max(core + index, core_weight);
@@ -3982,28 +4010,52 @@ kernel void display_resolve(
     uint pixels = p.display_width * p.display_height;
     if (gid >= pixels) return;
     uint x = gid % p.display_width, z = gid / p.display_width;
-    float2 position = (float2((float)x + .5f, (float)z + .5f) * float2(p.grid_x, p.grid_z) / float2(p.display_width, p.display_height)) - .5f;
-    float r = display_cell(rho, position, p.grid_x, p.grid_z), q = display_sample(psi, position, p.grid_x, p.grid_z);
+    float2 position = float2(
+        ((float)x + 0.5f) * (float)p.grid_x / (float)p.display_width,
+        ((float)z + 0.5f) * (float)p.grid_z / (float)p.display_height
+    );
+    float r = display_sample(rho, position, p.grid_x, p.grid_z), q = display_sample(psi, position, p.grid_x, p.grid_z);
     float2 current = float2(display_sample(guide_x, position, p.grid_x, p.grid_z), display_sample(guide_z, position, p.grid_x, p.grid_z));
     float flux = length(current);
     float ru = display_exposure(r, as_type<float>(extents[8]), extents[4], 2.6f);
     float qu = display_exposure(q, as_type<float>(extents[9]), extents[5], 1.8f);
     float gu = display_exposure(flux, as_type<float>(extents[10]), extents[6], 2.2f);
     float wave = pow(qu, 0.72f), gas = pow(ru, 1.35f);
-    float3 color = float3(9.0f, 8.0f, 10.0f);
-    float2 cell_local = fract(position);
-    float cell_edge = 1.0f - smoothstep(0.03f, 0.10f, min(min(cell_local.x, 1.0f - cell_local.x), min(cell_local.y, 1.0f - cell_local.y)));
-    float3 gas_color = mix(float3(58.0f, 34.0f, 62.0f), float3(145.0f, 61.0f, 42.0f), gas);
+    float3 color = float3(0.035f, 0.031f, 0.039f);
+    float3 gas_color = mix(float3(0.227f, 0.133f, 0.243f), float3(0.569f, 0.239f, 0.165f), gas);
     color = mix(color, gas_color, smoothstep(0.03f, 0.78f, gas) * 0.74f);
-    color += float3(28.0f, 12.0f, 20.0f) * cell_edge * gas;
-    color = mix(color, display_color(wave), smoothstep(0.02f, 0.84f, wave) * (0.72f + 0.28f * (1.0f - gas)));
-    if (flux > 0.0f && gu > 0.0f && wave > 0.0f) {
-        float2 unit = current / flux, local = fract(position) - .5f;
-        float along = dot(local, unit), across = abs(unit.x * local.y - unit.y * local.x);
-        float line = 1.0f - smoothstep(.015f, .07f, max(across, abs(along) - .34f));
-        color = mix(color, float3(125.0f, 190.0f, 196.0f), line * gu * min(wave + gas, 1.0f) * 0.55f);
+
+    if (p.show_grid_overlay > 0.5f) {
+        float2 cell_local = fract(position);
+        float cell_edge = 1.0f - smoothstep(0.03f, 0.10f, min(min(cell_local.x, 1.0f - cell_local.x), min(cell_local.y, 1.0f - cell_local.y)));
+        color += float3(0.110f, 0.047f, 0.078f) * cell_edge * gas;
     }
-    color = mix(color, float3(255.0f, 164.0f, 34.0f), 0.42f * (1.0f - exp(-as_type<float>(glow[gid]))));
-    color = mix(color, float3(255.0f, 250.0f, 225.0f), 0.55f * smoothstep(0.18f, 0.72f, as_type<float>(core[gid])));
-    rgba[gid] = uchar4((uchar)clamp(color.x, 0.0f, 255.0f), (uchar)clamp(color.y, 0.0f, 255.0f), (uchar)clamp(color.z, 0.0f, 255.0f), 255u);
+
+    color = mix(color, display_color_linear(wave), smoothstep(0.02f, 0.84f, wave) * (0.72f + 0.28f * (1.0f - gas)));
+
+    if (flux > 0.0f && gu > 0.0f) {
+        float2 unit = current / flux;
+        float3 flow_dir_color = mix(
+            float3(0.85f, 0.25f, 0.70f),
+            float3(0.20f, 0.75f, 0.85f),
+            0.5f + 0.5f * unit.x
+        );
+        float flow_intensity = gu * min(wave + gas, 1.0f) * 0.50f;
+        color = mix(color, flow_dir_color, flow_intensity);
+    }
+
+    float glow_val = 1.0f - exp(-as_type<float>(glow[gid]));
+    float core_val = smoothstep(0.18f, 0.72f, as_type<float>(core[gid]));
+
+    color = mix(color, float3(1.000f, 0.643f, 0.133f), 0.42f * glow_val);
+    color = mix(color, float3(1.000f, 0.980f, 0.882f), 0.55f * core_val);
+
+    color = clamp(color, 0.0f, 1.0f);
+    float3 srgb = pow(color, float3(1.0f / 2.2f));
+
+    rgba[gid] = uchar4(
+        (uchar)(srgb.r * 255.0f),
+        (uchar)(srgb.g * 255.0f),
+        (uchar)(srgb.b * 255.0f),
+        255u);
 }

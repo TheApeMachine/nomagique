@@ -15,9 +15,13 @@ import "C"
 import (
 	_ "embed"
 	"fmt"
-	"math"
 	"runtime"
 	"unsafe"
+)
+
+const (
+	sharedDisplayWidth  = 64
+	sharedDisplayHeight = 64
 )
 
 //go:embed kernels.metallib
@@ -480,15 +484,8 @@ func (domain *Domain) Display() ([]byte, DisplayStats, error) {
 		return nil, DisplayStats{}, fmt.Errorf("fluid: domain is closed")
 	}
 
-	displayCells := uint64(domain.config.Grid.X) * uint64(domain.config.Grid.Y) * uint64(domain.config.Grid.Z)
-	displayAspect := float64(domain.config.Grid.X) / float64(domain.config.Grid.Z)
-	width := uint32(math.Round(math.Sqrt(float64(displayCells) * displayAspect)))
-
-	if width == 0 {
-		width = 1
-	}
-
-	height := uint32((displayCells + uint64(width) - 1) / uint64(width))
+	width := uint32(sharedDisplayWidth)
+	height := uint32(sharedDisplayHeight)
 	rgba := make([]byte, width*height*4)
 	var stats C.FluidDisplayStats
 	errorBuffer := make([]byte, 4096)

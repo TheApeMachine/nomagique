@@ -572,11 +572,11 @@ func TestDomainDisplay(t *testing.T) {
 		_, err = domain.Step(particles)
 		So(err, ShouldBeNil)
 
-		Convey("It should expose a finite RGBA8 frame with lit particle cores", func() {
+		Convey("It should expose a finite RGBA8 frame with coherent field energy", func() {
 			rgba, stats, displayErr := domain.Display()
 			So(displayErr, ShouldBeNil)
 			expected := int(stats.Width * stats.Height * 4)
-			brightPixels := displayBrightPixels(rgba)
+			warmPixels := displayWarmPixels(rgba)
 			So(rgba, ShouldHaveLength, expected)
 			So(stats.Width, ShouldBeGreaterThan, uint32(testDomainConfig().Grid.X))
 			So(stats.Height, ShouldBeGreaterThan, uint32(testDomainConfig().Grid.Z))
@@ -584,8 +584,8 @@ func TestDomainDisplay(t *testing.T) {
 			So(stats.PsiOccupied, ShouldBeGreaterThan, uint32(0))
 			So(stats.RhoMax, ShouldBeGreaterThan, float32(0))
 			So(stats.PsiMax, ShouldBeGreaterThan, float32(0))
-			So(brightPixels, ShouldBeGreaterThan, 0)
-			So(brightPixels, ShouldBeLessThan, len(rgba)/12)
+			So(warmPixels, ShouldBeGreaterThan, 0)
+			So(warmPixels, ShouldBeLessThan, len(rgba)/12)
 			So(displayBlueArtifactPixels(rgba), ShouldEqual, 0)
 			So(displayIsFiniteRGBA(rgba), ShouldBeTrue)
 		})
@@ -614,16 +614,16 @@ func BenchmarkDomainDisplay(b *testing.B) {
 	}
 }
 
-func displayBrightPixels(rgba []byte) int {
-	bright := 0
+func displayWarmPixels(rgba []byte) int {
+	warm := 0
 
 	for index := 0; index+3 < len(rgba); index += 4 {
-		if rgba[index] > 220 && rgba[index+1] > 180 && rgba[index+2] > 120 && rgba[index+3] == 255 {
-			bright++
+		if rgba[index] > 60 && rgba[index+1] > 35 && rgba[index+2] > 15 && rgba[index+3] == 255 {
+			warm++
 		}
 	}
 
-	return bright
+	return warm
 }
 
 func displayBlueArtifactPixels(rgba []byte) int {

@@ -1,0 +1,240 @@
+package algorithm
+
+import (
+	"math"
+	"math/rand"
+	"sync"
+	"sync/atomic"
+	"time"
+
+	"github.com/theapemachine/nomagique/temporal"
+)
+
+type LatencyProvider interface {
+	Delay() time.Duration
+}
+
+/*
+LatencyConfig holds optional per-channel latency. nil field = no delay on that channel.
+With only latency providers set, delays are applied as wall-clock sleeps —
+correct for real-time runs but meaningless under a SimulatedClock (a "1ms"
+delay becomes however much sim time passes while the goroutine sleeps).
+Set Scheduler+Clock to deliver messages at exact simulation timestamps
+with per-channel FIFO ordering preserved.
+*/
+type LatencyConfig struct {
+	Request    LatencyProvider
+	Response   LatencyProvider
+	MarketData LatencyProvider
+
+	// Scheduler delivers delayed messages at exact sim times (required for
+	// correct latency under SimulatedClock). Clock must be the same clock the
+	// scheduler is bound to.
+	Scheduler *temporal.EventScheduler
+	Clock     temporal.Clock
+}
+
+type ConstantLatency struct {
+	delay time.Duration
+}
+
+func NewConstantLatency(delay time.Duration) *ConstantLatency {
+	return &ConstantLatency{delay: delay}
+}
+
+func (c *ConstantLatency) Delay() time.Duration {
+	return c.delay
+}
+
+type UniformRandomLatency struct {
+	min time.Duration
+	max time.Duration
+	rng *rand.Rand
+}
+
+func NewUniformRandomLatency(
+	min, max time.Duration, seed int64,
+) *UniformRandomLatency {
+	return &UniformRandomLatency{
+		min: min,
+		max: max,
+		rng: rand.New(rand.NewSource(seed)),
+	}
+}
+
+func (u *UniformRandomLatency) Delay() time.Duration {
+	delta := u.max - u.min
+
+	if delta <= 0 {
+		return u.min
+	}
+
+	return u.min + time.Duration(u.rng.Int63n(int64(delta)))
+}
+
+type NormalLatency struct {
+	mean   time.Duration
+	stddev time.Duration
+	rng    *rand.Rand
+}
+
+func NewNormalLatency(mean, stddev time.Duration, seed int64) *NormalLatency {
+	return &NormalLatency{
+		mean:   mean,
+		stddev: stddev,
+		rng:    rand.New(rand.NewSource(seed)),
+	}
+}
+
+func (n *NormalLatency) Delay() time.Duration {
+	return max(time.Duration(
+		n.rng.NormFloat64()*float64(n.stddev)+float64(n.mean),
+	), 0)
+}
+
+/*
+LoadScaledLatency scales base latency linearly with the number of in-flight requests.
+Useful for modelling exchange processing queues: as more orders pile up, round-trip
+latency grows. Users call Inc() on order submit and Dec() on acknowledgement.
+
+Effective delay = base + load * perRequest. Both are configurable at construction.
+*/
+type LoadScaledLatency struct {
+	base       time.Duration
+	perRequest time.Duration
+	load       atomic.Int64
+}
+
+func NewLoadScaledLatency(base, perRequest time.Duration) *LoadScaledLatency {
+	return &LoadScaledLatency{base: base, perRequest: perRequest}
+}
+
+func (l *LoadScaledLatency) Inc() { l.load.Add(1) }
+func (l *LoadScaledLatency) Dec() { l.load.Add(-1) }
+
+func (l *LoadScaledLatency) Delay() time.Duration {
+	return l.base + time.Duration(
+		max(l.load.Load(), 0),
+	)*l.perRequest
+}
+
+/*
+LogNormalLatency draws delays from a log-normal distribution with a hard floor.
+log(L − min) ~ N(logMu, logSigma²), so L is strictly above min with a heavy right tail.
+Captures retransmit spikes and GC pauses that the Normal model cannot represent without
+producing impossible negative values.
+
+Constructed from the observable median rather than the log-space mean:
+
+	mean   = min + exp(logMu + logSigma²/2)
+	median = min + medianAboveMin
+	p99    ≈ min + exp(logMu + 2.326·logSigma)
+
+Calibrating logSigma by p99/median ratio (tail heaviness):
+
+	0.3 → p99 ≈ 2×  median   tight, stable LAN link
+	0.5 → p99 ≈ 3×  median   moderate, typical co-location
+	1.0 → p99 ≈ 10× median   heavy tail, WAN / congested path
+*/
+type LogNormalLatency struct {
+	min      time.Duration
+	logMu    float64
+	logSigma float64
+	rng      *rand.Rand
+	mu       sync.Mutex
+}
+
+func NewLogNormalLatency(
+	min, medianAboveMin time.Duration, logSigma float64, seed int64,
+) *LogNormalLatency {
+	return &LogNormalLatency{
+		min:      min,
+		logMu:    math.Log(float64(medianAboveMin)),
+		logSigma: logSigma,
+		rng:      rand.New(rand.NewSource(seed)),
+	}
+}
+
+func (l *LogNormalLatency) Delay() time.Duration {
+	l.mu.Lock()
+	z := l.rng.NormFloat64()
+	l.mu.Unlock()
+	return l.min + time.Duration(math.Exp(l.logMu+l.logSigma*z))
+}
+
+/*
+HawkesLatency models processing latency as a self-exciting process with exponential kernel.
+Each order submission (RecordEvent) injects a spike α that decays at rate β per second:
+
+	R(t)    = R(t_last) · exp(−β · (t − t_last))   between events
+	R(t_n+) = R(t_n−)  + α                          at each event
+	L(t)    = minLatency + R(t)
+
+The exponential kernel admits an O(1) recursive update — no history retained.
+Driven by exogenous orders at mean rate ρ, steady-state excitation converges to:
+
+	E[R∞] = α·ρ/β   (geometric series; always finite since events are external)
+
+Calibrating decayPerSec from half-life: β = ln(2) / halfLife ≈ 0.693 / halfLife.Seconds()
+
+	β=1   → half-life 693ms   slow drain, persistent congestion
+	β=10  → half-life  69ms   moderate, burst clears in ~150ms
+	β=100 → half-life   7ms   fast, typical co-located exchange queue
+
+Under steady load ρ orders/s, mean added latency ≈ jumpPerEvent × ρ / β.
+Example: jump=10µs, ρ=1000/s, β=10 → +1ms above minLatency at saturation.
+
+RecordEvent must be called on every order submission. Delay is read-only.
+Under a SimulatedClock, call SetClock so the decay follows simulation time
+instead of wall-clock time.
+*/
+type HawkesLatency struct {
+	minLatency  time.Duration
+	alpha       float64
+	beta        float64
+	excitation  float64
+	lastEventNs int64
+	clock       temporal.Clock
+	mu          sync.Mutex
+}
+
+func NewHawkesLatency(
+	minLatency, jumpPerEvent time.Duration, decayPerSec float64,
+) *HawkesLatency {
+	hawkes := &HawkesLatency{
+		minLatency: minLatency,
+		alpha:      jumpPerEvent.Seconds(),
+		beta:       decayPerSec,
+		clock:      &temporal.RealClock{},
+	}
+	hawkes.lastEventNs = hawkes.clock.NowUnixNano()
+	return hawkes
+}
+
+/*
+SetClock switches the decay time source (e.g. to a SimulatedClock).
+*/
+func (hawkes *HawkesLatency) SetClock(c temporal.Clock) {
+	hawkes.mu.Lock()
+	hawkes.clock = c
+	hawkes.lastEventNs = c.NowUnixNano()
+	hawkes.mu.Unlock()
+}
+
+func (hawkes *HawkesLatency) RecordEvent() {
+	hawkes.mu.Lock()
+	now := hawkes.clock.NowUnixNano()
+	dt := float64(now-hawkes.lastEventNs) * 1e-9
+	hawkes.excitation = hawkes.excitation*math.Exp(-hawkes.beta*dt) + hawkes.alpha
+	hawkes.lastEventNs = now
+	hawkes.mu.Unlock()
+}
+
+func (hawkes *HawkesLatency) Delay() time.Duration {
+	hawkes.mu.Lock()
+	now := hawkes.clock.NowUnixNano()
+	dt := float64(now-hawkes.lastEventNs) * 1e-9
+	exc := hawkes.excitation * math.Exp(-hawkes.beta*dt)
+	hawkes.mu.Unlock()
+	return hawkes.minLatency + time.Duration(exc*1e9)
+}

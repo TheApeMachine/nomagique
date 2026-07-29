@@ -928,3 +928,50 @@ func (rm *ResonanceManifold) updatePrecision(layerErrors []*mat.Dense, targetCol
 
 	return nil
 }
+
+/*
+SetAlpha updates the adaptive hyperparameters of the manifold dynamically.
+*/
+func (rm *ResonanceManifold) SetAlpha(alpha float64) {
+	rm.cfg = AdaptiveResonanceConfig(alpha, rm.arch)
+}
+
+/*
+RolloutTaskPrediction projects the top latent state forward k steps into the future
+using the temporal prior matrix A, evaluating task head V at each step.
+Returns a slice of return predictions [y_t+1, y_t+2, ..., y_t+k].
+*/
+func (rm *ResonanceManifold) RolloutTaskPrediction(steps int) []float64 {
+	if rm.V == nil || rm.A == nil || rm.targetDim <= 0 || steps < 1 {
+		return nil
+	}
+
+	topDim := rm.arch[len(rm.arch)-1]
+	topLatent := rm.z[len(rm.z)-1]
+
+	// Working state buffers
+	currentState := mat.DenseCopyOf(topLatent)
+	nextState := mat.NewDense(topDim, 1, nil)
+	taskPred := mat.NewDense(rm.targetDim, 1, nil)
+
+	curve := make([]float64, steps*rm.targetDim)
+
+	for step := 0; step < steps; step++ {
+		// 1. Advance state: z_next = tanh(A * z_current)
+		nextState.Mul(rm.A, currentState)
+		denseApplyTanhInPlace(nextState)
+
+		// 2. Predict return: y_next = tanh(V * z_next)
+		taskPred.Mul(rm.V, nextState)
+		denseApplyTanhInPlace(taskPred)
+
+		// 3. Store prediction for this horizon step
+		for row := 0; row < rm.targetDim; row++ {
+			curve[step*rm.targetDim+row] = taskPred.At(row, 0)
+		}
+
+		currentState.Copy(nextState)
+	}
+
+	return curve
+}

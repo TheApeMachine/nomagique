@@ -13,12 +13,10 @@ LadderConfig describes the causal role mapping and intervention settings.
 */
 type LadderConfig struct {
 	Target                 int
-	MinHistory             int
 	TreatmentNormal        int
 	ControlsNormal         []int
 	TreatmentInverted      int
 	ControlsInverted       []int
-	KernelBandwidth        float64
 	InterventionLevel      float64
 	InterventionPercentile float64
 }
@@ -68,19 +66,7 @@ func NewLadder(config LadderConfig) *Ladder {
 Measure evaluates association, intervention, and counterfactual uplift.
 */
 func (ladder *Ladder) Measure(input LadderInput) (LadderOutput, error) {
-	if ladder.config.MinHistory <= 0 {
-		return LadderOutput{}, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"causal ladder: min history required",
-			nil,
-		))
-	}
-
-	table, err := newNodeTable(
-		input.Rows,
-		ladder.config.Target,
-		ladder.config.MinHistory,
-	)
+	table, err := newNodeTable(input.Rows, ladder.config.Target)
 	if err != nil {
 		return LadderOutput{}, errnie.Error(errnie.Err(
 			errnie.Validation,
@@ -167,10 +153,6 @@ func (ladder *Ladder) Measure(input LadderInput) (LadderOutput, error) {
 }
 
 func (ladder *Ladder) bandwidth(rows [][]float64) (float64, error) {
-	if ladder.config.KernelBandwidth > 0 {
-		return ladder.config.KernelBandwidth, nil
-	}
-
 	bandwidth, err := deriveBandwidth(rows, ladder.config.TreatmentNormal)
 	if err != nil {
 		if errors.Is(err, io.EOF) {

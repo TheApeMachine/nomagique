@@ -24,11 +24,11 @@ func TestScoreClassifier_Classify(t *testing.T) {
 
 			Convey("It should return category, confidence, and distribution output", func() {
 				So(err, ShouldBeNil)
-				So(result.Category, ShouldEqual, 20)
+				So(result.Category, ShouldEqual, 2)
 				So(result.Confidence, ShouldBeGreaterThan, result.ConfidenceBaseline)
 				So(result.Confidence, ShouldBeGreaterThan, result.EntryBaseline)
 				So(result.EntryBaseline, ShouldBeGreaterThanOrEqualTo, result.ExitBaseline)
-				So(result.Distribution, ShouldContainKey, "20")
+				So(result.Distribution, ShouldContainKey, "2")
 			})
 		})
 	})
@@ -62,7 +62,7 @@ func TestScoreClassifier_Classify(t *testing.T) {
 
 			Convey("It should return the finite winning category and adaptive gates", func() {
 				So(err, ShouldBeNil)
-				So(result.Category, ShouldEqual, 20)
+				So(result.Category, ShouldEqual, 2)
 				So(result.Confidence, ShouldAlmostEqual, 0.5, 1e-15)
 				So(result.EntryBaseline, ShouldAlmostEqual, 1.0/3.0, 1e-15)
 				So(result.ExitBaseline, ShouldAlmostEqual, 1.0/6.0, 1e-15)

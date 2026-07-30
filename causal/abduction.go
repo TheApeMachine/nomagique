@@ -9,8 +9,8 @@ type NodeTable struct {
 	Nt nodeTable
 }
 
-func NewNodeTableWrapper(rows [][]float64, target, minRows int) (NodeTable, error) {
-	nt, err := newNodeTable(rows, target, minRows)
+func NewNodeTableWrapper(rows [][]float64, target int, _ ...int) (NodeTable, error) {
+	nt, err := newNodeTable(rows, target)
 	if err != nil {
 		return NodeTable{}, err
 	}

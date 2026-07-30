@@ -12,8 +12,7 @@ ScoreClassifier classifies named float scores without knowing where they came
 from. It is the data-shape agnostic core used by typed callers.
 */
 type ScoreClassifier struct {
-	inputs          []string
-	categoryIndexes []float64
+	inputs []string
 }
 
 /*
@@ -34,10 +33,9 @@ type ScoreResult struct {
 /*
 NewScoreClassifier constructs a float-only classifier.
 */
-func NewScoreClassifier(inputs []string, categoryIndexes []float64) *ScoreClassifier {
+func NewScoreClassifier(inputs []string, _ ...[]float64) *ScoreClassifier {
 	return &ScoreClassifier{
-		inputs:          append([]string(nil), inputs...),
-		categoryIndexes: append([]float64(nil), categoryIndexes...),
+		inputs: append([]string(nil), inputs...),
 	}
 }
 
@@ -52,15 +50,6 @@ func (classifier *ScoreClassifier) Classify(
 		return ScoreResult{}, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"classifier: inputs required",
-			nil,
-		))
-	}
-
-	if len(classifier.categoryIndexes) > 0 &&
-		len(classifier.categoryIndexes) != len(classifier.inputs) {
-		return ScoreResult{}, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"classifier: categoryIndexes length must match inputs",
 			nil,
 		))
 	}
@@ -112,9 +101,6 @@ func (classifier *ScoreClassifier) Classify(
 
 	winnerIndex := ArgmaxIndex(probabilities)
 	categoryIndex := float64(winnerIndex + 1)
-	if len(classifier.categoryIndexes) > 0 {
-		categoryIndex = classifier.categoryIndexes[winnerIndex]
-	}
 
 	confidence, err := CategoryShareConfidence(values, winnerIndex+1)
 	if err != nil {
@@ -139,9 +125,6 @@ func (classifier *ScoreClassifier) Classify(
 	distribution := make(map[string]float64, len(probabilities))
 	for index, probability := range probabilities {
 		wireIndex := float64(index + 1)
-		if len(classifier.categoryIndexes) > 0 {
-			wireIndex = classifier.categoryIndexes[index]
-		}
 
 		distribution[fmt.Sprintf("%d", int(wireIndex))] = probability
 	}

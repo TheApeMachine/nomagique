@@ -19,10 +19,9 @@ func causalRows(rowCount int) [][]float64 {
 
 func TestBackdoorMeasure(t *testing.T) {
 	backdoor := NewBackdoor(BackdoorConfig{
-		Target:     3,
-		Treatment:  2,
-		Controls:   []int{0, 1},
-		MinHistory: 12,
+		Target:    3,
+		Treatment: 2,
+		Controls:  []int{0, 1},
 	})
 
 	output, err := backdoor.Measure(BackdoorInput{
@@ -40,7 +39,6 @@ func TestBackdoorMeasure(t *testing.T) {
 func TestRegimeMeasure(t *testing.T) {
 	regime := NewRegime(RegimeConfig{
 		Target:         3,
-		MinHistory:     12,
 		ContagionBreak: 0.8,
 		ContagionSkip:  []int{0, 3},
 	})
@@ -73,10 +71,8 @@ func TestRegimeMeasure(t *testing.T) {
 func TestLadderMeasure(t *testing.T) {
 	ladder := NewLadder(LadderConfig{
 		Target:          3,
-		MinHistory:      12,
 		TreatmentNormal: 2,
 		ControlsNormal:  []int{0, 1},
-		KernelBandwidth: 0.35,
 	})
 
 	output, err := ladder.Measure(LadderInput{
@@ -94,10 +90,8 @@ func TestLadderMeasure(t *testing.T) {
 func BenchmarkLadderMeasure(testingTB *testing.B) {
 	ladder := NewLadder(LadderConfig{
 		Target:          3,
-		MinHistory:      12,
 		TreatmentNormal: 2,
 		ControlsNormal:  []int{0, 1},
-		KernelBandwidth: 0.35,
 	})
 	input := LadderInput{
 		Rows: causalRows(16),

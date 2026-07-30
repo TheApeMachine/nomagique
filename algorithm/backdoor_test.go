@@ -9,10 +9,9 @@ import (
 
 func backdoorConfig() causal.BackdoorConfig {
 	return causal.BackdoorConfig{
-		Target:     3,
-		Treatment:  2,
-		Controls:   []int{0, 1},
-		MinHistory: 12,
+		Target:    3,
+		Treatment: 2,
+		Controls:  []int{0, 1},
 	}
 }
 

@@ -31,12 +31,8 @@ type PearlConfig struct {
 	Controls                []int
 	TreatmentInverted       int
 	ControlsInverted        []int
-	MinHistory              int
-	History                 int
-	KernelBandwidth         float64
 	InterventionLevel       float64
 	InterventionPercentile  float64
-	CategoryIndexes         []float64
 	NonlinearCounterfactual bool
 }
 
@@ -77,27 +73,20 @@ func NewPearl(configs ...PearlConfig) *Pearl {
 		config = configs[0]
 	}
 
-	if config.MinHistory <= 0 {
-		config.MinHistory = pearlDefaultMinHistory
-	}
-
 	return &Pearl{
 		config: config,
 		sample: NewPearlSample(config),
 		ladder: causal.NewLadder(causal.LadderConfig{
 			Target:                 config.Target,
-			MinHistory:             config.MinHistory,
 			TreatmentNormal:        config.Treatment,
 			ControlsNormal:         config.Controls,
 			TreatmentInverted:      config.TreatmentInverted,
 			ControlsInverted:       config.ControlsInverted,
-			KernelBandwidth:        config.KernelBandwidth,
 			InterventionLevel:      config.InterventionLevel,
 			InterventionPercentile: config.InterventionPercentile,
 		}),
 		classifier: probability.NewScoreClassifier(
 			[]string{"association", "intervention", "counterfactual", "residual"},
-			config.CategoryIndexes,
 		),
 	}
 }
@@ -125,11 +114,7 @@ func (pearl *Pearl) Measure(input PearlInput) (PearlOutput, bool, error) {
 		return PearlOutput{}, false, err
 	}
 
-	table, err := causal.NewNodeTableWrapper(
-		sample.Rows,
-		pearl.config.Target,
-		pearl.config.MinHistory,
-	)
+	table, err := causal.NewNodeTableWrapper(sample.Rows, pearl.config.Target)
 	if err != nil {
 		return PearlOutput{}, false, err
 	}

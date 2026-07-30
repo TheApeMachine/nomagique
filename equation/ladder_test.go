@@ -12,7 +12,6 @@ func regimeLadderConfig(contagionBreak float64) equation.RegimeLadderConfig {
 	return equation.RegimeLadderConfig{
 		Regime: causal.RegimeConfig{
 			Target:         3,
-			MinHistory:     12,
 			ContagionSkip:  []int{0, 3},
 			ContagionBreak: contagionBreak,
 		},
@@ -22,10 +21,8 @@ func regimeLadderConfig(contagionBreak float64) equation.RegimeLadderConfig {
 		},
 		Ladder: causal.LadderConfig{
 			Target:          3,
-			MinHistory:      12,
 			TreatmentNormal: 2,
 			ControlsNormal:  []int{0, 1},
-			KernelBandwidth: 0.35,
 		},
 	}
 }

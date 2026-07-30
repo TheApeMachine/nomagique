@@ -78,3 +78,10 @@ func (variance *Variance) Measure(sample float64) (VarianceOutput, error) {
 		Count: variance.count,
 	}, nil
 }
+
+/*
+Count returns the number of observed samples.
+*/
+func (variance *Variance) Count() int {
+	return variance.count
+}

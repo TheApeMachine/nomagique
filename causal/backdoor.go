@@ -6,10 +6,9 @@ import "github.com/theapemachine/errnie"
 BackdoorConfig describes a linear backdoor-adjusted treatment estimate.
 */
 type BackdoorConfig struct {
-	Target     int
-	Treatment  int
-	Controls   []int
-	MinHistory int
+	Target    int
+	Treatment int
+	Controls  []int
 }
 
 /*
@@ -49,19 +48,7 @@ func NewBackdoor(config BackdoorConfig) *Backdoor {
 Measure computes the adjusted treatment effect from retained rows.
 */
 func (backdoor *Backdoor) Measure(input BackdoorInput) (BackdoorOutput, error) {
-	if backdoor.config.MinHistory <= 0 {
-		return BackdoorOutput{}, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"causal backdoor: min history required",
-			nil,
-		))
-	}
-
-	table, err := newNodeTable(
-		input.Rows,
-		backdoor.config.Target,
-		backdoor.config.MinHistory,
-	)
+	table, err := newNodeTable(input.Rows, backdoor.config.Target)
 	if err != nil {
 		return BackdoorOutput{}, errnie.Error(errnie.Err(
 			errnie.Validation,

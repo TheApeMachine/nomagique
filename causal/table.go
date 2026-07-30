@@ -20,19 +20,11 @@ type linearModel struct {
 	predictors   []int
 }
 
-func newNodeTable(rows [][]float64, target, minRows int) (nodeTable, error) {
-	if minRows <= 0 {
+func newNodeTable(rows [][]float64, target int, _ ...int) (nodeTable, error) {
+	if len(rows) == 0 {
 		return nodeTable{}, errnie.Error(errnie.Err(
 			errnie.Validation,
-			"causal: minRows must be positive",
-			nil,
-		))
-	}
-
-	if len(rows) < minRows {
-		return nodeTable{}, errnie.Error(errnie.Err(
-			errnie.Validation,
-			fmt.Sprintf("causal: table needs %d rows, got %d", minRows, len(rows)),
+			"causal: table requires at least one row",
 			nil,
 		))
 	}

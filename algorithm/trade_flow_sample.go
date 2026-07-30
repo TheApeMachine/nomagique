@@ -69,13 +69,13 @@ ready to score, and a confidence maturity for that reading.
 */
 func (tradeFlowSample *TradeFlowSample) Measure(
 	input TradeFlowInput,
-) (equation.FlowInput, bool, float64, error) {
+) (equation.FlowInput, bool, error) {
 	if input.Symbol == "" || input.Price <= 0 || input.ResponsePrice <= 0 ||
 		input.Quantity <= 0 || math.IsNaN(input.Price) ||
 		math.IsInf(input.Price, 0) || math.IsNaN(input.ResponsePrice) ||
 		math.IsInf(input.ResponsePrice, 0) || math.IsNaN(input.Quantity) ||
 		math.IsInf(input.Quantity, 0) {
-		return equation.FlowInput{}, false, 0, errnie.Error(errnie.Err(
+		return equation.FlowInput{}, false, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"trade-flow-sample: trade requires symbol, execution price, response price, and qty",
 			nil,
@@ -83,7 +83,7 @@ func (tradeFlowSample *TradeFlowSample) Measure(
 	}
 
 	if input.Side != "buy" && input.Side != "sell" {
-		return equation.FlowInput{}, false, 0, errnie.Error(errnie.Err(
+		return equation.FlowInput{}, false, errnie.Error(errnie.Err(
 			errnie.Validation,
 			fmt.Sprintf("trade-flow-sample: unknown side %q", input.Side),
 			nil,
@@ -94,7 +94,7 @@ func (tradeFlowSample *TradeFlowSample) Measure(
 	notional := input.Price * input.Quantity
 
 	if math.IsNaN(notional) || math.IsInf(notional, 0) {
-		return equation.FlowInput{}, false, 0, errnie.Error(errnie.Err(
+		return equation.FlowInput{}, false, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"trade-flow-sample: execution notional must be finite",
 			nil,
@@ -112,14 +112,13 @@ func (tradeFlowSample *TradeFlowSample) Measure(
 		window.ticks = window.ticks[len(window.ticks)-flowSampleHistoryCap:]
 	}
 
-	maturity := float64(window.observations) / float64(window.observations+1)
 	features, err := tradeFlowSample.features(window)
 
 	if err != nil {
-		return equation.FlowInput{}, false, maturity, err
+		return equation.FlowInput{}, false, err
 	}
 
-	return features, true, maturity, nil
+	return features, true, nil
 }
 
 /*

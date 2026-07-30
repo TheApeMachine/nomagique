@@ -9,12 +9,9 @@ import (
 
 func pearlConfig() algorithm.PearlConfig {
 	return algorithm.PearlConfig{
-		Target:          2,
-		Treatment:       1,
-		Controls:        []int{0},
-		MinHistory:      6,
-		History:         16,
-		CategoryIndexes: []float64{1, 2, 3, 4},
+		Target:    2,
+		Treatment: 1,
+		Controls:  []int{0},
 	}
 }
 
@@ -64,7 +61,7 @@ func TestPearlSample_Measure(t *testing.T) {
 			})
 
 			So(err, ShouldBeNil)
-			So(ready, ShouldEqual, index >= 5)
+			So(ready, ShouldEqual, index >= 1)
 		}
 
 		secondary, ready, err := sample.Measure(algorithm.PearlInput{

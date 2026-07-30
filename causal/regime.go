@@ -12,7 +12,6 @@ RegimeConfig describes causal regime switching over tabular node rows.
 */
 type RegimeConfig struct {
 	Target          int
-	MinHistory      int
 	ContagionBreak  float64
 	ContagionSkip   []int
 	ConditionSwitch float64
@@ -57,19 +56,7 @@ func NewRegime(config RegimeConfig) *Regime {
 Measure evaluates the regime switch against retained node rows.
 */
 func (regime *Regime) Measure(input RegimeInput) (RegimeOutput, error) {
-	if regime.config.MinHistory <= 0 {
-		return RegimeOutput{}, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"causal regime: min history required",
-			nil,
-		))
-	}
-
-	table, err := newNodeTable(
-		input.Rows,
-		regime.config.Target,
-		regime.config.MinHistory,
-	)
+	table, err := newNodeTable(input.Rows, regime.config.Target)
 	if err != nil {
 		return RegimeOutput{}, errnie.Error(errnie.Err(
 			errnie.Validation,

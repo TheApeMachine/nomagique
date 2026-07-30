@@ -5,9 +5,8 @@ import (
 	"math"
 
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/nomagique/adaptive"
 )
-
-const pearlDefaultMinHistory = 5
 
 /*
 PearlInput is one keyed numeric observation for causal evaluation.
@@ -25,9 +24,7 @@ type PearlInput struct {
 PearlSample retains aligned numeric causal rows by key.
 */
 type PearlSample struct {
-	minHistory int
-	history    int
-	windows    map[string]*pearlWindow
+	windows map[string]*pearlWindow
 }
 
 /*
@@ -40,35 +37,16 @@ type PearlSampleOutput struct {
 }
 
 type pearlWindow struct {
-	rows [][]float64
+	rows      [][]float64
+	variances []*adaptive.Variance
 }
 
 /*
 NewPearlSample returns a keyed numeric causal sampler.
 */
 func NewPearlSample(configs ...PearlConfig) *PearlSample {
-	config := PearlConfig{}
-
-	if len(configs) > 0 {
-		config = configs[0]
-	}
-
-	minHistory := config.MinHistory
-
-	if minHistory <= 0 {
-		minHistory = pearlDefaultMinHistory
-	}
-
-	history := config.History
-
-	if history < minHistory {
-		history = minHistory
-	}
-
 	return &PearlSample{
-		minHistory: minHistory,
-		history:    history,
-		windows:    map[string]*pearlWindow{},
+		windows: map[string]*pearlWindow{},
 	}
 }
 
@@ -122,9 +100,17 @@ func (pearlSample *PearlSample) Measure(
 		))
 	}
 
-	return pearlSample.append(input.Key, row, window),
-		len(window.rows) >= pearlSample.minHistory,
-		nil
+	for index, value := range row {
+		if len(window.variances) == index {
+			window.variances = append(window.variances, adaptive.NewVariance())
+		}
+
+		if _, err := window.variances[index].Measure(value); err != nil {
+			return PearlSampleOutput{}, false, err
+		}
+	}
+
+	return pearlSample.append(input.Key, row, window), pearlSample.ready(window), nil
 }
 
 func (pearlSample *PearlSample) append(
@@ -133,10 +119,6 @@ func (pearlSample *PearlSample) append(
 	window *pearlWindow,
 ) PearlSampleOutput {
 	window.rows = append(window.rows, append([]float64(nil), row...))
-
-	if len(window.rows) > pearlSample.history {
-		window.rows = window.rows[len(window.rows)-pearlSample.history:]
-	}
 
 	rows := make([][]float64, 0, len(window.rows))
 
@@ -149,6 +131,16 @@ func (pearlSample *PearlSample) append(
 		Row:  append([]float64(nil), row...),
 		Rows: rows,
 	}
+}
+
+func (pearlSample *PearlSample) ready(window *pearlWindow) bool {
+	for _, variance := range window.variances {
+		if variance.Count() < 2 {
+			return false
+		}
+	}
+
+	return len(window.variances) > 0
 }
 
 func (pearlSample *PearlSample) window(key string) *pearlWindow {

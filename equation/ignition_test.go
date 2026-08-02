@@ -11,12 +11,12 @@ import (
 var ignitionEpoch = time.Date(2026, 7, 20, 10, 0, 0, 0, time.UTC)
 
 /*
-ignitionInput advances cumulative volume, price, and time on a steady clock.
+ignitionInput advances executed quantity, price, and time on a steady clock.
 */
 func ignitionInput(index int) IgnitionInput {
 	return IgnitionInput{
 		Symbol: "BTC/USD",
-		Volume: 1000 + float64(index*20),
+		Volume: 20,
 		Last:   100 + float64(index),
 		Bid:    99.5 + float64(index),
 		Ask:    100.5 + float64(index),
@@ -100,7 +100,7 @@ func TestIgnition_Measure(t *testing.T) {
 			var err error
 			small, _, _, err = ignition.Measure(IgnitionInput{
 				Symbol: "SMALL/USD",
-				Volume: 1000 + float64(index*20),
+				Volume: 20,
 				Last:   100 + float64(index),
 				Bid:    99.5 + float64(index),
 				Ask:    100.5 + float64(index),
@@ -109,7 +109,7 @@ func TestIgnition_Measure(t *testing.T) {
 			So(err, ShouldBeNil)
 			large, _, _, err = ignition.Measure(IgnitionInput{
 				Symbol: "LARGE/USD",
-				Volume: 10000 + float64(index*200),
+				Volume: 200,
 				Last:   1000 + float64(index*10),
 				Bid:    995 + float64(index*10),
 				Ask:    1005 + float64(index*10),
@@ -125,7 +125,7 @@ func TestIgnition_Measure(t *testing.T) {
 		})
 	})
 
-	Convey("Given quote churn with no new executed volume", t, func() {
+	Convey("Given repeated executed trades", t, func() {
 		ignition := NewIgnition(128)
 		_, _, err := warm(ignition, 12)
 		So(err, ShouldBeNil)
@@ -135,7 +135,7 @@ func TestIgnition_Measure(t *testing.T) {
 		for index := range 20 {
 			output, ready, _, err = ignition.Measure(IgnitionInput{
 				Symbol: "BTC/USD",
-				Volume: 1000 + float64(11*20),
+				Volume: 20,
 				Last:   111 + float64(index%2),
 				Bid:    110.5,
 				Ask:    111.5,
@@ -144,30 +144,30 @@ func TestIgnition_Measure(t *testing.T) {
 			So(err, ShouldBeNil)
 		}
 
-		Convey("It updates live spread without manufacturing volume bars", func() {
+		Convey("It retains finite empirical observations", func() {
 			So(ready, ShouldBeTrue)
 			So(output.Spread, ShouldEqual, 1.0)
 			window := ignition.windows["BTC/USD"]
 
 			for _, sample := range window.returns {
-				So(sample, ShouldBeGreaterThan, 0)
+				So(sample, ShouldBeGreaterThanOrEqualTo, 0)
 			}
 		})
 	})
 
-	Convey("Given decreasing volume or regressing event time", t, func() {
+	Convey("Given smaller trade quantity or regressing event time", t, func() {
 		ignition := NewIgnition(128)
 		_, _, err := warm(ignition, 4)
 		So(err, ShouldBeNil)
-		decreased := ignitionInput(4)
-		decreased.Volume = ignitionInput(3).Volume - 1
-		_, _, _, volumeErr := ignition.Measure(decreased)
+		smaller := ignitionInput(4)
+		smaller.Volume = 1
+		_, _, _, volumeErr := ignition.Measure(smaller)
 		regressed := ignitionInput(4)
 		regressed.At = ignitionInput(2).At
 		_, _, _, timeErr := ignition.Measure(regressed)
 
-		Convey("It rejects both causal violations", func() {
-			So(volumeErr, ShouldNotBeNil)
+		Convey("It accepts quantity variation and rejects time regression", func() {
+			So(volumeErr, ShouldBeNil)
 			So(timeErr, ShouldNotBeNil)
 		})
 	})
@@ -198,7 +198,7 @@ func TestIgnition_Measure(t *testing.T) {
 }
 
 /*
-BenchmarkIgnition_Measure measures the real monotonic volume-clock path.
+BenchmarkIgnition_Measure measures the real incremental volume-clock path.
 */
 func BenchmarkIgnition_Measure(b *testing.B) {
 	ignition := NewIgnition(128)

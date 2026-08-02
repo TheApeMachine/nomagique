@@ -19,7 +19,6 @@ type ignitionWindow struct {
 	initialized bool
 	classified  bool
 	bars        int
-	lastVolume  float64
 	lastTime    time.Time
 	haveTime    bool
 	barVolume   float64
@@ -46,22 +45,15 @@ func (window *ignitionWindow) observe(
 
 	if !window.initialized {
 		window.initialized = true
-		window.lastVolume = input.Volume
 		window.prevClose = input.Last
 		window.lastTime = input.At
 		window.barOpenTime = input.At
+		window.barVolume = input.Volume
+		window.deltas = window.appendPositive(window.deltas, input.Volume)
 		window.haveTime = !input.At.IsZero()
 		window.spreads = window.appendPositive(window.spreads, spread)
 
 		return window.compose(spread), window.ready(), window.maturity(), nil
-	}
-
-	if input.Volume < window.lastVolume {
-		return IgnitionOutput{}, false, 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"ignition: cumulative executed volume cannot decrease",
-			nil,
-		))
 	}
 
 	if window.haveTime && !input.At.IsZero() && input.At.Before(window.lastTime) {
@@ -86,9 +78,6 @@ advance accumulates executed quantity, advances event time, and closes at most
 one indivisible observation into the empirical volume clock.
 */
 func (window *ignitionWindow) advance(input IgnitionInput, spread float64) error {
-	delta := input.Volume - window.lastVolume
-	window.lastVolume = input.Volume
-
 	if !input.At.IsZero() {
 		window.lastTime = input.At
 
@@ -98,10 +87,8 @@ func (window *ignitionWindow) advance(input IgnitionInput, spread float64) error
 		}
 	}
 
-	if delta > 0 {
-		window.barVolume += delta
-		window.deltas = window.appendPositive(window.deltas, delta)
-	}
+	window.barVolume += input.Volume
+	window.deltas = window.appendPositive(window.deltas, input.Volume)
 
 	barTarget, targetReady := statistic.MedianOf(window.deltas)
 

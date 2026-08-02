@@ -19,9 +19,9 @@ type Ignition struct {
 }
 
 /*
-IgnitionInput is one ticker observation. Volume is cumulative executed quantity
-for the symbol, while At supplies the causal elapsed time used to measure the
-rate of each empirically sized volume bar.
+IgnitionInput is one executed-trade observation. Volume is the positive executed
+quantity of that event, while At supplies the causal elapsed time used to measure
+the rate of each empirically sized volume bar.
 */
 type IgnitionInput struct {
 	Symbol string

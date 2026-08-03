@@ -124,6 +124,34 @@ func TestProcess_Measure(t *testing.T) {
 		})
 	})
 
+	Convey("Given side events on a common explicit observation interval", t, func() {
+		process := NewProcess()
+		origin := time.Date(2026, 5, 30, 13, 0, 0, 0, time.UTC)
+		horizon := origin.Add(4 * time.Second)
+		stream := hawkes.NewArrivalStreamFrom(
+			origin,
+			[]time.Time{origin, origin.Add(time.Second), horizon},
+			[]time.Time{origin.Add(2 * time.Second), origin.Add(3 * time.Second)},
+		)
+		outcome, ready, err := process.Measure(Input{
+			Symbol:       "ALT/EUR",
+			ObservedFrom: origin,
+			Horizon:      horizon,
+			Stream:       stream,
+		})
+
+		Convey("It should publish exact (S,T] counts and rates with the same denominator", func() {
+			So(err, ShouldBeNil)
+			So(ready, ShouldBeTrue)
+			So(outcome.ObservedFrom, ShouldResemble, origin)
+			So(outcome.At, ShouldResemble, horizon)
+			So(outcome.BuyEventCount, ShouldEqual, 2)
+			So(outcome.SellEventCount, ShouldEqual, 2)
+			So(outcome.BuyArrivalRate, ShouldEqual, 0.5)
+			So(outcome.SellArrivalRate, ShouldEqual, 0.5)
+		})
+	})
+
 	Convey("Given a fitted sixteen-event epoch", t, func() {
 		process := NewProcess()
 		base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)

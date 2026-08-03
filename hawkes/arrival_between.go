@@ -6,8 +6,8 @@ import (
 )
 
 /*
-Between returns arrivals inside the inclusive measurement interval.
-It returns the existing stream when every arrival already lies inside it.
+Between returns arrivals inside [start, end] and sets the counted observation
+interval to (start, end]. An event at start remains available as prehistory.
 */
 func (stream ArrivalStream) Between(start, end time.Time) ArrivalStream {
 	buyTimes := betweenTimes(stream.BuyTimes(), start, end)
@@ -15,10 +15,10 @@ func (stream ArrivalStream) Between(start, end time.Time) ArrivalStream {
 
 	if len(buyTimes) == len(stream.BuyTimes()) &&
 		len(sellTimes) == len(stream.SellTimes()) {
-		return stream
+		return stream.WithObservationOrigin(start)
 	}
 
-	return NewArrivalStream(buyTimes, sellTimes)
+	return NewArrivalStreamFrom(start, buyTimes, sellTimes)
 }
 
 /*
@@ -33,10 +33,10 @@ func (stream ArrivalStream) BetweenInto(
 
 	if len(buyTimes) == len(stream.BuyTimes()) &&
 		len(sellTimes) == len(stream.SellTimes()) {
-		return stream
+		return stream.WithObservationOrigin(start)
 	}
 
-	return workspace.Stream(buyTimes, sellTimes)
+	return workspace.StreamFrom(start, buyTimes, sellTimes)
 }
 
 func betweenTimes(times []time.Time, start, end time.Time) []time.Time {

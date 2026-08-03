@@ -33,9 +33,26 @@ type IgnitionInput struct {
 }
 
 /*
-IgnitionOutput contains direct ticker ignition scores. Spread is the live quote
-spread refreshed every observation; the remaining scores are held from the most
-recent closed volume bar so quote churn cannot fabricate price observations.
+IgnitionSideOutput contains one reciprocal price direction's volume-clock
+families. Buy scores positive log returns; Sell scores the same observations
+under reciprocal price, which is exactly the negative original log return.
+*/
+type IgnitionSideOutput struct {
+	Value       float64
+	RVOL        float64
+	Precursor   float64
+	Compression float64
+	Ignition    float64
+	Trend       float64
+	Exhaustion  float64
+	Strength    float64
+	Category    float64
+}
+
+/*
+IgnitionOutput contains both reciprocal directional families. The top-level
+fields retain the legacy wire contract and carry the stronger directional
+family, while Spread remains the current executable quote spread.
 */
 type IgnitionOutput struct {
 	Value       float64
@@ -48,6 +65,8 @@ type IgnitionOutput struct {
 	Exhaustion  float64
 	Strength    float64
 	Category    float64
+	Buy         IgnitionSideOutput
+	Sell        IgnitionSideOutput
 }
 
 /*

@@ -267,6 +267,17 @@ func featureValue(row []float64, featureIndex int) float64 {
 	return featureValueWithOverride(row, featureIndex, -1, 0)
 }
 
+/*
+featureValueWithOverride reads one feature out of a row, substituting the
+override when the requested index is the intervened node.
+
+A row too short to carry the requested feature reads as zero rather than
+panicking. Rows reach the forest from callers that assemble them per observation,
+so a partial observation produces a short row, and a library that indexes it
+unchecked turns a gap in the caller's data into a crash in the caller's process.
+Zero is the neutral reading for a feature that was not observed: it places the
+row on the split's left branch without asserting anything the data did not say.
+*/
 func featureValueWithOverride(
 	row []float64,
 	featureIndex int,
@@ -275,6 +286,10 @@ func featureValueWithOverride(
 ) float64 {
 	if featureIndex == overrideNode {
 		return overrideValue
+	}
+
+	if featureIndex < 0 || featureIndex >= len(row) {
+		return 0
 	}
 
 	return row[featureIndex]

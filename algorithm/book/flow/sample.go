@@ -80,24 +80,26 @@ type TradeInput struct {
 Window retains one symbol's book and rolling imbalance history.
 */
 type Window struct {
-	mu             sync.Mutex
-	book           *Book
-	weightedHist   []float64
-	level1Hist     []float64
-	flatHist       []float64
-	tradePressure  float64
-	tradeAt        time.Time
-	tradeGapSum    float64
-	tradeGaps      int
-	lastMid        float64
-	lastSpread     float64
-	touchDepth     float64
-	flatOK         bool
-	touchCancelBid float64
-	touchCancelAsk float64
-	frameAddBid    float64
-	frameAddAsk    float64
-	observations   int
+	mu               sync.Mutex
+	book             *Book
+	weightedHist     []float64
+	level1Hist       []float64
+	flatHist         []float64
+	bookNotionalHist []float64
+	tradePressure    float64
+	tradeAt          time.Time
+	tradeGapSum      float64
+	tradeGaps        int
+	lastMid          float64
+	lastSpread       float64
+	touchDepth       float64
+	bookNotional     float64
+	flatOK           bool
+	touchCancelBid   float64
+	touchCancelAsk   float64
+	frameAddBid      float64
+	frameAddAsk      float64
+	observations     int
 }
 
 /*
@@ -281,6 +283,7 @@ func (sample *Sample) ingestBook(
 	window.lastMid = mid
 	window.lastSpread = spread
 	window.touchDepth = touchDepth
+	window.bookNotional = window.book.NotionalDepth()
 	window.flatOK = flatDepth > 0
 	window.observations++
 	window.weightedHist = utils.AppendRingFloat(
@@ -296,6 +299,11 @@ func (sample *Sample) ingestBook(
 	window.flatHist = utils.AppendRingFloat(
 		window.flatHist,
 		flat,
+		sample.historyCapacity,
+	)
+	window.bookNotionalHist = utils.AppendRingFloat(
+		window.bookNotionalHist,
+		window.bookNotional,
 		sample.historyCapacity,
 	)
 
@@ -364,6 +372,7 @@ func (sample *Sample) features(
 			Mid:           window.lastMid,
 			Spread:        window.lastSpread,
 			TouchDepth:    window.touchDepth,
+			BookNotional:  window.bookNotional,
 			TradePressure: window.tradePressure,
 		}, false, nil
 	}
@@ -373,16 +382,18 @@ func (sample *Sample) features(
 	flat := window.flatHist[len(window.flatHist)-1]
 
 	return equation.BookflowInput{
-		Weighted:        weighted,
-		Level1:          level1,
-		Flat:            flat,
-		FlatOK:          window.flatOK,
-		Mid:             window.lastMid,
-		Spread:          window.lastSpread,
-		TouchDepth:      window.touchDepth,
-		TradePressure:   window.tradePressure,
-		WeightedHistory: window.weightedHist,
-		Level1History:   window.level1Hist,
-		FlatHistory:     window.flatHist,
+		Weighted:            weighted,
+		Level1:              level1,
+		Flat:                flat,
+		FlatOK:              window.flatOK,
+		Mid:                 window.lastMid,
+		Spread:              window.lastSpread,
+		TouchDepth:          window.touchDepth,
+		BookNotional:        window.bookNotional,
+		TradePressure:       window.tradePressure,
+		WeightedHistory:     window.weightedHist,
+		Level1History:       window.level1Hist,
+		FlatHistory:         window.flatHist,
+		BookNotionalHistory: window.bookNotionalHist,
 	}, true, nil
 }

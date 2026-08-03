@@ -27,6 +27,7 @@ type MarkedEvent struct {
 ArrivalStream holds sorted buy and sell timelines inside one measurement window.
 */
 type ArrivalStream struct {
+	origin time.Time
 	buy    timeline.Timeline
 	sell   timeline.Timeline
 	marked []MarkedEvent
@@ -43,6 +44,42 @@ func NewArrivalStream(buyTimes, sellTimes []time.Time) ArrivalStream {
 	}
 	stream.marked = stream.merge()
 	stream.gaps.reset(stream.marked)
+
+	if len(stream.marked) > 0 {
+		stream.origin = stream.marked[0].At
+	}
+
+	return stream
+}
+
+/*
+NewArrivalStreamFrom constructs a stream with an explicit observation origin.
+Events at or before origin are retained as excitation prehistory but are not
+counted observations. Counted arrivals therefore follow (origin, horizon].
+*/
+func NewArrivalStreamFrom(
+	origin time.Time,
+	buyTimes, sellTimes []time.Time,
+) ArrivalStream {
+	stream := NewArrivalStream(buyTimes, sellTimes)
+	stream.origin = origin
+
+	return stream
+}
+
+/*
+ObservationOrigin returns the common left endpoint for both marked sides.
+*/
+func (stream ArrivalStream) ObservationOrigin() time.Time {
+	return stream.origin
+}
+
+/*
+WithObservationOrigin returns the same arrival support with a new common
+observation origin. Events at the origin remain available as prehistory.
+*/
+func (stream ArrivalStream) WithObservationOrigin(origin time.Time) ArrivalStream {
+	stream.origin = origin
 
 	return stream
 }
@@ -137,16 +174,62 @@ func (stream ArrivalStream) Bounds() (time.Time, time.Time, bool) {
 }
 
 /*
-Span returns seconds from the first marked event to horizon.
+Span returns exposure seconds on the common interval (origin, horizon].
 */
 func (stream ArrivalStream) Span(horizon time.Time) float64 {
-	marked := stream.markedEvents()
-
-	if len(marked) == 0 || horizon.Before(marked[0].At) {
+	if stream.origin.IsZero() || !horizon.After(stream.origin) {
 		return 0
 	}
 
-	return horizon.Sub(marked[0].At).Seconds()
+	return horizon.Sub(stream.origin).Seconds()
+}
+
+func (stream ArrivalStream) observationCounts(horizon time.Time) (buy, sell int) {
+	return observationCount(stream.buy.Times(), stream.origin, horizon),
+		observationCount(stream.sell.Times(), stream.origin, horizon)
+}
+
+/*
+ObservationCounts returns side counts on the common interval (origin, horizon].
+*/
+func (stream ArrivalStream) ObservationCounts(horizon time.Time) (buy, sell int) {
+	return stream.observationCounts(horizon)
+}
+
+func observationCount(times []time.Time, origin, horizon time.Time) int {
+	count := 0
+
+	for _, eventTime := range times {
+		if !eventTime.After(origin) {
+			continue
+		}
+
+		if eventTime.After(horizon) {
+			break
+		}
+
+		count++
+	}
+
+	return count
+}
+
+func (stream ArrivalStream) observationMarked(horizon time.Time) []MarkedEvent {
+	marked := make([]MarkedEvent, 0, len(stream.marked))
+
+	for _, event := range stream.marked {
+		if !event.At.After(stream.origin) {
+			continue
+		}
+
+		if event.At.After(horizon) {
+			break
+		}
+
+		marked = append(marked, event)
+	}
+
+	return marked
 }
 
 func (stream ArrivalStream) buyIntensityAt(
@@ -182,9 +265,39 @@ func (stream ArrivalStream) sellIntensityAt(
 func (stream ArrivalStream) kernelIntegralSupport(
 	horizon time.Time, beta float64,
 ) (buy, sell float64) {
-	return decay.KernelIntegralSupport(
-			stream.buy, horizon, beta,
-		), decay.KernelIntegralSupport(
-			stream.sell, horizon, beta,
+	return observationKernelIntegralSupport(
+			stream.buy.Times(), stream.origin, horizon, beta,
+		), observationKernelIntegralSupport(
+			stream.sell.Times(), stream.origin, horizon, beta,
 		)
+}
+
+func observationKernelIntegralSupport(
+	events []time.Time,
+	origin, horizon time.Time,
+	beta float64,
+) float64 {
+	support := 0.0
+
+	for _, eventTime := range events {
+		if eventTime.After(horizon) {
+			break
+		}
+
+		lowerAge := origin.Sub(eventTime).Seconds()
+
+		if lowerAge < 0 {
+			lowerAge = 0
+		}
+
+		upperAge := horizon.Sub(eventTime).Seconds()
+
+		if upperAge <= lowerAge {
+			continue
+		}
+
+		support += decay.ExpNeg(beta, lowerAge) - decay.ExpNeg(beta, upperAge)
+	}
+
+	return support
 }

@@ -18,8 +18,9 @@ type Fit struct {
 FitConfig carries the observation horizon and optional prior.
 */
 type FitConfig struct {
-	Horizon time.Time
-	Prior   BivariateFit
+	ObservedFrom time.Time
+	Horizon      time.Time
+	Prior        BivariateFit
 }
 
 /*
@@ -68,7 +69,16 @@ func (fit *Fit) Measure(input FitInput) (FitOutput, error) {
 		))
 	}
 
-	stream := NewArrivalStream(input.XTimes, input.YTimes)
+	stream := NewArrivalStreamFrom(
+		fit.config.ObservedFrom,
+		input.XTimes,
+		input.YTimes,
+	)
+
+	if stream.ObservationOrigin().IsZero() {
+		stream = NewArrivalStream(input.XTimes, input.YTimes)
+	}
+
 	fitted := NewBivariateEstimator(fit.config.Prior).Fit(stream, fit.config.Horizon)
 
 	if !fitted.Valid() {
@@ -184,6 +194,7 @@ func (fit BivariateFit) LogLikelihood(stream ArrivalStream, horizon time.Time) f
 	state := ExcitationState{}
 	logSum, ok := state.LogLikelihoodSum(
 		marked,
+		stream.ObservationOrigin(), horizon,
 		fit.MuX, fit.MuY,
 		fit.AlphaXX, fit.AlphaXY, fit.AlphaYX, fit.AlphaYY,
 		fit.Beta,

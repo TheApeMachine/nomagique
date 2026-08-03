@@ -160,6 +160,45 @@ func TestDecaySample_MeasureTrade(t *testing.T) {
 		})
 	})
 
+	Convey("Given fading buy pressure after an adverse book-price return", t, func() {
+		sample := NewDecaySample()
+		_, ready, _, err := sample.MeasureBook(decayBookAt(100, 101, 10, 10))
+		So(err, ShouldBeNil)
+		So(ready, ShouldBeTrue)
+		_, _, _, err = sample.MeasureTrade(flow.TradeInput{
+			Symbol: "BTC/USD", Price: 100, Quantity: 10,
+			Side: flow.TradeBuy, At: time.Unix(1, 0),
+		})
+		So(err, ShouldBeNil)
+		_, ready, _, err = sample.MeasureBook(flow.BookInput{
+			Symbol: "BTC/USD", TickSize: 1,
+			Bids: []flow.BookLevel{
+				{Price: 100, Ticks: 100, Quantity: 0},
+				{Price: 99, Ticks: 99, Quantity: 10},
+			},
+			Asks: []flow.BookLevel{
+				{Price: 101, Ticks: 101, Quantity: 0},
+				{Price: 100, Ticks: 100, Quantity: 10},
+			},
+		})
+		So(err, ShouldBeNil)
+		So(ready, ShouldBeTrue)
+		input, ready, _, err := sample.MeasureTrade(flow.TradeInput{
+			Symbol: "BTC/USD", Price: 99, Quantity: 1,
+			Side: flow.TradeBuy, At: time.Unix(2, 0),
+		})
+
+		Convey("It should retain rejection while pressure fades on the trade cut", func() {
+			So(err, ShouldBeNil)
+			So(ready, ShouldBeTrue)
+			So(input.PriceReturn, ShouldBeLessThan, 0)
+			So(input.Pressure, ShouldBeLessThan, input.PressurePeak)
+			output, measureErr := equation.NewDecay().Measure(input)
+			So(measureErr, ShouldBeNil)
+			So(output.Long.Thermal, ShouldBeGreaterThan, 0)
+		})
+	})
+
 	Convey("Given a trade without a Kraken aggressor side", t, func() {
 		sample := NewDecaySample()
 		_, _, _, err := sample.MeasureTrade(flow.TradeInput{
@@ -207,16 +246,25 @@ func BenchmarkDecaySampleMeasureTrade(b *testing.B) {
 }
 
 func decayBookInput(bidQuantity float64, askQuantity float64) flow.BookInput {
+	return decayBookAt(100, 101, bidQuantity, askQuantity)
+}
+
+func decayBookAt(
+	bidPrice float64,
+	askPrice float64,
+	bidQuantity float64,
+	askQuantity float64,
+) flow.BookInput {
 	tickSize := 1.0
 
 	return flow.BookInput{
 		Symbol:   "BTC/USD",
 		TickSize: tickSize,
 		Bids: []flow.BookLevel{
-			{Price: 100, Ticks: 100, Quantity: bidQuantity},
+			{Price: bidPrice, Ticks: int64(bidPrice), Quantity: bidQuantity},
 		},
 		Asks: []flow.BookLevel{
-			{Price: 101, Ticks: 101, Quantity: askQuantity},
+			{Price: askPrice, Ticks: int64(askPrice), Quantity: askQuantity},
 		},
 	}
 }

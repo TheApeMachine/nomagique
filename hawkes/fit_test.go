@@ -91,6 +91,37 @@ func TestBivariateFit_LogLikelihood(testingTB *testing.T) {
 			So(likelihood, ShouldAlmostEqual, expected, 1e-12)
 		})
 	})
+
+	Convey("Given one left-boundary prehistory event and one counted right-boundary event", testingTB, func() {
+		origin := time.Unix(10, 0)
+		horizon := origin.Add(time.Second)
+		stream := NewArrivalStreamFrom(
+			origin,
+			[]time.Time{origin, horizon},
+			nil,
+		)
+		fit := BivariateFit{
+			MuX:     1,
+			MuY:     1,
+			AlphaXX: 1,
+			Beta:    1,
+		}
+
+		likelihood := fit.LogLikelihood(stream, horizon)
+
+		Convey("It should exclude the left event log term but retain its excitation and compensator support", func() {
+			expectedLogTerm := math.Log(1 + math.Exp(-1))
+			expectedCompensator := 2 + 1 - math.Exp(-1)
+
+			So(likelihood, ShouldAlmostEqual, expectedLogTerm-expectedCompensator, 1e-12)
+		})
+
+		Convey("It should evaluate predictable intensity at horizon before the horizon event", func() {
+			projected := fit.WithIntensitiesAt(stream, horizon)
+
+			So(projected.IntensityX, ShouldAlmostEqual, 1+math.Exp(-1), 1e-12)
+		})
+	})
 }
 
 func TestClassifyFit_Saturation(testingTB *testing.T) {

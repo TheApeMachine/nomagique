@@ -32,8 +32,8 @@ func TestNewFitContext(t *testing.T) {
 			So(ok, ShouldBeTrue)
 			So(context.SpanSec, ShouldBeGreaterThan, 0)
 			So(context.MedianGapSec, ShouldBeGreaterThan, 0)
-			So(context.TotalEvents, ShouldEqual, 7)
-			So(context.EventsX, ShouldEqual, 4)
+			So(context.TotalEvents, ShouldEqual, 6)
+			So(context.EventsX, ShouldEqual, 3)
 			So(context.EventsY, ShouldEqual, 3)
 			So(len(context.BetaCandidates), ShouldBeGreaterThan, 0)
 			So(len(context.MuXFactors), ShouldBeGreaterThan, 0)
@@ -79,6 +79,28 @@ func TestNewObservationContext(t *testing.T) {
 			So(observation.TradeWindow, ShouldEqual, complete.TradeWindow)
 			So(observation.BetaCandidates, ShouldBeEmpty)
 			So(complete.BetaCandidates, ShouldNotBeEmpty)
+		})
+	})
+
+	Convey("Given unequal side starts on a common exposure interval", t, func() {
+		origin := time.Unix(375, 0)
+		horizon := origin.Add(4 * time.Second)
+		stream := NewArrivalStreamFrom(
+			origin,
+			[]time.Time{origin, origin.Add(time.Second), horizon},
+			[]time.Time{origin.Add(2 * time.Second), origin.Add(3 * time.Second)},
+		)
+		context, ok := NewObservationContext(stream, horizon)
+
+		Convey("It should exclude the left edge, include the right edge, and share one denominator", func() {
+			So(ok, ShouldBeTrue)
+			So(context.ObservedFrom, ShouldResemble, origin)
+			So(context.Through, ShouldResemble, horizon)
+			So(context.SpanSec, ShouldEqual, 4.0)
+			So(context.EventsX, ShouldEqual, 2)
+			So(context.EventsY, ShouldEqual, 2)
+			So(context.MuXStart(), ShouldEqual, 0.5)
+			So(context.MuYStart(), ShouldEqual, 0.5)
 		})
 	})
 }

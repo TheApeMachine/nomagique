@@ -43,15 +43,24 @@ func (fit BivariateFit) LogLikelihoodGradient(
 		return math.Inf(-1), gradient, false
 	}
 
-	eventGradient := fit.eventLogLikelihoodGradient(marked, fit.Beta)
+	eventGradient := fit.eventLogLikelihoodGradient(
+		marked,
+		stream.ObservationOrigin(),
+		horizon,
+		fit.Beta,
+	)
 
 	if !eventGradient.valid {
 		return math.Inf(-1), gradient, false
 	}
 
 	buySupport, sellSupport := stream.kernelIntegralSupport(horizon, fit.Beta)
-	buySupportBeta := kernelIntegralSupportBetaDerivative(stream.buy, horizon, fit.Beta)
-	sellSupportBeta := kernelIntegralSupportBetaDerivative(stream.sell, horizon, fit.Beta)
+	buySupportBeta := kernelIntegralSupportBetaDerivative(
+		stream.buy, stream.ObservationOrigin(), horizon, fit.Beta,
+	)
+	sellSupportBeta := kernelIntegralSupportBetaDerivative(
+		stream.sell, stream.ObservationOrigin(), horizon, fit.Beta,
+	)
 	beta := fit.Beta
 
 	compensator := fit.MuX*span +
@@ -78,6 +87,7 @@ func (fit BivariateFit) LogLikelihoodGradient(
 
 func (fit BivariateFit) eventLogLikelihoodGradient(
 	marked []MarkedEvent,
+	origin, horizon time.Time,
 	beta float64,
 ) likelihoodGradient {
 	result := likelihoodGradient{valid: true}
@@ -90,6 +100,10 @@ func (fit BivariateFit) eventLogLikelihoodGradient(
 
 	for index := 0; index < len(marked); {
 		eventTime := marked[index].At
+
+		if eventTime.After(horizon) {
+			break
+		}
 
 		if haveLast && eventTime.After(lastTime) {
 			decayFactor := decay.ExpNeg(beta, eventTime.Sub(lastTime).Seconds())
@@ -107,36 +121,38 @@ func (fit BivariateFit) eventLogLikelihoodGradient(
 			end++
 		}
 
-		for _, event := range marked[index:end] {
-			switch event.Side {
-			case sideBuy:
-				lambda := fit.MuX + fit.AlphaXX*buySupport + fit.AlphaXY*sellSupport
+		if eventTime.After(origin) {
+			for _, event := range marked[index:end] {
+				switch event.Side {
+				case sideBuy:
+					lambda := fit.MuX + fit.AlphaXX*buySupport + fit.AlphaXY*sellSupport
 
-				if lambda <= 0 {
-					return likelihoodGradient{}
+					if lambda <= 0 {
+						return likelihoodGradient{}
+					}
+
+					inverse := 1 / lambda
+					lambdaBeta := fit.AlphaXX*dBuySupport + fit.AlphaXY*dSellSupport
+					result.logSum += math.Log(lambda)
+					result.muX += inverse
+					result.alphaXX += inverse * buySupport
+					result.alphaXY += inverse * sellSupport
+					result.beta += inverse * lambdaBeta
+				case sideSell:
+					lambda := fit.MuY + fit.AlphaYX*buySupport + fit.AlphaYY*sellSupport
+
+					if lambda <= 0 {
+						return likelihoodGradient{}
+					}
+
+					inverse := 1 / lambda
+					lambdaBeta := fit.AlphaYX*dBuySupport + fit.AlphaYY*dSellSupport
+					result.logSum += math.Log(lambda)
+					result.muY += inverse
+					result.alphaYX += inverse * buySupport
+					result.alphaYY += inverse * sellSupport
+					result.beta += inverse * lambdaBeta
 				}
-
-				inverse := 1 / lambda
-				lambdaBeta := fit.AlphaXX*dBuySupport + fit.AlphaXY*dSellSupport
-				result.logSum += math.Log(lambda)
-				result.muX += inverse
-				result.alphaXX += inverse * buySupport
-				result.alphaXY += inverse * sellSupport
-				result.beta += inverse * lambdaBeta
-			case sideSell:
-				lambda := fit.MuY + fit.AlphaYX*buySupport + fit.AlphaYY*sellSupport
-
-				if lambda <= 0 {
-					return likelihoodGradient{}
-				}
-
-				inverse := 1 / lambda
-				lambdaBeta := fit.AlphaYX*dBuySupport + fit.AlphaYY*dSellSupport
-				result.logSum += math.Log(lambda)
-				result.muY += inverse
-				result.alphaYX += inverse * buySupport
-				result.alphaYY += inverse * sellSupport
-				result.beta += inverse * lambdaBeta
 			}
 		}
 
@@ -157,16 +173,27 @@ func (fit BivariateFit) eventLogLikelihoodGradient(
 
 func kernelIntegralSupportBetaDerivative(
 	events timeline.Timeline,
-	horizon time.Time,
+	origin, horizon time.Time,
 	beta float64,
 ) float64 {
 	derivative := 0.0
 
 	for _, eventTime := range events.Times() {
-		remaining := horizon.Sub(eventTime).Seconds()
+		if eventTime.After(horizon) {
+			break
+		}
 
-		if remaining > 0 {
-			derivative += remaining * decay.ExpNeg(beta, remaining)
+		lowerAge := origin.Sub(eventTime).Seconds()
+
+		if lowerAge < 0 {
+			lowerAge = 0
+		}
+
+		upperAge := horizon.Sub(eventTime).Seconds()
+
+		if upperAge > lowerAge {
+			derivative += upperAge*decay.ExpNeg(beta, upperAge) -
+				lowerAge*decay.ExpNeg(beta, lowerAge)
 		}
 	}
 

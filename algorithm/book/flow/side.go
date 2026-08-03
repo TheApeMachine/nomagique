@@ -180,6 +180,19 @@ func (sideBook *SideBook) Depth() float64 {
 }
 
 /*
+Notional returns quote-currency resting depth for this side.
+*/
+func (sideBook *SideBook) Notional(tickSize float64) float64 {
+	notional := 0.0
+
+	for tick, quantity := range sideBook.levels {
+		notional += TickPrice(tick, tickSize) * quantity
+	}
+
+	return notional
+}
+
+/*
 SideWeight decays resting quantity by distance from the midpoint.
 */
 func (sideBook *SideBook) SideWeight(

@@ -2314,8 +2314,13 @@ kernel void pic_gather_update_particles(
         return;
     }
 
-    // Heat per particle: Q = m c_v T = m * e_int / ρ  (c_v cancels).
-    float heat = ((e_used > 0.0f) && (rho_safe > 0.0f)) ? (mass * e_used / rho_safe) : 0.0f;
+    // Heat per particle: Q = m c_v T = m * (e_int / ρ)  (c_v cancels).
+    // Recover specific internal energy before multiplying by extensive mass so
+    // a finite result cannot overflow in the intermediate product m * e_int.
+    float specific_internal_energy = ((e_used > 0.0f) && (rho_safe > 0.0f))
+        ? (e_used / rho_safe)
+        : 0.0f;
+    float heat = mass * specific_internal_energy;
 
     if (!isfinite(heat) || !isfinite(T) || !isfinite(u.x) || !isfinite(u.y) || !isfinite(u.z)) {
         // TAG 0x05: non-finite temperature/heat/velocity result

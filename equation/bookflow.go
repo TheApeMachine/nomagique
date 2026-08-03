@@ -21,9 +21,8 @@ type bookflowBaseline struct {
 	weightedThreshold float64
 	level1Threshold   float64
 	flatThreshold     float64
+	bookNotional      float64
 	spoofContrast     float64
-	depthGate         float64
-	balancedDepth     bool
 	spoofReady        bool
 	thinningReady     bool
 }
@@ -32,17 +31,19 @@ type bookflowBaseline struct {
 BookflowInput contains the float-only book-flow inputs.
 */
 type BookflowInput struct {
-	Weighted        float64
-	Level1          float64
-	Flat            float64
-	FlatOK          bool
-	Mid             float64
-	Spread          float64
-	TouchDepth      float64
-	TradePressure   float64
-	WeightedHistory []float64
-	Level1History   []float64
-	FlatHistory     []float64
+	Weighted            float64
+	Level1              float64
+	Flat                float64
+	FlatOK              bool
+	Mid                 float64
+	Spread              float64
+	TouchDepth          float64
+	BookNotional        float64
+	TradePressure       float64
+	WeightedHistory     []float64
+	Level1History       []float64
+	FlatHistory         []float64
+	BookNotionalHistory []float64
 }
 
 /*
@@ -103,12 +104,9 @@ func (bookflow *Bookflow) Measure(input BookflowInput) (BookflowOutput, error) {
 	}
 
 	thinning := bookflowIsBookThinning(
-		input.Weighted,
-		input.Flat,
-		input.FlatOK,
-		baseline.depthGate,
+		input.BookNotional,
+		baseline.bookNotional,
 		baseline.thinningReady,
-		baseline.balancedDepth,
 	)
 	loadedThreshold := math.Max(baseline.weightedThreshold, baseline.level1Threshold)
 	loaded := !spoofed && !thinning && input.Weighted*input.Level1 > 0 &&
@@ -120,17 +118,12 @@ func (bookflow *Bookflow) Measure(input BookflowInput) (BookflowOutput, error) {
 	loadedScore := 0.0
 
 	if loaded {
-		loadedScore = math.Abs(input.Weighted)
-
-		pressureScale := bookflowLoadedPressureScale(
+		loadedScore = bookflowLoadedScore(
 			input.Weighted,
 			input.TradePressure,
+			baseline.bookNotional,
 			loadedThreshold,
 		)
-
-		if pressureScale > 0 {
-			loadedScore *= pressureScale
-		}
 	}
 
 	spoofScore := 0.0
@@ -142,11 +135,7 @@ func (bookflow *Bookflow) Measure(input BookflowInput) (BookflowOutput, error) {
 	thinScore := 0.0
 
 	if thinning {
-		thinScore = baseline.depthGate*math.Abs(input.Weighted) - math.Abs(input.Flat)
-
-		if baseline.balancedDepth {
-			thinScore = math.Abs(input.Weighted) - math.Abs(input.Flat)
-		}
+		thinScore = (baseline.bookNotional - input.BookNotional) / baseline.bookNotional
 	}
 
 	neutralScore := 0.0
@@ -188,8 +177,6 @@ func bookflowMeasureBaseline(input BookflowInput) bookflowBaseline {
 		level1Threshold:   bookflowMedianAbsolute(input.Level1History),
 		spoofReady: len(input.WeightedHistory) >= minBookGateHistory &&
 			len(input.Level1History) >= minBookGateHistory,
-		thinningReady: len(input.WeightedHistory) >= minBookGateHistory &&
-			len(input.FlatHistory) >= minBookGateHistory,
 	}
 
 	if len(input.FlatHistory) > 0 {
@@ -202,16 +189,13 @@ func bookflowMeasureBaseline(input BookflowInput) bookflowBaseline {
 		baseline.spoofContrast = baseline.weightedThreshold / denominator
 	}
 
-	if !baseline.thinningReady {
+	if len(input.BookNotionalHistory) <= minBookGateHistory {
 		return baseline
 	}
 
-	if baseline.weightedThreshold <= 0 {
-		baseline.balancedDepth = baseline.flatThreshold <= 0
-		return baseline
-	}
-
-	baseline.depthGate = baseline.flatThreshold / baseline.weightedThreshold
+	priorBookNotional := input.BookNotionalHistory[:len(input.BookNotionalHistory)-1]
+	baseline.bookNotional, baseline.thinningReady = statistic.MedianOf(priorBookNotional)
+	baseline.thinningReady = baseline.thinningReady && baseline.bookNotional > 0
 
 	return baseline
 }
@@ -234,21 +218,27 @@ func bookflowMedianAbsolute(values []float64) float64 {
 	return median
 }
 
-func bookflowLoadedPressureScale(weighted, tradePressure, weightedThreshold float64) float64 {
-	if weightedThreshold <= 0 {
-		return 1
+func bookflowLoadedScore(
+	weighted, tradePressure, bookNotional, weightedThreshold float64,
+) float64 {
+	loadedScore := math.Abs(weighted)
+
+	if bookNotional <= 0 || weightedThreshold <= 0 || tradePressure == 0 {
+		return loadedScore
 	}
 
-	confirmWeight := math.Abs(tradePressure) / (math.Abs(tradePressure) + weightedThreshold)
+	pressureRatio := math.Abs(tradePressure) / bookNotional
+	confirmation := pressureRatio / (pressureRatio + weightedThreshold)
+
 	if weighted*tradePressure > 0 {
-		return 1 + confirmWeight
+		return loadedScore + confirmation - loadedScore*confirmation
 	}
 
 	if weighted*tradePressure < 0 {
-		return 1 - confirmWeight
+		return loadedScore * weightedThreshold / (weightedThreshold + pressureRatio)
 	}
 
-	return 1
+	return loadedScore
 }
 
 func bookflowIsSpoofSkew(
@@ -271,25 +261,14 @@ func bookflowIsSpoofSkew(
 }
 
 func bookflowIsBookThinning(
-	weighted, flat float64,
-	flatOK bool,
-	depthGate float64,
+	bookNotional, baselineNotional float64,
 	ready bool,
-	balancedHistory bool,
 ) bool {
-	if !ready || !flatOK || math.Abs(weighted) <= 0 {
+	if !ready || bookNotional <= 0 || baselineNotional <= 0 {
 		return false
 	}
 
-	if balancedHistory {
-		return math.Abs(flat) < math.Abs(weighted)
-	}
-
-	if depthGate <= 0 {
-		return false
-	}
-
-	return math.Abs(flat) < depthGate*math.Abs(weighted)
+	return bookNotional < baselineNotional
 }
 
 func bookflowClassify(spoofed, thinning, loaded bool) int {

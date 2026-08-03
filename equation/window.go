@@ -64,13 +64,27 @@ func (window *ignitionWindow) observe(
 		))
 	}
 
-	if err := window.advance(input, spread); err != nil {
+	candidate := window.clone()
+
+	if err := candidate.advance(input, spread); err != nil {
 		return IgnitionOutput{}, false, 0, err
 	}
 
-	window.spreads = window.appendPositive(window.spreads, spread)
+	candidate.spreads = candidate.appendPositive(candidate.spreads, spread)
+	*window = candidate
 
 	return window.compose(spread), window.ready(), window.maturity(), nil
+}
+
+func (window *ignitionWindow) clone() ignitionWindow {
+	candidate := *window
+	candidate.deltas = append([]float64(nil), window.deltas...)
+	candidate.rates = append([]float64(nil), window.rates...)
+	candidate.returns = append([]float64(nil), window.returns...)
+	candidate.precursors = append([]float64(nil), window.precursors...)
+	candidate.spreads = append([]float64(nil), window.spreads...)
+
+	return candidate
 }
 
 /*
@@ -87,13 +101,13 @@ func (window *ignitionWindow) advance(input IgnitionInput, spread float64) error
 		}
 	}
 
-	window.barVolume += input.Volume
-	window.deltas = window.appendPositive(window.deltas, input.Volume)
-
 	barTarget, targetReady := statistic.MedianOf(window.deltas)
+	window.barVolume += input.Volume
 
 	if !targetReady || barTarget <= 0 || window.barVolume < barTarget ||
 		!window.haveTime || !input.At.After(window.barOpenTime) {
+		window.deltas = window.appendPositive(window.deltas, input.Volume)
+
 		return nil
 	}
 
@@ -106,6 +120,7 @@ func (window *ignitionWindow) advance(input IgnitionInput, spread float64) error
 		return err
 	}
 
+	window.deltas = window.appendPositive(window.deltas, input.Volume)
 	window.barVolume = 0
 
 	return nil
@@ -139,7 +154,7 @@ func (window *ignitionWindow) closeBar(
 
 	window.rates = window.appendPositive(window.rates, barRate)
 	window.returns = window.appendNonNegative(window.returns, math.Abs(priceMove))
-	window.precursors = window.appendPositive(window.precursors, priceMove)
+	window.precursors = window.appendPositive(window.precursors, math.Abs(priceMove))
 	window.prevClose = closePrice
 	window.barOpenTime = at
 	window.bars++
@@ -163,40 +178,98 @@ func (window *ignitionWindow) score(
 	moveBaseline, moveReady := statistic.MedianOf(window.returns)
 
 	rvol := ignitionRatio(barRate, rateBaseline, rateReady)
-	precursor := ignitionRatio(math.Max(0, priceMove), precursorBaseline, precursorReady)
+	buyPrecursor := ignitionRatio(
+		math.Max(0, priceMove),
+		precursorBaseline,
+		precursorReady,
+	)
+	sellPrecursor := ignitionRatio(
+		math.Max(0, -priceMove),
+		precursorBaseline,
+		precursorReady,
+	)
 	compression := 0.0
 
 	if spreadReady && spreadBaseline > 0 {
 		compression = math.Max(0, 1-spread/spreadBaseline)
 	}
 
-	rejection := ignitionRatio(math.Max(0, -priceMove), moveBaseline, moveReady)
-	output, err := ignitionFamilies(
+	buyRejection := ignitionRatio(math.Max(0, -priceMove), moveBaseline, moveReady)
+	sellRejection := ignitionRatio(math.Max(0, priceMove), moveBaseline, moveReady)
+	rvolScale := ignitionRatioScale(window.rates, rateBaseline)
+	precursorScale := ignitionRatioScale(window.precursors, precursorBaseline)
+	compressionScale := ignitionCompressionScale(window.spreads, spreadBaseline)
+	buy, err := ignitionFamilies(
 		rvol,
-		precursor,
+		buyPrecursor,
 		compression,
-		ignitionRatioScale(window.rates, rateBaseline),
-		ignitionRatioScale(window.precursors, precursorBaseline),
-		ignitionCompressionScale(window.spreads, spreadBaseline),
+		rvolScale,
+		precursorScale,
+		compressionScale,
 	)
 
 	if err != nil {
 		return err
 	}
 
-	output.Exhaustion = ignitionExhaustion(
+	sell, err := ignitionFamilies(
+		rvol,
+		sellPrecursor,
+		compression,
+		rvolScale,
+		precursorScale,
+		compressionScale,
+	)
+
+	if err != nil {
+		return err
+	}
+
+	buy.Exhaustion = ignitionExhaustion(
 		window.lastRVOL,
 		rvol,
-		rejection,
+		buyRejection,
 		ignitionRatioScale(window.returns, moveBaseline),
 	)
-	output.Strength = max(
-		output.Ignition,
-		output.Compression,
-		output.Trend,
-		output.Exhaustion,
+	buy.Strength = max(
+		buy.Ignition,
+		buy.Compression,
+		buy.Trend,
+		buy.Exhaustion,
 	)
-	output.Value = output.Strength
+	buy.Value = buy.Strength
+	sell.Exhaustion = ignitionExhaustion(
+		window.lastRVOL,
+		rvol,
+		sellRejection,
+		ignitionRatioScale(window.returns, moveBaseline),
+	)
+	sell.Strength = max(
+		sell.Ignition,
+		sell.Compression,
+		sell.Trend,
+		sell.Exhaustion,
+	)
+	sell.Value = sell.Strength
+	legacy := buy
+
+	if sell.Strength > buy.Strength {
+		legacy = sell
+	}
+
+	output := IgnitionOutput{
+		Value:       legacy.Value,
+		RVOL:        rvol,
+		Precursor:   legacy.Precursor,
+		Compression: legacy.Compression,
+		Ignition:    legacy.Ignition,
+		Trend:       legacy.Trend,
+		Exhaustion:  legacy.Exhaustion,
+		Strength:    legacy.Strength,
+		Category:    legacy.Category,
+		Buy:         buy,
+		Sell:        sell,
+	}
 
 	if math.IsNaN(output.Strength) || math.IsInf(output.Strength, 0) {
 		return errnie.Error(errnie.Err(

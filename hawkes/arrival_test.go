@@ -163,3 +163,32 @@ func TestArrivalStream_Span(testingTB *testing.T) {
 		})
 	})
 }
+
+func TestArrivalStream_ObservationCounts(testingTB *testing.T) {
+	Convey("Given prehistory, a left-boundary event, and a right-boundary event", testingTB, func() {
+		origin := time.Unix(900, 0)
+		horizon := origin.Add(2 * time.Second)
+		stream := NewArrivalStreamFrom(
+			origin,
+			[]time.Time{
+				origin.Add(-time.Second),
+				origin,
+				origin.Add(time.Second),
+			},
+			[]time.Time{
+				origin.Add(1500 * time.Millisecond),
+				horizon,
+				horizon.Add(time.Nanosecond),
+			},
+		)
+
+		buyCount, sellCount := stream.ObservationCounts(horizon)
+
+		Convey("It should count exactly (origin, horizon] on both sides", func() {
+			So(stream.ObservationOrigin(), ShouldResemble, origin)
+			So(stream.Span(horizon), ShouldEqual, 2.0)
+			So(buyCount, ShouldEqual, 1)
+			So(sellCount, ShouldEqual, 2)
+		})
+	})
+}

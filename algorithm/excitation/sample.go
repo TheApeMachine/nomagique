@@ -24,9 +24,10 @@ Input carries a chronological marked stream into Hawkes fitting without
 reconstructing exchange timestamps through floating-point seconds.
 */
 type Input struct {
-	Symbol  string
-	Horizon time.Time
-	Stream  hawkes.ArrivalStream
+	Symbol       string
+	ObservedFrom time.Time
+	Horizon      time.Time
+	Stream       hawkes.ArrivalStream
 }
 
 /*
@@ -40,6 +41,7 @@ type Sample struct {
 
 type window struct {
 	arrivals *hawkes.ArrivalWindow
+	origin   time.Time
 }
 
 /*
@@ -76,6 +78,10 @@ func (sample *Sample) MeasureArrival(
 	}
 
 	window := sample.window(input.Symbol)
+
+	if window.origin.IsZero() {
+		window.origin = arrival
+	}
 
 	if input.Side == "buy" {
 		window.arrivals.AppendBuy(arrival)
@@ -119,7 +125,7 @@ func (sample *Sample) window(symbol string) *window {
 
 func (window *window) input(symbol string) (Input, bool, error) {
 	stream := window.arrivals.Stream()
-	_, horizon, ok := stream.Bounds()
+	observedFrom, horizon, ok := stream.Bounds()
 
 	if !ok {
 		return Input{}, false, nil
@@ -132,13 +138,18 @@ func (window *window) input(symbol string) (Input, bool, error) {
 	}
 
 	if context.TradeWindow > 0 {
-		window.arrivals.RetainFrom(horizon.Add(-context.TradeWindow))
-		stream = window.arrivals.Stream()
+		observedFrom = horizon.Add(-context.TradeWindow)
+
+		if observedFrom.Before(window.origin) {
+			observedFrom = window.origin
+		}
 	}
+	stream = stream.WithObservationOrigin(observedFrom)
 
 	return Input{
-		Symbol:  symbol,
-		Horizon: horizon,
-		Stream:  stream,
+		Symbol:       symbol,
+		ObservedFrom: observedFrom,
+		Horizon:      horizon,
+		Stream:       stream,
 	}, true, nil
 }

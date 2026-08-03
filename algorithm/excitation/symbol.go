@@ -107,9 +107,28 @@ func (symbol *symbol) observation(
 	stream hawkes.ArrivalStream,
 	horizon time.Time,
 ) Outcome {
-	observedFrom, _, _ := stream.Bounds()
-	buyCount := len(stream.BuyTimes())
-	sellCount := len(stream.SellTimes())
+	observedFrom := stream.ObservationOrigin()
+	context, ready := hawkes.NewObservationContext(stream, horizon)
+
+	if ready {
+		return symbol.outcome(context, stream, horizon, hawkes.BivariateFit{})
+	}
+
+	buyCount, sellCount := stream.ObservationCounts(horizon)
+
+	if horizon.Equal(observedFrom) {
+		for _, eventTime := range stream.BuyTimes() {
+			if eventTime.Equal(horizon) {
+				buyCount++
+			}
+		}
+
+		for _, eventTime := range stream.SellTimes() {
+			if eventTime.Equal(horizon) {
+				sellCount++
+			}
+		}
+	}
 
 	return Outcome{
 		ObservedFrom:   observedFrom,
@@ -149,8 +168,8 @@ func (symbol *symbol) pendingReason(
 	context hawkes.FitContext,
 	stream hawkes.ArrivalStream,
 ) string {
-	buyCount := len(stream.BuyTimes())
-	sellCount := len(stream.SellTimes())
+	buyCount := context.EventsX
+	sellCount := context.EventsY
 
 	if buyCount < context.MinPerSide || sellCount < context.MinPerSide {
 		return fmt.Sprintf(
@@ -178,13 +197,14 @@ func (symbol *symbol) requestFit(
 	}
 
 	prior := symbol.model
+	origin := stream.ObservationOrigin()
 	buyTimes := append([]time.Time(nil), stream.BuyTimes()...)
 	sellTimes := append([]time.Time(nil), stream.SellTimes()...)
 
 	go func() {
 		defer symbol.fitting.Store(false)
 
-		snapshot := hawkes.NewArrivalStream(buyTimes, sellTimes)
+		snapshot := hawkes.NewArrivalStreamFrom(origin, buyTimes, sellTimes)
 		epoch, ok := symbol.computeFit(context, snapshot, horizon, prior)
 
 		if !ok {
@@ -237,4 +257,3 @@ func (symbol *symbol) peekPending() bool {
 
 	return symbol.pending != nil
 }
-

@@ -136,7 +136,6 @@ func (window *decayWindow) ingestTrade(input flow.TradeInput) error {
 		return err
 	}
 
-	window.lastFeatures.PriceReturn = 0
 	window.lastFeatures.Pressure = window.tradePressure
 	window.lastFeatures.PressurePeak = pressurePeak
 	window.lastFeatures.PressureTrough = pressureTrough

@@ -11,6 +11,8 @@ const bivariateParamCount = 7
 FitContext holds data-derived bounds for one bivariate Hawkes fit.
 */
 type FitContext struct {
+	ObservedFrom          time.Time
+	Through               time.Time
 	SpanSec               float64
 	MedianGapSec          float64
 	GapLowerSec           float64
@@ -58,7 +60,7 @@ NewObservationContext derives the exact fit statistics needed between refits.
 It omits optimizer candidate grids, which are constructed only by NewFitContext.
 */
 func NewObservationContext(stream ArrivalStream, horizon time.Time) (FitContext, bool) {
-	marked := stream.markedEvents()
+	marked := stream.observationMarked(horizon)
 
 	if len(marked) < 2 {
 		return FitContext{}, false
@@ -70,7 +72,8 @@ func NewObservationContext(stream ArrivalStream, horizon time.Time) (FitContext,
 		return FitContext{}, false
 	}
 
-	gaps := stream.gaps
+	gaps := newGapSummary(len(marked))
+	gaps.reset(marked)
 
 	if len(gaps.values) == 0 {
 		return FitContext{}, false
@@ -99,12 +102,15 @@ func NewObservationContext(stream ArrivalStream, horizon time.Time) (FitContext,
 
 	gapSpread := upperGap - lowerGap
 	gapCV := gapSpread / medianGap
+	buyCount, sellCount := stream.observationCounts(horizon)
 	tune := arrivalTune{
-		totalEvents: stream.buy.Len() + stream.sell.Len(),
-		eventsX:     stream.buy.Len(),
-		eventsY:     stream.sell.Len(),
+		totalEvents: buyCount + sellCount,
+		eventsX:     buyCount,
+		eventsY:     sellCount,
 	}
 	return FitContext{
+		ObservedFrom: stream.ObservationOrigin(),
+		Through:      horizon,
 		SpanSec:      span,
 		MedianGapSec: medianGap,
 		GapLowerSec:  lowerGap,
@@ -185,17 +191,18 @@ func (context FitContext) withSearchGrid() (FitContext, bool) {
 EnoughEvents reports whether the stream satisfies context minima.
 */
 func (context FitContext) EnoughEvents(stream ArrivalStream) bool {
-	total := stream.buy.Len() + stream.sell.Len()
+	buyCount, sellCount := stream.observationCounts(context.Through)
+	total := buyCount + sellCount
 
 	if total < context.MinFitEvents {
 		return false
 	}
 
-	if stream.buy.Len() < context.MinPerSide {
+	if buyCount < context.MinPerSide {
 		return false
 	}
 
-	return stream.sell.Len() >= context.MinPerSide
+	return sellCount >= context.MinPerSide
 }
 
 /*

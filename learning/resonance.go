@@ -41,6 +41,15 @@ type ResonanceConfig struct {
 /*
 AdaptiveResonanceConfig derives every single hyperparameter dynamically
 from the system-wide learning pace (alpha) and the physical depth of the network.
+
+Two families of parameter live in here and they do not behave the same way under
+a later SetAlpha. Pace terms (the learning rates, the precision tracking weight,
+the regularizer strengths) are what alpha is for, and retuning them mid-stream is
+the intended effect. Geometry terms (StateClip, TopDownInitMix, the inference
+step counts) describe the shape of the state space the retained weights and
+precisions were estimated in; moving those mid-stream changes the problem rather
+than the pace at which it is solved. SetAlpha therefore re-derives only the pace
+family. See ResonanceConfig.adoptPace.
 */
 func AdaptiveResonanceConfig(
 	alpha float64, arch []int,
@@ -52,7 +61,20 @@ func AdaptiveResonanceConfig(
 	temporalWeight := alpha / (alpha + 1.0/depthFloat)
 	earlyStopPatience := int(math.Max(1, math.Ceil(math.Sqrt(depthFloat))))
 	gradClip := alpha * depthFloat
-	stateClip := depthFloat / alpha
+
+	/*
+		StateClip bounds the latent magnitude. Deriving it as depth/alpha makes a
+		faster learning pace imply a tighter state space, which is backwards and
+		couples the clip to the controller: a pace that rose by 30x would shrink
+		the admissible latent range by the same factor and clip states that the
+		retained weights were fit against. The bound belongs to the activation
+		geometry instead. Every latent below the top is a tanh image bounded by 1,
+		and the merge in initializeLatents is a convex combination of two such
+		images, so a bound of depth admits the full reachable range with room for
+		the transient excursions inference makes on the way to a settled state,
+		and is invariant to pace.
+	*/
+	stateClip := depthFloat
 
 	return ResonanceConfig{
 		MaxInferenceSteps:  depth * 8,
@@ -99,6 +121,8 @@ type ResonanceManifold struct {
 	temporalVar           *mat.Dense
 	temporalPrecision     *mat.Dense
 	taskVar               *mat.Dense
+	taskScale             *mat.Dense
+	taskScaleReady        bool
 	taskPrecision         *mat.Dense
 	workspace             *resonanceWorkspace
 	streamLearn           bool
@@ -165,22 +189,33 @@ func NewResonanceManifold(
 
 	var taskWeights *mat.Dense
 	var taskVar *mat.Dense
+	var taskScale *mat.Dense
 	var taskPrecision *mat.Dense
 
 	if targetDim > 0 {
-		scaleV := math.Sqrt(2.0 / float64(topDim+targetDim))
-		dataV := make([]float64, targetDim*topDim)
-
-		for index := range dataV {
-			dataV[index] = rng.NormFloat64() * scaleV
-		}
-
-		taskWeights = mat.NewDense(targetDim, topDim, dataV)
+		/*
+			The head is linear and fits a target on the caller's own scale, so it
+			starts at zero rather than at a random draw. A random head is a
+			nonzero forecast asserted before a single sample has been seen, and
+			with the small-magnitude targets this head is built for that noise
+			can exceed the signal it will eventually learn. Zero forecasts
+			nothing until the data says otherwise, and the top latent it reads
+			from is already randomly projected, so no symmetry needs breaking
+			here.
+		*/
+		taskWeights = mat.NewDense(targetDim, topDim, nil)
 		taskVar = mat.NewDense(targetDim, 1, nil)
+		taskScale = mat.NewDense(targetDim, 1, nil)
 		taskPrecision = mat.NewDense(targetDim, 1, nil)
 
-		for rowIndex := 0; rowIndex < targetDim; rowIndex++ {
+		for rowIndex := range targetDim {
 			taskVar.Set(rowIndex, 0, 1.0)
+
+			/*
+				taskScale holds a log variance, so zero is unit scale. It is
+				replaced outright by the first observation regardless.
+			*/
+			taskScale.Set(rowIndex, 0, 0.0)
 			taskPrecision.Set(rowIndex, 0, 1.0)
 		}
 	}
@@ -194,7 +229,7 @@ func NewResonanceManifold(
 	temporalVar := mat.NewDense(topDim, 1, nil)
 	temporalPrecision := mat.NewDense(topDim, 1, nil)
 
-	for rowIndex := 0; rowIndex < topDim; rowIndex++ {
+	for rowIndex := range topDim {
 		temporalVar.Set(rowIndex, 0, 1.0)
 		temporalPrecision.Set(rowIndex, 0, 1.0)
 	}
@@ -213,6 +248,7 @@ func NewResonanceManifold(
 		temporalVar:           temporalVar,
 		temporalPrecision:     temporalPrecision,
 		taskVar:               taskVar,
+		taskScale:             taskScale,
 		taskPrecision:         taskPrecision,
 		workspace:             newResonanceWorkspace(arch, targetDim),
 		streamLearn:           true,
@@ -238,15 +274,23 @@ func (rm *ResonanceManifold) ResetState(resetPrecision bool) {
 			}
 		}
 		topDim := rm.arch[len(rm.arch)-1]
-		for rowIndex := 0; rowIndex < topDim; rowIndex++ {
+		for rowIndex := range topDim {
 			rm.temporalVar.Set(rowIndex, 0, 1.0)
 			rm.temporalPrecision.Set(rowIndex, 0, 1.0)
 		}
 		if rm.targetDim > 0 {
 			for rowIndex := 0; rowIndex < rm.targetDim; rowIndex++ {
 				rm.taskVar.Set(rowIndex, 0, 1.0)
+				rm.taskScale.Set(rowIndex, 0, 0.0)
 				rm.taskPrecision.Set(rowIndex, 0, 1.0)
 			}
+
+			/*
+				The retained scale is discarded with the precisions it
+				normalizes, so the next sample re-adopts the target scale rather
+				than relaxing toward it from a stale one.
+			*/
+			rm.taskScaleReady = false
 		}
 	}
 }
@@ -439,18 +483,20 @@ func (rm *ResonanceManifold) Learn(target []float64) error {
 
 	if targetCol != nil && rm.V != nil {
 		taskPred := rm.workspace.taskPred
-		taskPred.Mul(rm.V, rm.z[topIndex])
-		denseApplyTanhInPlace(taskPred)
+		rm.taskPredictionInto(taskPred)
 
 		taskError := rm.workspace.taskError
 		taskError.Sub(targetCol, taskPred)
 
+		/*
+			The head is linear, so its local derivative is one and the error is
+			the whole signal. Precision still weights it, which is what lets a
+			target whose residual scale is orders of magnitude below the
+			generative errors contribute a comparable gradient instead of being
+			swamped by them.
+		*/
 		taskSignal := rm.workspace.taskSignal
-		denseApplyOneMinusSquareInto(taskSignal, taskPred)
-
-		precision := rm.taskPrecisionVec()
-		taskSignal.MulElem(taskSignal, taskError)
-		taskSignal.MulElem(taskSignal, precision)
+		taskSignal.MulElem(taskError, rm.taskPrecisionVec())
 
 		update := rm.workspace.taskUpdate
 		denseOuterColsInto(update, taskSignal, rm.z[topIndex], 1.0)
@@ -463,9 +509,16 @@ func (rm *ResonanceManifold) Learn(target []float64) error {
 		update.Scale(rm.cfg.LrGenerative, update)
 		rm.V.Add(rm.V, update)
 
-		if rm.cfg.WeightDecay > 0 {
-			rm.V.Scale(1.0-rm.cfg.LrGenerative*rm.cfg.WeightDecay, rm.V)
-		}
+		/*
+			Weight decay is deliberately not applied to V. The generative and
+			recognition links are overparameterized reconstructions where decay
+			regularizes; V is a single row fitting a small-magnitude target, and
+			decaying it toward zero competes directly with the signal on the same
+			order as the signal itself. A head pulled to zero forecasts zero,
+			which reads downstream as a confident no-edge rather than as an
+			unlearned one. Regularization for the head is the precision term
+			above, which scales with the residual the head actually incurs.
+		*/
 	}
 
 	if rm.prevTop != nil {
@@ -508,7 +561,49 @@ func (rm *ResonanceManifold) Learn(target []float64) error {
 	return nil
 }
 
+/*
+Energy is the variational objective the inference line search minimizes. It is
+the sum of precision-weighted prediction error and the regularizer penalties
+that shape the latent state.
+
+Do not report this as a measure of how well the network is predicting. The
+regularizer terms are a function of the latent magnitudes and of alpha, not of
+market surprise, so a pace change moves this number without any change in
+prediction quality. PredictionEnergy isolates the part that is prediction error.
+*/
 func (rm *ResonanceManifold) Energy() float64 {
+	energy := rm.PredictionEnergy()
+
+	if rm.cfg.LatentDecay > 0 {
+		for layerIndex := 1; layerIndex < len(rm.z); layerIndex++ {
+			norm := denseColNorm(rm.z[layerIndex])
+			energy += 0.5 * rm.cfg.LatentDecay * norm * norm
+		}
+	}
+
+	if rm.cfg.Sparsity > 0 {
+		for layerIndex := 1; layerIndex < len(rm.z); layerIndex++ {
+			rowCount, _ := rm.z[layerIndex].Dims()
+
+			for rowIndex := range rowCount {
+				energy += rm.cfg.Sparsity * math.Abs(rm.z[layerIndex].At(rowIndex, 0))
+			}
+		}
+	}
+
+	return energy
+}
+
+/*
+PredictionEnergy is the precision-weighted prediction error alone: the
+generative residual at every link plus the temporal residual at the top,
+excluding the latent-decay and sparsity penalties that Energy adds.
+
+This is the quantity to report and to compare across ticks. It responds only to
+how well the network predicts, so unlike Energy it does not move when the
+learning pace is retuned.
+*/
+func (rm *ResonanceManifold) PredictionEnergy() float64 {
 	_, layerErrors := rm.predictAdjacentLayers()
 	energy := 0.0
 
@@ -541,22 +636,6 @@ func (rm *ResonanceManifold) Energy() float64 {
 		}
 	}
 
-	if rm.cfg.LatentDecay > 0 {
-		for layerIndex := 1; layerIndex < len(rm.z); layerIndex++ {
-			norm := denseColNorm(rm.z[layerIndex])
-			energy += 0.5 * rm.cfg.LatentDecay * norm * norm
-		}
-	}
-
-	if rm.cfg.Sparsity > 0 {
-		for layerIndex := 1; layerIndex < len(rm.z); layerIndex++ {
-			rowCount, _ := rm.z[layerIndex].Dims()
-			for rowIndex := 0; rowIndex < rowCount; rowIndex++ {
-				energy += rm.cfg.Sparsity * math.Abs(rm.z[layerIndex].At(rowIndex, 0))
-			}
-		}
-	}
-
 	return energy
 }
 
@@ -571,15 +650,30 @@ func (rm *ResonanceManifold) ReconstructionError() float64 {
 	return denseColNorm(diff)
 }
 
+/*
+taskPredictionInto evaluates the supervised head y = V * z into dst.
+
+The head is deliberately linear, unlike every generative and recognition link in
+the network, which are tanh. Those links reconstruct latent states that are
+themselves bounded tanh images, so squashing them is what makes prediction and
+target commensurate. The supervised target is not such a state: it is whatever
+scale the caller's regression lives on. For a log return that scale is order
+1e-4, which sits so deep inside tanh's linear region that the squash contributes
+nothing but a systematically attenuated gradient, while capping the head at +/-1
+would silently truncate any caller whose target is larger. A linear head fits the
+target on its own scale and leaves saturation to the caller who chose it.
+*/
+func (rm *ResonanceManifold) taskPredictionInto(dst *mat.Dense) {
+	dst.Mul(rm.V, rm.z[len(rm.z)-1])
+}
+
 func (rm *ResonanceManifold) TaskPrediction() []float64 {
 	if rm.V == nil || rm.targetDim <= 0 {
 		return nil
 	}
 
-	topIndex := len(rm.z) - 1
 	taskPred := rm.workspace.taskPred
-	taskPred.Mul(rm.V, rm.z[topIndex])
-	denseApplyTanhInPlace(taskPred)
+	rm.taskPredictionInto(taskPred)
 
 	rowCount, _ := taskPred.Dims()
 	prediction := make([]float64, rowCount)
@@ -604,11 +698,43 @@ func (rm *ResonanceManifold) LatentState() []float64 {
 
 /*
 ResonanceLayerWire exports one settled layer for UI x-ray visualization.
+
+Temporal reports whether ErrorNorm is a temporal mismatch rather than a
+generative one. Only the top layer carries a temporal error, because it is the
+only layer no other layer predicts top-down.
 */
 type ResonanceLayerWire struct {
 	State      []float64 `json:"state"`
 	Prediction []float64 `json:"prediction"`
 	ErrorNorm  float64   `json:"errorNorm"`
+	Temporal   bool      `json:"temporal"`
+}
+
+/*
+TemporalError reports the norm of the top layer's temporal prediction residual,
+z_top - tanh(A * z_prev), and whether that residual is defined at all.
+
+The top latent has no generative error term: layerErrors is indexed by link, of
+which there are len(arch)-1, so the top layer is not predicted from above by any
+weight matrix. Its prediction error is temporal, carried by A across ticks, and
+it is undefined on the very first settle because no prior top state exists yet.
+Callers driving a controller off this must honour the ok flag, because a zero
+returned as if it were a measurement reads as perfect temporal prediction and
+inverts whatever ratio it feeds.
+*/
+func (rm *ResonanceManifold) TemporalError() (float64, bool) {
+	if rm.prevTop == nil {
+		return 0, false
+	}
+
+	topPrior := rm.workspace.topPrior
+	topPrior.Mul(rm.A, rm.prevTop)
+	denseApplyTanhInPlace(topPrior)
+
+	temporalError := rm.workspace.temporalError
+	temporalError.Sub(rm.z[len(rm.z)-1], topPrior)
+
+	return denseColNorm(temporalError), true
 }
 
 /*
@@ -621,6 +747,8 @@ func (rm *ResonanceManifold) WireSnapshot() (
 ) {
 	predictions, layerErrors := rm.predictAdjacentLayers()
 	layers = make([]ResonanceLayerWire, len(rm.z))
+	topIndex := len(rm.z) - 1
+	temporalNorm, hasTemporal := rm.TemporalError()
 
 	for layerIndex := range rm.z {
 		stateMatrix := rm.z[layerIndex]
@@ -628,7 +756,7 @@ func (rm *ResonanceManifold) WireSnapshot() (
 		state := make([]float64, rowCount)
 		prediction := make([]float64, rowCount)
 
-		for rowIndex := 0; rowIndex < rowCount; rowIndex++ {
+		for rowIndex := range rowCount {
 			state[rowIndex] = stateMatrix.At(rowIndex, 0)
 
 			if layerIndex < len(predictions) {
@@ -637,15 +765,24 @@ func (rm *ResonanceManifold) WireSnapshot() (
 		}
 
 		errorNorm := 0.0
+		temporal := false
 
-		if layerIndex < len(layerErrors) {
+		switch {
+		case layerIndex < len(layerErrors):
 			errorNorm = denseColNorm(layerErrors[layerIndex])
+		case layerIndex == topIndex && hasTemporal:
+			// The top layer's only residual is the temporal one. Reporting it
+			// here is what makes the wire's last row a measurement rather than
+			// a structural zero.
+			errorNorm = temporalNorm
+			temporal = true
 		}
 
 		layers[layerIndex] = ResonanceLayerWire{
 			State:      state,
 			Prediction: prediction,
 			ErrorNorm:  errorNorm,
+			Temporal:   temporal,
 		}
 	}
 
@@ -672,6 +809,33 @@ func (rm *ResonanceManifold) temporalPrecisionVec() *mat.Dense {
 
 func (rm *ResonanceManifold) taskPrecisionVec() *mat.Dense {
 	return rm.taskPrecision
+}
+
+/*
+TaskPrecision reports how reliable the supervised head currently is, relative to
+its own retained residual scale, and whether it has seen enough to say.
+
+The value is scale-free by construction: one means the head is predicting at its
+typical accuracy, above one means it is currently doing better than its own
+history, below one means worse. That makes it the quantity a caller should use
+to decide how far ahead to trust the head, because it means the same thing
+whatever scale the caller's target is on and whatever the market is doing.
+
+ok is false before any supervised sample has been resolved, when the head has no
+basis for a claim at all.
+*/
+func (rm *ResonanceManifold) TaskPrecision() (float64, bool) {
+	if rm.V == nil || rm.targetDim <= 0 || !rm.taskScaleReady {
+		return 0, false
+	}
+
+	total := 0.0
+
+	for rowIndex := range rm.targetDim {
+		total += rm.taskPrecision.At(rowIndex, 0)
+	}
+
+	return total / float64(rm.targetDim), true
 }
 
 func (rm *ResonanceManifold) predictAdjacentLayers() ([]*mat.Dense, []*mat.Dense) {
@@ -898,8 +1062,7 @@ func (rm *ResonanceManifold) updatePrecision(layerErrors []*mat.Dense, targetCol
 
 	if targetCol != nil && rm.V != nil {
 		taskPred := rm.workspace.taskPred
-		taskPred.Mul(rm.V, rm.z[topIndex])
-		denseApplyTanhInPlace(taskPred)
+		rm.taskPredictionInto(taskPred)
 
 		taskError := rm.workspace.taskError
 		taskError.Sub(targetCol, taskPred)
@@ -920,26 +1083,161 @@ func (rm *ResonanceManifold) updatePrecision(layerErrors []*mat.Dense, targetCol
 				)
 			}
 
-			rawPrecision := 1.0 / variance
+			/*
+				The task precision is normalized by the head's own retained
+				residual scale rather than taken as a raw inverse variance.
+
+				The generative and temporal precisions weight tanh-bounded
+				residuals, so an absolute inverse variance lands inside
+				[PrecisionMin, PrecisionMax] and the clamp is a guard. The task
+				residual carries whatever scale the caller's target has. A log
+				return residual of 1e-4 has variance 1e-8 and an absolute
+				precision of 1e8, which the clamp truncates to PrecisionMax for
+				every row on every tick, discarding exactly the per-row
+				reliability the term exists to express.
+
+				Dividing by the running scale makes the ratio dimensionless: it
+				reads one when a row is at its typical residual, above one when
+				that row is currently predicting better than its own history, and
+				below one when it is predicting worse. The clamp then bounds a
+				relative reliability, which is scale-free, and the same bounds
+				mean the same thing for a log return as for a percentage.
+
+				The scale is tracked as a geometric mean, an average of the log
+				variance, rather than an arithmetic one. A residual variance
+				spans orders of magnitude as the head converges, and it
+				approaches its resting level from above over many samples. An
+				arithmetic mean of such a sequence is dominated by the largest
+				values it has seen, so it lags a falling variance persistently,
+				the ratio sits above one for the whole of convergence, and the
+				precision pins at the clamp exactly as an unnormalized inverse
+				variance would. In log space the same sequence is a decaying
+				level rather than a decaying magnitude, the mean tracks it
+				without a systematic lag, and the ratio centres on one.
+
+				The first observation is adopted outright. Any seed is a guess
+				about the caller's target scale, and a guess wrong by orders of
+				magnitude would take the whole of convergence to forget.
+			*/
+			logVariance := math.Log(variance)
+
+			if !rm.taskScaleReady {
+				rm.taskScale.Set(rowIndex, 0, logVariance)
+			}
+
+			logScale := rm.taskScale.At(rowIndex, 0)
+			logScale = (1.0-beta)*logScale + beta*logVariance
+			rm.taskScale.Set(rowIndex, 0, logScale)
+
+			rawPrecision := math.Exp(logScale - logVariance)
+
 			precisionValue := math.Min(rm.cfg.PrecisionMax, math.Max(rm.cfg.PrecisionMin, rawPrecision))
 			rm.taskPrecision.Set(rowIndex, 0, precisionValue)
 		}
+
+		rm.taskScaleReady = true
 	}
 
 	return nil
 }
 
 /*
-SetAlpha updates the adaptive hyperparameters of the manifold dynamically.
+adoptPace copies the learning-pace family of another config over this one and
+leaves the geometry family untouched.
+
+The split exists because the retained weights, error variances and precisions
+were all estimated under one state geometry. Re-deriving StateClip,
+TopDownInitMix or the inference step counts mid-stream would move the state
+space those estimates describe, so a pace change would silently invalidate
+learned state instead of merely speeding it up or slowing it down.
+*/
+func (cfg *ResonanceConfig) adoptPace(pace ResonanceConfig) {
+	cfg.LrState = pace.LrState
+	cfg.LrGenerative = pace.LrGenerative
+	cfg.LrTemporal = pace.LrTemporal
+	cfg.LrRecognition = pace.LrRecognition
+	cfg.PrecisionBeta = pace.PrecisionBeta
+
+	/*
+		TemporalWeight is deliberately absent. It scales the temporal term of
+		the variational objective relative to the generative terms, so it
+		describes the shape of the energy landscape rather than the rate at
+		which the landscape is descended. Moving it with the pace would change
+		what the network is minimizing, and would make the reported prediction
+		energy move whenever the controller retuned alpha with no change in how
+		well the network predicts.
+	*/
+	cfg.LatentDecay = pace.LatentDecay
+	cfg.Sparsity = pace.Sparsity
+	cfg.WeightDecay = pace.WeightDecay
+	cfg.GradClip = pace.GradClip
+}
+
+/*
+SetAlpha retunes the learning pace of the manifold dynamically.
+
+Only the pace family moves. The state geometry the retained weights and
+precisions were fit in stays fixed, so a controller may drive alpha across its
+whole range without invalidating what the network has already learned.
 */
 func (rm *ResonanceManifold) SetAlpha(alpha float64) {
-	rm.cfg = AdaptiveResonanceConfig(alpha, rm.arch)
+	rm.cfg.adoptPace(AdaptiveResonanceConfig(alpha, rm.arch))
+}
+
+/*
+RolloutRetention reports how much of the initial latent magnitude survives at
+each step of a rollout, as a fraction in (0, 1].
+
+The temporal recursion z <- tanh(A * z) is a contraction: tanh is 1-Lipschitz
+and A is initialized well inside the unit spectral radius, so the trajectory
+relaxes toward the origin and every task reading taken along it shrinks with it.
+That relaxation is genuine learned dynamics, not an artifact, but it means a
+k-step curve is not k equally informative forecasts. Past the point where
+retention has decayed, the curve carries the decay envelope rather than any
+statement about the market, and a caller that averages or sums across the whole
+curve is mostly averaging the envelope.
+
+Retention makes that envelope explicit so callers can weight, truncate, or
+simply read only as far as the dynamics still support.
+*/
+func (rm *ResonanceManifold) RolloutRetention(steps int) []float64 {
+	if rm.A == nil || steps < 1 {
+		return nil
+	}
+
+	topDim := rm.arch[len(rm.arch)-1]
+	currentState := mat.DenseCopyOf(rm.z[len(rm.z)-1])
+	nextState := mat.NewDense(topDim, 1, nil)
+
+	initialNorm := denseColNorm(currentState)
+	retention := make([]float64, steps)
+
+	for step := range steps {
+		nextState.Mul(rm.A, currentState)
+		denseApplyTanhInPlace(nextState)
+
+		if initialNorm > 0 {
+			retention[step] = denseColNorm(nextState) / initialNorm
+		}
+
+		currentState.Copy(nextState)
+	}
+
+	return retention
 }
 
 /*
 RolloutTaskPrediction projects the top latent state forward k steps into the future
 using the temporal prior matrix A, evaluating task head V at each step.
 Returns a slice of return predictions [y_t+1, y_t+2, ..., y_t+k].
+
+The latent recursion keeps its tanh, which is what bounds the trajectory and
+makes the dynamics stable. The task head does not, for the reason given on
+taskPredictionInto: squashing a small-magnitude target only attenuates it.
+
+Callers reading more than the first step should pair this with RolloutRetention,
+which reports how much of the latent magnitude still survives at each step and
+therefore how much of the curve is forecast rather than relaxation.
 */
 func (rm *ResonanceManifold) RolloutTaskPrediction(steps int) []float64 {
 	if rm.V == nil || rm.A == nil || rm.targetDim <= 0 || steps < 1 {
@@ -961,9 +1259,8 @@ func (rm *ResonanceManifold) RolloutTaskPrediction(steps int) []float64 {
 		nextState.Mul(rm.A, currentState)
 		denseApplyTanhInPlace(nextState)
 
-		// 2. Predict return: y_next = tanh(V * z_next)
+		// 2. Predict return: y_next = V * z_next (linear head)
 		taskPred.Mul(rm.V, nextState)
-		denseApplyTanhInPlace(taskPred)
 
 		// 3. Store prediction for this horizon step
 		for row := 0; row < rm.targetDim; row++ {

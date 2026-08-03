@@ -217,6 +217,49 @@ func TestDomainStep(t *testing.T) {
 		})
 	})
 
+	Convey("Given a carrier with large finite extensive mass and heat", t, func() {
+		domain, err := NewDomain(testDomainConfig())
+		So(err, ShouldBeNil)
+		Reset(func() { So(domain.Close(), ShouldBeNil) })
+		particles := []Particle{{
+			Position: Vector{X: 0.25, Y: 0.25, Z: 0.25},
+			Mass:     1e20,
+			Heat:     1e20,
+			Energy:   1,
+			Phase:    0.1,
+			Omega:    1,
+		}}
+
+		_, err = domain.Step(particles)
+
+		Convey("It should recover finite heat without overflowing an intermediate product", func() {
+			So(err, ShouldBeNil)
+			So(finiteParticle(particles[0]), ShouldBeTrue)
+			So(particles[0].Heat, ShouldBeGreaterThan, float32(0))
+		})
+	})
+
+	Convey("Given a carrier below the pilot-wave transport mass floor", t, func() {
+		domain, err := NewDomain(testDomainConfig())
+		So(err, ShouldBeNil)
+		Reset(func() { So(domain.Close(), ShouldBeNil) })
+		particles := []Particle{{
+			Position: Vector{X: 0.25, Y: 0.25, Z: 0.25},
+			Mass:     MinimumPilotWaveMass,
+			Heat:     0.1,
+			Energy:   1,
+			Phase:    0.1,
+			Omega:    1,
+		}}
+
+		_, err = domain.Step(particles)
+
+		Convey("It should reject the carrier before it reaches Metal transport", func() {
+			So(err, ShouldNotBeNil)
+			So(err.Error(), ShouldContainSubstring, "inadmissible mass or energy")
+		})
+	})
+
 	Convey("Given same-cell same-content particles after advance", t, func() {
 		domain, err := NewDomain(testDomainConfig())
 		So(err, ShouldBeNil)

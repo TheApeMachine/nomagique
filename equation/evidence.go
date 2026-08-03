@@ -19,14 +19,14 @@ func ignitionFamilies(
 	rvolScale float64,
 	precursorScale float64,
 	compressionScale float64,
-) (IgnitionOutput, error) {
+) (IgnitionSideOutput, error) {
 	scaledRVOL := ignitionSquash(rvol, rvolScale)
 	quietCompression := ignitionInverse(compression, compressionScale)
 	quietPrecursor := ignitionInverse(precursor, precursorScale)
 	ignitionScore, err := ignitionMean(rvol > 0 && precursor > 0, rvol, precursor)
 
 	if err != nil {
-		return IgnitionOutput{}, err
+		return IgnitionSideOutput{}, err
 	}
 
 	trendScore, err := ignitionMean(
@@ -37,7 +37,7 @@ func ignitionFamilies(
 	)
 
 	if err != nil {
-		return IgnitionOutput{}, err
+		return IgnitionSideOutput{}, err
 	}
 
 	compressionScore, err := ignitionMean(
@@ -48,10 +48,10 @@ func ignitionFamilies(
 	)
 
 	if err != nil {
-		return IgnitionOutput{}, err
+		return IgnitionSideOutput{}, err
 	}
 
-	return IgnitionOutput{
+	return IgnitionSideOutput{
 		RVOL:        rvol,
 		Precursor:   precursor,
 		Compression: compressionScore,

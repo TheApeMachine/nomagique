@@ -101,22 +101,28 @@ func (tradeFlowSample *TradeFlowSample) Measure(
 		))
 	}
 
-	window.ticks = append(window.ticks, tradeFlowTick{
+	candidate := &tradeFlowWindow{
+		ticks:        append([]tradeFlowTick(nil), window.ticks...),
+		observations: window.observations,
+	}
+	candidate.ticks = append(candidate.ticks, tradeFlowTick{
 		buy:      input.Side == "buy",
 		notional: notional,
 		price:    input.ResponsePrice,
 	})
-	window.observations++
+	candidate.observations++
 
-	if len(window.ticks) > flowSampleHistoryCap {
-		window.ticks = window.ticks[len(window.ticks)-flowSampleHistoryCap:]
+	if len(candidate.ticks) > flowSampleHistoryCap {
+		candidate.ticks = candidate.ticks[len(candidate.ticks)-flowSampleHistoryCap:]
 	}
 
-	features, err := tradeFlowSample.features(window)
+	features, err := tradeFlowSample.features(candidate)
 
 	if err != nil {
 		return equation.FlowInput{}, false, err
 	}
+
+	*window = *candidate
 
 	return features, true, nil
 }

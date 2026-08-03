@@ -96,7 +96,9 @@ func TestKernelIntegralSupportBetaDerivative(testingTB *testing.T) {
 		stream := NewArrivalStream([]time.Time{start}, nil)
 		horizon := start.Add(2 * time.Second)
 
-		derivative := kernelIntegralSupportBetaDerivative(stream.buy, horizon, 1)
+		derivative := kernelIntegralSupportBetaDerivative(
+			stream.buy, stream.ObservationOrigin(), horizon, 1,
+		)
 
 		Convey("It should match d/dbeta of one minus exponential survival", func() {
 			So(derivative, ShouldAlmostEqual, 2*math.Exp(-2), 1e-12)

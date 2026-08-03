@@ -92,6 +92,12 @@ func (process *Process) Measure(input Input) (Outcome, bool, error) {
 		))
 	}
 
+	if input.ObservedFrom.IsZero() {
+		input.ObservedFrom = input.Stream.ObservationOrigin()
+	}
+
+	input.Stream = input.Stream.WithObservationOrigin(input.ObservedFrom)
+
 	outcome, ready := process.symbol(input.Symbol).measure(
 		input.Stream,
 		input.Horizon,

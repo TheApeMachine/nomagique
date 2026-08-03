@@ -14,13 +14,19 @@ func TestSample_MeasureArrival(t *testing.T) {
 		_, _, err := sample.MeasureArrival(
 			tradeInput("ALT/EUR", "buy", base),
 		)
-		input, ready, err := sample.MeasureArrival(
+		_, ready, err := sample.MeasureArrival(
 			tradeInput("ALT/EUR", "sell", base.Add(time.Nanosecond)),
+		)
+		So(err, ShouldBeNil)
+		So(ready, ShouldBeFalse)
+		input, ready, err := sample.MeasureArrival(
+			tradeInput("ALT/EUR", "buy", base.Add(2*time.Nanosecond)),
 		)
 
 		Convey("It should preserve both native timestamps exactly", func() {
 			So(err, ShouldBeNil)
 			So(ready, ShouldBeTrue)
+			So(input.ObservedFrom, ShouldResemble, base)
 			So(input.Stream.BuyTimes()[0].UnixNano(), ShouldEqual, base.UnixNano())
 			So(input.Stream.SellTimes()[0].UnixNano(), ShouldEqual,
 				base.Add(time.Nanosecond).UnixNano())

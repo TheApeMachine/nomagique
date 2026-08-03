@@ -9,7 +9,7 @@ import (
 )
 
 func (symbol *symbol) computeFit(
-	_ hawkes.FitContext,
+	context hawkes.FitContext,
 	stream hawkes.ArrivalStream,
 	horizon time.Time,
 	prior hawkes.BivariateFit,
@@ -41,15 +41,13 @@ func (symbol *symbol) computeFit(
 		return fitEpoch{}, false
 	}
 
-	observedFrom, _, _ := stream.Bounds()
-
 	return fitEpoch{
 		model:        fit,
 		restricted:   selfOnly,
 		prior:        prior,
-		observedFrom: observedFrom,
+		observedFrom: context.ObservedFrom,
 		at:           horizon,
-		eventCount:   len(stream.BuyTimes()) + len(stream.SellTimes()),
+		eventCount:   context.TotalEvents,
 	}, true
 }
 
@@ -147,9 +145,9 @@ func (symbol *symbol) outcome(
 	horizon time.Time,
 	fit hawkes.BivariateFit,
 ) Outcome {
-	observedFrom, _, _ := stream.Bounds()
-	buyCount := len(stream.BuyTimes())
-	sellCount := len(stream.SellTimes())
+	observedFrom := context.ObservedFrom
+	buyCount := context.EventsX
+	sellCount := context.EventsY
 	eventCount := buyCount + sellCount
 	maturity := math.Min(
 		float64(eventCount)/float64(context.MinFitEvents),
@@ -191,16 +189,13 @@ func (symbol *symbol) context(
 		return hawkes.FitContext{}, hawkes.ArrivalStream{}, false
 	}
 
-	observed := stream.BetweenInto(
-		horizon.Add(-context.TradeWindow),
-		horizon,
-		symbol.adaptive,
-	)
+	origin := horizon.Add(-context.TradeWindow)
 
-	if len(observed.BuyTimes()) == len(stream.BuyTimes()) &&
-		len(observed.SellTimes()) == len(stream.SellTimes()) {
-		return context, stream, true
+	if origin.Before(stream.ObservationOrigin()) {
+		origin = stream.ObservationOrigin()
 	}
+
+	observed := stream.WithObservationOrigin(origin)
 
 	context, ready = hawkes.NewObservationContext(observed, horizon)
 

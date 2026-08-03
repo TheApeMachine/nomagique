@@ -209,6 +209,18 @@ func (book *Book) SideDepth(side Side) float64 {
 }
 
 /*
+NotionalDepth returns the resting book's quote-currency notional. Every level
+is valued at its own exchange-lattice price.
+*/
+func (book *Book) NotionalDepth() float64 {
+	if book.tick == nil {
+		return 0
+	}
+
+	return book.bids.Notional(book.TickSize()) + book.asks.Notional(book.TickSize())
+}
+
+/*
 FlatDepth resolves how many near-touch levels participate in flat imbalance.
 */
 func (book *Book) FlatDepth() (int, error) {
@@ -291,4 +303,3 @@ func (book *Book) side(side Side) *SideBook {
 
 	return book.asks
 }
-

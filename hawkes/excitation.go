@@ -35,6 +35,7 @@ LogLikelihoodSum accumulates log intensities across marked events.
 */
 func (state *ExcitationState) LogLikelihoodSum(
 	marked []MarkedEvent,
+	origin, horizon time.Time,
 	muBuy, muSell, alphaBB, alphaBS, alphaSB, alphaSS, beta float64,
 ) (float64, bool) {
 	if len(marked) == 0 {
@@ -47,6 +48,11 @@ func (state *ExcitationState) LogLikelihoodSum(
 
 	for index := 0; index < len(marked); {
 		eventTime := marked[index].At
+
+		if eventTime.After(horizon) {
+			break
+		}
+
 		state.DecayTo(eventTime, beta)
 
 		end := index
@@ -55,24 +61,26 @@ func (state *ExcitationState) LogLikelihoodSum(
 			end++
 		}
 
-		for _, event := range marked[index:end] {
-			switch event.Side {
-			case sideBuy:
-				lambda := muBuy + alphaBB*state.buySupport + alphaBS*state.sellSupport
+		if eventTime.After(origin) {
+			for _, event := range marked[index:end] {
+				switch event.Side {
+				case sideBuy:
+					lambda := muBuy + alphaBB*state.buySupport + alphaBS*state.sellSupport
 
-				if lambda <= 0 {
-					return 0, false
+					if lambda <= 0 {
+						return 0, false
+					}
+
+					logSum += decay.LogPositive(lambda)
+				case sideSell:
+					lambda := muSell + alphaSB*state.buySupport + alphaSS*state.sellSupport
+
+					if lambda <= 0 {
+						return 0, false
+					}
+
+					logSum += decay.LogPositive(lambda)
 				}
-
-				logSum += decay.LogPositive(lambda)
-			case sideSell:
-				lambda := muSell + alphaSB*state.buySupport + alphaSS*state.sellSupport
-
-				if lambda <= 0 {
-					return 0, false
-				}
-
-				logSum += decay.LogPositive(lambda)
 			}
 		}
 

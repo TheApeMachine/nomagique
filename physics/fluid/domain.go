@@ -5,7 +5,12 @@ import (
 	"math"
 )
 
-const maximumWaveModes = 128
+const (
+	maximumWaveModes = 128
+
+	// MinimumPilotWaveMass is the strict lower bound used by the Metal pilot-wave transport.
+	MinimumPilotWaveMass float32 = 1.0e-6
+)
 
 /*
 Config defines the public controls exposed by the Sensorium Metal domain: the
@@ -189,11 +194,11 @@ type Projection struct {
 DisplayStats describes occupancy and maxima for one GPU-composited display frame.
 */
 type DisplayStats struct {
-	Width       uint32
-	Height      uint32
-	RhoOccupied uint32
-	PsiOccupied uint32
-	RhoMax      float32
+	Width            uint32
+	Height           uint32
+	RhoOccupied      uint32
+	PsiOccupied      uint32
+	RhoMax           float32
 	PsiMax           float32
 	GuidanceOccupied uint32
 	GuidanceMax      float32

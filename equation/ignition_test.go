@@ -6,6 +6,7 @@ import (
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/nomagique/statistic"
 )
 
 var ignitionEpoch = time.Date(2026, 7, 20, 10, 0, 0, 0, time.UTC)
@@ -193,6 +194,59 @@ func TestIgnition_Measure(t *testing.T) {
 			So(len(window.returns), ShouldBeLessThanOrEqualTo, capacity)
 			So(len(window.precursors), ShouldBeLessThanOrEqualTo, capacity)
 			So(len(window.spreads), ShouldBeLessThanOrEqualTo, capacity)
+		})
+	})
+
+	Convey("Given reciprocal multi-leg price paths on the same volume clock", t, func() {
+		bullish := NewIgnition(128)
+		bearish := NewIgnition(128)
+		prices := []float64{100, 101, 100, 102, 101, 104}
+		var bullishOutput IgnitionOutput
+		var bearishOutput IgnitionOutput
+		var priorPrecursors []float64
+
+		for index, price := range prices {
+			if index == len(prices)-1 {
+				priorPrecursors = append(
+					[]float64(nil),
+					bullish.windows["BULL/USD"].precursors...,
+				)
+			}
+
+			at := ignitionEpoch.Add(time.Duration(index) * time.Second)
+			var err error
+			bullishOutput, _, _, err = bullish.Measure(IgnitionInput{
+				Symbol: "BULL/USD", Volume: 20, Last: price,
+				Bid: price - 0.5, Ask: price + 0.5, At: at,
+			})
+			So(err, ShouldBeNil)
+			reciprocal := 1 / price
+			spread := reciprocal / 100
+			bearishOutput, _, _, err = bearish.Measure(IgnitionInput{
+				Symbol: "BEAR/USD", Volume: 20, Last: reciprocal,
+				Bid: reciprocal - spread/2, Ask: reciprocal + spread/2, At: at,
+			})
+			So(err, ShouldBeNil)
+		}
+
+		Convey("Bullish evidence in price should equal bearish evidence in reciprocal price", func() {
+			priorBaseline, ready := statistic.MedianOf(priorPrecursors)
+			So(ready, ShouldBeTrue)
+			expectedPrecursor := math.Log(104.0/101.0) / priorBaseline
+			So(bullishOutput.Buy.Precursor,
+				ShouldAlmostEqual, bearishOutput.Sell.Precursor, 1e-12)
+			So(bullishOutput.Buy.Precursor,
+				ShouldAlmostEqual, expectedPrecursor, 1e-12)
+			So(bullishOutput.Buy.Ignition,
+				ShouldAlmostEqual, bearishOutput.Sell.Ignition, 1e-12)
+			So(bullishOutput.Buy.Exhaustion,
+				ShouldAlmostEqual, bearishOutput.Sell.Exhaustion, 1e-12)
+			So(bullishOutput.RVOL, ShouldAlmostEqual, bearishOutput.RVOL, 1e-12)
+
+			for index, precursor := range bullish.windows["BULL/USD"].precursors {
+				So(precursor,
+					ShouldAlmostEqual, bearish.windows["BEAR/USD"].precursors[index], 1e-12)
+			}
 		})
 	})
 }

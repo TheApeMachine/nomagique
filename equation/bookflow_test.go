@@ -56,17 +56,19 @@ func TestBookflow_Measure(testingTB *testing.T) {
 	Convey("Given deep bid wall with bearish touch", testingTB, func() {
 		bookflow := equation.NewBookflow()
 		output, err := bookflow.Measure(equation.BookflowInput{
-			Weighted:        0.6,
-			Level1:          -0.4,
-			Flat:            0.5,
-			FlatOK:          true,
-			Mid:             50,
-			Spread:          2,
-			TouchDepth:      3,
-			TradePressure:   -0.5,
-			WeightedHistory: []float64{0.6, 0.55, 0.58, 0.62},
-			Level1History:   []float64{0.2, 0.18, 0.22, 0.19},
-			FlatHistory:     []float64{0.25, 0.24, 0.26, 0.23},
+			Weighted:            0.6,
+			Level1:              -0.4,
+			Flat:                0.5,
+			FlatOK:              true,
+			Mid:                 50,
+			Spread:              2,
+			TouchDepth:          3,
+			BookNotional:        1_000,
+			TradePressure:       -0.5,
+			WeightedHistory:     []float64{0.6, 0.55, 0.58, 0.62},
+			Level1History:       []float64{0.2, 0.18, 0.22, 0.19},
+			FlatHistory:         []float64{0.25, 0.24, 0.26, 0.23},
+			BookNotionalHistory: []float64{1_000, 1_000, 1_000, 1_000},
 		})
 
 		So(err, ShouldBeNil)
@@ -79,16 +81,18 @@ func TestBookflow_Measure(testingTB *testing.T) {
 	Convey("Given a balanced history followed by opposing depth and touch", testingTB, func() {
 		bookflow := equation.NewBookflow()
 		output, err := bookflow.Measure(equation.BookflowInput{
-			Weighted:        0.8,
-			Level1:          -0.6,
-			Flat:            0.8,
-			FlatOK:          true,
-			Mid:             100,
-			Spread:          2,
-			TouchDepth:      3,
-			WeightedHistory: []float64{0, 0, 0, 0},
-			Level1History:   []float64{0, 0, 0, 0},
-			FlatHistory:     []float64{0, 0, 0, 0},
+			Weighted:            0.8,
+			Level1:              -0.6,
+			Flat:                0.8,
+			FlatOK:              true,
+			Mid:                 100,
+			Spread:              2,
+			TouchDepth:          3,
+			BookNotional:        1_000,
+			WeightedHistory:     []float64{0, 0, 0, 0},
+			Level1History:       []float64{0, 0, 0, 0},
+			FlatHistory:         []float64{0, 0, 0, 0},
+			BookNotionalHistory: []float64{1_000, 1_000, 1_000, 1_000},
 		})
 
 		So(err, ShouldBeNil)
@@ -102,17 +106,19 @@ func TestBookflow_Measure(testingTB *testing.T) {
 	Convey("Given weighted depth that collapses away from flat depth", testingTB, func() {
 		bookflow := equation.NewBookflow()
 		output, err := bookflow.Measure(equation.BookflowInput{
-			Weighted:        0.8,
-			Level1:          0.7,
-			Flat:            0.1,
-			FlatOK:          true,
-			Mid:             100,
-			Spread:          2,
-			TouchDepth:      12,
-			TradePressure:   0.2,
-			WeightedHistory: []float64{0.60, 0.62, 0.61, 0.63},
-			Level1History:   []float64{0.60, 0.62, 0.61, 0.63},
-			FlatHistory:     []float64{0.50, 0.48, 0.52, 0.50},
+			Weighted:            0.8,
+			Level1:              0.7,
+			Flat:                0.1,
+			FlatOK:              true,
+			Mid:                 100,
+			Spread:              2,
+			TouchDepth:          12,
+			BookNotional:        500,
+			TradePressure:       0.2,
+			WeightedHistory:     []float64{0.60, 0.62, 0.61, 0.63},
+			Level1History:       []float64{0.60, 0.62, 0.61, 0.63},
+			FlatHistory:         []float64{0.50, 0.48, 0.52, 0.50},
+			BookNotionalHistory: []float64{1_000, 1_000, 1_000, 500},
 		})
 
 		So(err, ShouldBeNil)
@@ -126,16 +132,18 @@ func TestBookflow_Measure(testingTB *testing.T) {
 	Convey("Given balanced depth history followed by deep-only skew", testingTB, func() {
 		bookflow := equation.NewBookflow()
 		output, err := bookflow.Measure(equation.BookflowInput{
-			Weighted:        0.8,
-			Level1:          0,
-			Flat:            0,
-			FlatOK:          true,
-			Mid:             100,
-			Spread:          2,
-			TouchDepth:      12,
-			WeightedHistory: []float64{0, 0, 0, 0},
-			Level1History:   []float64{0, 0, 0, 0},
-			FlatHistory:     []float64{0, 0, 0, 0},
+			Weighted:            0.8,
+			Level1:              0,
+			Flat:                0,
+			FlatOK:              true,
+			Mid:                 100,
+			Spread:              2,
+			TouchDepth:          12,
+			BookNotional:        500,
+			WeightedHistory:     []float64{0, 0, 0, 0},
+			Level1History:       []float64{0, 0, 0, 0},
+			FlatHistory:         []float64{0, 0, 0, 0},
+			BookNotionalHistory: []float64{1_000, 1_000, 1_000, 500},
 		})
 
 		So(err, ShouldBeNil)
@@ -149,16 +157,18 @@ func TestBookflow_Measure(testingTB *testing.T) {
 	Convey("Given flat depth below the adaptive thinning gate", testingTB, func() {
 		bookflow := equation.NewBookflow()
 		output, err := bookflow.Measure(equation.BookflowInput{
-			Weighted:        0.2,
-			Level1:          0.2,
-			Flat:            0.5,
-			FlatOK:          true,
-			Mid:             100,
-			Spread:          2,
-			TouchDepth:      12,
-			WeightedHistory: []float64{0.20, 0.20, 0.20, 0.20},
-			Level1History:   []float64{0.20, 0.20, 0.20, 0.20},
-			FlatHistory:     []float64{0.80, 0.80, 0.80, 0.80},
+			Weighted:            0.2,
+			Level1:              0.2,
+			Flat:                0.5,
+			FlatOK:              true,
+			Mid:                 100,
+			Spread:              2,
+			TouchDepth:          12,
+			BookNotional:        700,
+			WeightedHistory:     []float64{0.20, 0.20, 0.20, 0.20},
+			Level1History:       []float64{0.20, 0.20, 0.20, 0.20},
+			FlatHistory:         []float64{0.80, 0.80, 0.80, 0.80},
+			BookNotionalHistory: []float64{1_000, 1_000, 1_000, 700},
 		})
 
 		So(err, ShouldBeNil)
@@ -174,16 +184,18 @@ func TestBookflow_Measure(testingTB *testing.T) {
 	Convey("Given balanced depth below the loaded threshold", testingTB, func() {
 		bookflow := equation.NewBookflow()
 		output, err := bookflow.Measure(equation.BookflowInput{
-			Weighted:        0.1,
-			Level1:          0.05,
-			Flat:            0.12,
-			FlatOK:          true,
-			Mid:             100,
-			Spread:          2,
-			TouchDepth:      12,
-			WeightedHistory: []float64{0.50, 0.52, 0.51, 0.53},
-			Level1History:   []float64{0.45, 0.46, 0.44, 0.47},
-			FlatHistory:     []float64{0.50, 0.51, 0.49, 0.52},
+			Weighted:            0.1,
+			Level1:              0.05,
+			Flat:                0.12,
+			FlatOK:              true,
+			Mid:                 100,
+			Spread:              2,
+			TouchDepth:          12,
+			BookNotional:        1_000,
+			WeightedHistory:     []float64{0.50, 0.52, 0.51, 0.53},
+			Level1History:       []float64{0.45, 0.46, 0.44, 0.47},
+			FlatHistory:         []float64{0.50, 0.51, 0.49, 0.52},
+			BookNotionalHistory: []float64{1_000, 1_000, 1_000, 1_000},
 		})
 
 		So(err, ShouldBeNil)
@@ -197,16 +209,18 @@ func TestBookflow_Measure(testingTB *testing.T) {
 	Convey("Given spread weighting below the observed touch imbalance", testingTB, func() {
 		bookflow := equation.NewBookflow()
 		output, err := bookflow.Measure(equation.BookflowInput{
-			Weighted:        0.0004,
-			Level1:          0.0005,
-			Flat:            0.0004,
-			FlatOK:          true,
-			Mid:             100,
-			Spread:          0.02,
-			TouchDepth:      20_000,
-			WeightedHistory: []float64{0.0002, 0.0003, 0.0003, 0.0002},
-			Level1History:   []float64{0.0005, 0.0005, 0.0005, 0.0005},
-			FlatHistory:     []float64{0.0002, 0.0003, 0.0003, 0.0002},
+			Weighted:            0.0004,
+			Level1:              0.0005,
+			Flat:                0.0004,
+			FlatOK:              true,
+			Mid:                 100,
+			Spread:              0.02,
+			TouchDepth:          20_000,
+			BookNotional:        2_000_000,
+			WeightedHistory:     []float64{0.0002, 0.0003, 0.0003, 0.0002},
+			Level1History:       []float64{0.0005, 0.0005, 0.0005, 0.0005},
+			FlatHistory:         []float64{0.0002, 0.0003, 0.0003, 0.0002},
+			BookNotionalHistory: []float64{2_000_000, 2_000_000, 2_000_000, 2_000_000},
 		})
 
 		So(err, ShouldBeNil)
@@ -272,16 +286,18 @@ func bookflowInput(
 	tradePressure float64,
 ) equation.BookflowInput {
 	return equation.BookflowInput{
-		Weighted:        weighted,
-		Level1:          level1,
-		Flat:            flat,
-		FlatOK:          flatOK,
-		Mid:             100,
-		Spread:          2,
-		TouchDepth:      12,
-		TradePressure:   tradePressure,
-		WeightedHistory: []float64{0.80, 0.82, 0.84, 0.86},
-		Level1History:   []float64{0.78, 0.79, 0.80, 0.81},
-		FlatHistory:     []float64{0.80, 0.82, 0.83, 0.84},
+		Weighted:            weighted,
+		Level1:              level1,
+		Flat:                flat,
+		FlatOK:              flatOK,
+		Mid:                 100,
+		Spread:              2,
+		TouchDepth:          12,
+		BookNotional:        1_000,
+		TradePressure:       tradePressure,
+		WeightedHistory:     []float64{0.80, 0.82, 0.84, 0.86},
+		Level1History:       []float64{0.78, 0.79, 0.80, 0.81},
+		FlatHistory:         []float64{0.80, 0.82, 0.83, 0.84},
+		BookNotionalHistory: []float64{1_000, 1_000, 1_000, 1_000},
 	}
 }

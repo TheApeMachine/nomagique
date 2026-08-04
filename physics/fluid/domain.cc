@@ -17,6 +17,7 @@ static const NSUInteger FluidThreads = 256u;
 static const uint32_t FluidAnchorSlots = 8u;
 static const uint32_t FluidMaximumWaveModes = 128u;
 static const uint32_t FluidDebugCapacity = 2048u;
+static const float FluidDensityResolutionMinimum = 1.0e-3f;
 
 typedef struct SortScatterParams {
     uint32_t num_particles;
@@ -55,11 +56,8 @@ typedef struct PicGatherParams {
     float domain_x;
     float domain_y;
     float domain_z;
-    float gamma;
-    float gas_constant;
     float specific_heat;
-    float rho_min;
-    float pressure_min;
+    float density_resolution;
     float gravity_enabled;
 } PicGatherParams;
 
@@ -99,8 +97,7 @@ typedef struct GasGridParams {
     float dt;
     float gamma;
     float specific_heat;
-    float rho_min;
-    float pressure_min;
+    float density_resolution;
     float viscosity;
     float thermal_conductivity;
 } GasGridParams;
@@ -1136,7 +1133,6 @@ struct DisplayParams {
     const float viscosity = 1.0e-4f;
     const float prandtl = 0.71f;
     const float conductivity = viscosity * gamma * specificHeat / prandtl;
-    const float rhoFloor = 1.0e-3f;
     float *density = (float *)_density.contents;
     float *momentum = (float *)_momentum.contents;
     float *internalEnergy = (float *)_internalEnergy.contents;
@@ -1154,7 +1150,10 @@ struct DisplayParams {
     }
 
     float domainVolume = (float)_cellCount * _config.spacing * _config.spacing * _config.spacing;
-    float rhoMinimum = std::max(rhoFloor, massTotal / domainVolume * FLT_EPSILON);
+    float densityResolution = std::max(
+        FluidDensityResolutionMinimum,
+        massTotal / domainVolume * FLT_EPSILON
+    );
     float maximumRate = 0.0f;
     float maximumDiffusion = 0.0f;
 
@@ -1179,8 +1178,8 @@ struct DisplayParams {
         float rhoSafe = rho;
         float energyUsed = energy;
 
-        if (std::fabs(rho) <= rhoMinimum) {
-            if (energy < -4.0f * rhoMinimum * FLT_EPSILON) {
+        if (std::fabs(rho) <= densityResolution) {
+            if (energy < -4.0f * densityResolution * FLT_EPSILON) {
                 if (error != nil) {
                     *error = [NSString stringWithFormat:@"gas low-density energy is inadmissible at cell %u", cell];
                 }
@@ -1188,11 +1187,12 @@ struct DisplayParams {
                 return NO;
             }
 
-            rhoSafe = rhoMinimum;
+            rhoSafe = densityResolution;
             energyUsed = std::max(energy, 0.0f);
         }
 
-        if (std::fabs(rho) > rhoMinimum && (!(rho > rhoMinimum) || energy < 0.0f)) {
+        if (std::fabs(rho) > densityResolution &&
+            (!(rho > densityResolution) || energy < 0.0f)) {
             if (error != nil) {
                 *error = [NSString stringWithFormat:@"gas input is inadmissible at cell %u", cell];
             }
@@ -1241,8 +1241,7 @@ struct DisplayParams {
         delta,
         gamma,
         specificHeat,
-        rhoMinimum,
-        1.0e-3f,
+        densityResolution,
         viscosity,
         conductivity,
     };
@@ -1316,7 +1315,17 @@ struct DisplayParams {
     return YES;
 }
 
-- (BOOL)advanceGas:(FluidDiagnostics *)diagnostics error:(NSString **)error {
+- (BOOL)advanceGas:(FluidDiagnostics *)diagnostics
+ densityResolution:(float *)densityResolution
+             error:(NSString **)error {
+    if (densityResolution == nullptr) {
+        if (error != nil) {
+            *error = @"gas density resolution output is required";
+        }
+
+        return NO;
+    }
+
     GasGridParams params;
 
     if (![self deriveDelta:diagnostics params:&params error:error]) {
@@ -1367,6 +1376,7 @@ struct DisplayParams {
     std::memcpy(_internalEnergy.contents, _trialEnergy.contents, _trialEnergy.length);
     diagnostics->delta_used = params.dt;
     diagnostics->halvings = halvings;
+    *densityResolution = params.density_resolution;
     return YES;
 }
 
@@ -1410,15 +1420,25 @@ struct DisplayParams {
     };
 }
 
-- (BOOL)gather:(float)delta error:(NSString **)error {
+- (BOOL)gather:(float)delta
+ densityResolution:(float)densityResolution
+             error:(NSString **)error {
+    if (!(densityResolution > 0.0f) || !std::isfinite(densityResolution)) {
+        if (error != nil) {
+            *error = @"PIC gather density resolution must be finite and positive";
+        }
+
+        return NO;
+    }
+
     id<MTLComputePipelineState> pipeline = [self pipeline:@"pic_gather_update_particles" error:error];
 
     if (pipeline == nil) {
         return NO;
     }
 
-    // R_specific = (gamma - 1) * c_v = 0.4 in the restored nondimensional gas.
-    // Gravity is enabled after solveGravity fills φ (thermo.step parity).
+    // Gather consumes the same specific heat and derived density resolution as
+    // the accepted gas step. Gravity is enabled after solveGravity fills φ.
     PicGatherParams params = {
         _particleCount,
         _config.grid_x,
@@ -1430,11 +1450,8 @@ struct DisplayParams {
         _config.grid_x * _config.spacing,
         _config.grid_y * _config.spacing,
         _config.grid_z * _config.spacing,
-        1.4f,
-        0.4f,
         1.0f,
-        1.0e-3f,
-        1.0e-3f,
+        densityResolution,
         1.0f,
     };
     std::memset(_debugHead.contents, 0, _debugHead.length);
@@ -2399,10 +2416,16 @@ Advance without inventing a parallel particle store.
 
     // Sensorium manifold physics order:
     //   1) thermo.step  2) omegawave.step  3) quantum_flow.step
+    float densityResolution = 0.0f;
+
     if (![self scatter:error] ||
         ![self solveGravity:error] ||
-        ![self advanceGas:diagnostics error:error] ||
-        ![self gather:diagnostics->delta_used error:error]) {
+        ![self advanceGas:diagnostics
+          densityResolution:&densityResolution
+                      error:error] ||
+        ![self gather:diagnostics->delta_used
+       densityResolution:densityResolution
+                   error:error]) {
         return NO;
     }
 

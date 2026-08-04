@@ -239,6 +239,47 @@ func TestDomainStep(t *testing.T) {
 		})
 	})
 
+	Convey("Given a finite hot cell whose unscaled energy rate exceeds binary32", t, func() {
+		config := testDomainConfig()
+		domain, err := NewDomain(config)
+		So(err, ShouldBeNil)
+		Reset(func() { So(domain.Close(), ShouldBeNil) })
+		particles := hotCellParticles(config)
+
+		_, err = domain.Step(particles)
+
+		Convey("It should apply the CFL scale before the RK increment overflows", func() {
+			So(err, ShouldBeNil)
+			So(finiteParticle(particles[0]), ShouldBeTrue)
+		})
+	})
+
+	Convey("Given a high-mass field with a low-density probe", t, func() {
+		config := testDomainConfig()
+		domain, err := NewDomain(config)
+		So(err, ShouldBeNil)
+		Reset(func() { So(domain.Close(), ShouldBeNil) })
+		particles := highMassProbeParticles()
+
+		for range config.Grid.X {
+			_, err = domain.Step(particles)
+
+			if err != nil {
+				break
+			}
+
+			particles = particles[:domain.ParticleCount()]
+		}
+
+		Convey("It should use the gas density resolution during gather", func() {
+			So(err, ShouldBeNil)
+
+			for _, particle := range particles {
+				So(finiteParticle(particle), ShouldBeTrue)
+			}
+		})
+	})
+
 	Convey("Given a carrier below the pilot-wave transport mass floor", t, func() {
 		domain, err := NewDomain(testDomainConfig())
 		So(err, ShouldBeNil)
@@ -513,6 +554,16 @@ func BenchmarkDomainStep(b *testing.B) {
 	}{
 		{name: "two_particles", config: testDomainConfig(), particles: testParticles()},
 		{
+			name:      "finite_hot_cell",
+			config:    testDomainConfig(),
+			particles: hotCellParticles(testDomainConfig()),
+		},
+		{
+			name:      "high_mass_probe",
+			config:    testDomainConfig(),
+			particles: highMassProbeParticles(),
+		},
+		{
 			name:      "market_population",
 			config:    marketConfig,
 			particles: benchmarkParticles(marketConfig.Grid),
@@ -542,6 +593,48 @@ func BenchmarkDomainStep(b *testing.B) {
 				particles = particles[:domain.ParticleCount()]
 			}
 		})
+	}
+}
+
+func hotCellParticles(config Config) []Particle {
+	// Reconstruct the finite conserved state from the production GPU diagnostic.
+	cellVolume := config.Grid.Spacing * config.Grid.Spacing * config.Grid.Spacing
+	const density = float32(18.3101)
+	const internalEnergy = float32(2.72533e25)
+
+	return []Particle{{
+		Position: Vector{X: 0.25, Y: 0.25, Z: 0.25},
+		Velocity: Vector{X: -0.403464 / density, Y: -0.201732 / density},
+		Mass:     density * cellVolume,
+		Heat:     internalEnergy * cellVolume,
+		Energy:   1,
+		Phase:    0.1,
+		Omega:    1,
+	}}
+}
+
+func highMassProbeParticles() []Particle {
+	return []Particle{
+		{
+			Position: Vector{X: 0.25, Y: 0.25, Z: 0.25},
+			Velocity: Vector{X: 0.1, Y: -0.05},
+			// This production-scale mass derives a density resolution above the
+			// binary32 cancellation observed at the low-density probe.
+			Mass:   1e6,
+			Heat:   1,
+			Energy: 1,
+			Phase:  0.1,
+			Omega:  1,
+		},
+		{
+			Position: Vector{X: 0.5, Y: 0.5, Z: 0.5},
+			Velocity: Vector{X: 2e5},
+			Mass:     math.Nextafter32(MinimumPilotWaveMass, math.MaxFloat32),
+			Heat:     0.1,
+			Energy:   1,
+			Phase:    0.2,
+			Omega:    2,
+		},
 	}
 }
 

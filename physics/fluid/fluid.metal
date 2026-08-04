@@ -1287,11 +1287,8 @@ struct PicGatherParams {
     float domain_x;
     float domain_y;
     float domain_z;
-    float gamma;
-    float R_specific;
     float c_v;
-    float rho_min;
-    float p_min;
+    float density_resolution;
     float gravity_enabled;  // 1.0 if gravity field is valid, 0.0 otherwise
 };
 
@@ -1580,8 +1577,7 @@ struct GasGridParams {
     float dt;
     float gamma;
     float c_v;
-    float rho_min;
-    float p_min;
+    float density_resolution;
     float mu;        // reserved (viscosity) – not used yet
     float k_thermal; // thermal conductivity (constant)
 };
@@ -1652,8 +1648,7 @@ inline void primitives_from_U(
     U5 U,
     float gamma,
     float c_v,
-    float rho_min,
-    float p_min,
+    float density_resolution,
     thread float& rho_safe,
     thread float3& u,
     thread float& p,
@@ -1694,7 +1689,7 @@ inline void primitives_from_U(
     // `rho_eps` for primitive *computation* (u, T, c). The resulting characteristic
     // speed is included in the host CFL bound; no universal velocity or temperature
     // ceiling is part of the physical admissibility contract.
-    float rho_eps = max(rho_min, 0.0f);
+    float rho_eps = max(density_resolution, 0.0f);
     const float f32_eps = 1.1920929e-7f;
     float e_eps = 4.0f * rho_eps * f32_eps;
     if (fabs(U.rho) <= rho_eps) {
@@ -1741,49 +1736,64 @@ inline void primitives_from_U(
     speed = length(u) + c;
 }
 
-inline F5 inviscid_flux_dir(uint dir, U5 U, float3 u, float p) {
+inline F5 scaled_inviscid_flux_dir(
+    uint dir,
+    U5 U,
+    float3 u,
+    float p,
+    float courant
+) {
     F5 F;
     float u_d = (dir == 0u) ? u.x : ((dir == 1u) ? u.y : u.z);
+    float scaled_advection = courant * u_d;
     // rho flux = rho * u_d = mom_d (exact for conserved momentum density)
-    F.frho = (dir == 0u) ? U.mom.x : ((dir == 1u) ? U.mom.y : U.mom.z);
+    float mom_d = (dir == 0u) ? U.mom.x : ((dir == 1u) ? U.mom.y : U.mom.z);
+    F.frho = courant * mom_d;
     // mom flux = mom * u_d + p * e_dir
-    F.fmom = U.mom * u_d;
-    if (dir == 0u) F.fmom.x += p;
-    if (dir == 1u) F.fmom.y += p;
-    if (dir == 2u) F.fmom.z += p;
+    F.fmom = U.mom * scaled_advection;
+    if (dir == 0u) F.fmom.x += courant * p;
+    if (dir == 1u) F.fmom.y += courant * p;
+    if (dir == 2u) F.fmom.z += courant * p;
     // internal-energy advective flux
-    F.fe_int = U.e_int * u_d;
+    F.fe_int = U.e_int * scaled_advection;
     return F;
 }
 
-inline F5 rusanov_flux(F5 FL, F5 FR, U5 UL, U5 UR, float smax) {
-    // F = 0.5*(FL+FR) - 0.5*smax*(UR-UL)
+inline F5 scaled_rusanov_flux(
+    F5 FL,
+    F5 FR,
+    U5 UL,
+    U5 UR,
+    float scaled_smax
+) {
+    // dt/dx is already applied to the physical fluxes and wave speed. Applying
+    // the CFL scale before multiplying smax by U keeps a finite RK increment
+    // representable even when its unscaled binary32 rate is not.
     F5 F;
     float a = 0.5f;
-    float d_rho = UR.rho - UL.rho;
-    float3 d_mom = UR.mom - UL.mom;
-    float d_e = UR.e_int - UL.e_int;
-    F.frho = a * (FL.frho + FR.frho) - a * smax * d_rho;
-    F.fmom = a * (FL.fmom + FR.fmom) - a * smax * d_mom;
-    F.fe_int = a * (FL.fe_int + FR.fe_int) - a * smax * d_e;
+    float dissipation = a * scaled_smax;
+    F.frho = a * FL.frho + a * FR.frho -
+        dissipation * UR.rho + dissipation * UL.rho;
+    F.fmom = a * FL.fmom + a * FR.fmom -
+        dissipation * UR.mom + dissipation * UL.mom;
+    F.fe_int = a * FL.fe_int + a * FR.fe_int -
+        dissipation * UR.e_int + dissipation * UL.e_int;
     return F;
 }
 
 inline bool admissible_U5(
     thread const U5& U,
     float gamma,
-    float rho_min,
-    float p_min
+    float density_resolution
 ) {
     // FAIL-FAST admissibility: do not modify state.
     // For rho>0 we require rho finite and positive, mom finite, e_int finite and >=0.
     // In the low-density envelope (|rho|<=rho_eps), rho_eps regularizes primitive
     // recovery. Finite momentum and positive energy remain admissible because their
     // derived characteristic speed is constrained by the host CFL calculation.
-    (void)p_min; // no silent floors; this is not used for admissibility.
     if (!(gamma > 1.0f) || !isfinite(gamma)) return false;
     if (!isfinite(U.rho) || !isfinite(U.e_int) || !isfinite(U.mom.x) || !isfinite(U.mom.y) || !isfinite(U.mom.z)) return false;
-    float rho_eps = max(rho_min, 0.0f);
+    float rho_eps = max(density_resolution, 0.0f);
     const float f32_eps = 1.1920929e-7f;
     float e_eps = 4.0f * rho_eps * f32_eps;
     if (fabs(U.rho) <= rho_eps) {
@@ -1796,7 +1806,7 @@ inline bool admissible_U5(
     return true;
 }
 
-inline void gas_rhs_cell(
+inline void gas_increment_cell(
     device const float* rho0,
     device const float* mom0,
     device const float* e0,
@@ -1809,7 +1819,7 @@ inline void gas_rhs_cell(
     uint gx = p.grid_x, gy = p.grid_y, gz = p.grid_z;
     float dx = p.dx;
     float inv_dx = 1.0f / dx;
-    float inv_dx2 = 1.0f / (dx * dx);
+    float courant = p.dt * inv_dx;
     float gamma = p.gamma;
 
     uint x, y, z;
@@ -1836,13 +1846,13 @@ inline void gas_rhs_cell(
     U5 Uzp = load_U5(rho0, mom0, e0, idx_zp);
 
     // FAIL-FAST: stencil must already be admissible.
-    if (!admissible_U5(Uc,  p.gamma, p.rho_min, p.p_min) ||
-        !admissible_U5(Uxm, p.gamma, p.rho_min, p.p_min) ||
-        !admissible_U5(Uxp, p.gamma, p.rho_min, p.p_min) ||
-        !admissible_U5(Uym, p.gamma, p.rho_min, p.p_min) ||
-        !admissible_U5(Uyp, p.gamma, p.rho_min, p.p_min) ||
-        !admissible_U5(Uzm, p.gamma, p.rho_min, p.p_min) ||
-        !admissible_U5(Uzp, p.gamma, p.rho_min, p.p_min)) {
+    if (!admissible_U5(Uc,  p.gamma, p.density_resolution) ||
+        !admissible_U5(Uxm, p.gamma, p.density_resolution) ||
+        !admissible_U5(Uxp, p.gamma, p.density_resolution) ||
+        !admissible_U5(Uym, p.gamma, p.density_resolution) ||
+        !admissible_U5(Uyp, p.gamma, p.density_resolution) ||
+        !admissible_U5(Uzm, p.gamma, p.density_resolution) ||
+        !admissible_U5(Uzp, p.gamma, p.density_resolution)) {
         float qn = qnan_f();
         drho = qn;
         dmom = float3(qn);
@@ -1853,7 +1863,7 @@ inline void gas_rhs_cell(
     // Primitives for center and 6 neighbors (floors for wave speeds).
     float rho_c, p_c, T_c, c_c, sp_c;
     float3 u_c;
-    primitives_from_U(Uc, gamma, p.c_v, p.rho_min, p.p_min, rho_c, u_c, p_c, T_c, c_c, sp_c);
+    primitives_from_U(Uc, gamma, p.c_v, p.density_resolution, rho_c, u_c, p_c, T_c, c_c, sp_c);
 
     float rho_xm, p_xm, T_xm, c_xm, sp_xm; float3 u_xm;
     float rho_xp, p_xp, T_xp, c_xp, sp_xp; float3 u_xp;
@@ -1862,69 +1872,80 @@ inline void gas_rhs_cell(
     float rho_zm, p_zm, T_zm, c_zm, sp_zm; float3 u_zm;
     float rho_zp, p_zp, T_zp, c_zp, sp_zp; float3 u_zp;
 
-    primitives_from_U(Uxm, gamma, p.c_v, p.rho_min, p.p_min, rho_xm, u_xm, p_xm, T_xm, c_xm, sp_xm);
-    primitives_from_U(Uxp, gamma, p.c_v, p.rho_min, p.p_min, rho_xp, u_xp, p_xp, T_xp, c_xp, sp_xp);
-    primitives_from_U(Uym, gamma, p.c_v, p.rho_min, p.p_min, rho_ym, u_ym, p_ym, T_ym, c_ym, sp_ym);
-    primitives_from_U(Uyp, gamma, p.c_v, p.rho_min, p.p_min, rho_yp, u_yp, p_yp, T_yp, c_yp, sp_yp);
-    primitives_from_U(Uzm, gamma, p.c_v, p.rho_min, p.p_min, rho_zm, u_zm, p_zm, T_zm, c_zm, sp_zm);
-    primitives_from_U(Uzp, gamma, p.c_v, p.rho_min, p.p_min, rho_zp, u_zp, p_zp, T_zp, c_zp, sp_zp);
+    primitives_from_U(Uxm, gamma, p.c_v, p.density_resolution, rho_xm, u_xm, p_xm, T_xm, c_xm, sp_xm);
+    primitives_from_U(Uxp, gamma, p.c_v, p.density_resolution, rho_xp, u_xp, p_xp, T_xp, c_xp, sp_xp);
+    primitives_from_U(Uym, gamma, p.c_v, p.density_resolution, rho_ym, u_ym, p_ym, T_ym, c_ym, sp_ym);
+    primitives_from_U(Uyp, gamma, p.c_v, p.density_resolution, rho_yp, u_yp, p_yp, T_yp, c_yp, sp_yp);
+    primitives_from_U(Uzm, gamma, p.c_v, p.density_resolution, rho_zm, u_zm, p_zm, T_zm, c_zm, sp_zm);
+    primitives_from_U(Uzp, gamma, p.c_v, p.density_resolution, rho_zp, u_zp, p_zp, T_zp, c_zp, sp_zp);
 
     // Face fluxes (Rusanov/LLF), minus = (i-1,i), plus = (i,i+1)
-    F5 Fx_m = rusanov_flux(
-        inviscid_flux_dir(0u, Uxm, u_xm, p_xm),
-        inviscid_flux_dir(0u, Uc,  u_c,  p_c),
+    F5 Fx_m = scaled_rusanov_flux(
+        scaled_inviscid_flux_dir(0u, Uxm, u_xm, p_xm, courant),
+        scaled_inviscid_flux_dir(0u, Uc,  u_c,  p_c,  courant),
         Uxm, Uc,
-        max(sp_xm, sp_c)
+        courant * max(sp_xm, sp_c)
     );
-    F5 Fx_p = rusanov_flux(
-        inviscid_flux_dir(0u, Uc,  u_c,  p_c),
-        inviscid_flux_dir(0u, Uxp, u_xp, p_xp),
+    F5 Fx_p = scaled_rusanov_flux(
+        scaled_inviscid_flux_dir(0u, Uc,  u_c,  p_c,  courant),
+        scaled_inviscid_flux_dir(0u, Uxp, u_xp, p_xp, courant),
         Uc, Uxp,
-        max(sp_c, sp_xp)
+        courant * max(sp_c, sp_xp)
     );
-    F5 Fy_m = rusanov_flux(
-        inviscid_flux_dir(1u, Uym, u_ym, p_ym),
-        inviscid_flux_dir(1u, Uc,  u_c,  p_c),
+    F5 Fy_m = scaled_rusanov_flux(
+        scaled_inviscid_flux_dir(1u, Uym, u_ym, p_ym, courant),
+        scaled_inviscid_flux_dir(1u, Uc,  u_c,  p_c,  courant),
         Uym, Uc,
-        max(sp_ym, sp_c)
+        courant * max(sp_ym, sp_c)
     );
-    F5 Fy_p = rusanov_flux(
-        inviscid_flux_dir(1u, Uc,  u_c,  p_c),
-        inviscid_flux_dir(1u, Uyp, u_yp, p_yp),
+    F5 Fy_p = scaled_rusanov_flux(
+        scaled_inviscid_flux_dir(1u, Uc,  u_c,  p_c,  courant),
+        scaled_inviscid_flux_dir(1u, Uyp, u_yp, p_yp, courant),
         Uc, Uyp,
-        max(sp_c, sp_yp)
+        courant * max(sp_c, sp_yp)
     );
-    F5 Fz_m = rusanov_flux(
-        inviscid_flux_dir(2u, Uzm, u_zm, p_zm),
-        inviscid_flux_dir(2u, Uc,  u_c,  p_c),
+    F5 Fz_m = scaled_rusanov_flux(
+        scaled_inviscid_flux_dir(2u, Uzm, u_zm, p_zm, courant),
+        scaled_inviscid_flux_dir(2u, Uc,  u_c,  p_c,  courant),
         Uzm, Uc,
-        max(sp_zm, sp_c)
+        courant * max(sp_zm, sp_c)
     );
-    F5 Fz_p = rusanov_flux(
-        inviscid_flux_dir(2u, Uc,  u_c,  p_c),
-        inviscid_flux_dir(2u, Uzp, u_zp, p_zp),
+    F5 Fz_p = scaled_rusanov_flux(
+        scaled_inviscid_flux_dir(2u, Uc,  u_c,  p_c,  courant),
+        scaled_inviscid_flux_dir(2u, Uzp, u_zp, p_zp, courant),
         Uc, Uzp,
-        max(sp_c, sp_zp)
+        courant * max(sp_c, sp_zp)
     );
 
-    // Conservative divergences for rho and mom; internal energy gets an extra pressure-work source.
-    float div_frho = ((Fx_p.frho - Fx_m.frho) + (Fy_p.frho - Fy_m.frho) + (Fz_p.frho - Fz_m.frho)) * inv_dx;
-    float3 div_fmom = ((Fx_p.fmom - Fx_m.fmom) + (Fy_p.fmom - Fy_m.fmom) + (Fz_p.fmom - Fz_m.fmom)) * inv_dx;
-    float div_fe = ((Fx_p.fe_int - Fx_m.fe_int) + (Fy_p.fe_int - Fy_m.fe_int) + (Fz_p.fe_int - Fz_m.fe_int)) * inv_dx;
+    // Conservative increments for rho and mom; internal energy gets the
+    // timestep-scaled pressure-work and conduction increments below.
+    float div_frho = (Fx_p.frho - Fx_m.frho) +
+        (Fy_p.frho - Fy_m.frho) + (Fz_p.frho - Fz_m.frho);
+    float3 div_fmom = (Fx_p.fmom - Fx_m.fmom) +
+        (Fy_p.fmom - Fy_m.fmom) + (Fz_p.fmom - Fz_m.fmom);
+    float div_fe = (Fx_p.fe_int - Fx_m.fe_int) +
+        (Fy_p.fe_int - Fy_m.fe_int) + (Fz_p.fe_int - Fz_m.fe_int);
 
     drho = -div_frho;
     dmom = -div_fmom;
 
     // Pressure work term: -p * div(u)
-    float dux_dx = (u_xp.x - u_xm.x) * (0.5f * inv_dx);
-    float duy_dy = (u_yp.y - u_ym.y) * (0.5f * inv_dx);
-    float duz_dz = (u_zp.z - u_zm.z) * (0.5f * inv_dx);
+    float half_courant = 0.5f * courant;
+    float dux_dx = half_courant * u_xp.x - half_courant * u_xm.x;
+    float duy_dy = half_courant * u_yp.y - half_courant * u_ym.y;
+    float duz_dz = half_courant * u_zp.z - half_courant * u_zm.z;
     float div_u = dux_dx + duy_dy + duz_dz;
 
-    // Heat conduction: ∇·(k ∇T) = k ∇²T (constant k)
-    float lap_T = (T_xp + T_xm + T_yp + T_ym + T_zp + T_zm - 6.0f * T_c) * inv_dx2;
+    // Heat conduction: dt ∇·(k ∇T). Scale each temperature before
+    // summation so a representable diffusive increment does not require the raw
+    // Laplacian to fit in binary32.
+    float thermal_scale = p.dt * p.k_thermal / (dx * dx);
+    float conduction = thermal_scale * T_xp + thermal_scale * T_xm +
+        thermal_scale * T_yp + thermal_scale * T_ym +
+        thermal_scale * T_zp + thermal_scale * T_zm -
+        6.0f * thermal_scale * T_c;
 
-    de_int = -div_fe + (-p_c * div_u) + (p.k_thermal * lap_T);
+    de_int = -div_fe - p_c * div_u + conduction;
 }
 
 kernel void gas_rk2_stage1(
@@ -1946,9 +1967,9 @@ kernel void gas_rk2_stage1(
     if (gid >= p.num_cells) return;
 
     float dr; float3 dm; float de;
-    gas_rhs_cell(rho0, mom0, e0, p, gid, dr, dm, de);
+    gas_increment_cell(rho0, mom0, e0, p, gid, dr, dm, de);
     if (!isfinite(dr) || !isfinite(dm.x) || !isfinite(dm.y) || !isfinite(dm.z) || !isfinite(de)) {
-        // TAG 0x20: gas RHS produced non-finite (likely inadmissible stencil)
+        // TAG 0x20: gas RK increment produced non-finite (likely inadmissible stencil)
         U5 Uc_bad = load_U5(rho0, mom0, e0, gid);
         dbg_log(dbg_head, dbg_words, dbg_cap, 0x20u, gid, Uc_bad.rho, Uc_bad.e_int, Uc_bad.mom.x, Uc_bad.mom.y);
         float qn = qnan_f();
@@ -1969,10 +1990,10 @@ kernel void gas_rk2_stage1(
     // Stage1 state
     U5 Uc = load_U5(rho0, mom0, e0, gid);
     U5 U1;
-    U1.rho = Uc.rho + p.dt * dr;
-    U1.mom = Uc.mom + p.dt * dm;
-    U1.e_int = Uc.e_int + p.dt * de;
-    if (!admissible_U5(U1, p.gamma, p.rho_min, p.p_min)) {
+    U1.rho = Uc.rho + dr;
+    U1.mom = Uc.mom + dm;
+    U1.e_int = Uc.e_int + de;
+    if (!admissible_U5(U1, p.gamma, p.density_resolution)) {
         // TAG 0x12: stage1 produced inadmissible state
         dbg_log(
             dbg_head,
@@ -2033,7 +2054,7 @@ kernel void gas_rk2_stage2(
     if (gid >= p.num_cells) return;
 
     float dr2; float3 dm2; float de2;
-    gas_rhs_cell(rho1, mom1, e1, p, gid, dr2, dm2, de2);
+    gas_increment_cell(rho1, mom1, e1, p, gid, dr2, dm2, de2);
     if (!isfinite(dr2) || !isfinite(dm2.x) || !isfinite(dm2.y) || !isfinite(dm2.z) || !isfinite(de2)) {
         // TAG 0x21: gas RHS2 produced non-finite (likely inadmissible stencil)
         U5 Uc_bad = load_U5(rho1, mom1, e1, gid);
@@ -2055,10 +2076,10 @@ kernel void gas_rk2_stage2(
     float de1 = k1_e[gid];
 
     U5 U2;
-    U2.rho = Uc.rho + 0.5f * p.dt * (dr1 + dr2);
-    U2.mom = Uc.mom + 0.5f * p.dt * (dm1 + dm2);
-    U2.e_int = Uc.e_int + 0.5f * p.dt * (de1 + de2);
-    if (!admissible_U5(U2, p.gamma, p.rho_min, p.p_min)) {
+    U2.rho = Uc.rho + 0.5f * dr1 + 0.5f * dr2;
+    U2.mom = Uc.mom + 0.5f * dm1 + 0.5f * dm2;
+    U2.e_int = Uc.e_int + 0.5f * de1 + 0.5f * de2;
+    if (!admissible_U5(U2, p.gamma, p.density_resolution)) {
         // TAG 0x13: stage2 produced inadmissible state
         dbg_log(
             dbg_head,
@@ -2212,7 +2233,7 @@ kernel void pic_gather_update_particles(
     }
 
     // Numerical low-density envelope (must match primitives_from_U()).
-    float rho_eps = max(p.rho_min, 0.0f);
+    float rho_eps = max(p.density_resolution, 0.0f);
     const float f32_eps = 1.1920929e-7f;
     float e_eps = 4.0f * rho_eps * f32_eps;
 
@@ -2230,12 +2251,11 @@ kernel void pic_gather_update_particles(
         // TAG 0x02: vacuum gather (exact vacuum only)
         dbg_log(dbg_head, dbg_words, dbg_cap, 0x02u, gid, rho, e_int_density, 0.0f, 0.0f);
     } else if (fabs(rho) <= rho_eps) {
-        // Low-density: require bounded momentum and non-negative internal energy
-        // apart from fp32-scale signed roundoff. CFL bounds the resulting temperature.
-        float mom2 = dot(mom, mom);
-        float rho_eps2 = rho_eps * rho_eps;
-        if (mom2 > rho_eps2 || e_int_density < -e_eps) {
-            // TAG 0x08: low-density envelope violated
+        // Match gas primitive recovery exactly: finite momentum is regularized
+        // by rho_eps and its velocity is already represented in the accepted
+        // CFL step. Only energy outside the signed binary32 envelope is invalid.
+        if (e_int_density < -e_eps) {
+            // TAG 0x08: low-density energy envelope violated
             dbg_log(dbg_head, dbg_words, dbg_cap, 0x08u, gid, rho, e_int_density, mom.x, mom.y);
             float qn = qnan_f();
             particle_heat_out[gid] = qn;

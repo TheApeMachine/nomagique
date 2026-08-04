@@ -78,6 +78,26 @@ func TestPearlSample_Measure(t *testing.T) {
 			So(secondary.Rows, ShouldHaveLength, 1)
 		})
 	})
+
+	Convey("Given a sustained causal stream", t, func() {
+		sample := algorithm.NewPearlSample(pearlConfig())
+		observations := 4096
+		var latest algorithm.PearlSampleOutput
+
+		for index := range observations {
+			var err error
+			latest, _, err = sample.Measure(algorithm.PearlInput{
+				Key: "primary",
+				Row: []float64{float64(index % 3), float64(index), float64(index * 2)},
+			})
+			So(err, ShouldBeNil)
+		}
+
+		Convey("It retains a bounded adaptive table ending at the latest observation", func() {
+			So(len(latest.Rows), ShouldBeLessThan, observations)
+			So(latest.Rows[len(latest.Rows)-1], ShouldResemble, latest.Row)
+		})
+	})
 }
 
 func BenchmarkPearl_Measure(t *testing.B) {

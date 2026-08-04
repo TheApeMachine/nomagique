@@ -260,6 +260,31 @@ func TestDomainStep(t *testing.T) {
 		})
 	})
 
+	Convey("Given a light carrier whose finite specific heat exceeds the old gather ceiling", t, func() {
+		domain, err := NewDomain(testDomainConfig())
+		So(err, ShouldBeNil)
+		Reset(func() { So(domain.Close(), ShouldBeNil) })
+		particles := []Particle{{
+			Position: Vector{X: 0.25, Y: 0.25, Z: 0.25},
+			Mass:     math.Nextafter32(MinimumPilotWaveMass, math.MaxFloat32),
+			Heat:     1,
+			Energy:   1,
+			Phase:    0.1,
+			Omega:    1,
+		}}
+
+		for range testDomainConfig().Grid.X {
+			_, err = domain.Step(particles)
+			So(err, ShouldBeNil)
+			particles = particles[:domain.ParticleCount()]
+		}
+
+		Convey("It should remain finite without imposing a nonphysical temperature cap", func() {
+			So(finiteParticle(particles[0]), ShouldBeTrue)
+			So(particles[0].Heat, ShouldBeGreaterThanOrEqualTo, float32(0))
+		})
+	})
+
 	Convey("Given same-cell same-content particles after advance", t, func() {
 		domain, err := NewDomain(testDomainConfig())
 		So(err, ShouldBeNil)

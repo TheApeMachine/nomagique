@@ -2215,8 +2215,6 @@ kernel void pic_gather_update_particles(
     float rho_eps = max(p.rho_min, 0.0f);
     const float f32_eps = 1.1920929e-7f;
     float e_eps = 4.0f * rho_eps * f32_eps;
-    const float e_spec_max = 10.0f;
-    float e_int_max = e_spec_max * rho_eps;
 
     bool vacuum_exact = (rho == 0.0f && e_int_density == 0.0f && mom.x == 0.0f && mom.y == 0.0f && mom.z == 0.0f);
 
@@ -2232,10 +2230,11 @@ kernel void pic_gather_update_particles(
         // TAG 0x02: vacuum gather (exact vacuum only)
         dbg_log(dbg_head, dbg_words, dbg_cap, 0x02u, gid, rho, e_int_density, 0.0f, 0.0f);
     } else if (fabs(rho) <= rho_eps) {
-        // Low-density: require bounded momentum and bounded internal energy density.
+        // Low-density: require bounded momentum and non-negative internal energy
+        // apart from fp32-scale signed roundoff. CFL bounds the resulting temperature.
         float mom2 = dot(mom, mom);
         float rho_eps2 = rho_eps * rho_eps;
-        if (mom2 > rho_eps2 || e_int_density < -e_eps || e_int_density > e_int_max) {
+        if (mom2 > rho_eps2 || e_int_density < -e_eps) {
             // TAG 0x08: low-density envelope violated
             dbg_log(dbg_head, dbg_words, dbg_cap, 0x08u, gid, rho, e_int_density, mom.x, mom.y);
             float qn = qnan_f();

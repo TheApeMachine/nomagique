@@ -1437,6 +1437,7 @@ struct DisplayParams {
         1.0e-3f,
         1.0f,
     };
+    std::memset(_debugHead.contents, 0, _debugHead.length);
     id<MTLCommandBuffer> command = nil;
     id<MTLComputeCommandEncoder> encoder = [self encoder:pipeline command:&command];
     NSArray<id<MTLBuffer>> *buffers = @[
@@ -1471,7 +1472,21 @@ struct DisplayParams {
     for (uint32_t index = 0; index < _particleCount; index++) {
         if (!std::isfinite(heat[index]) || heat[index] < 0.0f) {
             if (error != nil) {
-                *error = [NSString stringWithFormat:@"PIC gather produced invalid heat at particle %u", index];
+                uint32_t events = *(uint32_t *)_debugHead.contents;
+                uint32_t *words = (uint32_t *)_debugWords.contents;
+                *error = events > 0u
+                    ? [NSString stringWithFormat:
+                        @"PIC gather produced invalid heat at particle %u; gpu tag=0x%x gid=%u values=(%g,%g,%g,%g)",
+                        index,
+                        words[0],
+                        words[1],
+                        fluid_debug_float(words[2]),
+                        fluid_debug_float(words[3]),
+                        fluid_debug_float(words[4]),
+                        fluid_debug_float(words[5])]
+                    : [NSString stringWithFormat:
+                        @"PIC gather produced invalid heat at particle %u without a GPU diagnostic",
+                        index];
             }
 
             return NO;

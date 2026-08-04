@@ -39,6 +39,7 @@ type PearlSampleOutput struct {
 type pearlWindow struct {
 	rows      [][]float64
 	variances []*adaptive.Variance
+	capacity  int
 }
 
 /*
@@ -86,7 +87,7 @@ func (pearlSample *PearlSample) Measure(
 		row = append(row, value)
 	}
 
-	window := pearlSample.window(input.Key)
+	window := pearlSample.window(input.Key, len(row))
 
 	if len(window.rows) > 0 && len(window.rows[0]) != len(row) {
 		return PearlSampleOutput{}, false, errnie.Error(errnie.Err(
@@ -118,19 +119,27 @@ func (pearlSample *PearlSample) append(
 	row []float64,
 	window *pearlWindow,
 ) PearlSampleOutput {
-	window.rows = append(window.rows, append([]float64(nil), row...))
-
-	rows := make([][]float64, 0, len(window.rows))
-
-	for _, retained := range window.rows {
-		rows = append(rows, append([]float64(nil), retained...))
-	}
+	window.rows = append(window.rows, row)
+	window.trim()
 
 	return PearlSampleOutput{
 		Key:  key,
-		Row:  append([]float64(nil), row...),
-		Rows: rows,
+		Row:  row,
+		Rows: window.rows,
 	}
+}
+
+func (window *pearlWindow) trim() {
+	capacity := window.capacity
+
+	if len(window.rows) <= capacity {
+		return
+	}
+
+	drop := len(window.rows) - capacity
+	copy(window.rows, window.rows[drop:])
+	clear(window.rows[capacity:])
+	window.rows = window.rows[:capacity]
 }
 
 func (pearlSample *PearlSample) ready(window *pearlWindow) bool {
@@ -143,15 +152,19 @@ func (pearlSample *PearlSample) ready(window *pearlWindow) bool {
 	return len(window.variances) > 0
 }
 
-func (pearlSample *PearlSample) window(key string) *pearlWindow {
+func (pearlSample *PearlSample) window(key string, rowWidth int) *pearlWindow {
 	window, ok := pearlSample.windows[key]
 
 	if ok {
 		return window
 	}
 
-	window = &pearlWindow{}
+	window = &pearlWindow{capacity: causalMomentParameterCount(rowWidth)}
 	pearlSample.windows[key] = window
 
 	return window
+}
+
+func causalMomentParameterCount(rowWidth int) int {
+	return 1 + rowWidth + rowWidth*(rowWidth+1)/2
 }

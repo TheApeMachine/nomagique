@@ -129,7 +129,7 @@ func (mcts *CausalMCTS) bestChild(node *Node, history [][]float64) *Node {
 				mcts.TargetCol,
 				mcts.MinRows,
 				mcts.TreatmentCol,
-				child.Action,
+				interventionLevel(child),
 				mcts.ControlCols,
 			)
 			if err == nil && !math.IsNaN(val) && !math.IsInf(val, 0) {
@@ -220,7 +220,7 @@ func (mcts *CausalMCTS) causalBackpropagate(leaf *Node, reward float64, trajecto
 					mcts.LinearFit,
 					actualRow,
 					mcts.TreatmentCol,
-					sibling.Rotor()[0], // Accessing sibling's specific action value
+					interventionLevel(sibling),
 				)
 
 				if err == nil && !math.IsNaN(virtualReward) && !math.IsInf(virtualReward, 0) {

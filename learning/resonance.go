@@ -259,7 +259,7 @@ func NewResonanceManifold(
 func (rm *ResonanceManifold) ResetState(resetPrecision bool) {
 	for _, latent := range rm.z {
 		rowCount, _ := latent.Dims()
-		for rowIndex := 0; rowIndex < rowCount; rowIndex++ {
+		for rowIndex := range rowCount {
 			latent.Set(rowIndex, 0, 0.0)
 		}
 	}
@@ -268,7 +268,7 @@ func (rm *ResonanceManifold) ResetState(resetPrecision bool) {
 	if resetPrecision {
 		for layerIndex := 0; layerIndex < len(rm.W); layerIndex++ {
 			rowCount, _ := rm.errorVar[layerIndex].Dims()
-			for rowIndex := 0; rowIndex < rowCount; rowIndex++ {
+			for rowIndex := range rowCount {
 				rm.errorVar[layerIndex].Set(rowIndex, 0, 1.0)
 				rm.precision[layerIndex].Set(rowIndex, 0, 1.0)
 			}
@@ -1254,7 +1254,7 @@ func (rm *ResonanceManifold) RolloutTaskPrediction(steps int) []float64 {
 
 	curve := make([]float64, steps*rm.targetDim)
 
-	for step := 0; step < steps; step++ {
+	for step := range steps {
 		// 1. Advance state: z_next = tanh(A * z_current)
 		nextState.Mul(rm.A, currentState)
 		denseApplyTanhInPlace(nextState)
@@ -1272,3 +1272,57 @@ func (rm *ResonanceManifold) RolloutTaskPrediction(steps int) []float64 {
 
 	return curve
 }
+
+/*
+DynamicHorizon calculates the forward horizon step count supported by the manifold's
+current task head precision and rollout retention curve, updating and returning the current reach.
+
+A precision below 0.5 or uninitialized task head retracts reach, while established
+precision grows reach up to maxHorizon. The resulting reach is capped by confidence
+and bounded by the retention decay envelope.
+*/
+func (rm *ResonanceManifold) DynamicHorizon(
+	confidence float64, currentReach int, maxHorizon int,
+) (int, int) {
+	precision, hasPrecision := rm.TaskPrecision()
+	newReach := currentReach
+
+	switch {
+	case !hasPrecision:
+		newReach = 1
+	case precision >= 0.5:
+		newReach = currentReach + 1
+	default:
+		newReach = int(math.Floor(float64(currentReach) * 0.5))
+	}
+
+	newReach = min(maxHorizon, max(1, newReach))
+	horizon := newReach
+
+	if capped := int(math.Floor(float64(newReach) * confidence)); capped < horizon {
+		horizon = capped
+	}
+
+	if horizon < 1 {
+		return 1, newReach
+	}
+
+	retention := rm.RolloutRetention(horizon)
+
+	if len(retention) == 0 || retention[0] <= 0 {
+		return 1, newReach
+	}
+
+	for step, surviving := range retention {
+		if surviving/retention[0] < 0.33 {
+			if step == 0 {
+				return 1, newReach
+			}
+
+			return step, newReach
+		}
+	}
+
+	return horizon, newReach
+}
+

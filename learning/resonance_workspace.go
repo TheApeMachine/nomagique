@@ -84,7 +84,7 @@ func newResonanceWorkspace(arch []int, targetDim int) *resonanceWorkspace {
 		}
 	}
 
-	for linkIndex := 0; linkIndex < numLinks; linkIndex++ {
+	for linkIndex := range numLinks {
 		rowDim := arch[linkIndex]
 		colDim := arch[linkIndex+1]
 

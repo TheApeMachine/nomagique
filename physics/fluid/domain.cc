@@ -351,6 +351,13 @@ static float fluid_debug_float(uint32_t word) {
                   error:(NSString **)error;
 - (BOOL)readWave:(FluidWaveMode *)modes count:(uint32_t)count error:(NSString **)error;
 - (BOOL)read:(FluidReading *)reading error:(NSString **)error;
+- (BOOL)readFields:(float *)density
+          momentum:(float *)momentum
+    internalEnergy:(float *)internalEnergy
+          waveReal:(float *)waveReal
+     waveImaginary:(float *)waveImaginary
+             count:(uint32_t)count
+             error:(NSString **)error;
 - (BOOL)readProjection:(float *)density
              coherence:(float *)coherence
               guidanceX:(float *)guidanceX
@@ -2940,6 +2947,63 @@ Advance without inventing a parallel particle store.
     return YES;
 }
 
+- (BOOL)readFields:(float *)density
+          momentum:(float *)momentum
+    internalEnergy:(float *)internalEnergy
+          waveReal:(float *)waveReal
+     waveImaginary:(float *)waveImaginary
+             count:(uint32_t)count
+             error:(NSString **)error {
+    if (_particleCount == 0u || !_waveInitialized) {
+        if (error != nil) {
+            *error = @"resident fluid fields are unavailable before the first step";
+        }
+
+        return NO;
+    }
+
+    if (density == nullptr || momentum == nullptr || internalEnergy == nullptr ||
+        waveReal == nullptr || waveImaginary == nullptr || count != _cellCount) {
+        if (error != nil) {
+            *error = @"fluid field buffers do not match the resident lattice";
+        }
+
+        return NO;
+    }
+
+    float *residentDensity = (float *)_density.contents;
+    float *residentMomentum = (float *)_momentum.contents;
+    float *residentEnergy = (float *)_internalEnergy.contents;
+    float *residentWaveReal = (float *)_spatialPsiReal.contents;
+    float *residentWaveImaginary = (float *)_spatialPsiImaginary.contents;
+
+    for (uint32_t cell = 0u; cell < count; cell++) {
+        uint32_t vector = cell * 3u;
+
+        if (!std::isfinite(residentDensity[cell]) ||
+            !std::isfinite(residentMomentum[vector]) ||
+            !std::isfinite(residentMomentum[vector + 1u]) ||
+            !std::isfinite(residentMomentum[vector + 2u]) ||
+            !std::isfinite(residentEnergy[cell]) ||
+            !std::isfinite(residentWaveReal[cell]) ||
+            !std::isfinite(residentWaveImaginary[cell])) {
+            if (error != nil) {
+                *error = @"resident fluid fields are not finite";
+            }
+
+            return NO;
+        }
+    }
+
+    size_t scalarBytes = (size_t)count * sizeof(float);
+    std::memcpy(density, residentDensity, scalarBytes);
+    std::memcpy(momentum, residentMomentum, scalarBytes * 3u);
+    std::memcpy(internalEnergy, residentEnergy, scalarBytes);
+    std::memcpy(waveReal, residentWaveReal, scalarBytes);
+    std::memcpy(waveImaginary, residentWaveImaginary, scalarBytes);
+    return YES;
+}
+
 - (BOOL)readDisplay:(uint8_t *)rgba
               count:(uint32_t)byteCount
               stats:(FluidDisplayStats *)stats
@@ -3298,6 +3362,44 @@ extern "C" int fluid_domain_read_projection(
 
         if (!success) {
             fluid_write_error(errorOutput, errorCapacity, error ?: @"fluid projection failed");
+            return 0;
+        }
+
+        return 1;
+    }
+}
+
+extern "C" int fluid_domain_read_fields(
+    void *handle,
+    float *density,
+    float *momentum,
+    float *internalEnergy,
+    float *waveReal,
+    float *waveImaginary,
+    uint32_t cellCount,
+    char *errorOutput,
+    int errorCapacity
+) {
+    @autoreleasepool {
+        if (handle == nullptr) {
+            fluid_write_error(errorOutput, errorCapacity, @"fluid domain handle is required");
+            return 0;
+        }
+
+        SensoriumFluidDomain *domain = (__bridge SensoriumFluidDomain *)handle;
+        NSString *error = nil;
+        BOOL success = [domain
+            readFields:density
+            momentum:momentum
+            internalEnergy:internalEnergy
+            waveReal:waveReal
+            waveImaginary:waveImaginary
+            count:cellCount
+            error:&error
+        ];
+
+        if (!success) {
+            fluid_write_error(errorOutput, errorCapacity, error ?: @"fluid field read failed");
             return 0;
         }
 

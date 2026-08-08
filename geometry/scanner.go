@@ -285,3 +285,24 @@ func (corpus *Corpus[Outcome]) rank(matches []CorpusMatch[Outcome]) {
 		return left.At.Before(right.At)
 	})
 }
+
+/*
+PhasePath returns an evenly spaced angular path over the full circle, excluding
+the endpoint so the last sample does not repeat the first.
+
+A scan is only comparable between queries if every query is evaluated on the
+same path, so the path is constructed here rather than by each caller.
+*/
+func PhasePath(samples int) ([]float64, error) {
+	if samples <= 0 {
+		return nil, fmt.Errorf("geometry: phase path requires a positive sample count")
+	}
+
+	angles := make([]float64, samples)
+
+	for index := range angles {
+		angles[index] = 2 * math.Pi * float64(index) / float64(samples)
+	}
+
+	return angles, nil
+}

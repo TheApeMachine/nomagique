@@ -162,6 +162,23 @@ int fluid_domain_read(
     int error_capacity
 );
 
+/*
+fluid_domain_read_fields copies the complete post-step Eulerian gas state and
+spatial complex wave field. Scalar arrays contain grid_x*grid_y*grid_z values;
+momentum contains three values per cell in XYZ order.
+*/
+int fluid_domain_read_fields(
+    void *handle,
+    float *density,
+    float *momentum,
+    float *internal_energy,
+    float *wave_real,
+    float *wave_imaginary,
+    uint32_t cell_count,
+    char *error_out,
+    int error_capacity
+);
+
 int fluid_domain_read_projection(
     void *handle,
     float *density,

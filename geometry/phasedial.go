@@ -66,7 +66,7 @@ func (dial PhaseDial) EncodeFromValues(values []Value) PhaseDial {
 		structuralScaled[valueIndex] = structuralPhaseMix(&values[valueIndex]) * math.Pi * 2
 	}
 
-	for dimIndex := 0; dimIndex < PhaseDialDimensions; dimIndex++ {
+	for dimIndex := range PhaseDialDimensions {
 		var sum complex128
 
 		omega := float64(PhaseDialPrimes[dimIndex])
@@ -285,7 +285,7 @@ func (rotor PhaseRotor) EncodeFromValues(values []Value) PhaseRotor {
 	goldenAngle := math.Pi * (3 - math.Sqrt(5))
 	nBasis := float64(PhaseDialDimensions)
 
-	for k := 0; k < PhaseDialDimensions; k++ {
+	for k := range PhaseDialDimensions {
 		theta := goldenAngle * float64(k)
 		zCoord := 1 - (2*float64(k)+1)/nBasis
 		radius := math.Sqrt(math.Max(0, 1-zCoord*zCoord))

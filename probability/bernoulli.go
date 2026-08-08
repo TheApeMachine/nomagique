@@ -111,6 +111,32 @@ func (bernoulli *Bernoulli) MeasurePair(pair BernoulliPair) (BernoulliOutput, er
 }
 
 /*
+ProbabilityAbove reports the posterior probability that the Bernoulli success
+rate exceeds reference. It turns retained evidence into a sample-aware confidence
+without declaring a fixed warm-up count.
+*/
+func (bernoulli *Bernoulli) ProbabilityAbove(reference float64) (float64, error) {
+	if err := finiteProbability("bernoulli reference", reference); err != nil {
+		return 0, err
+	}
+
+	if _, err := parseBernoulliOutcome(reference, nil); err != nil {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"bernoulli: invalid reference probability",
+			err,
+		))
+	}
+
+	distribution := distuv.Beta{
+		Alpha: bernoulli.alpha,
+		Beta:  bernoulli.beta,
+	}
+
+	return 1 - distribution.CDF(reference), nil
+}
+
+/*
 Reset clears posterior state back to its beta(1,1) prior.
 */
 func (bernoulli *Bernoulli) Reset() {

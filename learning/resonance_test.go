@@ -117,6 +117,50 @@ func TestResonanceManifoldDirectBatch(testingTB *testing.T) {
 	})
 }
 
+func TestResonanceManifoldLearn(testingTB *testing.T) {
+	Convey("Given a linear return stream and the former fixed-rate task update", testingTB, func() {
+		manifold, err := NewResonanceManifold([]int{1, 1}, 1, 0.03)
+		So(err, ShouldBeNil)
+
+		fixedIntercept := 0.0
+		fixedWeight := 0.0
+		fixedRate := 0.03
+		adaptiveLoss := 0.0
+		fixedLoss := 0.0
+
+		/*
+			Repeatedly traversing both signs makes slope and intercept identifiable.
+			The fixed comparator is the scalar SGD update the task head previously
+			shared with the manifold; RLS must lower prior, not post-fit, loss.
+		*/
+		for sampleIndex := range 128 {
+			feature := float64(sampleIndex%8-4) / 4
+			target := 0.25 + 0.5*feature
+			manifold.z[len(manifold.z)-1].Set(0, 0, feature)
+
+			adaptivePrediction := manifold.TaskPrediction()[0]
+			adaptiveError := target - adaptivePrediction
+			adaptiveLoss += adaptiveError * adaptiveError
+
+			fixedPrediction := fixedIntercept + fixedWeight*feature
+			fixedError := target - fixedPrediction
+			fixedLoss += fixedError * fixedError
+			fixedIntercept += fixedRate * fixedError
+			fixedWeight += fixedRate * fixedError * feature
+
+			So(manifold.Learn([]float64{target}), ShouldBeNil)
+		}
+
+		manifold.z[len(manifold.z)-1].Set(0, 0, 0.5)
+		prediction := manifold.TaskPrediction()[0]
+
+		Convey("It should derive gain from design covariance and lower prequential error", func() {
+			So(adaptiveLoss, ShouldBeLessThan, fixedLoss)
+			So(prediction, ShouldAlmostEqual, 0.5, 0.01)
+		})
+	})
+}
+
 func BenchmarkResonanceManifoldSettle(testingTB *testing.B) {
 	manifold, err := NewResonanceManifold([]int{8, 16, 8}, 2, 0.01)
 

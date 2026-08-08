@@ -2,6 +2,7 @@ package learning
 
 import (
 	"errors"
+	"fmt"
 	"math"
 	"math/rand"
 
@@ -114,6 +115,8 @@ type ResonanceManifold struct {
 	R                     []*mat.Dense
 	A                     *mat.Dense
 	V                     *mat.Dense
+	taskBias              *mat.Dense
+	taskLearners          []*RLS
 	z                     []*mat.Dense
 	prevTop               *mat.Dense
 	errorVar              []*mat.Dense
@@ -188,6 +191,8 @@ func NewResonanceManifold(
 	temporalWeights := mat.NewDense(topDim, topDim, dataA)
 
 	var taskWeights *mat.Dense
+	var taskBias *mat.Dense
+	var taskLearners []*RLS
 	var taskVar *mat.Dense
 	var taskScale *mat.Dense
 	var taskPrecision *mat.Dense
@@ -204,11 +209,23 @@ func NewResonanceManifold(
 			here.
 		*/
 		taskWeights = mat.NewDense(targetDim, topDim, nil)
+		taskBias = mat.NewDense(targetDim, 1, nil)
+		taskLearners = make([]*RLS, targetDim)
 		taskVar = mat.NewDense(targetDim, 1, nil)
 		taskScale = mat.NewDense(targetDim, 1, nil)
 		taskPrecision = mat.NewDense(targetDim, 1, nil)
 
 		for rowIndex := range targetDim {
+			learner, err := NewRLS(RLSConfig{
+				Dimension:       topDim,
+				InitialVariance: 1,
+			})
+
+			if err != nil {
+				return nil, fmt.Errorf("resonance: construct task learner: %w", err)
+			}
+
+			taskLearners[rowIndex] = learner
 			taskVar.Set(rowIndex, 0, 1.0)
 
 			/*
@@ -242,6 +259,8 @@ func NewResonanceManifold(
 		R:                     recognition,
 		A:                     temporalWeights,
 		V:                     taskWeights,
+		taskBias:              taskBias,
+		taskLearners:          taskLearners,
 		z:                     latents,
 		errorVar:              errorVar,
 		precision:             precision,
@@ -489,36 +508,37 @@ func (rm *ResonanceManifold) Learn(target []float64) error {
 		taskError.Sub(targetCol, taskPred)
 
 		/*
-			The head is linear, so its local derivative is one and the error is
-			the whole signal. Precision still weights it, which is what lets a
-			target whose residual scale is orders of magnitude below the
-			generative errors contribute a comparable gradient instead of being
-			swamped by them.
+			The return head is a linear regression, so square-root recursive least
+			squares is the exact online learner for its objective. Its gain follows
+			from retained design covariance; sharing the manifold's scalar alpha
+			with unrelated generative, recognition, temporal, precision, and
+			regularization updates made the task fit move for reasons outside its
+			own forecast error.
+
+			Initial covariance is the identity because the top latent is a tanh
+			image on a unit scale. Forgetting is one: no evidence is discarded
+			without an observed regime-reset rule.
 		*/
-		taskSignal := rm.workspace.taskSignal
-		taskSignal.MulElem(taskError, rm.taskPrecisionVec())
+		topState := rm.z[topIndex].RawMatrix().Data
 
-		update := rm.workspace.taskUpdate
-		denseOuterColsInto(update, taskSignal, rm.z[topIndex], 1.0)
+		for rowIndex, learner := range rm.taskLearners {
+			_, err := learner.Observe(RLSSample{
+				Features: topState,
+				Target:   targetCol.At(rowIndex, 0),
+			})
 
-		norm := mat.Norm(update, 2)
-		if norm > rm.cfg.GradClip {
-			update.Scale(rm.cfg.GradClip/norm, update)
+			if err != nil {
+				return fmt.Errorf("resonance: task learner update: %w", err)
+			}
+
+			intercept, err := learner.copyCoefficients(rm.V.RawRowView(rowIndex))
+
+			if err != nil {
+				return fmt.Errorf("resonance: task learner coefficients: %w", err)
+			}
+
+			rm.taskBias.Set(rowIndex, 0, intercept)
 		}
-
-		update.Scale(rm.cfg.LrGenerative, update)
-		rm.V.Add(rm.V, update)
-
-		/*
-			Weight decay is deliberately not applied to V. The generative and
-			recognition links are overparameterized reconstructions where decay
-			regularizes; V is a single row fitting a small-magnitude target, and
-			decaying it toward zero competes directly with the signal on the same
-			order as the signal itself. A head pulled to zero forecasts zero,
-			which reads downstream as a confident no-edge rather than as an
-			unlearned one. Regularization for the head is the precision term
-			above, which scales with the residual the head actually incurs.
-		*/
 	}
 
 	if rm.prevTop != nil {
@@ -665,6 +685,7 @@ target on its own scale and leaves saturation to the caller who chose it.
 */
 func (rm *ResonanceManifold) taskPredictionInto(dst *mat.Dense) {
 	dst.Mul(rm.V, rm.z[len(rm.z)-1])
+	dst.Add(dst, rm.taskBias)
 }
 
 func (rm *ResonanceManifold) TaskPrediction() []float64 {
@@ -1261,6 +1282,7 @@ func (rm *ResonanceManifold) RolloutTaskPrediction(steps int) []float64 {
 
 		// 2. Predict return: y_next = V * z_next (linear head)
 		taskPred.Mul(rm.V, nextState)
+		taskPred.Add(taskPred, rm.taskBias)
 
 		// 3. Store prediction for this horizon step
 		for row := 0; row < rm.targetDim; row++ {
@@ -1325,4 +1347,3 @@ func (rm *ResonanceManifold) DynamicHorizon(
 
 	return horizon, newReach
 }
-

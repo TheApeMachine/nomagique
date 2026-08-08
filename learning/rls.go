@@ -154,6 +154,29 @@ func (rls *RLS) Snapshot() (RLSSnapshot, error) {
 	return rls.session.snapshot(), nil
 }
 
+/*
+copyCoefficients copies the fitted linear model without reconstructing the
+covariance matrix. The intercept is returned separately because callers such as
+the resonance task head store it outside their dense weight row.
+*/
+func (rls *RLS) copyCoefficients(weights []float64) (float64, error) {
+	if rls == nil || rls.session == nil {
+		return 0, fmt.Errorf("learning: rls session required")
+	}
+
+	if len(weights) != rls.session.dimension {
+		return 0, fmt.Errorf(
+			"learning: rls expected %d coefficient slots, got %d",
+			rls.session.dimension,
+			len(weights),
+		)
+	}
+
+	copy(weights, rls.session.beta[1:])
+
+	return rls.session.beta[0], nil
+}
+
 type rlsSession struct {
 	dimension        int
 	initialVariance  float64

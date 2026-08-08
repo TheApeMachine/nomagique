@@ -98,6 +98,38 @@ func TestBernoulliMeasure(testingTB *testing.T) {
 	})
 }
 
+func TestBernoulliProbabilityAbove(testingTB *testing.T) {
+	Convey("Given sequential evidence that a model beats its baseline", testingTB, func() {
+		posterior := NewBernoulli()
+		prior, err := posterior.ProbabilityAbove(0.5)
+		So(err, ShouldBeNil)
+
+		_, err = posterior.Measure(1)
+		So(err, ShouldBeNil)
+		oneSuccess, err := posterior.ProbabilityAbove(0.5)
+		So(err, ShouldBeNil)
+
+		_, err = posterior.Measure(1)
+		So(err, ShouldBeNil)
+		twoSuccesses, err := posterior.ProbabilityAbove(0.5)
+
+		Convey("It should increase confidence while retaining small-sample uncertainty", func() {
+			So(err, ShouldBeNil)
+			So(prior, ShouldAlmostEqual, 0.5)
+			So(oneSuccess, ShouldAlmostEqual, 0.75)
+			So(twoSuccesses, ShouldAlmostEqual, 0.875)
+		})
+	})
+
+	Convey("Given a reference outside the probability domain", testingTB, func() {
+		_, err := NewBernoulli().ProbabilityAbove(2)
+
+		Convey("It should reject the reference", func() {
+			So(err, ShouldNotBeNil)
+		})
+	})
+}
+
 func TestBernoulliReset(testingTB *testing.T) {
 	Convey("Given an observed posterior", testingTB, func() {
 		posterior := NewBernoulli()
@@ -128,5 +160,16 @@ func BenchmarkBernoulliMeasure(testingTB *testing.B) {
 			Predicted: 10,
 			Actual:    11,
 		})
+	}
+}
+
+func BenchmarkBernoulliProbabilityAbove(testingTB *testing.B) {
+	posterior := NewBernoulli()
+	_, _ = posterior.Measure(1)
+
+	testingTB.ReportAllocs()
+
+	for testingTB.Loop() {
+		_, _ = posterior.ProbabilityAbove(0.5)
 	}
 }

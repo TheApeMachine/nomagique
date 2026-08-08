@@ -186,6 +186,17 @@ func (controller *PaceController) Alpha() float64 {
 }
 
 /*
+Bounds returns the pace floor and ceiling the controller integrates between.
+
+A pace sitting on either rail is a controller that has run out of room rather
+than one that has settled, so a reader of Alpha cannot tell the two apart
+without the interval it moves inside.
+*/
+func (controller *PaceController) Bounds() (float64, float64) {
+	return controller.minAlpha, controller.maxAlpha
+}
+
+/*
 Count returns the number of retained observations in the error calibrator.
 */
 func (controller *PaceController) Count() int {

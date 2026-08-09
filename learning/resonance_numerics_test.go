@@ -178,6 +178,7 @@ func TestRolloutRetentionReportsDecay(testingTB *testing.T) {
 		Convey("Then retention is reported per step alongside the curve", func() {
 			So(len(retention), ShouldEqual, 12)
 			So(len(curve), ShouldEqual, 12)
+			So(retention[0], ShouldEqual, 1)
 		})
 
 		Convey("Then retention decays rather than holding flat", func() {

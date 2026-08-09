@@ -63,6 +63,21 @@ func TestRLSMeasure(testingTB *testing.T) {
 }
 
 func TestRLSPredict(testingTB *testing.T) {
+	Convey("Given a learner without resolved residual scale", testingTB, func() {
+		stage, err := NewRLS(RLSConfig{Dimension: 1, InitialVariance: 1})
+		So(err, ShouldBeNil)
+
+		output, err := stage.Predict([]float64{1})
+
+		Convey("It should forecast without inventing predictive uncertainty", func() {
+			So(err, ShouldBeNil)
+			So(output.Value, ShouldEqual, 0)
+			So(output.Ready, ShouldBeFalse)
+			So(output.Scale, ShouldEqual, 0)
+			So(output.DegreesOfFreedom, ShouldEqual, 0)
+		})
+	})
+
 	Convey("Given a trained one-dimensional learner", testingTB, func() {
 		stage, err := NewRLS(RLSConfig{Dimension: 1, InitialVariance: 1000})
 		So(err, ShouldBeNil)
@@ -85,8 +100,35 @@ func TestRLSPredict(testingTB *testing.T) {
 		Convey("It should predict without changing retained state", func() {
 			So(err, ShouldBeNil)
 			So(after.Value, ShouldEqual, before.Value)
+			So(after.Ready, ShouldBeTrue)
+			So(after.Scale, ShouldBeGreaterThan, 0)
+			So(after.DegreesOfFreedom, ShouldEqual, 5)
 			So(afterSnap.Beta, ShouldResemble, beforeSnap.Beta)
 			So(afterSnap.Covariance, ShouldResemble, beforeSnap.Covariance)
+		})
+	})
+
+	Convey("Given observations concentrated in one part of the design", testingTB, func() {
+		stage, err := NewRLS(RLSConfig{Dimension: 1, InitialVariance: 1})
+		So(err, ShouldBeNil)
+
+		for _, target := range []float64{0.9, 1.1, 0.8, 1.2} {
+			_, err = stage.Observe(RLSSample{
+				Features: []float64{0},
+				Target:   target,
+			})
+			So(err, ShouldBeNil)
+		}
+
+		familiar, err := stage.Predict([]float64{0})
+		So(err, ShouldBeNil)
+		novel, err := stage.Predict([]float64{10})
+
+		Convey("It should widen uncertainty for a high-leverage forecast", func() {
+			So(err, ShouldBeNil)
+			So(familiar.Ready, ShouldBeTrue)
+			So(novel.Ready, ShouldBeTrue)
+			So(novel.Scale, ShouldBeGreaterThan, familiar.Scale)
 		})
 	})
 }

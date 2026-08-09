@@ -7,90 +7,83 @@ import (
 )
 
 func denseColDot(left, right *mat.Dense) float64 {
-	rows, _ := left.Dims()
-	sum := 0.0
-
-	for rowIndex := 0; rowIndex < rows; rowIndex++ {
-		sum += left.At(rowIndex, 0) * right.At(rowIndex, 0)
-	}
-
-	return sum
+	return mat.Dot(
+		left.ColView(0),
+		right.ColView(0),
+	)
 }
 
 func denseColNorm(matrix *mat.Dense) float64 {
-	rows, _ := matrix.Dims()
-	sum := 0.0
-
-	for rowIndex := 0; rowIndex < rows; rowIndex++ {
-		value := matrix.At(rowIndex, 0)
-		sum += value * value
-	}
-
-	return math.Sqrt(sum)
+	return mat.Norm(matrix.ColView(0), 2)
 }
 
 func denseApplyTanhInPlace(matrix *mat.Dense) {
-	rows, cols := matrix.Dims()
-	raw := matrix.RawMatrix()
-
-	for rowIndex := 0; rowIndex < rows; rowIndex++ {
-		for colIndex := 0; colIndex < cols; colIndex++ {
-			offset := rowIndex*raw.Stride + colIndex
-			raw.Data[offset] = math.Tanh(raw.Data[offset])
-		}
-	}
+	matrix.Apply(
+		func(_, _ int, value float64) float64 {
+			return math.Tanh(value)
+		},
+		matrix,
+	)
 }
 
 func denseApplyOneMinusSquareInto(dst, src *mat.Dense) {
-	rows, _ := src.Dims()
-
-	for rowIndex := 0; rowIndex < rows; rowIndex++ {
-		value := src.At(rowIndex, 0)
-		dst.Set(rowIndex, 0, 1.0-value*value)
-	}
+	dst.Apply(
+		func(_, _ int, value float64) float64 {
+			return 1.0 - value*value
+		},
+		src,
+	)
 }
 
 func denseClipColInPlace(matrix *mat.Dense, clip float64) {
-	rows, _ := matrix.Dims()
-
-	for rowIndex := 0; rowIndex < rows; rowIndex++ {
-		value := matrix.At(rowIndex, 0)
-
-		if value > clip {
-			matrix.Set(rowIndex, 0, clip)
-			continue
-		}
-
-		if value < -clip {
-			matrix.Set(rowIndex, 0, -clip)
-		}
-	}
+	matrix.Apply(
+		func(_, _ int, value float64) float64 {
+			switch {
+			case value > clip:
+				return clip
+			case value < -clip:
+				return -clip
+			default:
+				return value
+			}
+		},
+		matrix,
+	)
 }
 
-func denseOuterColsInto(dst *mat.Dense, left, right *mat.Dense, scale float64) {
-	leftRows, _ := left.Dims()
-	rightRows, _ := right.Dims()
-	dstRaw := dst.RawMatrix()
-
-	for rowIndex := 0; rowIndex < leftRows; rowIndex++ {
-		leftValue := left.At(rowIndex, 0) * scale
-
-		for colIndex := 0; colIndex < rightRows; colIndex++ {
-			dstRaw.Data[rowIndex*dstRaw.Stride+colIndex] = leftValue * right.At(colIndex, 0)
-		}
-	}
+func denseOuterColsInto(
+	dst *mat.Dense,
+	left *mat.Dense,
+	right *mat.Dense,
+	scale float64,
+) {
+	dst.Outer(
+		scale,
+		left.ColView(0),
+		right.ColView(0),
+	)
 }
 
-func denseMulWeightTransposeInto(dst, weight, signal *mat.Dense) {
-	signalRows, weightCols := weight.Dims()
+func denseMulWeightTransposeInto(
+	dst *mat.Dense,
+	weight *mat.Dense,
+	signal *mat.Dense,
+) {
+	dst.Mul(
+		weight.T(),
+		signal,
+	)
+}
 
-	for colIndex := 0; colIndex < weightCols; colIndex++ {
-		sum := 0.0
+func (rm *ResonanceManifold) constrainTemporalWeights() {
+	if rm.A == nil {
+		return
+	}
 
-		for rowIndex := 0; rowIndex < signalRows; rowIndex++ {
-			sum += weight.At(rowIndex, colIndex) * signal.At(rowIndex, 0)
-		}
+	const maxNorm = 0.95
 
-		dst.Set(colIndex, 0, sum)
+	norm := mat.Norm(rm.A, 2)
+	if norm > maxNorm {
+		rm.A.Scale(maxNorm/norm, rm.A)
 	}
 }

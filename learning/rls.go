@@ -28,9 +28,12 @@ Coefficient and covariance matrices are available only through Snapshot so the
 streaming path stays linear in feature dimension.
 */
 type RLSOutput struct {
-	Value      float64
-	Innovation float64
-	Reset      bool
+	Value            float64
+	Scale            float64
+	DegreesOfFreedom float64
+	Ready            bool
+	Innovation       float64
+	Reset            bool
 }
 
 /*
@@ -86,7 +89,7 @@ func (rls *RLS) Measure(sample RLSSample) (RLSOutput, error) {
 		return RLSOutput{}, fmt.Errorf("learning: rls session required")
 	}
 
-	prediction, err := rls.session.predict(sample.Features)
+	prediction, err := rls.session.predictive(sample.Features)
 
 	if err != nil {
 		return RLSOutput{}, fmt.Errorf("learning: rls predict failed: %w", err)
@@ -99,9 +102,12 @@ func (rls *RLS) Measure(sample RLSSample) (RLSOutput, error) {
 	}
 
 	return RLSOutput{
-		Value:      prediction,
-		Innovation: observed.Innovation,
-		Reset:      observed.Reset,
+		Value:            prediction.value,
+		Scale:            prediction.scale,
+		DegreesOfFreedom: prediction.degreesOfFreedom,
+		Ready:            prediction.ready,
+		Innovation:       observed.Innovation,
+		Reset:            observed.Reset,
 	}, nil
 }
 
@@ -132,14 +138,17 @@ func (rls *RLS) Predict(features []float64) (RLSOutput, error) {
 		return RLSOutput{}, fmt.Errorf("learning: rls session required")
 	}
 
-	prediction, err := rls.session.predict(features)
+	prediction, err := rls.session.predictive(features)
 
 	if err != nil {
 		return RLSOutput{}, fmt.Errorf("learning: rls predict failed: %w", err)
 	}
 
 	return RLSOutput{
-		Value: prediction,
+		Value:            prediction.value,
+		Scale:            prediction.scale,
+		DegreesOfFreedom: prediction.degreesOfFreedom,
+		Ready:            prediction.ready,
 	}, nil
 }
 
@@ -186,6 +195,15 @@ type rlsSession struct {
 	design           []float64
 	factor           []float64
 	gain             []float64
+	noiseShape       float64
+	noiseScale       float64
+}
+
+type rlsPrediction struct {
+	value            float64
+	scale            float64
+	degreesOfFreedom float64
+	ready            bool
 }
 
 func (rls *RLS) loadSession() (*rlsSession, error) {
@@ -238,6 +256,9 @@ func (session *rlsSession) resetState() {
 	for row := 0; row < size; row++ {
 		session.root[row*size+row] = scale
 	}
+
+	session.noiseShape = 0
+	session.noiseScale = 0
 }
 
 func (session *rlsSession) observe(
@@ -296,10 +317,10 @@ func (session *rlsSession) observeOnce(features []float64, target float64) (floa
 
 	factor := session.factor
 
-	for row := 0; row < size; row++ {
+	for row := range size {
 		sum := 0.0
 
-		for col := 0; col < size; col++ {
+		for col := range size {
 			sum += session.root[col*size+row] * design[col]
 		}
 
@@ -308,7 +329,7 @@ func (session *rlsSession) observeOnce(features []float64, target float64) (floa
 
 	alpha := session.forgettingFactor
 
-	for index := 0; index < size; index++ {
+	for index := range size {
 		alpha += factor[index] * factor[index]
 	}
 
@@ -318,7 +339,7 @@ func (session *rlsSession) observeOnce(features []float64, target float64) (floa
 
 	prediction := 0.0
 
-	for index := 0; index < size; index++ {
+	for index := range size {
 		prediction += session.beta[index] * design[index]
 	}
 
@@ -330,10 +351,10 @@ func (session *rlsSession) observeOnce(features []float64, target float64) (floa
 
 	gain := session.gain
 
-	for row := 0; row < size; row++ {
+	for row := range size {
 		sum := 0.0
 
-		for col := 0; col < size; col++ {
+		for col := range size {
 			sum += session.root[row*size+col] * factor[col]
 		}
 
@@ -360,10 +381,10 @@ func (session *rlsSession) observeOnce(features []float64, target float64) (floa
 		scale = 1 / rootLambda
 	}
 
-	for row := 0; row < size; row++ {
+	for row := range size {
 		scaledGain := gamma * gain[row] * alpha
 
-		for col := 0; col < size; col++ {
+		for col := range size {
 			updated := session.root[row*size+col] - scaledGain*factor[col]
 			session.root[row*size+col] = scale * updated
 
@@ -373,33 +394,80 @@ func (session *rlsSession) observeOnce(features []float64, target float64) (floa
 		}
 	}
 
+	session.noiseShape = lambda*session.noiseShape + 0.5
+	session.noiseScale = lambda*session.noiseScale + 0.5*innovation*innovation/alpha
+
 	return innovation, nil
 }
 
-func (session *rlsSession) predict(features []float64) (float64, error) {
+/*
+predictive evaluates the Student-t posterior predictive distribution retained by
+recursive least squares. The coefficient covariance contributes design leverage;
+the normalized prequential innovations contribute observation noise. With no
+arbitrary noise prior, uncertainty remains unavailable until outcomes identify a
+strictly positive residual scale.
+*/
+func (session *rlsSession) predictive(features []float64) (rlsPrediction, error) {
 	if len(features) != session.dimension {
-		return 0, fmt.Errorf(
+		return rlsPrediction{}, fmt.Errorf(
 			"learning: rls expected %d features, got %d",
 			session.dimension,
 			len(features),
 		)
 	}
 
+	design := session.design
+	design[0] = 1
 	forecast := session.beta[0]
 
 	for index, feature := range features {
 		if !finite(feature) {
-			return 0, fmt.Errorf("learning: rls feature[%d] must be finite", index)
+			return rlsPrediction{}, fmt.Errorf(
+				"learning: rls feature[%d] must be finite",
+				index,
+			)
 		}
 
+		design[index+1] = feature
 		forecast += session.beta[index+1] * feature
 	}
 
 	if !finite(forecast) {
-		return 0, fmt.Errorf("learning: rls forecast must be finite")
+		return rlsPrediction{}, fmt.Errorf("learning: rls forecast must be finite")
 	}
 
-	return forecast, nil
+	prediction := rlsPrediction{value: forecast}
+
+	if !(session.noiseShape > 0) || !(session.noiseScale > 0) {
+		return prediction, nil
+	}
+
+	size := session.dimension + 1
+	leverage := 1.0
+
+	for row := range size {
+		factor := 0.0
+
+		for col := range size {
+			factor += session.root[col*size+row] * design[col]
+		}
+
+		leverage += factor * factor
+	}
+
+	variance := session.noiseScale / session.noiseShape * leverage
+
+	if !(variance > 0) || !finite(variance) {
+		return rlsPrediction{}, fmt.Errorf(
+			"learning: rls predictive variance must be finite and positive",
+		)
+	}
+
+	prediction.scale = math.Sqrt(variance)
+	prediction.degreesOfFreedom = 2 * session.noiseShape
+	prediction.ready = true
+
+	return prediction, nil
 }
 
 func (session *rlsSession) snapshot() RLSSnapshot {
@@ -407,8 +475,8 @@ func (session *rlsSession) snapshot() RLSSnapshot {
 	covariance := make([]float64, size*size)
 	diagonal := make([]float64, size)
 
-	for row := 0; row < size; row++ {
-		for col := 0; col < size; col++ {
+	for row := range size {
+		for col := range size {
 			sum := 0.0
 
 			for index := 0; index < size; index++ {

@@ -36,6 +36,7 @@ func TestAdaptiveResonanceConfig(testingTB *testing.T) {
 		Convey("It should derive mix, patience, and clip from alpha and depth", func() {
 			So(derived.TemporalWeight, ShouldBeGreaterThan, 0)
 			So(derived.TopDownInitMix, ShouldBeGreaterThan, 0)
+			So(derived.TemporalNormMax, ShouldBeBetween, 0, 1)
 			So(derived.EarlyStopPatience, ShouldBeGreaterThan, 0)
 			So(derived.GradClip, ShouldBeGreaterThan, 0)
 			So(derived.StateClip, ShouldBeGreaterThan, 0)
@@ -68,6 +69,87 @@ func TestResonanceManifoldSettleAdvanceTemporal(testingTB *testing.T) {
 
 		Convey("It should keep temporal priors active without Learn", func() {
 			So(withHistory, ShouldNotResemble, coldLatent)
+		})
+	})
+
+	Convey("Given batch learning with temporal advancement enabled", testingTB, func() {
+		manifold, err := NewResonanceManifold([]int{1, 1}, 0, 0.05)
+		So(err, ShouldBeNil)
+		manifold.cfg.LrTemporal = 1
+		manifold.cfg.TemporalWeight = 1
+		manifold.cfg.WeightDecay = 0
+		manifold.cfg.GradClip = 1
+		manifold.cfg.TemporalNormMax = 0.99
+
+		So(manifold.Settle([]float64{0.2}, false), ShouldBeNil)
+		So(manifold.Learn(nil), ShouldBeNil)
+		previousTop := manifold.z[1].At(0, 0)
+		manifold.A.Zero()
+
+		_, err = manifold.SettleFromBatchOptions(
+			[]float64{-0.3},
+			nil,
+			true,
+			true,
+		)
+		So(err, ShouldBeNil)
+		currentTop := manifold.z[1].At(0, 0)
+		temporalError, hasTemporal := manifold.TemporalError()
+		layers, _, _ := manifold.WireSnapshot()
+
+		Convey("It should learn the transition from the previous top state", func() {
+			So(manifold.A.At(0, 0), ShouldAlmostEqual, currentTop*previousTop, 1e-12)
+			So(manifold.prevTop.At(0, 0), ShouldAlmostEqual, currentTop, 1e-12)
+		})
+
+		Convey("It should retain the temporal prediction used during inference", func() {
+			So(hasTemporal, ShouldBeTrue)
+			So(temporalError, ShouldAlmostEqual, math.Abs(currentTop), 1e-12)
+			So(layers[1].Prediction[0], ShouldEqual, 0)
+			So(layers[1].ErrorNorm, ShouldAlmostEqual, temporalError, 1e-12)
+		})
+	})
+
+	Convey("Given temporal state advanced before a learning call", testingTB, func() {
+		manifold, err := NewResonanceManifold([]int{1, 1}, 0, 0.05)
+		So(err, ShouldBeNil)
+		So(manifold.Settle([]float64{0.2}, true), ShouldBeNil)
+
+		Convey("It should reject a self-transition update", func() {
+			So(manifold.Learn(nil), ShouldNotBeNil)
+		})
+	})
+
+	Convey("Given accepted stable inference steps", testingTB, func() {
+		manifold, err := NewResonanceManifold([]int{1, 1}, 0, 0.05)
+		So(err, ShouldBeNil)
+		manifold.cfg.LrState = 0
+		manifold.cfg.MonotoneStateSteps = false
+		manifold.cfg.MinInferenceSteps = 1
+		manifold.cfg.MaxInferenceSteps = 6
+		manifold.cfg.EarlyStopPatience = 3
+
+		So(manifold.Settle([]float64{0.2}, false), ShouldBeNil)
+
+		Convey("It should require the configured consecutive evidence", func() {
+			So(manifold.lastInferenceSteps, ShouldEqual, 3)
+		})
+	})
+
+	Convey("Given line-search proposals that are rejected", testingTB, func() {
+		manifold, err := NewResonanceManifold([]int{1, 1}, 0, 0.05)
+		So(err, ShouldBeNil)
+		manifold.cfg.LrState = -100
+		manifold.cfg.MonotoneStateSteps = true
+		manifold.cfg.LineSearchHalvings = 0
+		manifold.cfg.MinInferenceSteps = 1
+		manifold.cfg.MaxInferenceSteps = 4
+		manifold.cfg.EarlyStopPatience = 1
+
+		So(manifold.Settle([]float64{0.2}, false), ShouldBeNil)
+
+		Convey("It should not mistake rejection for convergence", func() {
+			So(manifold.lastInferenceSteps, ShouldEqual, manifold.cfg.MaxInferenceSteps)
 		})
 	})
 }
@@ -118,7 +200,7 @@ func TestResonanceManifoldDirectBatch(testingTB *testing.T) {
 }
 
 func TestResonanceManifoldLearn(testingTB *testing.T) {
-	Convey("Given a linear return stream and the former fixed-rate task update", testingTB, func() {
+	Convey("Given covariance-derived and fixed-rate task updates", testingTB, func() {
 		manifold, err := NewResonanceManifold([]int{1, 1}, 1, 0.03)
 		So(err, ShouldBeNil)
 
@@ -130,8 +212,10 @@ func TestResonanceManifoldLearn(testingTB *testing.T) {
 
 		/*
 			Repeatedly traversing both signs makes slope and intercept identifiable.
-			The fixed comparator is the scalar SGD update the task head previously
-			shared with the manifold; RLS must lower prior, not post-fit, loss.
+			The fixed comparator gets the same slope-and-intercept form so the
+			difference isolates gain selection; its rate is the scalar pace the task
+			head previously shared with the manifold. RLS must lower prior, not
+			post-fit, loss.
 		*/
 		for sampleIndex := range 128 {
 			feature := float64(sampleIndex%8-4) / 4
@@ -159,6 +243,157 @@ func TestResonanceManifoldLearn(testingTB *testing.T) {
 			So(prediction, ShouldAlmostEqual, 0.5, 0.01)
 		})
 	})
+
+	Convey("Given a supervised sample before its RLS update", testingTB, func() {
+		manifold, err := NewResonanceManifold([]int{1, 1}, 1, 1)
+		So(err, ShouldBeNil)
+		manifold.z[1].Set(0, 0, 0.5)
+
+		So(manifold.Learn([]float64{1}), ShouldBeNil)
+
+		Convey("It should retain the strictly prior forecast error", func() {
+			So(manifold.taskVar.At(0, 0), ShouldEqual, 1)
+		})
+	})
+
+	Convey("Given an explicitly malformed supervised target", testingTB, func() {
+		manifold, err := NewResonanceManifold([]int{1, 1}, 1, 0.05)
+		So(err, ShouldBeNil)
+
+		Convey("It should distinguish it from an absent target", func() {
+			So(manifold.Learn(nil), ShouldBeNil)
+			So(manifold.Learn([]float64{}), ShouldNotBeNil)
+			So(manifold.Learn([]float64{1, 2}), ShouldNotBeNil)
+		})
+	})
+
+	Convey("Given exact zero residuals at unit precision pace", testingTB, func() {
+		manifold, err := NewResonanceManifold([]int{1, 1}, 1, 1)
+		So(err, ShouldBeNil)
+
+		So(manifold.Learn([]float64{0}), ShouldBeNil)
+		So(manifold.Settle([]float64{0}, false), ShouldBeNil)
+		So(manifold.Learn([]float64{0}), ShouldBeNil)
+
+		Convey("It should floor bounded-state variances without inventing target scale", func() {
+			So(manifold.errorVar[0].At(0, 0), ShouldEqual, manifold.cfg.PrecisionEps)
+			So(manifold.temporalVar.At(0, 0), ShouldEqual, manifold.cfg.PrecisionEps)
+			_, hasTaskPrecision := manifold.TaskPrecision()
+			So(hasTaskPrecision, ShouldBeFalse)
+		})
+	})
+
+	Convey("Given learned temporal weights with excessive operator norm", testingTB, func() {
+		manifold, err := NewResonanceManifold([]int{2, 2}, 0, 0.05)
+		So(err, ShouldBeNil)
+		So(manifold.Settle([]float64{0.2, -0.1}, false), ShouldBeNil)
+		So(manifold.Learn(nil), ShouldBeNil)
+		manifold.A.Set(0, 0, 10)
+		manifold.A.Set(0, 1, 4)
+		manifold.A.Set(1, 0, -3)
+		manifold.A.Set(1, 1, 8)
+		So(manifold.Settle([]float64{-0.3, 0.4}, false), ShouldBeNil)
+		So(manifold.Learn(nil), ShouldBeNil)
+
+		var decomposition mat.SVD
+		So(decomposition.Factorize(manifold.A, mat.SVDThin), ShouldBeTrue)
+		operatorNorm := decomposition.Values(nil)[0]
+
+		Convey("It should project the induced norm back inside contraction", func() {
+			So(operatorNorm, ShouldBeLessThanOrEqualTo, manifold.cfg.TemporalNormMax+1e-12)
+		})
+	})
+}
+
+func TestResonanceManifoldSetAlpha(testingTB *testing.T) {
+	Convey("Given an invalid replacement learning pace", testingTB, func() {
+		manifold, err := NewResonanceManifold([]int{1, 1}, 0, 0.05)
+		So(err, ShouldBeNil)
+		before := manifold.cfg
+
+		Convey("It should reject the value without poisoning retained pace", func() {
+			So(manifold.SetAlpha(math.NaN()), ShouldNotBeNil)
+			So(manifold.SetAlpha(0), ShouldNotBeNil)
+			So(manifold.SetAlpha(2), ShouldNotBeNil)
+			So(manifold.cfg, ShouldResemble, before)
+		})
+	})
+}
+
+func TestResonanceManifoldDynamicHorizon(testingTB *testing.T) {
+	Convey("Given relative precision without absolute baseline skill", testingTB, func() {
+		manifold, err := NewResonanceManifold([]int{1, 1}, 1, 0.05)
+		So(err, ShouldBeNil)
+		manifold.taskScaleReady[0] = true
+		manifold.taskPrecision.Set(0, 0, 1)
+		manifold.taskSkillReady[0] = true
+		manifold.taskSkill.Set(0, 0, 0.5)
+
+		_, retractedReach := manifold.DynamicHorizon(1, 5, 10)
+		manifold.taskSkill.Set(0, 0, 2)
+		_, grownReach := manifold.DynamicHorizon(1, 5, 10)
+
+		Convey("It should retract a consistently unskilled head and grow a skilled one", func() {
+			So(retractedReach, ShouldEqual, 4)
+			So(grownReach, ShouldEqual, 6)
+		})
+	})
+}
+
+func TestRolloutTaskPrediction(testingTB *testing.T) {
+	Convey("Given a task head trained on the currently settled state", testingTB, func() {
+		manifold, err := NewResonanceManifold([]int{2, 4, 2}, 1, 0.03)
+		So(err, ShouldBeNil)
+
+		for sampleIndex := range 16 {
+			input := []float64{
+				math.Sin(float64(sampleIndex)),
+				math.Cos(float64(sampleIndex)),
+			}
+			target := []float64{0.001 * float64(sampleIndex%3-1)}
+			So(manifold.Settle(input, false), ShouldBeNil)
+			So(manifold.Learn(target), ShouldBeNil)
+		}
+
+		So(manifold.Settle([]float64{0.4, -0.7}, false), ShouldBeNil)
+		direct := manifold.TaskPrediction()
+		curve := manifold.RolloutTaskPrediction(3)
+
+		Convey("Its first rollout step should be the direct next-return prediction", func() {
+			So(curve, ShouldHaveLength, 3)
+			So(curve[0], ShouldAlmostEqual, direct[0])
+		})
+	})
+}
+
+func TestRolloutTaskForecast(testingTB *testing.T) {
+	Convey("Given a task head with resolved prequential noise", testingTB, func() {
+		manifold, err := NewResonanceManifold([]int{2, 4, 2}, 1, 0.03)
+		So(err, ShouldBeNil)
+
+		for sampleIndex := range 16 {
+			input := []float64{
+				math.Sin(float64(sampleIndex)),
+				math.Cos(float64(sampleIndex)),
+			}
+			target := []float64{0.001 * math.Sin(float64(sampleIndex)*0.5)}
+			So(manifold.Settle(input, false), ShouldBeNil)
+			So(manifold.Learn(target), ShouldBeNil)
+		}
+
+		So(manifold.Settle([]float64{0.4, -0.7}, false), ShouldBeNil)
+		direct := manifold.TaskPrediction()
+		forecast, err := manifold.RolloutTaskForecast(3)
+
+		Convey("It should align posterior uncertainty with the same first step", func() {
+			So(err, ShouldBeNil)
+			So(forecast, ShouldHaveLength, 3)
+			So(forecast[0].Value, ShouldAlmostEqual, direct[0])
+			So(forecast[0].Ready, ShouldBeTrue)
+			So(forecast[0].Scale, ShouldBeGreaterThan, 0)
+			So(forecast[0].DegreesOfFreedom, ShouldBeGreaterThan, 0)
+		})
+	})
 }
 
 func BenchmarkResonanceManifoldSettle(testingTB *testing.B) {
@@ -175,6 +410,56 @@ func BenchmarkResonanceManifoldSettle(testingTB *testing.B) {
 
 	for testingTB.Loop() {
 		if _, err := manifold.SettleFromBatch(input, target); err != nil {
+			testingTB.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkResonanceManifoldLearn(testingTB *testing.B) {
+	manifold, err := NewResonanceManifold([]int{8, 16, 8}, 1, 0.01)
+
+	if err != nil {
+		testingTB.Fatal(err)
+	}
+
+	input := []float64{0.1, -0.2, 0.3, -0.4, 0.5, -0.6, 0.7, -0.8}
+
+	if err := manifold.Settle(input, false); err != nil {
+		testingTB.Fatal(err)
+	}
+
+	testingTB.ReportAllocs()
+
+	for testingTB.Loop() {
+		if err := manifold.Learn([]float64{0.01}); err != nil {
+			testingTB.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkRolloutTaskForecast(testingTB *testing.B) {
+	manifold, err := NewResonanceManifold([]int{8, 16, 8}, 1, 0.01)
+
+	if err != nil {
+		testingTB.Fatal(err)
+	}
+
+	input := []float64{0.1, -0.2, 0.3, -0.4, 0.5, -0.6, 0.7, -0.8}
+
+	for sampleIndex := range 8 {
+		if err := manifold.Settle(input, false); err != nil {
+			testingTB.Fatal(err)
+		}
+
+		if err := manifold.Learn([]float64{0.001 * float64(sampleIndex%3-1)}); err != nil {
+			testingTB.Fatal(err)
+		}
+	}
+
+	testingTB.ReportAllocs()
+
+	for testingTB.Loop() {
+		if _, err := manifold.RolloutTaskForecast(4); err != nil {
 			testingTB.Fatal(err)
 		}
 	}

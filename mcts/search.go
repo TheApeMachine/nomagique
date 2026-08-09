@@ -45,8 +45,10 @@ func NewCausalMCTS(
 	}
 }
 
-// Search executes MCTS iterations and returns the recommended best action.
-func (mcts *CausalMCTS) Search(rootState State, iterations int, historicalData [][]float64) (float64, error) {
+// Search executes MCTS iterations and returns the explored tree's root
+// together with the recommended best action, so a caller can inspect every
+// branch actually visited rather than only the one selected.
+func (mcts *CausalMCTS) Search(rootState State, iterations int, historicalData [][]float64) (*Node, float64, error) {
 	root := &Node{
 		State:          rootState,
 		UntakenActions: rootState.GetPossibleActions(),
@@ -78,7 +80,7 @@ func (mcts *CausalMCTS) Search(rootState State, iterations int, historicalData [
 	}
 
 	if len(root.Children) == 0 {
-		return 0, errors.New("mcts: zero paths explored during search")
+		return nil, 0, errors.New("mcts: zero paths explored during search")
 	}
 
 	// Select the action associated with the most visited child (robust child strategy)
@@ -91,7 +93,7 @@ func (mcts *CausalMCTS) Search(rootState State, iterations int, historicalData [
 		}
 	}
 
-	return bestAction, nil
+	return root, bestAction, nil
 }
 
 // selectNode descends the tree using our modified selection equation.

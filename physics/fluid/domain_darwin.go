@@ -274,6 +274,48 @@ func (domain *Domain) ReadParticles(start, count int) ([]Particle, error) {
 }
 
 /*
+ReadClamped copies the resident clamp flags for one resident range, in the
+same indexing as ReadParticles. A true entry marks a frozen particle that
+should be excluded from convergence sums such as total heat.
+*/
+func (domain *Domain) ReadClamped(start, count int) ([]bool, error) {
+	if domain == nil || domain.handle == nil {
+		return nil, fmt.Errorf("fluid: domain is closed")
+	}
+
+	if start < 0 || count < 0 {
+		return nil, fmt.Errorf("fluid: clamp read range is invalid")
+	}
+
+	if count == 0 {
+		return nil, nil
+	}
+
+	bridgeClamped := make([]C.uint32_t, count)
+	errorBuffer := make([]byte, 4096)
+	result := C.fluid_domain_read_clamped(
+		unsafe.Pointer(domain.handle),
+		&bridgeClamped[0],
+		C.uint32_t(start),
+		C.uint32_t(count),
+		(*C.char)(unsafe.Pointer(&errorBuffer[0])),
+		C.int(len(errorBuffer)),
+	)
+
+	if result == 0 {
+		return nil, fmt.Errorf("fluid: %s", cString(errorBuffer))
+	}
+
+	clamped := make([]bool, count)
+
+	for index, value := range bridgeClamped {
+		clamped[index] = value != 0
+	}
+
+	return clamped, nil
+}
+
+/*
 ReadSpatialIDs copies post-merge Morton spatial token IDs for one resident range.
 Each ID is (cell_morton << 8) | (content & 0xFF), matching Sensorium thermo.step.
 */

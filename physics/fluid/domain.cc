@@ -346,6 +346,10 @@ static float fluid_debug_float(uint32_t word) {
                 start:(uint32_t)start
                 count:(uint32_t)count
                 error:(NSString **)error;
+- (BOOL)readClamped:(uint32_t *)clamped
+               start:(uint32_t)start
+               count:(uint32_t)count
+               error:(NSString **)error;
 - (BOOL)retainParticles:(const uint32_t *)indices
                   count:(uint32_t)count
                   error:(NSString **)error;
@@ -656,7 +660,8 @@ struct DisplayParams {
         [self blitFrom:_phase sourceOffset:0 to:_hostPhase destinationOffset:0 bytes:liveScalar error:error] &&
         [self blitFrom:_omega sourceOffset:0 to:_hostOmega destinationOffset:0 bytes:liveScalar error:error] &&
         [self blitFrom:_amplitude sourceOffset:0 to:_hostAmplitude destinationOffset:0 bytes:liveScalar error:error] &&
-        [self blitFrom:_content sourceOffset:0 to:_hostContent destinationOffset:0 bytes:liveIndex error:error];
+        [self blitFrom:_content sourceOffset:0 to:_hostContent destinationOffset:0 bytes:liveIndex error:error] &&
+        [self blitFrom:_clamped sourceOffset:0 to:_hostClamped destinationOffset:0 bytes:liveIndex error:error];
 }
 
 - (BOOL)pushParticleRange:(uint32_t)offset count:(uint32_t)count error:(NSString **)error {
@@ -2233,6 +2238,39 @@ Advance without inventing a parallel particle store.
     return YES;
 }
 
+- (BOOL)readClamped:(uint32_t *)clamped
+               start:(uint32_t)start
+               count:(uint32_t)count
+               error:(NSString **)error {
+    if (clamped == nullptr || count == 0u) {
+        if (error != nil) {
+            *error = @"clamp read buffer is required";
+        }
+
+        return NO;
+    }
+
+    if (start > _particleCount || count > _particleCount - start) {
+        if (error != nil) {
+            *error = @"clamp read range exceeds resident population";
+        }
+
+        return NO;
+    }
+
+    if (![self pullParticles:error]) {
+        return NO;
+    }
+
+    uint32_t *hostClamped = (uint32_t *)_hostClamped.contents;
+
+    for (uint32_t index = 0; index < count; index++) {
+        clamped[index] = hostClamped[start + index];
+    }
+
+    return YES;
+}
+
 - (BOOL)appendParticles:(const FluidParticle *)particles
              contentIDs:(const uint32_t *)contentIDs
                   count:(uint32_t)count
@@ -3241,6 +3279,32 @@ extern "C" int fluid_domain_read_particles(
 
         if (![domain readParticles:particles start:start count:count error:&error]) {
             fluid_write_error(errorOutput, errorCapacity, error ?: @"fluid particle read failed");
+            return 0;
+        }
+
+        return 1;
+    }
+}
+
+extern "C" int fluid_domain_read_clamped(
+    void *handle,
+    uint32_t *clamped,
+    uint32_t start,
+    uint32_t count,
+    char *errorOutput,
+    int errorCapacity
+) {
+    @autoreleasepool {
+        if (handle == nullptr) {
+            fluid_write_error(errorOutput, errorCapacity, @"fluid domain handle is required");
+            return 0;
+        }
+
+        SensoriumFluidDomain *domain = (__bridge SensoriumFluidDomain *)handle;
+        NSString *error = nil;
+
+        if (![domain readClamped:clamped start:start count:count error:&error]) {
+            fluid_write_error(errorOutput, errorCapacity, error ?: @"fluid clamp read failed");
             return 0;
         }
 

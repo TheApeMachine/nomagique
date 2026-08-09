@@ -133,6 +133,19 @@ int fluid_domain_read_particles(
 );
 
 /*
+fluid_domain_read_clamped copies the resident clamp flags (nonzero = frozen)
+for one resident range, in the same indexing as fluid_domain_read_particles.
+*/
+int fluid_domain_read_clamped(
+    void *handle,
+    uint32_t *clamped,
+    uint32_t start,
+    uint32_t count,
+    char *error_out,
+    int error_capacity
+);
+
+/*
 fluid_domain_read_spatial_ids copies post-merge Morton spatial token IDs
 ((cell_morton << 8) | byte) for one resident range.
 */

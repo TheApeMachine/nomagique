@@ -1548,14 +1548,15 @@ func (rm *ResonanceManifold) DynamicHorizon(
 
 	retention := rm.RolloutRetention(horizon)
 
-	if len(retention) == 0 || retention[0] <= 0 {
+	if len(retention) == 0 || !(retention[0] > 0) || !finite(retention[0]) {
 		return 1, newReach
 	}
 
 	minimumRetention := 1.0 - confidence
 
 	for step, surviving := range retention {
-		if surviving/retention[0] < minimumRetention {
+		if !(surviving > 0) || !finite(surviving) ||
+			surviving/retention[0] < minimumRetention {
 			if step == 0 {
 				return 1, newReach
 			}

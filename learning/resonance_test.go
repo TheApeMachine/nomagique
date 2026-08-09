@@ -338,6 +338,24 @@ func TestResonanceManifoldDynamicHorizon(testingTB *testing.T) {
 			So(grownReach, ShouldEqual, 6)
 		})
 	})
+
+	Convey("Given certain confidence and a rollout that reaches zero retention", testingTB, func() {
+		manifold, err := NewResonanceManifold([]int{1, 1}, 1, 0.05)
+		So(err, ShouldBeNil)
+		manifold.taskScaleReady[0] = true
+		manifold.taskPrecision.Set(0, 0, 1)
+		manifold.taskSkillReady[0] = true
+		manifold.taskSkill.Set(0, 0, 2)
+		manifold.z[len(manifold.z)-1].Set(0, 0, 1)
+		manifold.A.Zero()
+
+		horizon, grownReach := manifold.DynamicHorizon(1, 5, 10)
+
+		Convey("It should exclude the first unsupported rollout step", func() {
+			So(horizon, ShouldEqual, 1)
+			So(grownReach, ShouldEqual, 6)
+		})
+	})
 }
 
 func TestRolloutTaskPrediction(testingTB *testing.T) {

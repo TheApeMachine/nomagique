@@ -57,6 +57,13 @@ func (domain *Domain) ReadParticles(start, count int) ([]Particle, error) {
 }
 
 /*
+ReadClamped reports that no Metal domain exists on this platform.
+*/
+func (domain *Domain) ReadClamped(start, count int) ([]bool, error) {
+	return nil, fmt.Errorf("fluid: Metal domain requires darwin with cgo")
+}
+
+/*
 ReadSpatialIDs reports that no Metal domain exists on this platform.
 */
 func (domain *Domain) ReadSpatialIDs(start, count int) ([]uint32, error) {

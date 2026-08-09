@@ -38,7 +38,13 @@ func validateParticles(particles []Particle, config Config) error {
 		}
 
 		if particle.Mass <= MinimumPilotWaveMass || particle.Heat < 0 || particle.Energy < 0 {
-			return fmt.Errorf("fluid: particle %d has inadmissible mass or energy", index)
+			return fmt.Errorf(
+				"fluid: particle %d has inadmissible mass or energy - mass %g, heat %g, energy %g",
+				index,
+				particle.Mass,
+				particle.Heat,
+				particle.Energy,
+			)
 		}
 
 		if particle.Omega < config.OmegaMin || particle.Omega > config.OmegaMax {

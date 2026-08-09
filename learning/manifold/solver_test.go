@@ -60,7 +60,7 @@ func TestBatchSolver_SettleParityPerSlot(t *testing.T) {
 
 		refs := make([]*learning.ResonanceManifold, N)
 		for i := 0; i < N; i++ {
-			refs[i], _ = learning.NewResonanceManifold(arch, 0, alpha)
+			refs[i] = learning.NewResonanceManifold(arch, 0, alpha)
 		}
 
 		for slot := 0; slot < N; slot++ {
@@ -99,7 +99,7 @@ func TestBatchSolver_SettleLearnParityPerSlot(t *testing.T) {
 
 		refs := make([]*learning.ResonanceManifold, N)
 		for i := 0; i < N; i++ {
-			refs[i], _ = learning.NewResonanceManifold(arch, 2, alpha)
+			refs[i] = learning.NewResonanceManifold(arch, 2, alpha)
 		}
 
 		for cycle := 0; cycle < 5; cycle++ {
@@ -140,7 +140,7 @@ func TestBatchSolver_ReadOutcomesParity(t *testing.T) {
 		references := make([]*learning.ResonanceManifold, batchSize)
 
 		for slot := 0; slot < batchSize; slot++ {
-			references[slot], _ = learning.NewResonanceManifold(arch, 0, alpha)
+			references[slot] = learning.NewResonanceManifold(arch, 0, alpha)
 			convey.So(solver.SetInput(slot, slotInput(slot, arch[0]), nil), convey.ShouldBeNil)
 		}
 

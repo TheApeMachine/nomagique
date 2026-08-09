@@ -3,38 +3,36 @@ package learning
 import "gonum.org/v1/gonum/mat"
 
 type resonanceWorkspace struct {
-	xCol                *mat.Dense
-	yCol                *mat.Dense
-	predictions         []*mat.Dense
-	errors              []*mat.Dense
-	grads               []*mat.Dense
-	topPrior            *mat.Dense
-	temporalError       *mat.Dense
-	temporalSignal      *mat.Dense
-	temporalWeightedErr *mat.Dense
-	taskPred            *mat.Dense
-	taskError           *mat.Dense
-	taskSignal          *mat.Dense
-	taskCorrection      *mat.Dense
-	weightedErr         []*mat.Dense
-	belowSignal         []*mat.Dense
-	correction          []*mat.Dense
-	localSignal         []*mat.Dense
+	xCol                *mat.VecDense
+	yCol                *mat.VecDense
+	predictions         []*mat.VecDense
+	errors              []*mat.VecDense
+	grads               []*mat.VecDense
+	topPrior            *mat.VecDense
+	temporalError       *mat.VecDense
+	temporalSignal      *mat.VecDense
+	temporalWeightedErr *mat.VecDense
+	taskPred            *mat.VecDense
+	taskError           *mat.VecDense
+	taskSignal          *mat.VecDense
+	weightedErr         []*mat.VecDense
+	belowSignal         []*mat.VecDense
+	correction          []*mat.VecDense
+	localSignal         []*mat.VecDense
 	weightUpdate        []*mat.Dense
-	recProposal         []*mat.Dense
-	recError            []*mat.Dense
-	recSignal           []*mat.Dense
+	recProposal         []*mat.VecDense
+	recError            []*mat.VecDense
+	recSignal           []*mat.VecDense
 	recUpdate           []*mat.Dense
-	taskUpdate          *mat.Dense
 	temporalUpdate      *mat.Dense
-	bottomUp            []*mat.Dense
-	topDown             []*mat.Dense
-	mergeTD             []*mat.Dense
-	mergeBU             []*mat.Dense
-	savedStates         []*mat.Dense
-	stepBuf             []*mat.Dense
-	reconPred           *mat.Dense
-	reconDiff           *mat.Dense
+	bottomUp            []*mat.VecDense
+	topDown             []*mat.VecDense
+	savedStates         []*mat.VecDense
+	stepBuf             []*mat.VecDense
+	reconPred           *mat.VecDense
+	reconDiff           *mat.VecDense
+	temporalSVD         mat.SVD
+	svdValues           []float64
 }
 
 func newResonanceWorkspace(arch []int, targetDim int) *resonanceWorkspace {
@@ -42,45 +40,42 @@ func newResonanceWorkspace(arch []int, targetDim int) *resonanceWorkspace {
 	topDim := arch[len(arch)-1]
 
 	workspace := &resonanceWorkspace{
-		xCol:                mat.NewDense(arch[0], 1, nil),
-		predictions:         make([]*mat.Dense, numLinks),
-		errors:              make([]*mat.Dense, numLinks),
-		grads:               make([]*mat.Dense, len(arch)),
-		topPrior:            mat.NewDense(topDim, 1, nil),
-		temporalError:       mat.NewDense(topDim, 1, nil),
-		temporalSignal:      mat.NewDense(topDim, 1, nil),
-		temporalWeightedErr: mat.NewDense(topDim, 1, nil),
-		bottomUp:            make([]*mat.Dense, len(arch)),
-		topDown:             make([]*mat.Dense, len(arch)),
-		mergeTD:             make([]*mat.Dense, len(arch)),
-		mergeBU:             make([]*mat.Dense, len(arch)),
-		savedStates:         make([]*mat.Dense, len(arch)),
-		stepBuf:             make([]*mat.Dense, len(arch)),
-		weightedErr:         make([]*mat.Dense, numLinks),
-		belowSignal:         make([]*mat.Dense, numLinks),
-		correction:          make([]*mat.Dense, len(arch)),
-		localSignal:         make([]*mat.Dense, numLinks),
+		xCol:                mat.NewVecDense(arch[0], nil),
+		predictions:         make([]*mat.VecDense, numLinks),
+		errors:              make([]*mat.VecDense, numLinks),
+		grads:               make([]*mat.VecDense, len(arch)),
+		topPrior:            mat.NewVecDense(topDim, nil),
+		temporalError:       mat.NewVecDense(topDim, nil),
+		temporalSignal:      mat.NewVecDense(topDim, nil),
+		temporalWeightedErr: mat.NewVecDense(topDim, nil),
+		bottomUp:            make([]*mat.VecDense, len(arch)),
+		topDown:             make([]*mat.VecDense, len(arch)),
+		savedStates:         make([]*mat.VecDense, len(arch)),
+		stepBuf:             make([]*mat.VecDense, len(arch)),
+		weightedErr:         make([]*mat.VecDense, numLinks),
+		belowSignal:         make([]*mat.VecDense, numLinks),
+		correction:          make([]*mat.VecDense, len(arch)),
+		localSignal:         make([]*mat.VecDense, numLinks),
 		weightUpdate:        make([]*mat.Dense, numLinks),
-		recProposal:         make([]*mat.Dense, numLinks),
-		recError:            make([]*mat.Dense, numLinks),
-		recSignal:           make([]*mat.Dense, numLinks),
+		recProposal:         make([]*mat.VecDense, numLinks),
+		recError:            make([]*mat.VecDense, numLinks),
+		recSignal:           make([]*mat.VecDense, numLinks),
 		recUpdate:           make([]*mat.Dense, numLinks),
-		reconPred:           mat.NewDense(arch[0], 1, nil),
-		reconDiff:           mat.NewDense(arch[0], 1, nil),
+		reconPred:           mat.NewVecDense(arch[0], nil),
+		reconDiff:           mat.NewVecDense(arch[0], nil),
 		temporalUpdate:      mat.NewDense(topDim, topDim, nil),
+		svdValues:           make([]float64, topDim),
 	}
 
 	for layerIndex, layerDim := range arch {
-		workspace.bottomUp[layerIndex] = mat.NewDense(layerDim, 1, nil)
-		workspace.topDown[layerIndex] = mat.NewDense(layerDim, 1, nil)
-		workspace.mergeTD[layerIndex] = mat.NewDense(layerDim, 1, nil)
-		workspace.mergeBU[layerIndex] = mat.NewDense(layerDim, 1, nil)
-		workspace.savedStates[layerIndex] = mat.NewDense(layerDim, 1, nil)
-		workspace.stepBuf[layerIndex] = mat.NewDense(layerDim, 1, nil)
-		workspace.correction[layerIndex] = mat.NewDense(layerDim, 1, nil)
+		workspace.bottomUp[layerIndex] = mat.NewVecDense(layerDim, nil)
+		workspace.topDown[layerIndex] = mat.NewVecDense(layerDim, nil)
+		workspace.savedStates[layerIndex] = mat.NewVecDense(layerDim, nil)
+		workspace.stepBuf[layerIndex] = mat.NewVecDense(layerDim, nil)
+		workspace.correction[layerIndex] = mat.NewVecDense(layerDim, nil)
 
 		if layerIndex > 0 {
-			workspace.grads[layerIndex] = mat.NewDense(layerDim, 1, nil)
+			workspace.grads[layerIndex] = mat.NewVecDense(layerDim, nil)
 		}
 	}
 
@@ -88,25 +83,23 @@ func newResonanceWorkspace(arch []int, targetDim int) *resonanceWorkspace {
 		rowDim := arch[linkIndex]
 		colDim := arch[linkIndex+1]
 
-		workspace.predictions[linkIndex] = mat.NewDense(rowDim, 1, nil)
-		workspace.errors[linkIndex] = mat.NewDense(rowDim, 1, nil)
-		workspace.weightedErr[linkIndex] = mat.NewDense(rowDim, 1, nil)
-		workspace.belowSignal[linkIndex] = mat.NewDense(rowDim, 1, nil)
-		workspace.localSignal[linkIndex] = mat.NewDense(rowDim, 1, nil)
+		workspace.predictions[linkIndex] = mat.NewVecDense(rowDim, nil)
+		workspace.errors[linkIndex] = mat.NewVecDense(rowDim, nil)
+		workspace.weightedErr[linkIndex] = mat.NewVecDense(rowDim, nil)
+		workspace.belowSignal[linkIndex] = mat.NewVecDense(rowDim, nil)
+		workspace.localSignal[linkIndex] = mat.NewVecDense(rowDim, nil)
 		workspace.weightUpdate[linkIndex] = mat.NewDense(rowDim, colDim, nil)
-		workspace.recProposal[linkIndex] = mat.NewDense(colDim, 1, nil)
-		workspace.recError[linkIndex] = mat.NewDense(colDim, 1, nil)
-		workspace.recSignal[linkIndex] = mat.NewDense(colDim, 1, nil)
+		workspace.recProposal[linkIndex] = mat.NewVecDense(colDim, nil)
+		workspace.recError[linkIndex] = mat.NewVecDense(colDim, nil)
+		workspace.recSignal[linkIndex] = mat.NewVecDense(colDim, nil)
 		workspace.recUpdate[linkIndex] = mat.NewDense(colDim, rowDim, nil)
 	}
 
 	if targetDim > 0 {
-		workspace.yCol = mat.NewDense(targetDim, 1, nil)
-		workspace.taskPred = mat.NewDense(targetDim, 1, nil)
-		workspace.taskError = mat.NewDense(targetDim, 1, nil)
-		workspace.taskSignal = mat.NewDense(targetDim, 1, nil)
-		workspace.taskCorrection = mat.NewDense(topDim, 1, nil)
-		workspace.taskUpdate = mat.NewDense(targetDim, topDim, nil)
+		workspace.yCol = mat.NewVecDense(targetDim, nil)
+		workspace.taskPred = mat.NewVecDense(targetDim, nil)
+		workspace.taskError = mat.NewVecDense(targetDim, nil)
+		workspace.taskSignal = mat.NewVecDense(targetDim, nil)
 	}
 
 	return workspace

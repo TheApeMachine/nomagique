@@ -130,7 +130,7 @@ err := nomagique.RoundTripArtifact(wire, pipeline)
 |---------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | `core`        | `Number[T]`, `Scalar[T]`, `Scalars[T]`                                                                                                                             |
 | `adaptive`    | `EMA`, `Delta`, `Accumulator`, `Compression`, `FracDiff`, `Variance`, `ZScore`, `Momentum`, `Range`, `TimeElastic`                                                 |
-| `learning`    | `Weight`, `SampleRatio`, `Forecast`, `RLS`, `NewClassifierWeights`                                                                                                 |
+| `learning`    | `Weight`, `SampleRatio`, `Forecast`, `RLS`, `ResonanceManifold`, `NewClassifierWeights`                                                                            |
 | `probability` | `Bernoulli`, `CUSUM`, `Rank`, `TransitionSurprise`, `Classifier`, `SoftmaxScores`                                                                                  |
 | `statistic`   | `Mean`, `Median`, `Panel`, `LeaveOneOutMedian`, `Quantile`, `StdDev`, `Min`, `Max`, `Entropy`, `FastSlow`, `KLDivergence`, `BivariateMoment`, `OLS`, `RidgeSolver` |
 | `vector`      | `FeatureExtractor`, `InputSlot`, `FeatureNode`                                                                                                                     |

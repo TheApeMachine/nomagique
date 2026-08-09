@@ -7,6 +7,7 @@ import (
 	"math/rand"
 
 	"github.com/theapemachine/errnie"
+	"gonum.org/v1/gonum/floats"
 	"gonum.org/v1/gonum/mat"
 )
 
@@ -116,25 +117,25 @@ type ResonanceManifold struct {
 	R                      []*mat.Dense
 	A                      *mat.Dense
 	V                      *mat.Dense
-	taskBias               *mat.Dense
+	taskBias               *mat.VecDense
 	taskLearners           []*RLS
-	z                      []*mat.Dense
-	prevTop                *mat.Dense
-	errorVar               []*mat.Dense
-	precision              []*mat.Dense
-	temporalVar            *mat.Dense
-	temporalPrecision      *mat.Dense
-	temporalPrior          *mat.Dense
+	z                      []*mat.VecDense
+	prevTop                *mat.VecDense
+	errorVar               []*mat.VecDense
+	precision              []*mat.VecDense
+	temporalVar            *mat.VecDense
+	temporalPrecision      *mat.VecDense
+	temporalPrior          *mat.VecDense
 	temporalPriorReady     bool
 	settleAdvancedTemporal bool
-	taskVar                *mat.Dense
-	taskScale              *mat.Dense
+	taskVar                *mat.VecDense
+	taskScale              *mat.VecDense
 	taskScaleReady         []bool
-	taskPrecision          *mat.Dense
-	taskModelLoss          *mat.Dense
-	taskBaselineLoss       *mat.Dense
+	taskPrecision          *mat.VecDense
+	taskModelLoss          *mat.VecDense
+	taskBaselineLoss       *mat.VecDense
 	taskSkillReady         []bool
-	taskSkill              *mat.Dense
+	taskSkill              *mat.VecDense
 	workspace              *resonanceWorkspace
 	streamLearn            bool
 	streamAdvanceTemporal  bool
@@ -144,13 +145,25 @@ type ResonanceManifold struct {
 
 func NewResonanceManifold(
 	arch []int, targetDim int, alpha float64,
-) (*ResonanceManifold, error) {
+) *ResonanceManifold {
 	if len(arch) < 2 {
-		return nil, errors.New("resonance: architecture must contain at least input and one latent layer")
+		errnie.Error(errnie.Err(
+			errnie.Validation,
+			"resonance: architecture must contain at least input and one latent layer",
+			nil,
+		))
+
+		return nil
 	}
 
 	if alpha <= 0 || alpha > 1 || math.IsNaN(alpha) || math.IsInf(alpha, 0) {
-		return nil, errors.New("resonance: alpha must be finite and in (0, 1]")
+		errnie.Error(errnie.Err(
+			errnie.Validation,
+			"resonance: alpha must be finite and in (0, 1]",
+			nil,
+		))
+
+		return nil
 	}
 
 	cfg := AdaptiveResonanceConfig(alpha, arch)
@@ -159,10 +172,10 @@ func NewResonanceManifold(
 
 	weights := make([]*mat.Dense, numLinks)
 	recognition := make([]*mat.Dense, numLinks)
-	errorVar := make([]*mat.Dense, numLinks)
-	precision := make([]*mat.Dense, numLinks)
+	errorVar := make([]*mat.VecDense, numLinks)
+	precision := make([]*mat.VecDense, numLinks)
 
-	for layerIndex := 0; layerIndex < numLinks; layerIndex++ {
+	for layerIndex := range numLinks {
 		rowCount, colCount := arch[layerIndex], arch[layerIndex+1]
 		scaleW := math.Sqrt(2.0 / float64(rowCount+colCount))
 		dataW := make([]float64, rowCount*colCount)
@@ -180,8 +193,8 @@ func NewResonanceManifold(
 		}
 
 		recognition[layerIndex] = mat.NewDense(colCount, rowCount, dataR)
-		errorVar[layerIndex] = mat.NewDense(rowCount, 1, nil)
-		precision[layerIndex] = mat.NewDense(rowCount, 1, nil)
+		errorVar[layerIndex] = mat.NewVecDense(rowCount, nil)
+		precision[layerIndex] = mat.NewVecDense(rowCount, nil)
 		denseFill(errorVar[layerIndex], 1.0)
 		denseFill(precision[layerIndex], 1.0)
 	}
@@ -197,16 +210,16 @@ func NewResonanceManifold(
 	temporalWeights := mat.NewDense(topDim, topDim, dataA)
 
 	var taskWeights *mat.Dense
-	var taskBias *mat.Dense
+	var taskBias *mat.VecDense
 	var taskLearners []*RLS
-	var taskVar *mat.Dense
-	var taskScale *mat.Dense
+	var taskVar *mat.VecDense
+	var taskScale *mat.VecDense
 	var taskScaleReady []bool
-	var taskPrecision *mat.Dense
-	var taskModelLoss *mat.Dense
-	var taskBaselineLoss *mat.Dense
+	var taskPrecision *mat.VecDense
+	var taskModelLoss *mat.VecDense
+	var taskBaselineLoss *mat.VecDense
 	var taskSkillReady []bool
-	var taskSkill *mat.Dense
+	var taskSkill *mat.VecDense
 
 	if targetDim > 0 {
 		// The head is linear and fits a target on the caller's own scale, so it
@@ -218,16 +231,16 @@ func NewResonanceManifold(
 		// from is already randomly projected, so no symmetry needs breaking
 		// here.
 		taskWeights = mat.NewDense(targetDim, topDim, nil)
-		taskBias = mat.NewDense(targetDim, 1, nil)
+		taskBias = mat.NewVecDense(targetDim, nil)
 		taskLearners = make([]*RLS, targetDim)
-		taskVar = mat.NewDense(targetDim, 1, nil)
-		taskScale = mat.NewDense(targetDim, 1, nil)
+		taskVar = mat.NewVecDense(targetDim, nil)
+		taskScale = mat.NewVecDense(targetDim, nil)
 		taskScaleReady = make([]bool, targetDim)
-		taskPrecision = mat.NewDense(targetDim, 1, nil)
-		taskModelLoss = mat.NewDense(targetDim, 1, nil)
-		taskBaselineLoss = mat.NewDense(targetDim, 1, nil)
+		taskPrecision = mat.NewVecDense(targetDim, nil)
+		taskModelLoss = mat.NewVecDense(targetDim, nil)
+		taskBaselineLoss = mat.NewVecDense(targetDim, nil)
 		taskSkillReady = make([]bool, targetDim)
-		taskSkill = mat.NewDense(targetDim, 1, nil)
+		taskSkill = mat.NewVecDense(targetDim, nil)
 		denseFill(taskVar, 1.0)
 		denseFill(taskPrecision, 1.0)
 		denseFill(taskSkill, 1.0)
@@ -239,21 +252,25 @@ func NewResonanceManifold(
 			})
 
 			if err != nil {
-				return nil, fmt.Errorf("resonance: construct task learner: %w", err)
+				errnie.Error(errnie.Err(
+					errnie.Validation,
+					"resonance: task RLS learner construction failed - "+err.Error(),
+					err,
+				))
 			}
 
 			taskLearners[rowIndex] = learner
 		}
 	}
 
-	latents := make([]*mat.Dense, len(arch))
+	latents := make([]*mat.VecDense, len(arch))
 
 	for layerIndex, layerDim := range arch {
-		latents[layerIndex] = mat.NewDense(layerDim, 1, nil)
+		latents[layerIndex] = mat.NewVecDense(layerDim, nil)
 	}
 
-	temporalVar := mat.NewDense(topDim, 1, nil)
-	temporalPrecision := mat.NewDense(topDim, 1, nil)
+	temporalVar := mat.NewVecDense(topDim, nil)
+	temporalPrecision := mat.NewVecDense(topDim, nil)
 	denseFill(temporalVar, 1.0)
 	denseFill(temporalPrecision, 1.0)
 
@@ -272,7 +289,7 @@ func NewResonanceManifold(
 		precision:             precision,
 		temporalVar:           temporalVar,
 		temporalPrecision:     temporalPrecision,
-		temporalPrior:         mat.NewDense(topDim, 1, nil),
+		temporalPrior:         mat.NewVecDense(topDim, nil),
 		taskVar:               taskVar,
 		taskScale:             taskScale,
 		taskScaleReady:        taskScaleReady,
@@ -287,10 +304,14 @@ func NewResonanceManifold(
 	}
 
 	if err := manifold.projectTemporalOperatorNorm(); err != nil {
-		return nil, fmt.Errorf("resonance: constrain initial temporal weights: %w", err)
+		errnie.Error(errnie.Err(
+			errnie.Validation,
+			"resonance: constrain initial temporal weights: "+err.Error(),
+			err,
+		))
 	}
 
-	return manifold, nil
+	return manifold
 }
 
 func (rm *ResonanceManifold) ResetState(resetPrecision bool) {
@@ -388,17 +409,16 @@ func (rm *ResonanceManifold) Settle(input []float64, advanceTemporal bool) error
 	rm.lastInferenceSteps = 0
 
 	xCol := rm.workspace.xCol
-	copy(xCol.RawMatrix().Data, input)
+	copy(xCol.RawVector().Data, input)
 
 	rm.initializeLatents(xCol)
 	rm.temporalPriorReady = rm.prevTop != nil
 
 	if rm.temporalPriorReady {
-		rm.temporalPrior.Copy(rm.workspace.topPrior)
+		rm.temporalPrior.CopyVec(rm.workspace.topPrior)
 	}
 
-	trace := make([]float64, 0, rm.cfg.MaxInferenceSteps+2)
-	trace = append(trace, rm.Energy())
+	settledEnergy := rm.Energy()
 	stableSteps := 0
 
 	for step := 0; step < rm.cfg.MaxInferenceSteps; step++ {
@@ -407,8 +427,8 @@ func (rm *ResonanceManifold) Settle(input []float64, advanceTemporal bool) error
 		gradients := rm.stateGradients(predictions, layerErrors)
 
 		rm.saveStates()
-		oldEnergy := trace[len(trace)-1]
 		accepted := false
+		candidateEnergy := settledEnergy
 		stepSize := rm.cfg.LrState
 
 		halvings := 0
@@ -418,11 +438,11 @@ func (rm *ResonanceManifold) Settle(input []float64, advanceTemporal bool) error
 
 		for halvingIndex := 0; halvingIndex <= halvings; halvingIndex++ {
 			rm.tryStateUpdate(gradients, stepSize)
-			rm.z[0].Copy(xCol)
-			newEnergy := rm.Energy()
+			rm.z[0].CopyVec(xCol)
+			candidateEnergy = rm.Energy()
 
 			if !rm.cfg.MonotoneStateSteps ||
-				newEnergy <= math.Nextafter(oldEnergy, math.Inf(1)) {
+				candidateEnergy <= math.Nextafter(settledEnergy, math.Inf(1)) {
 				accepted = true
 				break
 			}
@@ -433,18 +453,16 @@ func (rm *ResonanceManifold) Settle(input []float64, advanceTemporal bool) error
 
 		if !accepted {
 			rm.restoreStates()
-			rm.z[0].Copy(xCol)
-			trace = append(trace, oldEnergy)
+			rm.z[0].CopyVec(xCol)
 			stableSteps = 0
 
 			continue
 		}
 
-		trace = append(trace, rm.Energy())
-
-		deltaEnergy := math.Abs(trace[len(trace)-2] - trace[len(trace)-1])
-		energyScale := math.Max(math.Abs(trace[len(trace)-2]), rm.cfg.PrecisionEps)
+		deltaEnergy := math.Abs(settledEnergy - candidateEnergy)
+		energyScale := math.Max(math.Abs(settledEnergy), rm.cfg.PrecisionEps)
 		relativeDelta := deltaEnergy / energyScale
+		settledEnergy = candidateEnergy
 
 		if step+1 < rm.cfg.MinInferenceSteps || relativeDelta >= rm.cfg.EarlyStopTol {
 			stableSteps = 0
@@ -483,10 +501,10 @@ func (rm *ResonanceManifold) Learn(target []float64) error {
 	predictions, layerErrors := rm.predictAdjacentLayers()
 	topIndex := len(rm.z) - 1
 
-	var targetCol *mat.Dense
+	var targetCol *mat.VecDense
 	if target != nil && rm.targetDim > 0 {
 		targetCol = rm.workspace.yCol
-		copy(targetCol.RawMatrix().Data, target)
+		copy(targetCol.RawVector().Data, target)
 	}
 
 	for layerIndex, weightMatrix := range rm.W {
@@ -494,8 +512,8 @@ func (rm *ResonanceManifold) Learn(target []float64) error {
 		denseApplyOneMinusSquareInto(localSignal, predictions[layerIndex])
 
 		precision := rm.precisionFor(layerIndex)
-		localSignal.MulElem(localSignal, layerErrors[layerIndex])
-		localSignal.MulElem(localSignal, precision)
+		localSignal.MulElemVec(localSignal, layerErrors[layerIndex])
+		localSignal.MulElemVec(localSignal, precision)
 
 		update := rm.workspace.weightUpdate[layerIndex]
 		denseOuterColsInto(update, localSignal, rm.z[layerIndex+1], 1.0)
@@ -505,25 +523,28 @@ func (rm *ResonanceManifold) Learn(target []float64) error {
 			scale *= rm.cfg.GradClip / norm
 		}
 
-		update.Scale(scale, update)
+		denseScaleInPlace(update, scale)
 		weightMatrix.Add(weightMatrix, update)
 
 		if rm.cfg.WeightDecay > 0 {
-			weightMatrix.Scale(1.0-rm.cfg.LrGenerative*rm.cfg.WeightDecay, weightMatrix)
+			denseScaleInPlace(
+				weightMatrix,
+				1.0-rm.cfg.LrGenerative*rm.cfg.WeightDecay,
+			)
 		}
 	}
 
 	for layerIndex, recognitionMatrix := range rm.R {
 		proposal := rm.workspace.recProposal[layerIndex]
-		proposal.Mul(recognitionMatrix, rm.z[layerIndex])
+		proposal.MulVec(recognitionMatrix, rm.z[layerIndex])
 		denseApplyTanhInPlace(proposal)
 
 		recError := rm.workspace.recError[layerIndex]
-		recError.Sub(rm.z[layerIndex+1], proposal)
+		recError.SubVec(rm.z[layerIndex+1], proposal)
 
 		recSignal := rm.workspace.recSignal[layerIndex]
 		denseApplyOneMinusSquareInto(recSignal, proposal)
-		recSignal.MulElem(recSignal, recError)
+		recSignal.MulElemVec(recSignal, recError)
 
 		update := rm.workspace.recUpdate[layerIndex]
 		denseOuterColsInto(update, recSignal, rm.z[layerIndex], 1.0)
@@ -533,22 +554,25 @@ func (rm *ResonanceManifold) Learn(target []float64) error {
 			scale *= rm.cfg.GradClip / norm
 		}
 
-		update.Scale(scale, update)
+		denseScaleInPlace(update, scale)
 		recognitionMatrix.Add(recognitionMatrix, update)
 
 		if rm.cfg.WeightDecay > 0 {
-			recognitionMatrix.Scale(1.0-rm.cfg.LrRecognition*rm.cfg.WeightDecay, recognitionMatrix)
+			denseScaleInPlace(
+				recognitionMatrix,
+				1.0-rm.cfg.LrRecognition*rm.cfg.WeightDecay,
+			)
 		}
 	}
 
-	var taskError *mat.Dense
+	var taskError *mat.VecDense
 
 	if targetCol != nil && rm.V != nil {
 		taskPred := rm.workspace.taskPred
 		rm.taskPredictionInto(taskPred)
 
 		taskError = rm.workspace.taskError
-		taskError.Sub(targetCol, taskPred)
+		taskError.SubVec(targetCol, taskPred)
 
 		/*
 			The return head is a linear regression, so square-root recursive least
@@ -562,9 +586,9 @@ func (rm *ResonanceManifold) Learn(target []float64) error {
 			image on a unit scale. Forgetting is one: no evidence is discarded
 			without an observed regime-reset rule.
 		*/
-		topState := rm.z[topIndex].RawMatrix().Data
-		targetData := targetCol.RawMatrix().Data
-		biasData := rm.taskBias.RawMatrix().Data
+		topState := rm.z[topIndex].RawVector().Data
+		targetData := targetCol.RawVector().Data
+		biasData := rm.taskBias.RawVector().Data
 
 		for rowIndex, learner := range rm.taskLearners {
 			_, err := learner.Observe(RLSSample{
@@ -586,19 +610,19 @@ func (rm *ResonanceManifold) Learn(target []float64) error {
 		}
 	}
 
-	var temporalError *mat.Dense
+	var temporalError *mat.VecDense
 
 	if rm.temporalPriorReady {
 		temporalError = rm.workspace.temporalError
-		temporalError.Sub(rm.z[topIndex], rm.temporalPrior)
+		temporalError.SubVec(rm.z[topIndex], rm.temporalPrior)
 
 		temporalSignal := rm.workspace.temporalSignal
 		denseApplyOneMinusSquareInto(temporalSignal, rm.temporalPrior)
 
 		precision := rm.temporalPrecisionVec()
-		temporalSignal.MulElem(temporalSignal, temporalError)
-		temporalSignal.MulElem(temporalSignal, precision)
-		temporalSignal.Scale(rm.cfg.TemporalWeight, temporalSignal)
+		temporalSignal.MulElemVec(temporalSignal, temporalError)
+		temporalSignal.MulElemVec(temporalSignal, precision)
+		temporalSignal.ScaleVec(rm.cfg.TemporalWeight, temporalSignal)
 
 		update := rm.workspace.temporalUpdate
 		denseOuterColsInto(update, temporalSignal, rm.prevTop, 1.0)
@@ -608,11 +632,14 @@ func (rm *ResonanceManifold) Learn(target []float64) error {
 			scale *= rm.cfg.GradClip / norm
 		}
 
-		update.Scale(scale, update)
+		denseScaleInPlace(update, scale)
 		rm.A.Add(rm.A, update)
 
 		if rm.cfg.WeightDecay > 0 {
-			rm.A.Scale(1.0-rm.cfg.LrTemporal*rm.cfg.WeightDecay, rm.A)
+			denseScaleInPlace(
+				rm.A,
+				1.0-rm.cfg.LrTemporal*rm.cfg.WeightDecay,
+			)
 		}
 
 		if err := rm.projectTemporalOperatorNorm(); err != nil {
@@ -650,7 +677,10 @@ func (rm *ResonanceManifold) Energy() float64 {
 
 	if rm.cfg.Sparsity > 0 {
 		for layerIndex := 1; layerIndex < len(rm.z); layerIndex++ {
-			energy += rm.cfg.Sparsity * mat.Norm(rm.z[layerIndex], 1)
+			energy += rm.cfg.Sparsity * floats.Norm(
+				rm.z[layerIndex].RawVector().Data,
+				1,
+			)
 		}
 	}
 
@@ -673,7 +703,7 @@ func (rm *ResonanceManifold) PredictionEnergy() float64 {
 	for layerIndex, layerError := range layerErrors {
 		if rm.cfg.UsePrecision {
 			weightedError := rm.workspace.weightedErr[layerIndex]
-			weightedError.MulElem(rm.precisionFor(layerIndex), layerError)
+			weightedError.MulElemVec(rm.precisionFor(layerIndex), layerError)
 			energy += 0.5 * denseColDot(weightedError, layerError)
 
 			continue
@@ -684,11 +714,11 @@ func (rm *ResonanceManifold) PredictionEnergy() float64 {
 
 	if rm.temporalPriorReady {
 		temporalError := rm.workspace.temporalError
-		temporalError.Sub(rm.z[len(rm.z)-1], rm.temporalPrior)
+		temporalError.SubVec(rm.z[len(rm.z)-1], rm.temporalPrior)
 
 		if rm.cfg.UsePrecision {
 			weightedError := rm.workspace.temporalWeightedErr
-			weightedError.MulElem(rm.temporalPrecisionVec(), temporalError)
+			weightedError.MulElemVec(rm.temporalPrecisionVec(), temporalError)
 			energy += 0.5 * rm.cfg.TemporalWeight * denseColDot(weightedError, temporalError)
 		} else {
 			energy += 0.5 * rm.cfg.TemporalWeight * denseColDot(temporalError, temporalError)
@@ -700,11 +730,11 @@ func (rm *ResonanceManifold) PredictionEnergy() float64 {
 
 func (rm *ResonanceManifold) ReconstructionError() float64 {
 	reconstruction := rm.workspace.reconPred
-	reconstruction.Mul(rm.W[0], rm.z[1])
+	reconstruction.MulVec(rm.W[0], rm.z[1])
 	denseApplyTanhInPlace(reconstruction)
 
 	diff := rm.workspace.reconDiff
-	diff.Sub(rm.z[0], reconstruction)
+	diff.SubVec(rm.z[0], reconstruction)
 
 	return denseColNorm(diff)
 }
@@ -722,9 +752,9 @@ nothing but a systematically attenuated gradient, while capping the head at +/-1
 would silently truncate any caller whose target is larger. A linear head fits the
 target on its own scale and leaves saturation to the caller who chose it.
 */
-func (rm *ResonanceManifold) taskPredictionInto(dst *mat.Dense) {
-	dst.Mul(rm.V, rm.z[len(rm.z)-1])
-	dst.Add(dst, rm.taskBias)
+func (rm *ResonanceManifold) taskPredictionInto(dst *mat.VecDense) {
+	dst.MulVec(rm.V, rm.z[len(rm.z)-1])
+	dst.AddVec(dst, rm.taskBias)
 }
 
 func (rm *ResonanceManifold) TaskPrediction() []float64 {
@@ -735,7 +765,7 @@ func (rm *ResonanceManifold) TaskPrediction() []float64 {
 	taskPred := rm.workspace.taskPred
 	rm.taskPredictionInto(taskPred)
 
-	return append([]float64(nil), taskPred.RawMatrix().Data...)
+	return append([]float64(nil), taskPred.RawVector().Data...)
 }
 
 func (rm *ResonanceManifold) LatentState() []float64 {
@@ -743,7 +773,7 @@ func (rm *ResonanceManifold) LatentState() []float64 {
 		return nil
 	}
 
-	return append([]float64(nil), rm.z[len(rm.z)-1].RawMatrix().Data...)
+	return append([]float64(nil), rm.z[len(rm.z)-1].RawVector().Data...)
 }
 
 /*
@@ -778,7 +808,7 @@ func (rm *ResonanceManifold) TemporalError() (float64, bool) {
 	}
 
 	temporalError := rm.workspace.temporalError
-	temporalError.Sub(rm.z[len(rm.z)-1], rm.temporalPrior)
+	temporalError.SubVec(rm.z[len(rm.z)-1], rm.temporalPrior)
 
 	return denseColNorm(temporalError), true
 }
@@ -799,15 +829,15 @@ func (rm *ResonanceManifold) WireSnapshot() (
 	for layerIndex := range rm.z {
 		stateMatrix := rm.z[layerIndex]
 		rowCount, _ := stateMatrix.Dims()
-		state := append([]float64(nil), stateMatrix.RawMatrix().Data...)
+		state := append([]float64(nil), stateMatrix.RawVector().Data...)
 		prediction := make([]float64, rowCount)
 
 		if layerIndex < len(predictions) {
-			copy(prediction, predictions[layerIndex].RawMatrix().Data)
+			copy(prediction, predictions[layerIndex].RawVector().Data)
 		}
 
 		if layerIndex == topIndex && rm.temporalPriorReady {
-			copy(prediction, rm.temporalPrior.RawMatrix().Data)
+			copy(prediction, rm.temporalPrior.RawVector().Data)
 		}
 
 		errorNorm := 0.0
@@ -839,17 +869,17 @@ func (rm *ResonanceManifold) advanceTemporalState() {
 	topIndex := len(rm.z) - 1
 
 	if rm.prevTop == nil {
-		rm.prevTop = mat.NewDense(rm.arch[topIndex], 1, nil)
+		rm.prevTop = mat.NewVecDense(rm.arch[topIndex], nil)
 	}
 
-	rm.prevTop.Copy(rm.z[topIndex])
+	rm.prevTop.CopyVec(rm.z[topIndex])
 }
 
-func (rm *ResonanceManifold) precisionFor(layerIndex int) *mat.Dense {
+func (rm *ResonanceManifold) precisionFor(layerIndex int) *mat.VecDense {
 	return rm.precision[layerIndex]
 }
 
-func (rm *ResonanceManifold) temporalPrecisionVec() *mat.Dense {
+func (rm *ResonanceManifold) temporalPrecisionVec() *mat.VecDense {
 	return rm.temporalPrecision
 }
 
@@ -877,7 +907,8 @@ func (rm *ResonanceManifold) TaskPrecision() (float64, bool) {
 		}
 	}
 
-	return mat.Sum(rm.taskPrecision) / float64(rm.targetDim), true
+	return floats.Sum(rm.taskPrecision.RawVector().Data) /
+		float64(rm.targetDim), true
 }
 
 /*
@@ -896,75 +927,78 @@ func (rm *ResonanceManifold) TaskSkill() (float64, bool) {
 		}
 	}
 
-	return mat.Sum(rm.taskSkill) / float64(rm.targetDim), true
+	return floats.Sum(rm.taskSkill.RawVector().Data) /
+		float64(rm.targetDim), true
 }
 
-func (rm *ResonanceManifold) predictAdjacentLayers() ([]*mat.Dense, []*mat.Dense) {
+func (rm *ResonanceManifold) predictAdjacentLayers() (
+	[]*mat.VecDense,
+	[]*mat.VecDense,
+) {
 	for layerIndex := 0; layerIndex < len(rm.W); layerIndex++ {
 		prediction := rm.workspace.predictions[layerIndex]
-		prediction.Mul(rm.W[layerIndex], rm.z[layerIndex+1])
+		prediction.MulVec(rm.W[layerIndex], rm.z[layerIndex+1])
 		denseApplyTanhInPlace(prediction)
 
 		layerError := rm.workspace.errors[layerIndex]
-		layerError.Sub(rm.z[layerIndex], prediction)
+		layerError.SubVec(rm.z[layerIndex], prediction)
 	}
 
 	return rm.workspace.predictions, rm.workspace.errors
 }
 
-func (rm *ResonanceManifold) initializeLatents(xCol *mat.Dense) {
+func (rm *ResonanceManifold) initializeLatents(xCol *mat.VecDense) {
 	bottomUp := rm.workspace.bottomUp
-	bottomUp[0].Copy(xCol)
+	bottomUp[0].CopyVec(xCol)
 
 	for layerIndex := 0; layerIndex < len(rm.R); layerIndex++ {
 		proposal := bottomUp[layerIndex+1]
-		proposal.Mul(rm.R[layerIndex], bottomUp[layerIndex])
+		proposal.MulVec(rm.R[layerIndex], bottomUp[layerIndex])
 		denseApplyTanhInPlace(proposal)
 	}
 
-	rm.z[0].Copy(xCol)
+	rm.z[0].CopyVec(xCol)
 
 	if rm.prevTop == nil {
 		for layerIndex := 1; layerIndex < len(rm.z); layerIndex++ {
-			rm.z[layerIndex].Copy(bottomUp[layerIndex])
+			rm.z[layerIndex].CopyVec(bottomUp[layerIndex])
 		}
 
 		return
 	}
 
 	topPrior := rm.workspace.topPrior
-	topPrior.Mul(rm.A, rm.prevTop)
+	topPrior.MulVec(rm.A, rm.prevTop)
 
 	denseApplyTanhInPlace(topPrior)
 
 	topDown := rm.workspace.topDown
-	topDown[len(topDown)-1].Copy(topPrior)
+	topDown[len(topDown)-1].CopyVec(topPrior)
 
 	for layerIndex := len(rm.W) - 1; layerIndex > 0; layerIndex-- {
 		proposal := topDown[layerIndex]
-		proposal.Mul(rm.W[layerIndex], topDown[layerIndex+1])
+		proposal.MulVec(rm.W[layerIndex], topDown[layerIndex+1])
 		denseApplyTanhInPlace(proposal)
 	}
 
 	initMix := rm.cfg.TopDownInitMix
 
 	for layerIndex := 1; layerIndex < len(rm.z); layerIndex++ {
-		topDownTerm := rm.workspace.mergeTD[layerIndex]
-		topDownTerm.Scale(initMix, topDown[layerIndex])
-
-		bottomUpTerm := rm.workspace.mergeBU[layerIndex]
-		bottomUpTerm.Scale(1.0-initMix, bottomUp[layerIndex])
-
 		merged := rm.z[layerIndex]
-		merged.Add(topDownTerm, bottomUpTerm)
+		merged.ScaleVec(initMix, topDown[layerIndex])
+		floats.AddScaled(
+			merged.RawVector().Data,
+			1.0-initMix,
+			bottomUp[layerIndex].RawVector().Data,
+		)
 		denseClipColInPlace(merged, rm.cfg.StateClip)
 	}
 }
 
 func (rm *ResonanceManifold) stateGradients(
-	predictions []*mat.Dense,
-	layerErrors []*mat.Dense,
-) []*mat.Dense {
+	predictions []*mat.VecDense,
+	layerErrors []*mat.VecDense,
+) []*mat.VecDense {
 	topIndex := len(rm.z) - 1
 
 	for layerIndex := 1; layerIndex <= topIndex; layerIndex++ {
@@ -974,10 +1008,15 @@ func (rm *ResonanceManifold) stateGradients(
 		if layerIndex < topIndex {
 			if rm.cfg.UsePrecision {
 				weightedError := rm.workspace.weightedErr[layerIndex]
-				weightedError.MulElem(rm.precisionFor(layerIndex), layerErrors[layerIndex])
-				gradient.Add(gradient, weightedError)
-			} else {
-				gradient.Add(gradient, layerErrors[layerIndex])
+				weightedError.MulElemVec(
+					rm.precisionFor(layerIndex),
+					layerErrors[layerIndex],
+				)
+				gradient.AddVec(gradient, weightedError)
+			}
+
+			if !rm.cfg.UsePrecision {
+				gradient.AddVec(gradient, layerErrors[layerIndex])
 			}
 		}
 
@@ -985,56 +1024,62 @@ func (rm *ResonanceManifold) stateGradients(
 		denseApplyOneMinusSquareInto(belowSignal, predictions[layerIndex-1])
 
 		if rm.cfg.UsePrecision {
-			belowSignal.MulElem(belowSignal, layerErrors[layerIndex-1])
-			belowSignal.MulElem(belowSignal, rm.precisionFor(layerIndex-1))
-		} else {
-			belowSignal.MulElem(belowSignal, layerErrors[layerIndex-1])
+			belowSignal.MulElemVec(belowSignal, layerErrors[layerIndex-1])
+			belowSignal.MulElemVec(
+				belowSignal,
+				rm.precisionFor(layerIndex-1),
+			)
+		}
+
+		if !rm.cfg.UsePrecision {
+			belowSignal.MulElemVec(belowSignal, layerErrors[layerIndex-1])
 		}
 
 		correction := rm.workspace.correction[layerIndex]
 		denseMulWeightTransposeInto(correction, rm.W[layerIndex-1], belowSignal)
-		gradient.Sub(gradient, correction)
+		gradient.SubVec(gradient, correction)
 
 		if layerIndex == topIndex && rm.temporalPriorReady {
 			temporalError := rm.workspace.temporalError
-			temporalError.Sub(rm.z[topIndex], rm.temporalPrior)
+			temporalError.SubVec(rm.z[topIndex], rm.temporalPrior)
 
 			if rm.cfg.UsePrecision {
-				temporalError.MulElem(temporalError, rm.temporalPrecisionVec())
+				temporalError.MulElemVec(
+					temporalError,
+					rm.temporalPrecisionVec(),
+				)
 			}
 
-			temporalError.Scale(rm.cfg.TemporalWeight, temporalError)
-			gradient.Add(gradient, temporalError)
+			temporalError.ScaleVec(rm.cfg.TemporalWeight, temporalError)
+			gradient.AddVec(gradient, temporalError)
 		}
 
 		if rm.cfg.LatentDecay > 0 {
-			decayTerm := rm.workspace.stepBuf[layerIndex]
-			decayTerm.Scale(rm.cfg.LatentDecay, rm.z[layerIndex])
-			gradient.Add(gradient, decayTerm)
+			floats.AddScaled(
+				gradient.RawVector().Data,
+				rm.cfg.LatentDecay,
+				rm.z[layerIndex].RawVector().Data,
+			)
 		}
 
 		if rm.cfg.Sparsity > 0 {
-			sparsityTerm := rm.workspace.stepBuf[layerIndex]
-			sparsityTerm.Apply(
-				func(_, _ int, latentValue float64) float64 {
-					switch {
-					case latentValue > 0:
-						return rm.cfg.Sparsity
-					case latentValue < 0:
-						return -rm.cfg.Sparsity
-					default:
-						return 0
-					}
-				},
-				rm.z[layerIndex],
-			)
-			gradient.Add(gradient, sparsityTerm)
+			gradientData := gradient.RawVector().Data
+			latentData := rm.z[layerIndex].RawVector().Data
+
+			for index, latentValue := range latentData {
+				switch {
+				case latentValue > 0:
+					gradientData[index] += rm.cfg.Sparsity
+				case latentValue < 0:
+					gradientData[index] -= rm.cfg.Sparsity
+				}
+			}
 		}
 
 		gradientNorm := denseColNorm(gradient)
 
 		if gradientNorm > rm.cfg.GradClip {
-			gradient.Scale(rm.cfg.GradClip/gradientNorm, gradient)
+			gradient.ScaleVec(rm.cfg.GradClip/gradientNorm, gradient)
 		}
 	}
 
@@ -1043,32 +1088,35 @@ func (rm *ResonanceManifold) stateGradients(
 
 func (rm *ResonanceManifold) saveStates() {
 	for layerIndex, latent := range rm.z {
-		rm.workspace.savedStates[layerIndex].Copy(latent)
+		rm.workspace.savedStates[layerIndex].CopyVec(latent)
 	}
 }
 
 func (rm *ResonanceManifold) restoreStates() {
 	for layerIndex, latent := range rm.z {
-		latent.Copy(rm.workspace.savedStates[layerIndex])
+		latent.CopyVec(rm.workspace.savedStates[layerIndex])
 	}
 }
 
-func (rm *ResonanceManifold) tryStateUpdate(gradients []*mat.Dense, stepSize float64) {
+func (rm *ResonanceManifold) tryStateUpdate(
+	gradients []*mat.VecDense,
+	stepSize float64,
+) {
 	for layerIndex := 1; layerIndex < len(rm.z); layerIndex++ {
 		step := rm.workspace.stepBuf[layerIndex]
-		step.Scale(stepSize, gradients[layerIndex])
+		step.ScaleVec(stepSize, gradients[layerIndex])
 
 		nextState := rm.z[layerIndex]
-		nextState.Sub(rm.workspace.savedStates[layerIndex], step)
+		nextState.SubVec(rm.workspace.savedStates[layerIndex], step)
 		denseClipColInPlace(nextState, rm.cfg.StateClip)
 	}
 }
 
 func (rm *ResonanceManifold) updatePrecision(
-	layerErrors []*mat.Dense,
-	temporalError *mat.Dense,
-	targetCol *mat.Dense,
-	taskError *mat.Dense,
+	layerErrors []*mat.VecDense,
+	temporalError *mat.VecDense,
+	targetCol *mat.VecDense,
+	taskError *mat.VecDense,
 ) error {
 	if !rm.cfg.UsePrecision {
 		return nil
@@ -1081,12 +1129,14 @@ func (rm *ResonanceManifold) updatePrecision(
 		denseVarianceEMAInto(
 			variance,
 			layerError,
-			rm.workspace.weightedErr[layerIndex],
 			beta,
 			rm.cfg.PrecisionEps,
 		)
 
-		if !(mat.Min(variance) > 0) || !finite(mat.Norm(variance, 2)) {
+		varianceData := variance.RawVector().Data
+
+		if !(floats.Min(varianceData) > 0) ||
+			!finite(floats.Norm(varianceData, 2)) {
 			return errnie.Err(
 				errnie.Validation,
 				"resonance: precision variance must be finite and strictly positive",
@@ -1106,13 +1156,14 @@ func (rm *ResonanceManifold) updatePrecision(
 		denseVarianceEMAInto(
 			rm.temporalVar,
 			temporalError,
-			rm.workspace.temporalWeightedErr,
 			beta,
 			rm.cfg.PrecisionEps,
 		)
 
-		if !(mat.Min(rm.temporalVar) > 0) ||
-			!finite(mat.Norm(rm.temporalVar, 2)) {
+		temporalVarianceData := rm.temporalVar.RawVector().Data
+
+		if !(floats.Min(temporalVarianceData) > 0) ||
+			!finite(floats.Norm(temporalVarianceData, 2)) {
 			return errnie.Err(
 				errnie.Validation,
 				"resonance: temporal precision variance must be finite and strictly positive",
@@ -1136,24 +1187,24 @@ func (rm *ResonanceManifold) updatePrecision(
 }
 
 func (rm *ResonanceManifold) updateTaskReliability(
-	targetCol *mat.Dense,
-	taskError *mat.Dense,
+	targetCol *mat.VecDense,
+	taskError *mat.VecDense,
 ) error {
 	beta := rm.cfg.PrecisionBeta
 	squaredError := rm.workspace.taskSignal
-	squaredError.MulElem(taskError, taskError)
+	squaredError.MulElemVec(taskError, taskError)
 	candidateVariance := taskError
-	candidateVariance.Scale(1.0-beta, rm.taskVar)
+	candidateVariance.ScaleVec(1.0-beta, rm.taskVar)
 
 	varianceFloor := rm.workspace.taskPred
-	varianceFloor.Scale(beta, squaredError)
-	candidateVariance.Add(candidateVariance, varianceFloor)
+	varianceFloor.ScaleVec(beta, squaredError)
+	candidateVariance.AddVec(candidateVariance, varianceFloor)
 
-	squaredErrorData := squaredError.RawMatrix().Data
-	candidateVarianceData := candidateVariance.RawMatrix().Data
-	varianceFloorData := varianceFloor.RawMatrix().Data
-	taskVarianceData := rm.taskVar.RawMatrix().Data
-	taskScaleData := rm.taskScale.RawMatrix().Data
+	squaredErrorData := squaredError.RawVector().Data
+	candidateVarianceData := candidateVariance.RawVector().Data
+	varianceFloorData := varianceFloor.RawVector().Data
+	taskVarianceData := rm.taskVar.RawVector().Data
+	taskScaleData := rm.taskScale.RawVector().Data
 
 	for rowIndex, logScale := range taskScaleData {
 		varianceFloorData[rowIndex] = rm.cfg.PrecisionEps * math.Exp(logScale)
@@ -1197,7 +1248,8 @@ func (rm *ResonanceManifold) updateTaskReliability(
 		}
 	}
 
-	if !(mat.Min(rm.taskVar) > 0) || !finite(mat.Norm(rm.taskVar, 2)) {
+	if !(floats.Min(taskVarianceData) > 0) ||
+		!finite(floats.Norm(taskVarianceData, 2)) {
 		return errnie.Err(
 			errnie.Validation,
 			"resonance: task precision variance must be finite and strictly positive",
@@ -1209,8 +1261,8 @@ func (rm *ResonanceManifold) updateTaskReliability(
 		varianceFloorData[rowIndex] = math.Exp(logScale)
 	}
 
-	rm.taskPrecision.DivElem(varianceFloor, rm.taskVar)
-	taskPrecisionData := rm.taskPrecision.RawMatrix().Data
+	rm.taskPrecision.DivElemVec(varianceFloor, rm.taskVar)
+	taskPrecisionData := rm.taskPrecision.RawVector().Data
 
 	for rowIndex, value := range taskPrecisionData {
 		if !rm.taskScaleReady[rowIndex] {
@@ -1231,52 +1283,58 @@ func (rm *ResonanceManifold) updateTaskReliability(
 }
 
 func (rm *ResonanceManifold) updateTaskSkill(
-	targetCol *mat.Dense,
-	modelSquaredError *mat.Dense,
+	targetCol *mat.VecDense,
+	modelSquaredError *mat.VecDense,
 ) {
 	baselineSquaredError := rm.workspace.taskPred
-	baselineSquaredError.MulElem(targetCol, targetCol)
+	baselineSquaredError.MulElemVec(targetCol, targetCol)
+	hasRetainedSkill := rm.taskSkillReady[0]
 
-	if !rm.taskSkillReady[0] {
-		rm.taskModelLoss.Copy(modelSquaredError)
-		rm.taskBaselineLoss.Copy(baselineSquaredError)
+	if !hasRetainedSkill {
+		rm.taskModelLoss.CopyVec(modelSquaredError)
+		rm.taskBaselineLoss.CopyVec(baselineSquaredError)
 
 		for rowIndex := range rm.taskSkillReady {
 			rm.taskSkillReady[rowIndex] = true
 		}
-	} else {
-		beta := rm.cfg.PrecisionBeta
-		rm.taskModelLoss.Scale(1.0-beta, rm.taskModelLoss)
-		modelSquaredError.Scale(beta, modelSquaredError)
-		rm.taskModelLoss.Add(rm.taskModelLoss, modelSquaredError)
+	}
 
-		rm.taskBaselineLoss.Scale(1.0-beta, rm.taskBaselineLoss)
-		baselineSquaredError.Scale(beta, baselineSquaredError)
-		rm.taskBaselineLoss.Add(rm.taskBaselineLoss, baselineSquaredError)
+	if hasRetainedSkill {
+		beta := rm.cfg.PrecisionBeta
+		rm.taskModelLoss.ScaleVec(1.0-beta, rm.taskModelLoss)
+		modelSquaredError.ScaleVec(beta, modelSquaredError)
+		rm.taskModelLoss.AddVec(rm.taskModelLoss, modelSquaredError)
+
+		rm.taskBaselineLoss.ScaleVec(1.0-beta, rm.taskBaselineLoss)
+		baselineSquaredError.ScaleVec(beta, baselineSquaredError)
+		rm.taskBaselineLoss.AddVec(
+			rm.taskBaselineLoss,
+			baselineSquaredError,
+		)
 	}
 
 	lossScale := rm.workspace.taskError
-	lossScale.Sub(rm.taskModelLoss, rm.taskBaselineLoss)
-	lossScaleData := lossScale.RawMatrix().Data
+	lossScale.SubVec(rm.taskModelLoss, rm.taskBaselineLoss)
+	lossScaleData := lossScale.RawVector().Data
 
 	for rowIndex, value := range lossScaleData {
 		lossScaleData[rowIndex] = math.Abs(value)
 	}
 
-	lossScale.Add(lossScale, rm.taskModelLoss)
-	lossScale.Add(lossScale, rm.taskBaselineLoss)
-	lossScale.Scale(0.5, lossScale)
+	lossScale.AddVec(lossScale, rm.taskModelLoss)
+	lossScale.AddVec(lossScale, rm.taskBaselineLoss)
+	lossScale.ScaleVec(0.5, lossScale)
 
 	numerator := modelSquaredError
-	numerator.Scale(rm.cfg.PrecisionEps, lossScale)
-	numerator.Add(numerator, rm.taskBaselineLoss)
+	numerator.ScaleVec(rm.cfg.PrecisionEps, lossScale)
+	numerator.AddVec(numerator, rm.taskBaselineLoss)
 
 	denominator := baselineSquaredError
-	denominator.Scale(rm.cfg.PrecisionEps, lossScale)
-	denominator.Add(denominator, rm.taskModelLoss)
+	denominator.ScaleVec(rm.cfg.PrecisionEps, lossScale)
+	denominator.AddVec(denominator, rm.taskModelLoss)
 
-	rm.taskSkill.DivElem(numerator, denominator)
-	taskSkillData := rm.taskSkill.RawMatrix().Data
+	rm.taskSkill.DivElemVec(numerator, denominator)
+	taskSkillData := rm.taskSkill.RawVector().Data
 
 	for rowIndex, value := range taskSkillData {
 		if lossScaleData[rowIndex] == 0 {
@@ -1327,13 +1385,13 @@ func (rm *ResonanceManifold) projectTemporalOperatorNorm() error {
 		return errors.New("resonance: temporal operator-norm limit must be in (0, 1)")
 	}
 
-	var decomposition mat.SVD
+	decomposition := &rm.workspace.temporalSVD
 
 	if ok := decomposition.Factorize(rm.A, mat.SVDNone); !ok {
 		return errors.New("resonance: temporal singular-value decomposition failed")
 	}
 
-	singularValues := decomposition.Values(nil)
+	singularValues := decomposition.Values(rm.workspace.svdValues)
 
 	if len(singularValues) == 0 || math.IsNaN(singularValues[0]) ||
 		math.IsInf(singularValues[0], 0) {
@@ -1346,7 +1404,7 @@ func (rm *ResonanceManifold) projectTemporalOperatorNorm() error {
 		return nil
 	}
 
-	rm.A.Scale(rm.cfg.TemporalNormMax/operatorNorm, rm.A)
+	denseScaleInPlace(rm.A, rm.cfg.TemporalNormMax/operatorNorm)
 
 	return nil
 }
@@ -1391,8 +1449,8 @@ func (rm *ResonanceManifold) RolloutRetention(steps int) []float64 {
 	}
 
 	topDim := rm.arch[len(rm.arch)-1]
-	currentState := mat.DenseCopyOf(rm.z[len(rm.z)-1])
-	nextState := mat.NewDense(topDim, 1, nil)
+	currentState := mat.VecDenseCopyOf(rm.z[len(rm.z)-1])
+	nextState := mat.NewVecDense(topDim, nil)
 
 	initialNorm := denseColNorm(currentState)
 	retention := make([]float64, steps)
@@ -1400,12 +1458,14 @@ func (rm *ResonanceManifold) RolloutRetention(steps int) []float64 {
 	for step := range steps {
 		if step == 0 {
 			retention[step] = 1
-		} else if initialNorm > 0 {
+		}
+
+		if step > 0 && initialNorm > 0 {
 			retention[step] = denseColNorm(currentState) / initialNorm
 		}
 
 		if step+1 < steps {
-			nextState.Mul(rm.A, currentState)
+			nextState.MulVec(rm.A, currentState)
 			denseApplyTanhInPlace(nextState)
 			currentState, nextState = nextState, currentState
 		}
@@ -1426,12 +1486,12 @@ func (rm *ResonanceManifold) RolloutTaskForecast(steps int) ([]RLSOutput, error)
 	}
 
 	topDim := rm.arch[len(rm.arch)-1]
-	currentState := mat.DenseCopyOf(rm.z[len(rm.z)-1])
-	nextState := mat.NewDense(topDim, 1, nil)
+	currentState := mat.VecDenseCopyOf(rm.z[len(rm.z)-1])
+	nextState := mat.NewVecDense(topDim, nil)
 	forecast := make([]RLSOutput, steps*rm.targetDim)
 
 	for step := range steps {
-		features := currentState.RawMatrix().Data
+		features := currentState.RawVector().Data
 
 		for rowIndex, learner := range rm.taskLearners {
 			output, err := learner.Predict(features)
@@ -1444,7 +1504,7 @@ func (rm *ResonanceManifold) RolloutTaskForecast(steps int) ([]RLSOutput, error)
 		}
 
 		if step+1 < steps {
-			nextState.Mul(rm.A, currentState)
+			nextState.MulVec(rm.A, currentState)
 			denseApplyTanhInPlace(nextState)
 			currentState, nextState = nextState, currentState
 		}
@@ -1472,32 +1532,29 @@ func (rm *ResonanceManifold) RolloutTaskPrediction(steps int) []float64 {
 		return nil
 	}
 
-	lastZ := rm.z[len(rm.z)-1]
-	r, c := lastZ.Dims()
-
 	// Pre-allocate working state buffers once
-	currentState := mat.DenseCopyOf(lastZ)
-	nextState := mat.NewDense(r, c, nil)
-	taskPred := mat.NewDense(rm.targetDim, 1, nil)
+	currentState := mat.VecDenseCopyOf(rm.z[len(rm.z)-1])
+	nextState := mat.NewVecDense(currentState.Len(), nil)
+	taskPred := mat.NewVecDense(rm.targetDim, nil)
 
-	// Cache slice header to avoid calling RawMatrix() repeatedly in the loop
-	taskPredData := taskPred.RawMatrix().Data
+	// Cache slice header to avoid calling RawVector repeatedly in the loop.
+	taskPredData := taskPred.RawVector().Data
 
 	curve := make([]float64, steps*rm.targetDim)
 
 	for step := range steps {
 		// Predict return for current state
-		taskPred.Mul(rm.V, currentState)
+		taskPred.MulVec(rm.V, currentState)
 
 		if rm.taskBias != nil {
-			taskPred.Add(taskPred, rm.taskBias)
+			taskPred.AddVec(taskPred, rm.taskBias)
 		}
 
 		start := step * rm.targetDim
 		copy(curve[start:start+rm.targetDim], taskPredData)
 
 		if step+1 < steps {
-			nextState.Mul(rm.A, currentState)
+			nextState.MulVec(rm.A, currentState)
 			denseApplyTanhInPlace(nextState)
 
 			// Zero-copy swap of matrix pointers instead of copying memory

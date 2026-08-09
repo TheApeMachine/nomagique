@@ -562,3 +562,59 @@ func TestDenseHelpersMatchGonum(testingTB *testing.T) {
 		})
 	})
 }
+
+func BenchmarkTaskPrediction(testingTB *testing.B) {
+	manifold, err := NewResonanceManifold([]int{8, 16, 8}, 2, 0.01)
+
+	if err != nil {
+		testingTB.Fatal(err)
+	}
+
+	testingTB.ReportAllocs()
+
+	for testingTB.Loop() {
+		_ = manifold.TaskPrediction()
+	}
+}
+
+func BenchmarkLatentState(testingTB *testing.B) {
+	manifold, err := NewResonanceManifold([]int{8, 16, 8}, 2, 0.01)
+
+	if err != nil {
+		testingTB.Fatal(err)
+	}
+
+	testingTB.ReportAllocs()
+
+	for testingTB.Loop() {
+		_ = manifold.LatentState()
+	}
+}
+
+func BenchmarkWireSnapshot(testingTB *testing.B) {
+	manifold, err := NewResonanceManifold([]int{8, 16, 8}, 2, 0.01)
+
+	if err != nil {
+		testingTB.Fatal(err)
+	}
+
+	testingTB.ReportAllocs()
+
+	for testingTB.Loop() {
+		manifold.WireSnapshot()
+	}
+}
+
+func BenchmarkRolloutRetention(testingTB *testing.B) {
+	manifold, err := NewResonanceManifold([]int{8, 16, 8}, 2, 0.01)
+
+	if err != nil {
+		testingTB.Fatal(err)
+	}
+
+	testingTB.ReportAllocs()
+
+	for testingTB.Loop() {
+		_ = manifold.RolloutRetention(16)
+	}
+}

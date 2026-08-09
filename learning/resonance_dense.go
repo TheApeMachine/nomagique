@@ -35,6 +35,48 @@ func denseApplyOneMinusSquareInto(dst, src *mat.Dense) {
 	)
 }
 
+func denseFill(matrix *mat.Dense, value float64) {
+	matrix.Apply(
+		func(_, _ int, _ float64) float64 {
+			return value
+		},
+		matrix,
+	)
+}
+
+func denseVarianceEMAInto(
+	variance *mat.Dense,
+	residual *mat.Dense,
+	scratch *mat.Dense,
+	beta float64,
+	floor float64,
+) {
+	scratch.MulElem(residual, residual)
+	scratch.Scale(beta, scratch)
+	variance.Scale(1.0-beta, variance)
+	variance.Add(variance, scratch)
+	variance.Apply(
+		func(_, _ int, value float64) float64 {
+			return math.Max(floor, value)
+		},
+		variance,
+	)
+}
+
+func densePrecisionFromVarianceInto(
+	precision *mat.Dense,
+	variance *mat.Dense,
+	minimum float64,
+	maximum float64,
+) {
+	precision.Apply(
+		func(_, _ int, varianceValue float64) float64 {
+			return math.Min(maximum, math.Max(minimum, 1.0/varianceValue))
+		},
+		variance,
+	)
+}
+
 func denseClipColInPlace(matrix *mat.Dense, clip float64) {
 	matrix.Apply(
 		func(_, _ int, value float64) float64 {
@@ -73,17 +115,4 @@ func denseMulWeightTransposeInto(
 		weight.T(),
 		signal,
 	)
-}
-
-func (rm *ResonanceManifold) constrainTemporalWeights() {
-	if rm.A == nil {
-		return
-	}
-
-	const maxNorm = 0.95
-
-	norm := mat.Norm(rm.A, 2)
-	if norm > maxNorm {
-		rm.A.Scale(maxNorm/norm, rm.A)
-	}
 }

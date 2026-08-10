@@ -815,6 +815,8 @@ func (rm *ResonanceManifold) TemporalError() (float64, bool) {
 
 /*
 WireSnapshot exports settled states, top-down predictions, and layer errors.
+Its scalar diagnostics are the root-mean-square reconstruction error and mean
+prediction energy, so architecture width cannot inflate either reading.
 */
 func (rm *ResonanceManifold) WireSnapshot() (
 	layers []ResonanceLayerWire,
@@ -862,7 +864,20 @@ func (rm *ResonanceManifold) WireSnapshot() (
 		}
 	}
 
-	return layers, rm.ReconstructionError(), rm.Energy()
+	reconstructionDimensions := float64(rm.arch[0])
+	predictionDimensions := 0
+
+	for _, layerError := range layerErrors {
+		predictionDimensions += layerError.Len()
+	}
+
+	if hasTemporal {
+		predictionDimensions += rm.arch[topIndex]
+	}
+
+	return layers,
+		rm.ReconstructionError() / math.Sqrt(reconstructionDimensions),
+		rm.PredictionEnergy() / float64(predictionDimensions)
 }
 
 func (rm *ResonanceManifold) advanceTemporalState() {

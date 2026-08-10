@@ -67,6 +67,26 @@ func TestResonanceManifoldSettle(testingTB *testing.T) {
 	})
 }
 
+func TestResonanceManifoldWireSnapshot(testingTB *testing.T) {
+	Convey("Given a settled manifold with active latent regularization", testingTB, func() {
+		manifold := NewResonanceManifold([]int{4, 8, 4}, 0, 0.03)
+		So(manifold.Settle([]float64{0.8, -0.2, 0.4, 0.1}, true), ShouldBeNil)
+		manifold.cfg.LatentDecay = 100
+		manifold.cfg.Sparsity = 100
+
+		_, surprise, energy := manifold.WireSnapshot()
+
+		Convey("It should report per-residual prediction diagnostics", func() {
+			predictionDimensions := float64(manifold.arch[0] + manifold.arch[1])
+			So(surprise, ShouldAlmostEqual,
+				manifold.ReconstructionError()/math.Sqrt(float64(manifold.arch[0])))
+			So(energy, ShouldAlmostEqual,
+				manifold.PredictionEnergy()/predictionDimensions)
+			So(energy, ShouldBeLessThan, manifold.Energy())
+		})
+	})
+}
+
 func TestResonanceManifoldStateGradients(testingTB *testing.T) {
 	Convey("Given an unregularized manifold with fixed latent state", testingTB, func() {
 		manifold := NewResonanceManifold([]int{2, 3, 2}, 0, 0.03)
@@ -144,6 +164,21 @@ func BenchmarkResonanceManifoldSettle(testingTB *testing.B) {
 		if err := manifold.Settle(input, true); err != nil {
 			testingTB.Fatal(err)
 		}
+	}
+}
+
+func BenchmarkResonanceManifoldWireSnapshot(testingTB *testing.B) {
+	manifold := NewResonanceManifold([]int{8, 16, 8}, 0, 0.01)
+	input := []float64{0.1, -0.2, 0.3, -0.4, 0.5, -0.6, 0.7, -0.8}
+
+	if err := manifold.Settle(input, true); err != nil {
+		testingTB.Fatal(err)
+	}
+
+	testingTB.ReportAllocs()
+
+	for testingTB.Loop() {
+		manifold.WireSnapshot()
 	}
 }
 

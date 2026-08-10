@@ -153,7 +153,7 @@ func (symbol *symbol) baseline(
 		context,
 		stream,
 		horizon,
-		hawkes.BivariateFit{},
+		context.PoissonFit(),
 	)
 	outcome.Readiness = Readiness{
 		Observation: true,

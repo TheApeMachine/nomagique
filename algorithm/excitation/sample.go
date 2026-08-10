@@ -79,7 +79,7 @@ func (sample *Sample) MeasureArrival(
 
 	window := sample.window(input.Symbol)
 
-	if window.origin.IsZero() {
+	if window.origin.IsZero() || arrival.Before(window.origin) {
 		window.origin = arrival
 	}
 
@@ -134,7 +134,12 @@ func (window *window) input(symbol string) (Input, bool, error) {
 	context, ready := hawkes.NewObservationContext(stream, horizon)
 
 	if !ready {
-		return Input{}, false, nil
+		return Input{
+			Symbol:       symbol,
+			ObservedFrom: window.origin,
+			Horizon:      horizon,
+			Stream:       stream.WithObservationOrigin(window.origin),
+		}, true, nil
 	}
 
 	if context.TradeWindow > 0 {
@@ -144,7 +149,9 @@ func (window *window) input(symbol string) (Input, bool, error) {
 			observedFrom = window.origin
 		}
 	}
-	stream = stream.WithObservationOrigin(observedFrom)
+
+	window.arrivals.RetainFrom(observedFrom)
+	stream = window.arrivals.Stream().WithObservationOrigin(observedFrom)
 
 	return Input{
 		Symbol:       symbol,

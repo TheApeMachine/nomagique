@@ -182,7 +182,7 @@ func BranchingMomentEstimate(
 		return 0, false
 	}
 
-	branching := params.branchingMatrix()
+	branching := params.BranchingMatrix()
 
 	switch {
 	case momentR == 2 && momentS == 0:

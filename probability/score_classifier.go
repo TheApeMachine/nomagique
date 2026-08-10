@@ -1,8 +1,8 @@
 package probability
 
 import (
-	"fmt"
 	"math"
+	"strconv"
 
 	"github.com/theapemachine/errnie"
 )
@@ -124,9 +124,7 @@ func (classifier *ScoreClassifier) Classify(
 
 	distribution := make(map[string]float64, len(probabilities))
 	for index, probability := range probabilities {
-		wireIndex := float64(index + 1)
-
-		distribution[fmt.Sprintf("%d", int(wireIndex))] = probability
+		distribution[strconv.Itoa(index+1)] = probability
 	}
 
 	confidenceBaseline, entryBaseline, exitBaseline, err := CategoryEvidenceBaselines(

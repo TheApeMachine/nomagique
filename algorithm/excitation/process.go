@@ -73,8 +73,7 @@ Measure estimates the current empirical arrival rate or Hawkes state from one
 chronological marked stream.
 */
 func (process *Process) Measure(input Input) (Outcome, bool, error) {
-	if input.Symbol == "" ||
-		len(input.Stream.BuyTimes())+len(input.Stream.SellTimes()) == 0 {
+	if input.Symbol == "" || len(input.Stream.BuyTimes())+len(input.Stream.SellTimes()) == 0 {
 		return Outcome{}, false, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"excitation: invalid arrival stream",

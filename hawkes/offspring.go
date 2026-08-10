@@ -40,7 +40,7 @@ func (fit BivariateFit) TotalDescendants() (
 		return 0, 0, false
 	}
 
-	branch := fit.Params().branchingMatrix()
+	branch := fit.Params().BranchingMatrix()
 	determinant := (1-branch[0][0])*(1-branch[1][1]) -
 		branch[0][1]*branch[1][0]
 

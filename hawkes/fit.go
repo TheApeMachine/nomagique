@@ -162,7 +162,7 @@ func (fit BivariateFit) computeSpectralRadius() float64 {
 		return math.Inf(1)
 	}
 
-	branching := fit.Params().branchingMatrix()
+	branching := fit.Params().BranchingMatrix()
 
 	return SpectralRadius(branching)
 }

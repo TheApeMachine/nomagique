@@ -11,14 +11,18 @@ func TestSample_MeasureArrival(t *testing.T) {
 	Convey("Given distinct trades one nanosecond apart", t, func() {
 		sample := NewSample()
 		base := time.Date(2026, 5, 30, 12, 0, 0, 1, time.UTC)
-		_, _, err := sample.MeasureArrival(
+		first, ready, err := sample.MeasureArrival(
 			tradeInput("ALT/EUR", "buy", base),
 		)
-		_, ready, err := sample.MeasureArrival(
+		So(err, ShouldBeNil)
+		So(ready, ShouldBeTrue)
+		So(first.Horizon, ShouldResemble, base)
+
+		_, ready, err = sample.MeasureArrival(
 			tradeInput("ALT/EUR", "sell", base.Add(time.Nanosecond)),
 		)
 		So(err, ShouldBeNil)
-		So(ready, ShouldBeFalse)
+		So(ready, ShouldBeTrue)
 		input, ready, err := sample.MeasureArrival(
 			tradeInput("ALT/EUR", "buy", base.Add(2*time.Nanosecond)),
 		)
@@ -30,6 +34,41 @@ func TestSample_MeasureArrival(t *testing.T) {
 			So(input.Stream.BuyTimes()[0].UnixNano(), ShouldEqual, base.UnixNano())
 			So(input.Stream.SellTimes()[0].UnixNano(), ShouldEqual,
 				base.Add(time.Nanosecond).UnixNano())
+		})
+	})
+
+	Convey("Given arrivals beyond the derived observation window", t, func() {
+		sample := NewSample()
+		base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
+		var input Input
+
+		for index := range 128 {
+			side := "buy"
+			arrival := base
+
+			if index%2 != 0 {
+				side = "sell"
+			}
+
+			if index > 0 {
+				arrival = base.Add(time.Hour + time.Duration(index)*time.Second)
+			}
+
+			var err error
+			input, _, err = sample.MeasureArrival(tradeInput(
+				"ALT/EUR",
+				side,
+				arrival,
+			))
+			So(err, ShouldBeNil)
+		}
+
+		Convey("It should release arrivals before Nomagique's selected horizon", func() {
+			earliest, _, found := sample.window("ALT/EUR").arrivals.Stream().Bounds()
+
+			So(found, ShouldBeTrue)
+			So(earliest.Before(input.ObservedFrom), ShouldBeFalse)
+			So(earliest.After(base), ShouldBeTrue)
 		})
 	})
 

@@ -23,7 +23,7 @@ func (params BivariateParams) MeanIntensity() (lambdaX float64, lambdaY float64,
 		return 0, 0, false
 	}
 
-	branching := params.branchingMatrix()
+	branching := params.BranchingMatrix()
 	determinant := (1-branching[0][0])*(1-branching[1][1]) - branching[0][1]*branching[1][0]
 
 	if determinant <= 0 {
@@ -48,10 +48,19 @@ func (params BivariateParams) Stable() bool {
 		return false
 	}
 
-	return spectralRadius(params.branchingMatrix()) < 1
+	return spectralRadius(params.BranchingMatrix()) < 1
 }
 
-func (params BivariateParams) branchingMatrix() [2][2]float64 {
+/*
+BranchingMatrix returns the expected direct offspring per parent event.
+Rows identify the child stream and columns identify the parent stream.
+*/
+func (params BivariateParams) BranchingMatrix() [2][2]float64 {
+	if params.AlphaXX == 0 && params.AlphaXY == 0 &&
+		params.AlphaYX == 0 && params.AlphaYY == 0 {
+		return [2][2]float64{}
+	}
+
 	invBeta := 1 / params.Beta
 
 	return [2][2]float64{

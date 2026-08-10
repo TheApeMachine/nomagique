@@ -81,7 +81,7 @@ func (extractor *FeatureExtractor) Measure(input FeatureInput) (FeatureVector, e
 			))
 		}
 
-		if err := finiteVector("feature-extractor: "+inputKey, sample); err != nil {
+		if err := finiteVector(inputKey, sample); err != nil {
 			return FeatureVector{}, err
 		}
 

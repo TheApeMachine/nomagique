@@ -3,10 +3,14 @@ package equation
 import (
 	"math"
 
+	"github.com/theapemachine/nomagique/probability"
 	"github.com/theapemachine/nomagique/statistic"
 )
 
-const minBookGateHistory = 3
+const (
+	minBookGateHistory           = 3
+	maxBookImbalanceDisagreement = 2.0
+)
 
 /*
 Bookflow classifies weighted book imbalance with touch skew and trade pressure.
@@ -23,7 +27,9 @@ type bookflowBaseline struct {
 	flatThreshold     float64
 	bookNotional      float64
 	spoofContrast     float64
+	flatSpoofContrast float64
 	spoofReady        bool
+	flatSpoofReady    bool
 	thinningReady     bool
 }
 
@@ -51,7 +57,7 @@ BookflowOutput contains the float-only book-flow scores.
 */
 type BookflowOutput struct {
 	Value        float64
-	Strength     float64
+	SNR          float64
 	LoadedScore  float64
 	SpoofScore   float64
 	ThinScore    float64
@@ -83,7 +89,7 @@ func (bookflow *Bookflow) Measure(input BookflowInput) (BookflowOutput, error) {
 
 	baseline := bookflowMeasureBaseline(input)
 
-	spoofed := bookflowIsSpoofSkew(
+	weightedSpoof := bookflowIsSpoofSkew(
 		input.Weighted,
 		input.Level1,
 		baseline.weightedThreshold,
@@ -91,17 +97,19 @@ func (bookflow *Bookflow) Measure(input BookflowInput) (BookflowOutput, error) {
 		baseline.spoofContrast,
 		baseline.spoofReady,
 	)
+	flatSpoof := false
 
 	if input.FlatOK {
-		spoofed = spoofed || bookflowIsSpoofSkew(
+		flatSpoof = bookflowIsSpoofSkew(
 			input.Flat,
 			input.Level1,
-			baseline.weightedThreshold,
+			baseline.flatThreshold,
 			baseline.level1Threshold,
-			baseline.spoofContrast,
-			baseline.spoofReady,
+			baseline.flatSpoofContrast,
+			baseline.flatSpoofReady,
 		)
 	}
+	spoofed := weightedSpoof || flatSpoof
 
 	thinning := bookflowIsBookThinning(
 		input.BookNotional,
@@ -109,7 +117,7 @@ func (bookflow *Bookflow) Measure(input BookflowInput) (BookflowOutput, error) {
 		baseline.thinningReady,
 	)
 	loadedThreshold := math.Max(baseline.weightedThreshold, baseline.level1Threshold)
-	loaded := !spoofed && !thinning && input.Weighted*input.Level1 > 0 &&
+	loaded := input.Weighted*input.Level1 > 0 &&
 		math.Abs(input.Weighted) > baseline.weightedThreshold &&
 		math.Abs(input.Level1) > baseline.level1Threshold
 
@@ -128,8 +136,12 @@ func (bookflow *Bookflow) Measure(input BookflowInput) (BookflowOutput, error) {
 
 	spoofScore := 0.0
 
-	if spoofed {
+	if weightedSpoof {
 		spoofScore = math.Abs(input.Weighted - input.Level1)
+	}
+
+	if flatSpoof {
+		spoofScore = math.Max(spoofScore, math.Abs(input.Flat-input.Level1))
 	}
 
 	thinScore := 0.0
@@ -138,26 +150,38 @@ func (bookflow *Bookflow) Measure(input BookflowInput) (BookflowOutput, error) {
 		thinScore = (baseline.bookNotional - input.BookNotional) / baseline.bookNotional
 	}
 
-	neutralScore := 0.0
+	neutralScore := math.Max(0, 1-math.Abs(input.Weighted))
 
-	if category == 4 {
-		neutralScore = math.Max(0, 1-math.Abs(input.Weighted))
+	value := neutralScore
+
+	switch category {
+	case 1:
+		value = loadedScore
+	case 2:
+		value = spoofScore
+	case 3:
+		value = thinScore
 	}
-
-	strength := math.Max(
-		loadedScore,
-		math.Max(spoofScore, math.Max(thinScore, neutralScore)),
-	)
 
 	quoteVol := input.Mid * input.TouchDepth
 
-	if quoteVol <= 0 && strength > 0 {
+	if quoteVol <= 0 && value > 0 {
 		return BookflowOutput{}, nil
 	}
 
+	snr, err := probability.SignalNoiseRatio([]float64{
+		loadedScore,
+		spoofScore / maxBookImbalanceDisagreement,
+		thinScore,
+		neutralScore,
+	})
+	if err != nil {
+		return BookflowOutput{}, err
+	}
+
 	return BookflowOutput{
-		Value:        strength,
-		Strength:     strength,
+		Value:        value,
+		SNR:          snr,
 		LoadedScore:  loadedScore,
 		SpoofScore:   spoofScore,
 		ThinScore:    thinScore,
@@ -181,12 +205,20 @@ func bookflowMeasureBaseline(input BookflowInput) bookflowBaseline {
 
 	if len(input.FlatHistory) > 0 {
 		baseline.flatThreshold = bookflowMedianAbsolute(input.FlatHistory)
+		baseline.flatSpoofReady = len(input.FlatHistory) >= minBookGateHistory &&
+			len(input.Level1History) >= minBookGateHistory
 	}
 
 	denominator := baseline.weightedThreshold + baseline.level1Threshold
 
 	if baseline.spoofReady && denominator > 0 {
 		baseline.spoofContrast = baseline.weightedThreshold / denominator
+	}
+
+	flatDenominator := baseline.flatThreshold + baseline.level1Threshold
+
+	if baseline.flatSpoofReady && flatDenominator > 0 {
+		baseline.flatSpoofContrast = baseline.flatThreshold / flatDenominator
 	}
 
 	if len(input.BookNotionalHistory) <= minBookGateHistory {

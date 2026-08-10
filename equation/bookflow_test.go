@@ -48,8 +48,26 @@ func TestBookflow_Measure(testingTB *testing.T) {
 			So(int(output.Category), ShouldEqual, 1)
 			So(output.LoadedScore, ShouldBeGreaterThan, 0)
 			So(output.LoadedScore, ShouldBeLessThan, 0.85)
-			So(output.Strength, ShouldEqual, output.LoadedScore)
+			So(output.SNR, ShouldBeGreaterThan, 0)
 			So(output.Value, ShouldEqual, output.LoadedScore)
+		})
+	})
+
+	Convey("Given equally defined loaded and neutral hypotheses", testingTB, func() {
+		bookflow := equation.NewBookflow()
+		output, err := bookflow.Measure(equation.BookflowInput{
+			Weighted: 0.5, Level1: 0.5, Flat: 0.5, FlatOK: true,
+			Mid: 100, Spread: 2, TouchDepth: 3, BookNotional: 1_000,
+			WeightedHistory:     []float64{0.2, 0.2, 0.2, 0.2},
+			Level1History:       []float64{0.2, 0.2, 0.2, 0.2},
+			FlatHistory:         []float64{0.2, 0.2, 0.2, 0.2},
+			BookNotionalHistory: []float64{1_000, 1_000, 1_000, 1_000},
+		})
+
+		Convey("It should report zero signal-to-noise separation", func() {
+			So(err, ShouldBeNil)
+			So(output.LoadedScore, ShouldEqual, output.NeutralScore)
+			So(output.SNR, ShouldEqual, 0)
 		})
 	})
 
@@ -126,6 +144,75 @@ func TestBookflow_Measure(testingTB *testing.T) {
 		Convey("It should classify book thinning", func() {
 			So(int(output.Category), ShouldEqual, 3)
 			So(output.ThinScore, ShouldBeGreaterThan, 0)
+			So(output.LoadedScore, ShouldBeGreaterThan, 0)
+			So(output.NeutralScore, ShouldBeGreaterThan, 0)
+		})
+	})
+
+	Convey("Given flat and weighted depth with materially different baselines", testingTB, func() {
+		bookflow := equation.NewBookflow()
+		output, err := bookflow.Measure(equation.BookflowInput{
+			Weighted: 0.1, Level1: -0.3, Flat: 0.4, FlatOK: true,
+			Mid: 100, Spread: 2, TouchDepth: 3, BookNotional: 1_000,
+			WeightedHistory:     []float64{0.8, 0.8, 0.8, 0.8},
+			Level1History:       []float64{0.2, 0.2, 0.2, 0.2},
+			FlatHistory:         []float64{0.3, 0.3, 0.3, 0.3},
+			BookNotionalHistory: []float64{1_000, 1_000, 1_000, 1_000},
+		})
+
+		So(err, ShouldBeNil)
+
+		Convey("It should score flat-versus-touch spoof evidence against flat history", func() {
+			So(int(output.Category), ShouldEqual, 2)
+			So(output.SpoofScore, ShouldAlmostEqual, 0.7, 1e-12)
+			So(output.LoadedScore, ShouldEqual, 0)
+		})
+	})
+
+	Convey("Given independent loaded, spoof, thin, and neutral evidence regimes", testingTB, func() {
+		bookflow := equation.NewBookflow()
+		loaded, loadedErr := bookflow.Measure(bookflowInput(
+			0.85, 0.80, 0.86, true, 0.8,
+		))
+		spoof, spoofErr := bookflow.Measure(equation.BookflowInput{
+			Weighted: 0.8, Level1: -0.6, Flat: 0.8, FlatOK: true,
+			Mid: 100, Spread: 2, TouchDepth: 3, BookNotional: 1_000,
+			WeightedHistory:     []float64{0.6, 0.6, 0.6, 0.6},
+			Level1History:       []float64{0.2, 0.2, 0.2, 0.2},
+			FlatHistory:         []float64{0.6, 0.6, 0.6, 0.6},
+			BookNotionalHistory: []float64{1_000, 1_000, 1_000, 1_000},
+		})
+		thin, thinErr := bookflow.Measure(equation.BookflowInput{
+			Weighted: 0.8, Level1: 0.7, Flat: 0.8, FlatOK: true,
+			Mid: 100, Spread: 2, TouchDepth: 3, BookNotional: 500,
+			WeightedHistory:     []float64{0.6, 0.6, 0.6, 0.6},
+			Level1History:       []float64{0.6, 0.6, 0.6, 0.6},
+			FlatHistory:         []float64{0.6, 0.6, 0.6, 0.6},
+			BookNotionalHistory: []float64{1_000, 1_000, 1_000, 500},
+		})
+		neutral, neutralErr := bookflow.Measure(equation.BookflowInput{
+			Weighted: 0.1, Level1: 0.05, Flat: 0.1, FlatOK: true,
+			Mid: 100, Spread: 2, TouchDepth: 3, BookNotional: 1_000,
+			WeightedHistory:     []float64{0.5, 0.5, 0.5, 0.5},
+			Level1History:       []float64{0.5, 0.5, 0.5, 0.5},
+			FlatHistory:         []float64{0.5, 0.5, 0.5, 0.5},
+			BookNotionalHistory: []float64{1_000, 1_000, 1_000, 1_000},
+		})
+
+		So(loadedErr, ShouldBeNil)
+		So(spoofErr, ShouldBeNil)
+		So(thinErr, ShouldBeNil)
+		So(neutralErr, ShouldBeNil)
+
+		Convey("Each score should answer its own evidence instead of copying the winner", func() {
+			So(loaded.LoadedScore, ShouldBeGreaterThan, loaded.SpoofScore)
+			So(spoof.SpoofScore, ShouldBeGreaterThan, spoof.LoadedScore)
+			So(thin.ThinScore, ShouldBeGreaterThan, thin.SpoofScore)
+			So(neutral.NeutralScore, ShouldBeGreaterThan, neutral.LoadedScore)
+			So(thin.LoadedScore, ShouldBeGreaterThan, 0)
+			So(thin.ThinScore, ShouldNotEqual, thin.LoadedScore)
+			So(loaded.NeutralScore, ShouldBeGreaterThan, 0)
+			So(loaded.NeutralScore, ShouldNotEqual, loaded.LoadedScore)
 		})
 	})
 
@@ -173,10 +260,10 @@ func TestBookflow_Measure(testingTB *testing.T) {
 
 		So(err, ShouldBeNil)
 
-		Convey("It should emit positive thinning strength", func() {
+		Convey("It should emit positive thinning evidence", func() {
 			So(int(output.Category), ShouldEqual, 3)
 			So(output.ThinScore, ShouldAlmostEqual, 0.3, 1e-12)
-			So(output.Strength, ShouldAlmostEqual, output.ThinScore, 1e-12)
+			So(output.SNR, ShouldBeGreaterThan, 0)
 			So(output.Value, ShouldAlmostEqual, output.ThinScore, 1e-12)
 		})
 	})
@@ -246,7 +333,7 @@ func TestBookflow_Measure(testingTB *testing.T) {
 		Convey("It should wait for an empirical classification baseline", func() {
 			So(err, ShouldBeNil)
 			So(output.Ready, ShouldBeFalse)
-			So(output.Strength, ShouldEqual, 0)
+			So(output.SNR, ShouldEqual, 0)
 		})
 	})
 

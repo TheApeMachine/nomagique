@@ -38,6 +38,42 @@ func CompetitionMargin(excess, span float64) (float64, error) {
 }
 
 /*
+SignalNoiseRatio returns the fraction of the dominant hypothesis that is not
+matched by its strongest competitor. Equal competitors have zero separation;
+an uncontested positive hypothesis has complete separation.
+*/
+func SignalNoiseRatio(scores []float64) (float64, error) {
+	if len(scores) < 2 {
+		return 0, fmt.Errorf("probability: signal-noise ratio requires competing scores")
+	}
+
+	dominant := 0.0
+	competitor := 0.0
+
+	for _, score := range scores {
+		if score < 0 {
+			return 0, fmt.Errorf("probability: signal-noise ratio requires nonnegative scores")
+		}
+
+		if score >= dominant {
+			competitor = dominant
+			dominant = score
+			continue
+		}
+
+		if score > competitor {
+			competitor = score
+		}
+	}
+
+	if dominant == 0 {
+		return 0, nil
+	}
+
+	return (dominant - competitor) / dominant, nil
+}
+
+/*
 MagnitudeMargin maps a positive magnitude into (0, 1).
 */
 func MagnitudeMargin(value float64) (float64, error) {

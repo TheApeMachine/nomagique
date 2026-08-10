@@ -26,6 +26,45 @@ func TestCompetitionMargin(testingTB *testing.T) {
 	})
 }
 
+func TestSignalNoiseRatio(testingTB *testing.T) {
+	Convey("Given equally strong competing hypotheses", testingTB, func() {
+		ratio, err := SignalNoiseRatio([]float64{0.8, 0.8, 0.1})
+
+		Convey("It should report no separation", func() {
+			So(err, ShouldBeNil)
+			So(ratio, ShouldEqual, 0)
+		})
+	})
+
+	Convey("Given one hypothesis clearly above its nearest competitor", testingTB, func() {
+		ratio, err := SignalNoiseRatio([]float64{0.8, 0.2, 0.1})
+
+		Convey("It should report the dominant evidence not matched by noise", func() {
+			So(err, ShouldBeNil)
+			So(ratio, ShouldAlmostEqual, 0.75, 1e-12)
+		})
+	})
+
+	Convey("Given an all-zero competition", testingTB, func() {
+		ratio, err := SignalNoiseRatio([]float64{0, 0})
+
+		Convey("It should report no separation", func() {
+			So(err, ShouldBeNil)
+			So(ratio, ShouldEqual, 0)
+		})
+	})
+
+	Convey("Given an invalid competition", testingTB, func() {
+		_, missingErr := SignalNoiseRatio([]float64{1})
+		_, negativeErr := SignalNoiseRatio([]float64{1, -1})
+
+		Convey("It should reject missing or negative competing evidence", func() {
+			So(missingErr, ShouldNotBeNil)
+			So(negativeErr, ShouldNotBeNil)
+		})
+	})
+}
+
 func TestMagnitudeMargin(testingTB *testing.T) {
 	Convey("Given a positive magnitude", testingTB, func() {
 		margin, err := MagnitudeMargin(1)
@@ -51,5 +90,14 @@ func BenchmarkMagnitudeMargin(b *testing.B) {
 
 	for b.Loop() {
 		_, _ = MagnitudeMargin(12.0)
+	}
+}
+
+func BenchmarkSignalNoiseRatio(benchmark *testing.B) {
+	scores := []float64{0.8, 0.2, 0.1, 0.05}
+	benchmark.ReportAllocs()
+
+	for benchmark.Loop() {
+		_, _ = SignalNoiseRatio(scores)
 	}
 }

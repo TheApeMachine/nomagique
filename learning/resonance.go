@@ -1606,6 +1606,51 @@ func (rm *ResonanceManifold) RolloutTaskForecast(steps int) ([]RLSOutput, error)
 }
 
 /*
+RolloutTaskAggregateForecast returns the posterior predictive distribution of
+the cumulative target from t+1 through t+steps. Every rollout row shares the
+same task-head coefficient posterior, so RLS.PredictSum retains their covariance.
+*/
+func (rm *ResonanceManifold) RolloutTaskAggregateForecast(
+	steps int,
+) ([]RLSOutput, error) {
+	if rm.V == nil || rm.A == nil || rm.targetDim <= 0 || steps < 1 {
+		return nil, nil
+	}
+
+	topDim := rm.arch[len(rm.arch)-1]
+	currentState := mat.VecDenseCopyOf(rm.z[len(rm.z)-1])
+	nextState := mat.NewVecDense(topDim, nil)
+	featureRows := make([][]float64, steps)
+
+	for step := range steps {
+		featureRows[step] = append(
+			[]float64(nil),
+			currentState.RawVector().Data...,
+		)
+
+		if step+1 < steps {
+			nextState.MulVec(rm.A, currentState)
+			denseApplyTanhInPlace(nextState)
+			currentState, nextState = nextState, currentState
+		}
+	}
+
+	forecast := make([]RLSOutput, rm.targetDim)
+
+	for rowIndex, learner := range rm.taskLearners {
+		output, err := learner.PredictSum(featureRows)
+
+		if err != nil {
+			return nil, fmt.Errorf("resonance: aggregate task forecast: %w", err)
+		}
+
+		forecast[rowIndex] = output
+	}
+
+	return forecast, nil
+}
+
+/*
 RolloutTaskPrediction projects the top latent state forward k steps into the future
 using the temporal prior matrix A, evaluating task head V at each step.
 Returns a slice of return predictions [y_t+1, y_t+2, ..., y_t+k].
@@ -1655,64 +1700,4 @@ func (rm *ResonanceManifold) RolloutTaskPrediction(steps int) []float64 {
 	}
 
 	return curve
-}
-
-/*
-DynamicHorizon calculates the forward horizon step count supported by relative
-task precision, prequential skill against the zero-change baseline, and rollout
-retention, updating and returning the current reach.
-
-Relative degradation discounts the head's absolute baseline skill, and reach
-grows only while the discounted skill remains above the baseline. Confidence
-supplies both the proportional reach cap and the tolerated retention loss, so no
-fixed decay threshold is assumed.
-*/
-func (rm *ResonanceManifold) DynamicHorizon(
-	confidence float64, currentReach int, maxHorizon int,
-) (int, int) {
-	precision, hasPrecision := rm.TaskPrecision()
-	skill, hasSkill := rm.TaskSkill()
-	newReach := currentReach
-	supportedSkill := skill * math.Min(1.0, precision)
-
-	switch {
-	case !hasPrecision || !hasSkill:
-		newReach = 1
-	case supportedSkill > 1.0:
-		newReach = currentReach + 1
-	default:
-		newReach = currentReach - 1
-	}
-
-	newReach = min(maxHorizon, max(1, newReach))
-	horizon := newReach
-
-	if capped := int(math.Floor(float64(newReach) * confidence)); capped < horizon {
-		horizon = capped
-	}
-
-	if horizon < 1 {
-		return 1, newReach
-	}
-
-	retention := rm.RolloutRetention(horizon)
-
-	if len(retention) == 0 || !(retention[0] > 0) || !finite(retention[0]) {
-		return 1, newReach
-	}
-
-	minimumRetention := 1.0 - confidence
-
-	for step, surviving := range retention {
-		if !(surviving > 0) || !finite(surviving) ||
-			surviving/retention[0] < minimumRetention {
-			if step == 0 {
-				return 1, newReach
-			}
-
-			return step, newReach
-		}
-	}
-
-	return horizon, newReach
 }

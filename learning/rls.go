@@ -164,6 +164,33 @@ func (rls *RLS) Predict(features []float64) (RLSOutput, error) {
 }
 
 /*
+PredictSum evaluates the posterior predictive distribution of the sum of
+multiple future targets. The feature rows share one coefficient posterior, so
+their covariance is retained rather than treating the forecasts as independent.
+*/
+func (rls *RLS) PredictSum(featureRows [][]float64) (RLSOutput, error) {
+	if rls == nil || rls.session == nil {
+		return RLSOutput{}, fmt.Errorf("learning: rls session required")
+	}
+
+	rls.mu.RLock()
+	defer rls.mu.RUnlock()
+
+	prediction, err := rls.session.predictiveSum(featureRows)
+
+	if err != nil {
+		return RLSOutput{}, fmt.Errorf("learning: rls predict sum failed: %w", err)
+	}
+
+	return RLSOutput{
+		Value:            prediction.value,
+		Scale:            prediction.scale,
+		DegreesOfFreedom: prediction.degreesOfFreedom,
+		Ready:            prediction.ready,
+	}, nil
+}
+
+/*
 Snapshot copies coefficients and the reconstructed covariance for diagnostics.
 */
 func (rls *RLS) Snapshot() (RLSSnapshot, error) {
@@ -474,6 +501,86 @@ func (session *rlsSession) predictive(features []float64) (rlsPrediction, error)
 	if !(variance > 0) || !finite(variance) {
 		return rlsPrediction{}, fmt.Errorf(
 			"learning: rls predictive variance must be finite and positive",
+		)
+	}
+
+	prediction.scale = math.Sqrt(variance)
+	prediction.degreesOfFreedom = 2 * session.noiseShape
+	prediction.ready = true
+
+	return prediction, nil
+}
+
+/*
+predictiveSum preserves coefficient covariance across a collection of future
+design rows. Conditional observation errors remain independent, contributing
+one noise variance per row.
+*/
+func (session *rlsSession) predictiveSum(
+	featureRows [][]float64,
+) (rlsPrediction, error) {
+	if len(featureRows) == 0 {
+		return rlsPrediction{}, fmt.Errorf(
+			"learning: rls predictive sum requires feature rows",
+		)
+	}
+
+	size := session.dimension + 1
+	aggregateDesign := make([]float64, size)
+	aggregateDesign[0] = float64(len(featureRows))
+
+	for rowIndex, features := range featureRows {
+		if len(features) != session.dimension {
+			return rlsPrediction{}, fmt.Errorf(
+				"learning: rls feature row %d expected %d features, got %d",
+				rowIndex,
+				session.dimension,
+				len(features),
+			)
+		}
+
+		for featureIndex, feature := range features {
+			if !finite(feature) {
+				return rlsPrediction{}, fmt.Errorf(
+					"learning: rls feature row %d[%d] must be finite",
+					rowIndex,
+					featureIndex,
+				)
+			}
+
+			aggregateDesign[featureIndex+1] += feature
+		}
+	}
+
+	forecast := 0.0
+
+	for index, design := range aggregateDesign {
+		forecast += session.beta[index] * design
+	}
+
+	prediction := rlsPrediction{value: forecast}
+
+	if !(session.noiseShape > 0) || !(session.noiseScale > 0) {
+		return prediction, nil
+	}
+
+	leverage := float64(len(featureRows))
+
+	for col := range size {
+		factor := 0.0
+
+		for row := range size {
+			factor += aggregateDesign[row] * session.root[row*size+col]
+		}
+
+		leverage += factor * factor
+	}
+
+	variance := session.noiseScale / session.noiseShape * leverage
+
+	if !(variance > 0) || !finite(variance) {
+		return rlsPrediction{}, fmt.Errorf(
+			"learning: rls predictive sum variance must be finite and positive",
 		)
 	}
 

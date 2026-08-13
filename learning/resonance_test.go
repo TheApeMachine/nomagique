@@ -134,6 +134,40 @@ func TestResonanceManifoldObserveTask(testingTB *testing.T) {
 	})
 }
 
+func TestResonanceManifoldRolloutTaskAggregateForecast(testingTB *testing.T) {
+	Convey("Given a trained task head and a settled temporal state", testingTB, func() {
+		manifold := NewResonanceManifold([]int{2, 2}, 1, 0.05)
+		features := []float64{0.25, -0.5}
+
+		for sample := range 32 {
+			shift := float64(sample%5) * 0.01
+			observed := []float64{features[0] + shift, features[1] - shift}
+			prediction := []float64{0}
+			target := []float64{0.2 + observed[0] - 0.5*observed[1]}
+			So(manifold.ObserveTask(observed, prediction, target), ShouldBeNil)
+		}
+
+		manifold.z[len(manifold.z)-1].CopyVec(mat.NewVecDense(2, features))
+		steps := 4
+		pointForecasts, err := manifold.RolloutTaskForecast(steps)
+		So(err, ShouldBeNil)
+		aggregate, err := manifold.RolloutTaskAggregateForecast(steps)
+		pointSum := 0.0
+
+		for _, point := range pointForecasts {
+			pointSum += point.Value
+		}
+
+		Convey("It should report the distribution of the complete cumulative return", func() {
+			So(err, ShouldBeNil)
+			So(aggregate, ShouldHaveLength, 1)
+			So(aggregate[0].Value, ShouldAlmostEqual, pointSum, 1e-12)
+			So(aggregate[0].Ready, ShouldBeTrue)
+			So(aggregate[0].Scale, ShouldBeGreaterThan, 0)
+		})
+	})
+}
+
 func TestResonanceManifoldStateGradients(testingTB *testing.T) {
 	Convey("Given an unregularized manifold with fixed latent state", testingTB, func() {
 		manifold := NewResonanceManifold([]int{2, 3, 2}, 0, 0.03)
@@ -239,6 +273,31 @@ func BenchmarkResonanceManifoldObserveTask(testingTB *testing.B) {
 
 	for testingTB.Loop() {
 		if err := manifold.ObserveTask(features, prediction, target); err != nil {
+			testingTB.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkResonanceManifoldRolloutTaskAggregateForecast(testingTB *testing.B) {
+	manifold := NewResonanceManifold([]int{8, 16, 8}, 1, 0.01)
+	features := make([]float64, 8)
+
+	for sample := range 16 {
+		features[0] = float64(sample)
+
+		if err := manifold.ObserveTask(
+			features,
+			[]float64{0},
+			[]float64{float64(sample) * 0.001},
+		); err != nil {
+			testingTB.Fatal(err)
+		}
+	}
+
+	testingTB.ReportAllocs()
+
+	for testingTB.Loop() {
+		if _, err := manifold.RolloutTaskAggregateForecast(16); err != nil {
 			testingTB.Fatal(err)
 		}
 	}

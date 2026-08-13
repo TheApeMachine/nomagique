@@ -3,7 +3,6 @@ package causal
 import (
 	"errors"
 	"io"
-	"math"
 
 	"github.com/theapemachine/errnie"
 )
@@ -39,6 +38,8 @@ type LadderOutput struct {
 	Association       float64
 	Intervention      float64
 	InterventionScore float64
+	TreatmentScale    float64
+	TargetScale       float64
 	Uplift            float64
 	UpliftScore       float64
 	Contagion         float64
@@ -83,8 +84,12 @@ func (ladder *Ladder) Measure(input LadderInput) (LadderOutput, error) {
 		controls = append([]int(nil), ladder.config.ControlsInverted...)
 	}
 
-	bandwidth, err := ladder.bandwidth(input.Rows)
+	bandwidth, err := deriveBandwidth(input.Rows, controls...)
 	if err != nil {
+		return LadderOutput{}, err
+	}
+
+	if err := table.treatmentIdentifiable(treatment, controls...); err != nil {
 		return LadderOutput{}, err
 	}
 
@@ -118,20 +123,18 @@ func (ladder *Ladder) Measure(input LadderInput) (LadderOutput, error) {
 		))
 	}
 
-	uplift, err := ladder.uplift(table, input.Rows, treatment, controls, intervention)
+	uplift, err := ladder.uplift(table, input.Rows, treatment, controls)
 	if err != nil {
 		return LadderOutput{}, err
 	}
 
-	interventionScore := intervention
-	upliftScore := uplift
-
-	if targetValues, targetErr := table.column(ladder.config.Target); targetErr == nil {
-		if scale := robustScale(targetValues); scale > 0 {
-			interventionScore = intervention / scale
-			upliftScore = uplift / scale
-		}
+	treatmentScale, targetScale, err := table.effectScales(treatment)
+	if err != nil {
+		return LadderOutput{}, err
 	}
+
+	interventionScore := intervention * treatmentScale / targetScale
+	upliftScore := uplift / targetScale
 
 	invertedValue := 0.0
 
@@ -144,6 +147,8 @@ func (ladder *Ladder) Measure(input LadderInput) (LadderOutput, error) {
 		Association:       association,
 		Intervention:      intervention,
 		InterventionScore: interventionScore,
+		TreatmentScale:    treatmentScale,
+		TargetScale:       targetScale,
 		Uplift:            uplift,
 		UpliftScore:       upliftScore,
 		Contagion:         input.Contagion,
@@ -152,43 +157,18 @@ func (ladder *Ladder) Measure(input LadderInput) (LadderOutput, error) {
 	}, nil
 }
 
-func (ladder *Ladder) bandwidth(rows [][]float64) (float64, error) {
-	bandwidth, err := deriveBandwidth(rows, ladder.config.TreatmentNormal)
-	if err != nil {
-		if errors.Is(err, io.EOF) {
-			return 0, err
-		}
-
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"causal ladder: kernel bandwidth derivation failed",
-			err,
-		))
-	}
-
-	if bandwidth <= 0 {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"causal ladder: kernel bandwidth required",
-			nil,
-		))
-	}
-
-	return bandwidth, nil
-}
-
 func (ladder *Ladder) uplift(
 	table nodeTable,
 	rows [][]float64,
 	treatment int,
 	controls []int,
-	intervention float64,
 ) (float64, error) {
-	if intervention <= 0 {
-		return 0, nil
+	predictors := append(append([]int(nil), controls...), treatment)
+
+	if len(rows) <= len(predictors) {
+		return 0, io.EOF
 	}
 
-	predictors := append(append([]int(nil), controls...), treatment)
 	currentRow := rows[len(rows)-1]
 	interventionLevel, err := ladder.interventionLevel(table, treatment, rows)
 	if err != nil {
@@ -206,6 +186,10 @@ func (ladder *Ladder) uplift(
 
 	linear, err := table.fitLinearModel(predictors...)
 	if err != nil {
+		if errors.Is(err, io.EOF) {
+			return 0, io.EOF
+		}
+
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"causal ladder: linear uplift fit failed",
@@ -254,44 +238,4 @@ func (ladder *Ladder) interventionLevel(
 	}
 
 	return level, nil
-}
-
-func robustScale(values []float64) float64 {
-	if len(values) == 0 {
-		return 0
-	}
-
-	center := median(values)
-	deviations := make([]float64, 0, len(values))
-
-	for _, value := range values {
-		deviations = append(deviations, math.Abs(value-center))
-	}
-
-	scale := median(deviations)
-
-	if scale > 0 && !math.IsNaN(scale) && !math.IsInf(scale, 0) {
-		return scale
-	}
-
-	minValue := values[0]
-	maxValue := values[0]
-
-	for _, value := range values[1:] {
-		if value < minValue {
-			minValue = value
-		}
-
-		if value > maxValue {
-			maxValue = value
-		}
-	}
-
-	scale = maxValue - minValue
-
-	if scale <= 0 || math.IsNaN(scale) || math.IsInf(scale, 0) {
-		return 0
-	}
-
-	return scale
 }

@@ -56,6 +56,7 @@ type PearlOutput struct {
 	UpliftScore        float64            `json:"upliftScore"`
 	Counterfactual     float64            `json:"counterfactual"`
 	Noise              float64            `json:"noise"`
+	NoiseScore         float64            `json:"noiseScore"`
 	Contagion          float64            `json:"contagion"`
 	Condition          float64            `json:"condition"`
 	Inverted           bool               `json:"inverted"`
@@ -170,9 +171,10 @@ func (pearl *Pearl) Measure(input PearlInput) (PearlOutput, bool, error) {
 		InterventionScore: math.Abs(ladderOutput.InterventionScore),
 		DoExpectation:     doExpectation,
 		Uplift:            uplift,
-		UpliftScore:       math.Abs(ladderOutput.UpliftScore),
+		UpliftScore:       math.Abs(uplift) / ladderOutput.TargetScale,
 		Counterfactual:    counterfactual,
-		Noise:             math.Abs(noise),
+		Noise:             noise,
+		NoiseScore:        math.Abs(noise) / ladderOutput.TargetScale,
 		Contagion:         ladderOutput.Contagion,
 		Condition:         ladderOutput.Condition,
 		Inverted:          input.Inverted || ladderOutput.Inverted > 0,
@@ -207,13 +209,10 @@ func (pearl *Pearl) Measure(input PearlInput) (PearlOutput, bool, error) {
 }
 
 /*
-Residual returns the evidence left after association, intervention, and
-counterfactual channels.
+Residual returns standardized unexplained target magnitude.
 */
 func (output PearlOutput) Residual() float64 {
-	evidence := output.AssociationScore + output.InterventionScore + output.UpliftScore
-
-	return 1 / (1 + evidence + math.Abs(output.Noise))
+	return output.NoiseScore
 }
 
 /*
@@ -230,6 +229,7 @@ func (output PearlOutput) Outputs() map[string]any {
 		"upliftScore":         output.UpliftScore,
 		"counterfactual":      output.Counterfactual,
 		"noise":               output.Noise,
+		"noiseScore":          output.NoiseScore,
 		"residual":            output.Residual(),
 		"contagion":           output.Contagion,
 		"condition":           output.Condition,

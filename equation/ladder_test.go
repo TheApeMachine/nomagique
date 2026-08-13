@@ -33,12 +33,16 @@ func regimeLadderRows() [][]float64 {
 	rows := make([][]float64, 0, rowCount)
 
 	for rowIndex := range rowCount {
+		controlPrimary := float64(rowIndex % 3)
+		controlSecondary := float64((rowIndex*rowIndex + rowIndex) % 5)
+		treatment := float64(rowIndex)*0.5 + controlPrimary*0.2 - controlSecondary*0.1
+		target := controlPrimary*0.3 - controlSecondary*0.2 + treatment*0.8
 		row := make([]float64, 0, nodeCount)
 		row = append(row,
-			float64(rowIndex)*0.1,
-			float64(rowIndex)*0.2,
-			float64(rowIndex)*0.5,
-			float64(rowIndex)*0.05,
+			controlPrimary,
+			controlSecondary,
+			treatment,
+			target,
 		)
 		rows = append(rows, row)
 	}

@@ -56,14 +56,14 @@ type BookflowInput struct {
 BookflowOutput contains the float-only book-flow scores.
 */
 type BookflowOutput struct {
-	Value        float64
-	SNR          float64
-	LoadedScore  float64
-	SpoofScore   float64
-	ThinScore    float64
-	NeutralScore float64
-	Category     float64
-	Ready        bool
+	Value                float64
+	HypothesisSeparation float64
+	LoadedScore          float64
+	SpoofScore           float64
+	ThinScore            float64
+	NeutralScore         float64
+	Category             float64
+	Ready                bool
 }
 
 /*
@@ -169,7 +169,7 @@ func (bookflow *Bookflow) Measure(input BookflowInput) (BookflowOutput, error) {
 		return BookflowOutput{}, nil
 	}
 
-	snr, err := probability.SignalNoiseRatio([]float64{
+	separation, err := probability.HypothesisSeparation([]float64{
 		loadedScore,
 		spoofScore / maxBookImbalanceDisagreement,
 		thinScore,
@@ -180,14 +180,14 @@ func (bookflow *Bookflow) Measure(input BookflowInput) (BookflowOutput, error) {
 	}
 
 	return BookflowOutput{
-		Value:        value,
-		SNR:          snr,
-		LoadedScore:  loadedScore,
-		SpoofScore:   spoofScore,
-		ThinScore:    thinScore,
-		NeutralScore: neutralScore,
-		Category:     float64(category),
-		Ready:        true,
+		Value:                value,
+		HypothesisSeparation: separation,
+		LoadedScore:          loadedScore,
+		SpoofScore:           spoofScore,
+		ThinScore:            thinScore,
+		NeutralScore:         neutralScore,
+		Category:             float64(category),
+		Ready:                true,
 	}, nil
 }
 

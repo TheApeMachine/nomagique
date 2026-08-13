@@ -8,7 +8,7 @@ import (
 )
 
 func TestDeriveBandwidth(testingTB *testing.T) {
-	Convey("Given tabular rows with treatment spread", testingTB, func() {
+	Convey("Given tabular rows with control spread", testingTB, func() {
 		rows := [][]float64{
 			{1, 0, 0},
 			{2, 1, 2},
@@ -25,7 +25,7 @@ func TestDeriveBandwidth(testingTB *testing.T) {
 		So(err, ShouldBeNil)
 		So(bandwidth, ShouldBeGreaterThan, 0)
 
-		Convey("It should widen bandwidth when treatment spread grows", func() {
+		Convey("It should be invariant to control units after standardization", func() {
 			wideRows := [][]float64{
 				{1, 0, 0},
 				{5, 1, 2},
@@ -40,11 +40,11 @@ func TestDeriveBandwidth(testingTB *testing.T) {
 			wideBandwidth, wideErr := deriveBandwidth(wideRows, 0)
 
 			So(wideErr, ShouldBeNil)
-			So(wideBandwidth, ShouldBeGreaterThan, bandwidth)
+			So(wideBandwidth, ShouldAlmostEqual, bandwidth)
 		})
 	})
 
-	Convey("Given signed treatment spread centered near zero", testingTB, func() {
+	Convey("Given signed control spread centered near zero", testingTB, func() {
 		rows := [][]float64{
 			{-4, 0, -8},
 			{-3, 1, -6},
@@ -58,7 +58,7 @@ func TestDeriveBandwidth(testingTB *testing.T) {
 		}
 		bandwidth, err := deriveBandwidth(rows, 0)
 
-		Convey("It should derive bandwidth from dispersion, not mean sign", func() {
+		Convey("It should derive a positive dimensionless bandwidth", func() {
 			So(err, ShouldBeNil)
 			So(bandwidth, ShouldBeGreaterThan, 0)
 		})
@@ -72,7 +72,7 @@ func TestDeriveBandwidth(testingTB *testing.T) {
 		})
 	})
 
-	Convey("Given constant treatment values", testingTB, func() {
+	Convey("Given constant control values", testingTB, func() {
 		_, err := deriveBandwidth([][]float64{
 			{1, 0},
 			{1, 1},
@@ -109,9 +109,13 @@ func TestLinearModel_counterfactualUplift(testingTB *testing.T) {
 	Convey("Given a linear model fit on treatment and controls", testingTB, func() {
 		rows := [][]float64{
 			{0, 0, 0, 0},
-			{1, 2, 4, 1},
-			{2, 4, 8, 2},
-			{3, 6, 12, 3},
+			{1, 0, 2, 2.5},
+			{0, 1, 3, 2.5},
+			{1, 1, 5, 5},
+			{2, 1, 4, 5},
+			{1, 2, 7, 6.5},
+			{2, 2, 6, 6.5},
+			{3, 1, 8, 9.5},
 		}
 		table, tableErr := newNodeTable(rows, 3, 4)
 
@@ -125,6 +129,33 @@ func TestLinearModel_counterfactualUplift(testingTB *testing.T) {
 
 		So(upliftErr, ShouldBeNil)
 		So(uplift, ShouldBeGreaterThan, 0)
+	})
+}
+
+func TestNodeTable_fitLinearModel(testingTB *testing.T) {
+	Convey("Given a structurally rank-deficient causal table", testingTB, func() {
+		rows := [][]float64{
+			{0, 0, 1},
+			{1, 1, 4},
+			{2, 2, 7},
+			{3, 3, 10},
+			{4, 4, 13},
+			{5, 5, 16},
+		}
+		table, tableErr := newNodeTable(rows, 2)
+
+		So(tableErr, ShouldBeNil)
+
+		model, err := table.fitLinearModel(0, 1)
+
+		Convey("It should fit the independent control span once", func() {
+			So(err, ShouldBeNil)
+			So(model.predictors, ShouldResemble, []int{0, 1})
+
+			prediction, predictionErr := model.predict(rows[len(rows)-1], -1, 0)
+			So(predictionErr, ShouldBeNil)
+			So(prediction, ShouldAlmostEqual, rows[len(rows)-1][2], 1e-12)
+		})
 	})
 }
 

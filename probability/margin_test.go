@@ -26,9 +26,9 @@ func TestCompetitionMargin(testingTB *testing.T) {
 	})
 }
 
-func TestSignalNoiseRatio(testingTB *testing.T) {
+func TestHypothesisSeparation(testingTB *testing.T) {
 	Convey("Given equally strong competing hypotheses", testingTB, func() {
-		ratio, err := SignalNoiseRatio([]float64{0.8, 0.8, 0.1})
+		ratio, err := HypothesisSeparation([]float64{0.8, 0.8, 0.1})
 
 		Convey("It should report no separation", func() {
 			So(err, ShouldBeNil)
@@ -37,16 +37,16 @@ func TestSignalNoiseRatio(testingTB *testing.T) {
 	})
 
 	Convey("Given one hypothesis clearly above its nearest competitor", testingTB, func() {
-		ratio, err := SignalNoiseRatio([]float64{0.8, 0.2, 0.1})
+		ratio, err := HypothesisSeparation([]float64{0.8, 0.2, 0.1})
 
-		Convey("It should report the dominant evidence not matched by noise", func() {
+		Convey("It should report the dominant evidence not matched by a competitor", func() {
 			So(err, ShouldBeNil)
 			So(ratio, ShouldAlmostEqual, 0.75, 1e-12)
 		})
 	})
 
 	Convey("Given an all-zero competition", testingTB, func() {
-		ratio, err := SignalNoiseRatio([]float64{0, 0})
+		ratio, err := HypothesisSeparation([]float64{0, 0})
 
 		Convey("It should report no separation", func() {
 			So(err, ShouldBeNil)
@@ -55,8 +55,8 @@ func TestSignalNoiseRatio(testingTB *testing.T) {
 	})
 
 	Convey("Given an invalid competition", testingTB, func() {
-		_, missingErr := SignalNoiseRatio([]float64{1})
-		_, negativeErr := SignalNoiseRatio([]float64{1, -1})
+		_, missingErr := HypothesisSeparation([]float64{1})
+		_, negativeErr := HypothesisSeparation([]float64{1, -1})
 
 		Convey("It should reject missing or negative competing evidence", func() {
 			So(missingErr, ShouldNotBeNil)
@@ -93,11 +93,11 @@ func BenchmarkMagnitudeMargin(b *testing.B) {
 	}
 }
 
-func BenchmarkSignalNoiseRatio(benchmark *testing.B) {
+func BenchmarkHypothesisSeparation(benchmark *testing.B) {
 	scores := []float64{0.8, 0.2, 0.1, 0.05}
 	benchmark.ReportAllocs()
 
 	for benchmark.Loop() {
-		_, _ = SignalNoiseRatio(scores)
+		_, _ = HypothesisSeparation(scores)
 	}
 }

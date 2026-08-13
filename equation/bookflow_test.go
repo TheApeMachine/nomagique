@@ -48,7 +48,7 @@ func TestBookflow_Measure(testingTB *testing.T) {
 			So(int(output.Category), ShouldEqual, 1)
 			So(output.LoadedScore, ShouldBeGreaterThan, 0)
 			So(output.LoadedScore, ShouldBeLessThan, 0.85)
-			So(output.SNR, ShouldBeGreaterThan, 0)
+			So(output.HypothesisSeparation, ShouldBeGreaterThan, 0)
 			So(output.Value, ShouldEqual, output.LoadedScore)
 		})
 	})
@@ -64,10 +64,10 @@ func TestBookflow_Measure(testingTB *testing.T) {
 			BookNotionalHistory: []float64{1_000, 1_000, 1_000, 1_000},
 		})
 
-		Convey("It should report zero signal-to-noise separation", func() {
+		Convey("It should report zero hypothesis separation", func() {
 			So(err, ShouldBeNil)
 			So(output.LoadedScore, ShouldEqual, output.NeutralScore)
-			So(output.SNR, ShouldEqual, 0)
+			So(output.HypothesisSeparation, ShouldEqual, 0)
 		})
 	})
 
@@ -263,7 +263,7 @@ func TestBookflow_Measure(testingTB *testing.T) {
 		Convey("It should emit positive thinning evidence", func() {
 			So(int(output.Category), ShouldEqual, 3)
 			So(output.ThinScore, ShouldAlmostEqual, 0.3, 1e-12)
-			So(output.SNR, ShouldBeGreaterThan, 0)
+			So(output.HypothesisSeparation, ShouldBeGreaterThan, 0)
 			So(output.Value, ShouldAlmostEqual, output.ThinScore, 1e-12)
 		})
 	})
@@ -333,7 +333,7 @@ func TestBookflow_Measure(testingTB *testing.T) {
 		Convey("It should wait for an empirical classification baseline", func() {
 			So(err, ShouldBeNil)
 			So(output.Ready, ShouldBeFalse)
-			So(output.SNR, ShouldEqual, 0)
+			So(output.HypothesisSeparation, ShouldEqual, 0)
 		})
 	})
 

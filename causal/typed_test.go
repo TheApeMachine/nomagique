@@ -6,11 +6,15 @@ func causalRows(rowCount int) [][]float64 {
 	rows := make([][]float64, 0, rowCount)
 
 	for rowIndex := range rowCount {
+		controlPrimary := float64(rowIndex % 3)
+		controlSecondary := float64((rowIndex*rowIndex + rowIndex) % 5)
+		treatment := float64(rowIndex)*0.5 + controlPrimary*0.2 - controlSecondary*0.1
+		target := controlPrimary*0.3 - controlSecondary*0.2 + treatment*0.8
 		rows = append(rows, []float64{
-			float64(rowIndex) * 0.1,
-			float64(rowIndex) * 0.2,
-			float64(rowIndex) * 0.5,
-			float64(rowIndex) * 0.05,
+			controlPrimary,
+			controlSecondary,
+			treatment,
+			target,
 		})
 	}
 
@@ -65,43 +69,5 @@ func TestRegimeMeasure(t *testing.T) {
 
 	if output.RawInverted != 1 {
 		t.Fatalf("raw inverted = %f, want 1", output.RawInverted)
-	}
-}
-
-func TestLadderMeasure(t *testing.T) {
-	ladder := NewLadder(LadderConfig{
-		Target:          3,
-		TreatmentNormal: 2,
-		ControlsNormal:  []int{0, 1},
-	})
-
-	output, err := ladder.Measure(LadderInput{
-		Rows: causalRows(16),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if output.Intervention <= 0 {
-		t.Fatalf("intervention = %f, want positive", output.Intervention)
-	}
-}
-
-func BenchmarkLadderMeasure(testingTB *testing.B) {
-	ladder := NewLadder(LadderConfig{
-		Target:          3,
-		TreatmentNormal: 2,
-		ControlsNormal:  []int{0, 1},
-	})
-	input := LadderInput{
-		Rows: causalRows(16),
-	}
-
-	testingTB.ReportAllocs()
-
-	for testingTB.Loop() {
-		if _, err := ladder.Measure(input); err != nil {
-			testingTB.Fatal(err)
-		}
 	}
 }

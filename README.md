@@ -131,11 +131,11 @@ err := nomagique.RoundTripArtifact(wire, pipeline)
 | `core`        | `Number[T]`, `Scalar[T]`, `Scalars[T]`                                                                                                                             |
 | `adaptive`    | `EMA`, `Delta`, `Accumulator`, `Compression`, `FracDiff`, `Variance`, `ZScore`, `Momentum`, `Range`, `TimeElastic`                                                 |
 | `learning`    | `Weight`, `SampleRatio`, `Forecast`, `RLS`, `ResonanceManifold`, `NewClassifierWeights`                                                                            |
-| `probability` | `Bernoulli`, `CUSUM`, `Rank`, `TransitionSurprise`, `Classifier`, `SoftmaxScores`                                                                                  |
+| `probability` | `Bernoulli`, `CUSUM`, `Rank`, `TransitionSurprise`, `Classifier`, `SoftmaxScores`, `HypothesisSeparation`                                                          |
 | `statistic`   | `Mean`, `Median`, `Panel`, `LeaveOneOutMedian`, `Quantile`, `StdDev`, `Min`, `Max`, `Entropy`, `FastSlow`, `KLDivergence`, `BivariateMoment`, `OLS`, `RidgeSolver` |
 | `vector`      | `FeatureExtractor`, `InputSlot`, `FeatureNode`                                                                                                                     |
 | `correlation` | `Pearson`, `HayashiYoshida`, `Covariance`, `Contagion`, `IntervalCoupling`, `IntervalSeries`, `WindowSet`                                            |
-| `causal`      | Tabular SCM stages: `NodeRing`, `Zip`, `Backdoor`, `Graph`, `Abduction`, `Do`, `Ladder`, `Regime`, `Contagion` |
+| `causal`      | Tabular SCM stages: `NodeRing`, `Zip`, `Backdoor`, `Graph`, `Abduction`, `Do`, `Ladder`, `Regime`, `Contagion`; effects are fitted on standardized designs and reported in compatible target/treatment units |
 | `hawkes`      | Count-stream MoM plus timestamp MLE                                                                                                                                |
 | `decay`       | Exponential kernel and intensity support                                                                                                                           |
 | `timeline`    | Sorted event timestamps, gaps, and span utilities                                                                                                                  |

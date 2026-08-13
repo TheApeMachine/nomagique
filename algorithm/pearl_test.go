@@ -45,6 +45,64 @@ func TestPearl_Measure(t *testing.T) {
 			So(output.Probabilities, ShouldHaveLength, 4)
 		})
 	})
+
+	Convey("Given equivalent return systems expressed on different numeric scales", t, func() {
+		base := algorithm.NewPearl(algorithm.PearlConfig{Target: 1, Treatment: 0})
+		rescaled := algorithm.NewPearl(algorithm.PearlConfig{Target: 1, Treatment: 0})
+		var baseOutput algorithm.PearlOutput
+		var rescaledOutput algorithm.PearlOutput
+		var baseReady bool
+		var rescaledReady bool
+		var baseErr error
+		var rescaledErr error
+
+		for index := range 24 {
+			treatment := float64(index+1) * 0.0001
+			target := 0.75*treatment + float64(index%3-1)*0.00001
+			baseOutput, baseReady, baseErr = base.Measure(algorithm.PearlInput{
+				Key: "base", Row: []float64{treatment, target},
+			})
+			rescaledOutput, rescaledReady, rescaledErr = rescaled.Measure(algorithm.PearlInput{
+				Key: "rescaled", Row: []float64{treatment * 0.000001, target * 1000000},
+			})
+		}
+
+		Convey("It should preserve evidence strength, shares, and gates", func() {
+			So(baseErr, ShouldBeNil)
+			So(rescaledErr, ShouldBeNil)
+			So(baseReady, ShouldBeTrue)
+			So(rescaledReady, ShouldBeTrue)
+			So(rescaledOutput.Strength, ShouldAlmostEqual, baseOutput.Strength, 1e-10)
+			So(rescaledOutput.Confidence, ShouldAlmostEqual, baseOutput.Confidence, 1e-10)
+			So(rescaledOutput.EntryBaseline, ShouldAlmostEqual,
+				baseOutput.EntryBaseline, 1e-10)
+			So(rescaledOutput.Residual(), ShouldAlmostEqual, baseOutput.Residual(), 1e-10)
+		})
+	})
+
+	Convey("Given a treatment perfectly explained by a control", t, func() {
+		pearl := algorithm.NewPearl(algorithm.PearlConfig{
+			Target: 2, Treatment: 1, Controls: []int{0},
+		})
+		ready := false
+		var output algorithm.PearlOutput
+
+		for index := range 24 {
+			control := float64(index) * 0.0001
+			var err error
+			output, ready, err = pearl.Measure(algorithm.PearlInput{
+				Key: "collinear",
+				Row: []float64{control, control, 0.5 * control},
+			})
+
+			So(err, ShouldBeNil)
+		}
+
+		Convey("It should remain unresolved instead of publishing unstable evidence", func() {
+			So(ready, ShouldBeFalse)
+			So(output, ShouldResemble, algorithm.PearlOutput{})
+		})
+	})
 }
 
 func TestPearlSample_Measure(t *testing.T) {

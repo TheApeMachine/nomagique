@@ -54,7 +54,7 @@ func TestBookflowSample_MeasureBook(testingTB *testing.T) {
 			"spoofScore":   output.SpoofScore,
 			"thinScore":    output.ThinScore,
 			"neutralScore": output.NeutralScore,
-			"strength":     output.SNR,
+			"strength":     output.Value,
 		})
 		So(err, ShouldBeNil)
 

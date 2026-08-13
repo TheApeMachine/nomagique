@@ -1,6 +1,7 @@
 package causal
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -109,6 +110,29 @@ func (nodeTable nodeTable) association(treatment int) (float64, error) {
 	return association, nil
 }
 
+func (nodeTable nodeTable) effectScales(treatment int) (float64, float64, error) {
+	treatmentValues, err := nodeTable.column(treatment)
+
+	if err != nil {
+		return 0, 0, err
+	}
+
+	targetValues, err := nodeTable.column(nodeTable.target)
+
+	if err != nil {
+		return 0, 0, err
+	}
+
+	treatmentScale := stat.StdDev(treatmentValues, nil)
+	targetScale := stat.StdDev(targetValues, nil)
+
+	if treatmentScale <= 0 || targetScale <= 0 {
+		return 0, 0, io.EOF
+	}
+
+	return treatmentScale, targetScale, nil
+}
+
 func (nodeTable nodeTable) backdoorEffect(treatment int, controls ...int) (float64, error) {
 	treatmentValues, err := nodeTable.column(treatment)
 
@@ -185,6 +209,10 @@ func (nodeTable nodeTable) fitLinearModel(predictors ...int) (linearModel, error
 	coefficients, err := olsFit(targetValues, predictorColumns...)
 
 	if err != nil {
+		if errors.Is(err, io.EOF) {
+			return linearModel{}, io.EOF
+		}
+
 		return linearModel{}, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"causal: linear structural fit failed",
@@ -275,7 +303,7 @@ func (nodeTable nodeTable) percentile(node int, percentile float64) (float64, er
 func (nodeTable nodeTable) kernelBackdoorEffect(
 	treatment int, bandwidth float64, controls ...int,
 ) (float64, error) {
-	if bandwidth <= 0 {
+	if len(controls) > 0 && bandwidth <= 0 {
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"causal: kernel bandwidth must be positive",
@@ -309,6 +337,16 @@ func (nodeTable nodeTable) kernelBackdoorEffect(
 		return 0, err
 	}
 
+	controlScales := make([]float64, len(controlColumns))
+
+	for index, control := range controlColumns {
+		controlScales[index] = stat.StdDev(control, nil)
+
+		if controlScales[index] <= 0 {
+			return 0, io.EOF
+		}
+	}
+
 	residualTarget, err := residualize(targetValues, controlColumns...)
 
 	if err != nil {
@@ -336,13 +374,17 @@ func (nodeTable nodeTable) kernelBackdoorEffect(
 	for rowIndex, row := range nodeTable.rows {
 		distanceSum := 0.0
 
-		for _, feature := range controls {
-			delta := current[feature] - row[feature]
+		for controlIndex, feature := range controls {
+			delta := (current[feature] - row[feature]) / controlScales[controlIndex]
 			distanceSum += delta * delta
 		}
 
 		distance := math.Sqrt(distanceSum)
-		weight := math.Exp(-distance * distance / (2 * bandwidth * bandwidth))
+		weight := 1.0
+
+		if len(controls) > 0 {
+			weight = math.Exp(-distance * distance / (2 * bandwidth * bandwidth))
+		}
 
 		if math.IsNaN(weight) || math.IsInf(weight, 0) {
 			return 0, errnie.Error(errnie.Err(
@@ -500,60 +542,66 @@ func (nodeTable nodeTable) validateNode(node int) error {
 	return nil
 }
 
-func deriveBandwidth(rows [][]float64, treatmentNode int) (float64, error) {
-	if treatmentNode < 0 || len(rows) == 0 || treatmentNode >= len(rows[0]) {
+func deriveBandwidth(rows [][]float64, controls ...int) (float64, error) {
+	if len(rows) < 2 {
+		return 0, io.EOF
+	}
+
+	if len(controls) == 0 {
+		return 0, nil
+	}
+
+	width := len(rows[0])
+
+	if width == 0 {
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
-			"causal: treatment node outside table width",
+			"causal: bandwidth rows must contain nodes",
 			nil,
 		))
 	}
 
-	minSamples := max(2, int(math.Ceil(math.Sqrt(float64(len(rows))))))
-
-	if len(rows) < minSamples {
-		return 0, io.EOF
-	}
-
-	values := make([]float64, len(rows))
-
-	for index := range rows {
-		values[index] = rows[index][treatmentNode]
-
-		if math.IsNaN(values[index]) || math.IsInf(values[index], 0) {
+	for _, control := range controls {
+		if control < 0 || control >= width {
 			return 0, errnie.Error(errnie.Err(
 				errnie.Validation,
-				"causal: treatment value is non-finite",
+				"causal: control node outside table width",
 				nil,
 			))
 		}
+
+		values := make([]float64, len(rows))
+
+		for rowIndex, row := range rows {
+			if len(row) != width {
+				return 0, errnie.Error(errnie.Err(
+					errnie.Validation,
+					"causal: bandwidth row width mismatch",
+					nil,
+				))
+			}
+
+			values[rowIndex] = row[control]
+
+			if math.IsNaN(values[rowIndex]) || math.IsInf(values[rowIndex], 0) {
+				return 0, errnie.Error(errnie.Err(
+					errnie.Validation,
+					"causal: control value is non-finite",
+					nil,
+				))
+			}
+		}
+
+		if stat.StdDev(values, nil) <= 0 {
+			return 0, io.EOF
+		}
 	}
 
-	variance := stat.Variance(values, nil)
+	sampleCount := float64(len(rows))
+	covariateDimension := float64(len(controls))
 
-	if variance <= 0 || math.IsNaN(variance) || math.IsInf(variance, 0) {
-		return 0, io.EOF
-	}
-
-	sampleCount := float64(len(values))
-	covariateDimension := float64(len(rows[0]) - 1)
-	spread := math.Sqrt(variance)
-	scale := robustScale(values)
-
-	if covariateDimension < 1 {
-		covariateDimension = 1
-	}
-
-	if scale <= 0 {
-		scale = spread
-	}
-
-	relativeSpread := spread / scale
-	smoothnessPenalty := math.Log(math.E + relativeSpread*relativeSpread*sampleCount)
-	denominator := covariateDimension + smoothnessPenalty
-	exponent := -1.0 / denominator
-
-	return spread * math.Pow(sampleCount, exponent), nil
+	// Scott's multivariate Gaussian-kernel rule on standardized controls.
+	return math.Pow(sampleCount, -1/(covariateDimension+4)), nil
 }
 
 func intSlice(values []float64) []int {

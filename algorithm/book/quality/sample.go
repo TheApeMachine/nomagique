@@ -134,7 +134,7 @@ func (sample *Sample) MeasureLevel3(
 	output := window.finish(frame, true)
 	window.tradePrices = nil
 
-	return output, true, window.maturity(), nil
+	return output, output.LastPrice > 0, window.maturity(), nil
 }
 
 /*

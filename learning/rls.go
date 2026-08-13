@@ -3,6 +3,7 @@ package learning
 import (
 	"fmt"
 	"math"
+	"sync"
 )
 
 /*
@@ -59,6 +60,7 @@ RLS is an online square-root recursive-least-squares learner.
 type RLS struct {
 	config  RLSConfig
 	session *rlsSession
+	mu      sync.RWMutex
 }
 
 /*
@@ -88,6 +90,9 @@ func (rls *RLS) Measure(sample RLSSample) (RLSOutput, error) {
 	if rls == nil || rls.session == nil {
 		return RLSOutput{}, fmt.Errorf("learning: rls session required")
 	}
+
+	rls.mu.Lock()
+	defer rls.mu.Unlock()
 
 	prediction, err := rls.session.predictive(sample.Features)
 
@@ -119,6 +124,9 @@ func (rls *RLS) Observe(sample RLSSample) (RLSObserveOutput, error) {
 		return RLSObserveOutput{}, fmt.Errorf("learning: rls session required")
 	}
 
+	rls.mu.Lock()
+	defer rls.mu.Unlock()
+
 	observed, err := rls.session.observe(sample.Features, sample.Target)
 
 	if err != nil {
@@ -137,6 +145,9 @@ func (rls *RLS) Predict(features []float64) (RLSOutput, error) {
 	if rls == nil || rls.session == nil {
 		return RLSOutput{}, fmt.Errorf("learning: rls session required")
 	}
+
+	rls.mu.RLock()
+	defer rls.mu.RUnlock()
 
 	prediction, err := rls.session.predictive(features)
 
@@ -160,6 +171,9 @@ func (rls *RLS) Snapshot() (RLSSnapshot, error) {
 		return RLSSnapshot{}, fmt.Errorf("learning: rls session required")
 	}
 
+	rls.mu.RLock()
+	defer rls.mu.RUnlock()
+
 	return rls.session.snapshot(), nil
 }
 
@@ -172,6 +186,9 @@ func (rls *RLS) copyCoefficients(weights []float64) (float64, error) {
 	if rls == nil || rls.session == nil {
 		return 0, fmt.Errorf("learning: rls session required")
 	}
+
+	rls.mu.RLock()
+	defer rls.mu.RUnlock()
 
 	if len(weights) != rls.session.dimension {
 		return 0, fmt.Errorf(
@@ -416,8 +433,6 @@ func (session *rlsSession) predictive(features []float64) (rlsPrediction, error)
 		)
 	}
 
-	design := session.design
-	design[0] = 1
 	forecast := session.beta[0]
 
 	for index, feature := range features {
@@ -428,7 +443,6 @@ func (session *rlsSession) predictive(features []float64) (rlsPrediction, error)
 			)
 		}
 
-		design[index+1] = feature
 		forecast += session.beta[index+1] * feature
 	}
 
@@ -446,10 +460,10 @@ func (session *rlsSession) predictive(features []float64) (rlsPrediction, error)
 	leverage := 1.0
 
 	for row := range size {
-		factor := 0.0
+		factor := session.root[row]
 
-		for col := range size {
-			factor += session.root[col*size+row] * design[col]
+		for featureIndex, feature := range features {
+			factor += session.root[(featureIndex+1)*size+row] * feature
 		}
 
 		leverage += factor * factor

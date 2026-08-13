@@ -148,6 +148,10 @@ func (pearl *Pearl) Measure(input PearlInput) (PearlOutput, bool, error) {
 		controls...,
 	)
 	if err != nil {
+		if errors.Is(err, io.EOF) {
+			return PearlOutput{}, false, nil
+		}
+
 		return PearlOutput{}, false, err
 	}
 
@@ -161,6 +165,10 @@ func (pearl *Pearl) Measure(input PearlInput) (PearlOutput, bool, error) {
 		interventionLevel,
 	)
 	if err != nil {
+		if errors.Is(err, io.EOF) {
+			return PearlOutput{}, false, nil
+		}
+
 		return PearlOutput{}, false, err
 	}
 

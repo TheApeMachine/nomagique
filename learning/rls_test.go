@@ -2,6 +2,7 @@ package learning
 
 import (
 	"math"
+	"sync"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
@@ -19,6 +20,44 @@ func TestNewRLS(testingTB *testing.T) {
 }
 
 func TestRLSMeasure(testingTB *testing.T) {
+	Convey("Given concurrent forecasts and observations", testingTB, func() {
+		stage, err := NewRLS(RLSConfig{Dimension: 1, InitialVariance: 1000})
+		So(err, ShouldBeNil)
+		errors := make(chan error, 128)
+		wait := sync.WaitGroup{}
+		wait.Add(2)
+
+		go func() {
+			defer wait.Done()
+
+			for observation := 1; observation <= 64; observation++ {
+				_, err := stage.Measure(RLSSample{
+					Features: []float64{float64(observation)},
+					Target:   float64(observation * 2),
+				})
+				errors <- err
+			}
+		}()
+
+		go func() {
+			defer wait.Done()
+
+			for forecast := 1; forecast <= 64; forecast++ {
+				_, err := stage.Predict([]float64{float64(forecast)})
+				errors <- err
+			}
+		}()
+
+		wait.Wait()
+		close(errors)
+
+		Convey("It should protect updates while read-only forecasts share the model", func() {
+			for err := range errors {
+				So(err, ShouldBeNil)
+			}
+		})
+	})
+
 	Convey("Given invalid dimension", testingTB, func() {
 		_, err := NewRLS(RLSConfig{Dimension: 0, InitialVariance: 1000})
 

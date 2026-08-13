@@ -27,6 +27,36 @@ func TestOlsFit(testingTB *testing.T) {
 			}
 		})
 	})
+
+	Convey("Given fewer observations than fitted coefficients", testingTB, func() {
+		_, err := olsFit(
+			[]float64{1, 2},
+			[]float64{0, 1},
+			[]float64{1, 0},
+		)
+
+		Convey("It should remain unresolved without manufacturing a fit", func() {
+			So(err, ShouldEqual, io.EOF)
+		})
+	})
+
+	Convey("Given a target with no observed variation", testingTB, func() {
+		_, err := olsFit([]float64{1, 1, 1}, []float64{0, 1, 2})
+
+		Convey("It should remain unresolved without manufacturing coefficients", func() {
+			So(err, ShouldEqual, io.EOF)
+		})
+	})
+}
+
+func TestBackdoorDenominator(testingTB *testing.T) {
+	Convey("Given a treatment residual with no independent variation", testingTB, func() {
+		_, err := backdoorDenominator(0)
+
+		Convey("It should report an unresolved estimate", func() {
+			So(err, ShouldEqual, io.EOF)
+		})
+	})
 }
 
 func TestNodeTable_treatmentIdentifiable(testingTB *testing.T) {

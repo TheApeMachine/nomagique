@@ -6,7 +6,9 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 )
 
-type graphFixture struct{}
+type graphFixture struct {
+	edgeValue float64
+}
 
 func (graphFixture) Roots() []string { return []string{"compression"} }
 
@@ -26,11 +28,13 @@ func (graphFixture) NodeValue(node string) (float64, float64) {
 	return 0.8, 0.8
 }
 
-func (graphFixture) EdgeValue(_, _ string) (float64, float64) { return 0.86, 0.86 }
+func (fixture graphFixture) EdgeValue(_, _ string) (float64, float64) {
+	return fixture.edgeValue, 0.86
+}
 
 func TestNewGraphState(t *testing.T) {
 	Convey("Given a directed weighted graph", t, func() {
-		state, err := NewGraphState(graphFixture{})
+		state, err := NewGraphState(graphFixture{edgeValue: 0.86})
 
 		Convey("It should expose graph roots as search actions", func() {
 			So(err, ShouldBeNil)
@@ -42,7 +46,7 @@ func TestNewGraphState(t *testing.T) {
 
 func TestGraphStateApplyAction(t *testing.T) {
 	Convey("Given a graph search state", t, func() {
-		state, err := NewGraphState(graphFixture{})
+		state, err := NewGraphState(graphFixture{edgeValue: 0.86})
 		So(err, ShouldBeNil)
 
 		root := state.ApplyAction(0).(*GraphState)
@@ -55,11 +59,28 @@ func TestGraphStateApplyAction(t *testing.T) {
 			So(next.ToVector(), ShouldHaveLength, 5)
 		})
 	})
+
+	Convey("Given equal evidence with the opposite relation sign", t, func() {
+		supporting, supportErr := NewGraphState(graphFixture{edgeValue: 0.86})
+		contradicting, contradictErr := NewGraphState(graphFixture{edgeValue: -0.86})
+		So(supportErr, ShouldBeNil)
+		So(contradictErr, ShouldBeNil)
+
+		supportRoot := supporting.ApplyAction(0).(*GraphState)
+		supportLeaf := supportRoot.ApplyAction(0).(*GraphState)
+		contradictRoot := contradicting.ApplyAction(0).(*GraphState)
+		contradictLeaf := contradictRoot.ApplyAction(0).(*GraphState)
+
+		Convey("It should move path reward above and below the same forecast", func() {
+			So(supportLeaf.GetReward(), ShouldBeGreaterThan, supportRoot.GetReward())
+			So(contradictLeaf.GetReward(), ShouldBeLessThan, contradictRoot.GetReward())
+		})
+	})
 }
 
 func TestGraphStateSearch(t *testing.T) {
 	Convey("Given a reusable graph state", t, func() {
-		state, err := NewGraphState(graphFixture{})
+		state, err := NewGraphState(graphFixture{edgeValue: 0.86})
 		So(err, ShouldBeNil)
 		history := state.History()
 		engine := NewCausalMCTS(
@@ -85,7 +106,7 @@ func TestGraphStateSearch(t *testing.T) {
 }
 
 func BenchmarkGraphStateApplyAction(b *testing.B) {
-	state, err := NewGraphState(graphFixture{})
+	state, err := NewGraphState(graphFixture{edgeValue: 0.86})
 
 	if err != nil {
 		b.Fatal(err)

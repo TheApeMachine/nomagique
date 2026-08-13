@@ -116,7 +116,11 @@ func standardizedRank(columns ...[]float64) (int, error) {
 }
 
 func backdoorDenominator(residualNorm float64) (float64, error) {
-	if math.IsNaN(residualNorm) || math.IsInf(residualNorm, 0) || residualNorm <= 0 {
+	if residualNorm <= 0 {
+		return 0, io.EOF
+	}
+
+	if math.IsNaN(residualNorm) || math.IsInf(residualNorm, 0) {
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"causal: backdoor denominator is non-positive",
@@ -170,22 +174,14 @@ func olsFit(target []float64, predictors ...[]float64) ([]float64, error) {
 	columnCount := len(predictors) + 1
 
 	if rowCount < columnCount {
-		return nil, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"causal: ols rows must cover the fitted design",
-			nil,
-		))
+		return nil, io.EOF
 	}
 
 	targetMean := stat.Mean(target, nil)
 	targetScale := stat.StdDev(target, nil)
 
 	if targetScale <= 0 {
-		return nil, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"causal: ols target variation required",
-			nil,
-		))
+		return nil, io.EOF
 	}
 
 	predictorMeans := make([]float64, len(predictors))

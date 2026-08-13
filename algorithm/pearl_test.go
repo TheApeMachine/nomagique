@@ -32,6 +32,12 @@ func TestPearl_Measure(t *testing.T) {
 				Row:          []float64{control, treatment, target},
 				Intervention: 20,
 			})
+			So(err, ShouldBeNil)
+
+			if index < 2 {
+				So(ready, ShouldBeFalse)
+				So(output, ShouldResemble, algorithm.PearlOutput{})
+			}
 		}
 
 		Convey("It emits Pearl ladder and do-calculus evidence", func() {

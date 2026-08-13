@@ -47,6 +47,35 @@ func TestSample_MeasureBook(t *testing.T) {
 }
 
 func TestSample_MeasureLevel3(t *testing.T) {
+	Convey("Given an empty level3 frame", t, func() {
+		sample := NewSample(sampleConfig())
+		input, ready, _, err := sample.MeasureLevel3(Level3Input{
+			Symbol: "BTC/USD",
+		})
+
+		Convey("It should retain the frame without exposing an unpriceable sample", func() {
+			So(err, ShouldBeNil)
+			So(ready, ShouldBeFalse)
+			So(input.LastPrice, ShouldEqual, 0)
+		})
+
+		input, ready, _, err = sample.MeasureLevel3(Level3Input{
+			Symbol: "BTC/USD",
+			Bids: []OrderEvent{
+				{Event: "add", OrderID: "B1", Price: 100, Quantity: 20},
+			},
+			Asks: []OrderEvent{
+				{Event: "add", OrderID: "A1", Price: 101, Quantity: 20},
+			},
+		})
+
+		Convey("It should become ready when book prices establish a midpoint", func() {
+			So(err, ShouldBeNil)
+			So(ready, ShouldBeTrue)
+			So(input.LastPrice, ShouldEqual, 100.5)
+		})
+	})
+
 	Convey("Given level3 frames for multiple symbols", t, func() {
 		sample := NewSample(sampleConfig())
 

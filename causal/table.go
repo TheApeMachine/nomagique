@@ -155,6 +155,10 @@ func (nodeTable nodeTable) backdoorEffect(treatment int, controls ...int) (float
 	residualTarget, err := residualize(targetValues, controlColumns...)
 
 	if err != nil {
+		if errors.Is(err, io.EOF) {
+			return 0, io.EOF
+		}
+
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"causal: target residualization failed",
@@ -165,6 +169,10 @@ func (nodeTable nodeTable) backdoorEffect(treatment int, controls ...int) (float
 	residualTreatment, err := residualize(treatmentValues, controlColumns...)
 
 	if err != nil {
+		if errors.Is(err, io.EOF) {
+			return 0, io.EOF
+		}
+
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"causal: treatment residualization failed",

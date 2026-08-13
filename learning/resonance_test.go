@@ -87,6 +87,53 @@ func TestResonanceManifoldWireSnapshot(testingTB *testing.T) {
 	})
 }
 
+func TestResonanceManifoldObserveTask(testingTB *testing.T) {
+	Convey("Given identical features and targets with different issued forecasts", testingTB, func() {
+		accurate := NewResonanceManifold([]int{1, 1}, 1, 0.05)
+		wrong := NewResonanceManifold([]int{1, 1}, 1, 0.05)
+		features := []float64{0.25}
+		target := []float64{0.01}
+
+		accurateErr := accurate.ObserveTask(
+			features,
+			[]float64{0.009},
+			target,
+		)
+		wrongErr := wrong.ObserveTask(
+			features,
+			[]float64{-0.01},
+			target,
+		)
+		accurateSkill, accurateReady := accurate.TaskSkill()
+		wrongSkill, wrongReady := wrong.TaskSkill()
+
+		Convey("It should score and learn from the strict-prior forecast that was shown", func() {
+			So(accurateErr, ShouldBeNil)
+			So(wrongErr, ShouldBeNil)
+			So(accurateReady, ShouldBeTrue)
+			So(wrongReady, ShouldBeTrue)
+			So(accurateSkill, ShouldBeGreaterThan, wrongSkill)
+			So(accurate.TaskPrediction()[0], ShouldBeGreaterThan, 0)
+		})
+	})
+
+	Convey("Given malformed retained task evidence", testingTB, func() {
+		manifold := NewResonanceManifold([]int{1, 1}, 1, 0.05)
+
+		Convey("It should reject it before changing the task learner", func() {
+			before := manifold.TaskPrediction()
+			err := manifold.ObserveTask(
+				[]float64{0.25},
+				[]float64{math.Inf(1)},
+				[]float64{0.01},
+			)
+
+			So(err, ShouldNotBeNil)
+			So(manifold.TaskPrediction(), ShouldResemble, before)
+		})
+	})
+}
+
 func TestResonanceManifoldStateGradients(testingTB *testing.T) {
 	Convey("Given an unregularized manifold with fixed latent state", testingTB, func() {
 		manifold := NewResonanceManifold([]int{2, 3, 2}, 0, 0.03)
@@ -179,6 +226,21 @@ func BenchmarkResonanceManifoldWireSnapshot(testingTB *testing.B) {
 
 	for testingTB.Loop() {
 		manifold.WireSnapshot()
+	}
+}
+
+func BenchmarkResonanceManifoldObserveTask(testingTB *testing.B) {
+	manifold := NewResonanceManifold([]int{8, 16, 8}, 1, 0.01)
+	features := make([]float64, 8)
+	prediction := []float64{0.001}
+	target := []float64{0.002}
+
+	testingTB.ReportAllocs()
+
+	for testingTB.Loop() {
+		if err := manifold.ObserveTask(features, prediction, target); err != nil {
+			testingTB.Fatal(err)
+		}
 	}
 }
 

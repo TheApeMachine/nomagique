@@ -116,6 +116,12 @@ err := nomagique.RoundTripArtifact(wire, pipeline)
 
 **Migration:** `learning/`, `probability/`, and parts of `geometry/` still expose legacy `Observe`/`Reset` APIs. Target primitives live in `adaptive/`, `statistic/`, `vector/`, and `correlation/Pearson`. See `core/dynamic.go`.
 
+`learning.ResonanceManifold.ObserveTask` is the strict-prior supervised boundary:
+retain the exact task features and prediction when a forecast is issued, then
+resolve those retained values against the later target. Do not score a newer
+manifold state against an older outcome; that leaks future information into the
+reported task skill.
+
 ## Composability contract
 
 | Layer | Role | Example |

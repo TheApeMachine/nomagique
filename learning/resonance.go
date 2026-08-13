@@ -768,6 +768,83 @@ func (rm *ResonanceManifold) TaskPrediction() []float64 {
 	return append([]float64(nil), taskPred.RawVector().Data...)
 }
 
+/*
+ObserveTask resolves one strict-prior task forecast against its later target.
+Features and prediction must be the exact values retained when the forecast was
+issued; the current manifold state may already describe a newer market tick.
+*/
+func (rm *ResonanceManifold) ObserveTask(
+	features []float64,
+	prediction []float64,
+	target []float64,
+) error {
+	if rm.V == nil || rm.targetDim <= 0 {
+		return errors.New("resonance: supervised task head required")
+	}
+
+	if len(features) != rm.arch[len(rm.arch)-1] {
+		return fmt.Errorf(
+			"resonance: expected %d task features, got %d",
+			rm.arch[len(rm.arch)-1],
+			len(features),
+		)
+	}
+
+	if len(prediction) != rm.targetDim || len(target) != rm.targetDim {
+		return fmt.Errorf(
+			"resonance: expected %d task predictions and targets, got %d and %d",
+			rm.targetDim,
+			len(prediction),
+			len(target),
+		)
+	}
+
+	for index, feature := range features {
+		if !finite(feature) {
+			return fmt.Errorf("resonance: task feature %d must be finite", index)
+		}
+	}
+
+	for index := range target {
+		if !finite(prediction[index]) || !finite(target[index]) {
+			return fmt.Errorf(
+				"resonance: task prediction and target %d must be finite",
+				index,
+			)
+		}
+	}
+
+	targetCol := rm.workspace.yCol
+	predictionCol := rm.workspace.taskPred
+	copy(targetCol.RawVector().Data, target)
+	copy(predictionCol.RawVector().Data, prediction)
+
+	taskError := rm.workspace.taskError
+	taskError.SubVec(targetCol, predictionCol)
+	biasData := rm.taskBias.RawVector().Data
+
+	for rowIndex, learner := range rm.taskLearners {
+		_, err := learner.Observe(RLSSample{
+			Features: features,
+			Target:   target[rowIndex],
+		})
+
+		if err != nil {
+			return fmt.Errorf("resonance: task learner update: %w", err)
+		}
+
+		intercept, err := learner.copyCoefficients(rm.V.RawRowView(rowIndex))
+
+		if err != nil {
+			return fmt.Errorf("resonance: task learner coefficients: %w", err)
+		}
+
+		biasData[rowIndex] = intercept
+	}
+
+	return rm.updateTaskReliability(targetCol, taskError)
+}
+
 func (rm *ResonanceManifold) LatentState() []float64 {
 	if len(rm.z) == 0 {
 		return nil

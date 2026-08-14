@@ -3,13 +3,13 @@ package mcts
 import "fmt"
 
 const (
-	GraphTreatmentColumn = 2
-	GraphTargetColumn    = 4
+	GraphTreatmentColumn = 1
+	GraphTargetColumn    = 2
 )
 
 var (
-	GraphControlColumns = []int{0, 1, 3}
-	GraphFeatureColumns = []int{0, 1, 2, 3}
+	GraphControlColumns = []int{0}
+	GraphFeatureColumns = []int{0, 1}
 )
 
 /*
@@ -26,12 +26,14 @@ type Graph interface {
 GraphState traverses one weighted path through a Graph.
 */
 type GraphState struct {
-	graph        Graph
-	current      string
-	visited      map[string]bool
-	row          []float64
-	reward       float64
-	intervention float64
+	graph         Graph
+	current       string
+	visited       map[string]bool
+	row           []float64
+	reward        float64
+	evidenceTotal float64
+	evidenceCount int
+	intervention  float64
 }
 
 func NewGraphState(graph Graph) (*GraphState, error) {
@@ -71,10 +73,12 @@ func (graphState *GraphState) ApplyAction(action float64) State {
 
 	target := targets[index]
 	next := &GraphState{
-		graph:        graphState.graph,
-		current:      target,
-		visited:      make(map[string]bool, len(graphState.visited)+1),
-		intervention: 0,
+		graph:         graphState.graph,
+		current:       target,
+		visited:       make(map[string]bool, len(graphState.visited)+1),
+		evidenceTotal: graphState.evidenceTotal,
+		evidenceCount: graphState.evidenceCount,
+		intervention:  0,
 	}
 
 	for node := range graphState.visited {
@@ -82,23 +86,20 @@ func (graphState *GraphState) ApplyAction(action float64) State {
 	}
 
 	next.visited[target] = true
-	targetValue, targetConfidence := graphState.graph.NodeValue(target)
-
 	if graphState.current == "" {
-		next.reward = targetValue * targetConfidence
-		next.row = []float64{0, 0, 0, 0, next.reward}
+		next.row = []float64{0, 0, 0}
 		return next
 	}
 
-	sourceValue, sourceConfidence := graphState.graph.NodeValue(graphState.current)
 	edgeValue, edgeConfidence := graphState.graph.EdgeValue(graphState.current, target)
+	evidence := edgeValue * edgeConfidence
 	next.intervention = edgeValue
-	next.reward = graphState.reward + edgeValue*edgeConfidence*targetValue*targetConfidence
+	next.evidenceTotal += evidence
+	next.evidenceCount++
+	next.reward = next.evidenceTotal / float64(next.evidenceCount)
 	next.row = []float64{
-		sourceValue,
-		sourceConfidence,
-		edgeValue,
 		edgeConfidence,
+		edgeValue,
 		next.reward,
 	}
 
@@ -127,17 +128,12 @@ func (graphState *GraphState) History() [][]float64 {
 		}
 
 		visited[source] = true
-		sourceValue, sourceConfidence := graphState.graph.NodeValue(source)
-
 		for _, target := range graphState.graph.Targets(source) {
 			edgeValue, edgeConfidence := graphState.graph.EdgeValue(source, target)
-			targetValue, targetConfidence := graphState.graph.NodeValue(target)
 			rows = append(rows, []float64{
-				sourceValue,
-				sourceConfidence,
-				edgeValue,
 				edgeConfidence,
-				edgeValue * edgeConfidence * targetValue * targetConfidence,
+				edgeValue,
+				edgeValue * edgeConfidence,
 			})
 			queue = append(queue, target)
 		}

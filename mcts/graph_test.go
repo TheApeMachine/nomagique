@@ -7,7 +7,9 @@ import (
 )
 
 type graphFixture struct {
-	edgeValue float64
+	edgeValue   float64
+	rootValue   float64
+	targetValue float64
 }
 
 func (graphFixture) Roots() []string { return []string{"compression"} }
@@ -20,12 +22,12 @@ func (graphFixture) Targets(node string) []string {
 	return nil
 }
 
-func (graphFixture) NodeValue(node string) (float64, float64) {
+func (fixture graphFixture) NodeValue(node string) (float64, float64) {
 	if node == "ignition" {
-		return 1, 0.9
+		return fixture.targetValue, 0.9
 	}
 
-	return 0.8, 0.8
+	return fixture.rootValue, 0.8
 }
 
 func (fixture graphFixture) EdgeValue(_, _ string) (float64, float64) {
@@ -55,8 +57,9 @@ func TestGraphStateApplyAction(t *testing.T) {
 		Convey("It should traverse weighted graph edges", func() {
 			So(root.IsTerminal(), ShouldBeFalse)
 			So(next.IsTerminal(), ShouldBeTrue)
-			So(next.GetReward(), ShouldBeGreaterThan, root.GetReward())
-			So(next.ToVector(), ShouldHaveLength, 5)
+			So(root.GetReward(), ShouldEqual, 0.0)
+			So(next.GetReward(), ShouldAlmostEqual, 0.86*0.86)
+			So(next.ToVector(), ShouldHaveLength, 3)
 		})
 	})
 
@@ -71,9 +74,29 @@ func TestGraphStateApplyAction(t *testing.T) {
 		contradictRoot := contradicting.ApplyAction(0).(*GraphState)
 		contradictLeaf := contradictRoot.ApplyAction(0).(*GraphState)
 
-		Convey("It should move path reward above and below the same forecast", func() {
-			So(supportLeaf.GetReward(), ShouldBeGreaterThan, supportRoot.GetReward())
-			So(contradictLeaf.GetReward(), ShouldBeLessThan, contradictRoot.GetReward())
+		Convey("It should classify supporting and contradicting edge evidence by sign", func() {
+			So(supportRoot.GetReward(), ShouldEqual, 0.0)
+			So(contradictRoot.GetReward(), ShouldEqual, 0.0)
+			So(supportLeaf.GetReward(), ShouldBeGreaterThan, 0.0)
+			So(contradictLeaf.GetReward(), ShouldBeLessThan, 0.0)
+		})
+	})
+
+	Convey("Given identical edge evidence attached to incompatible raw node scales", t, func() {
+		small, smallErr := NewGraphState(graphFixture{
+			edgeValue: 0.5, rootValue: 0.0001, targetValue: 0.0002,
+		})
+		large, largeErr := NewGraphState(graphFixture{
+			edgeValue: 0.5, rootValue: 1e12, targetValue: -1e15,
+		})
+		So(smallErr, ShouldBeNil)
+		So(largeErr, ShouldBeNil)
+
+		smallReward := small.ApplyAction(0).(*GraphState).ApplyAction(0).GetReward()
+		largeReward := large.ApplyAction(0).(*GraphState).ApplyAction(0).GetReward()
+
+		Convey("Raw price and return units should not contaminate graph evidence", func() {
+			So(smallReward, ShouldEqual, largeReward)
 		})
 	})
 }

@@ -2,6 +2,7 @@ package equation
 
 import (
 	"math"
+	"sync"
 	"time"
 
 	"github.com/theapemachine/errnie"
@@ -14,6 +15,7 @@ positive executed-volume advance it has actually observed, so neither wall time
 nor a universal sampling cadence controls its bars.
 */
 type Ignition struct {
+	mu       sync.RWMutex
 	windows  map[string]*ignitionWindow
 	capacity int
 }
@@ -149,9 +151,18 @@ window returns the retained state for one symbol, creating only that concrete
 per-symbol responsibility when the symbol first appears.
 */
 func (ignition *Ignition) window(symbol string) *ignitionWindow {
-	existing, ok := ignition.windows[symbol]
+	ignition.mu.RLock()
+	existing := ignition.windows[symbol]
+	ignition.mu.RUnlock()
 
-	if ok {
+	if existing != nil {
+		return existing
+	}
+
+	ignition.mu.Lock()
+	defer ignition.mu.Unlock()
+
+	if existing = ignition.windows[symbol]; existing != nil {
 		return existing
 	}
 

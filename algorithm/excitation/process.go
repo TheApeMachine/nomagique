@@ -2,6 +2,7 @@ package excitation
 
 import (
 	"sort"
+	"sync"
 	"time"
 
 	"github.com/theapemachine/errnie"
@@ -57,6 +58,7 @@ the mutable estimators with their single owner preserves event ordering without
 adding a concurrent map that cannot protect estimator internals.
 */
 type Process struct {
+	mu      sync.RWMutex
 	symbols map[string]*symbol
 }
 
@@ -106,9 +108,18 @@ func (process *Process) Measure(input Input) (Outcome, bool, error) {
 }
 
 func (process *Process) symbol(symbolName string) *symbol {
-	model, ok := process.symbols[symbolName]
+	process.mu.RLock()
+	model := process.symbols[symbolName]
+	process.mu.RUnlock()
 
-	if ok {
+	if model != nil {
+		return model
+	}
+
+	process.mu.Lock()
+	defer process.mu.Unlock()
+
+	if model = process.symbols[symbolName]; model != nil {
 		return model
 	}
 
@@ -122,7 +133,14 @@ func (process *Process) symbol(symbolName string) *symbol {
 Symbols returns every symbol that has produced at least one excitation outcome.
 */
 func (process *Process) Symbols() []string {
-	if process == nil || len(process.symbols) == 0 {
+	if process == nil {
+		return nil
+	}
+
+	process.mu.RLock()
+	defer process.mu.RUnlock()
+
+	if len(process.symbols) == 0 {
 		return nil
 	}
 
@@ -145,9 +163,11 @@ func (process *Process) Outcome(symbolName string) (Outcome, bool) {
 		return Outcome{}, false
 	}
 
-	model, ok := process.symbols[symbolName]
+	process.mu.RLock()
+	model := process.symbols[symbolName]
+	process.mu.RUnlock()
 
-	if !ok || !model.lastReady {
+	if model == nil || !model.lastReady {
 		return Outcome{}, false
 	}
 
@@ -163,9 +183,11 @@ func (process *Process) AwaitFit(symbolName string) bool {
 		return false
 	}
 
-	model, ok := process.symbols[symbolName]
+	process.mu.RLock()
+	model := process.symbols[symbolName]
+	process.mu.RUnlock()
 
-	if !ok {
+	if model == nil {
 		return false
 	}
 

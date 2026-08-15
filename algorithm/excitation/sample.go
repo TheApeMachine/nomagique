@@ -1,6 +1,7 @@
 package excitation
 
 import (
+	"sync"
 	"time"
 
 	"github.com/theapemachine/errnie"
@@ -36,6 +37,7 @@ processor. It derives retention from the observed event-time scale so symbols
 with different activity rates do not share a fixed event-count window.
 */
 type Sample struct {
+	mu      sync.RWMutex
 	windows map[string]*window
 }
 
@@ -111,9 +113,18 @@ func (input TradeInput) ArrivalTime() time.Time {
 }
 
 func (sample *Sample) window(symbol string) *window {
-	current, ok := sample.windows[symbol]
+	sample.mu.RLock()
+	current := sample.windows[symbol]
+	sample.mu.RUnlock()
 
-	if ok {
+	if current != nil {
+		return current
+	}
+
+	sample.mu.Lock()
+	defer sample.mu.Unlock()
+
+	if current = sample.windows[symbol]; current != nil {
 		return current
 	}
 

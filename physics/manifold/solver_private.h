@@ -506,6 +506,7 @@ void manifold_velocity_at(
 @property(nonatomic, assign) uint32_t numOsc;
 @property(nonatomic, assign) uint32_t numBins;
 @property(nonatomic, assign) uint32_t maxCarriersForTG;
+@property(nonatomic, assign) uint32_t maxParticles;
 @property(nonatomic, assign) uint32_t simdWidth;
 @property(nonatomic, assign) NSUInteger maxThreadsPerThreadgroup;
 @property(nonatomic, assign) uint64_t residentBytes;
@@ -624,8 +625,14 @@ void manifold_velocity_at(
 - (BOOL)runGasTransport:(NSString **)error;
 - (BOOL)computeReading:(ManifoldReading *)reading error:(NSString **)error;
 - (BOOL)readRhoMaxProjection:(float *)out length:(uint32_t)length error:(NSString **)error;
-- (BOOL)computeProjectionReading:(ManifoldReading *)reading error:(NSString **)error;
 - (BOOL)readOscillators:(ManifoldOscillator *)out count:(uint32_t)count error:(NSString **)error;
+- (BOOL)readVolumetricFields:(float *)densityOut
+                    momentum:(float *)momentumOut
+              internalEnergy:(float *)eIntOut
+                    waveReal:(float *)waveReOut
+               waveImaginary:(float *)waveImOut
+                     ySlices:(uint32_t)ySlices
+                       error:(NSString **)error;
 - (BOOL)step:(ManifoldReading *)reading error:(NSString **)error;
 @end
 

@@ -13,6 +13,7 @@ package manifold
 */
 import "C"
 import (
+	"bytes"
 	_ "embed"
 	"fmt"
 	"runtime"
@@ -64,6 +65,7 @@ func (config Config) toC() C.ManifoldConfig {
 		gas_p_min:            C.float(config.GasPMin),
 		k_thermal:            C.float(config.KThermal),
 		max_carriers:         C.uint32_t(config.MaxModes),
+		max_particles:        C.uint32_t(config.CarrierCapacity()),
 		hbar_eff:             C.float(config.HbarEffective()),
 		g_interaction:        C.float(config.GInteraction()),
 		energy_decay:         C.float(config.EnergyDecay()),
@@ -93,6 +95,11 @@ func NewSolver(config Config) (*Solver, error) {
 	)
 
 	if handle == nil {
+		errStr := string(bytes.TrimRight(errBuf, "\x00"))
+		if errStr != "" {
+			return nil, fmt.Errorf("physics: failed to create solver: %s", errStr)
+		}
+
 		return nil, fmt.Errorf("physics: failed to create solver")
 	}
 
@@ -260,8 +267,10 @@ func (solver *Solver) SetOscillators(oscillators []Oscillator) error {
 		return fmt.Errorf("physics: at least one oscillator is required")
 	}
 
-	if uint32(len(oscillators)) > solver.config.MaxModes {
-		return fmt.Errorf("physics: oscillator count %d exceeds max_modes %d", len(oscillators), solver.config.MaxModes)
+	capacity := solver.config.CarrierCapacity()
+
+	if uint32(len(oscillators)) > capacity {
+		return fmt.Errorf("physics: oscillator count %d exceeds carrier capacity %d", len(oscillators), capacity)
 	}
 
 	cOscillators := make([]C.ManifoldOscillator, len(oscillators))
@@ -463,6 +472,94 @@ func (solver *Solver) ReadProjectionReading() (Reading, error) {
 		PressureGradNorm: float64(cReading.pressure_grad_norm),
 		Divergence:       float64(cReading.divergence),
 		ViscosityProxy:   float64(cReading.viscosity_proxy),
+	}, nil
+}
+
+/*
+VolumetricFields holds the 3D density, momentum, internal energy, and wave field values.
+*/
+type VolumetricFields struct {
+	GridX          int
+	GridY          int
+	GridZ          int
+	Density        []float32
+	Momentum       []float32
+	InternalEnergy []float32
+	WaveReal       []float32
+	WaveImaginary  []float32
+}
+
+/*
+ReadVolumetricFields extracts the 3D density, momentum, internal energy, and complex wave
+fields with the requested vertical slice resolution.
+*/
+func (solver *Solver) ReadVolumetricFields(ySlices int) (VolumetricFields, error) {
+	if solver == nil || solver.handle == nil {
+		return VolumetricFields{}, fmt.Errorf("physics: solver is not initialized")
+	}
+
+	if ySlices <= 0 {
+		ySlices = 1
+	}
+
+	if uint32(ySlices) > solver.config.GridY {
+		ySlices = int(solver.config.GridY)
+	}
+
+	gridX := solver.config.GridX
+	gridZ := solver.config.GridZ
+	cells := int(gridX) * ySlices * int(gridZ)
+
+	density := make([]float32, cells)
+	momentum := make([]float32, cells*3)
+	internalEnergy := make([]float32, cells)
+	waveReal := make([]float32, cells)
+	waveImaginary := make([]float32, cells)
+
+	var (
+		cGridX C.uint32_t
+		cGridY C.uint32_t
+		cGridZ C.uint32_t
+	)
+
+	err := solver.call(func(errBuf []byte) C.int {
+		return C.manifold_solver_read_volumetric_fields(
+			solver.handle,
+			(*C.float)(unsafe.Pointer(&density[0])),
+			(*C.float)(unsafe.Pointer(&momentum[0])),
+			(*C.float)(unsafe.Pointer(&internalEnergy[0])),
+			(*C.float)(unsafe.Pointer(&waveReal[0])),
+			(*C.float)(unsafe.Pointer(&waveImaginary[0])),
+			C.uint32_t(ySlices),
+			&cGridX,
+			&cGridY,
+			&cGridZ,
+			(*C.char)(unsafe.Pointer(&errBuf[0])),
+			C.int(len(errBuf)),
+		)
+	})
+	runtime.KeepAlive(density)
+	runtime.KeepAlive(momentum)
+	runtime.KeepAlive(internalEnergy)
+	runtime.KeepAlive(waveReal)
+	runtime.KeepAlive(waveImaginary)
+	runtime.KeepAlive(&cGridX)
+	runtime.KeepAlive(&cGridY)
+	runtime.KeepAlive(&cGridZ)
+
+	if err != nil {
+		return VolumetricFields{}, err
+	}
+
+	return VolumetricFields{
+		GridX:          int(cGridX),
+		GridY:          int(cGridY),
+		GridZ:          int(cGridZ),
+		Density:        density,
+		Momentum:       momentum,
+		InternalEnergy: internalEnergy,
+		WaveReal:       waveReal,
+		WaveImaginary:  waveImaginary,
 	}, nil
 }
 

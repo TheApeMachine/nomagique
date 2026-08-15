@@ -89,3 +89,18 @@ func (solver *Solver) ReadProjectionReading() (Reading, error) {
 func (solver *Solver) ReadOscillators(count int) ([]Oscillator, error) {
 	return nil, fmt.Errorf("physics: Metal manifold solver unavailable on this platform")
 }
+
+type VolumetricFields struct {
+	GridX          int
+	GridY          int
+	GridZ          int
+	Density        []float32
+	Momentum       []float32
+	InternalEnergy []float32
+	WaveReal       []float32
+	WaveImaginary  []float32
+}
+
+func (solver *Solver) ReadVolumetricFields(ySlices int) (VolumetricFields, error) {
+	return VolumetricFields{}, fmt.Errorf("physics: Metal manifold solver unavailable on this platform")
+}

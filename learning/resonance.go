@@ -1214,7 +1214,7 @@ func (rm *ResonanceManifold) updatePrecision(
 		return nil
 	}
 
-	beta := rm.cfg.PrecisionBeta
+	beta := math.Max(rm.cfg.PrecisionBeta, 0.1)
 
 	for layerIndex, layerError := range layerErrors {
 		variance := rm.errorVar[layerIndex]
@@ -1282,7 +1282,7 @@ func (rm *ResonanceManifold) updateTaskReliability(
 	targetCol *mat.VecDense,
 	taskError *mat.VecDense,
 ) error {
-	beta := rm.cfg.PrecisionBeta
+	beta := math.Max(rm.cfg.PrecisionBeta, 0.1)
 	squaredError := rm.workspace.taskSignal
 	squaredError.MulElemVec(taskError, taskError)
 	candidateVariance := taskError
@@ -1392,7 +1392,7 @@ func (rm *ResonanceManifold) updateTaskSkill(
 	}
 
 	if hasRetainedSkill {
-		beta := rm.cfg.PrecisionBeta
+		beta := math.Max(rm.cfg.PrecisionBeta, 0.1)
 		rm.taskModelLoss.ScaleVec(1.0-beta, rm.taskModelLoss)
 		modelSquaredError.ScaleVec(beta, modelSquaredError)
 		rm.taskModelLoss.AddVec(rm.taskModelLoss, modelSquaredError)

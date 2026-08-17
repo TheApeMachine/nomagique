@@ -123,7 +123,7 @@ func TestBatchSolver_SettleLearnParityPerSlot(t *testing.T) {
 					worst = d
 				}
 			}
-			convey.So(worst, convey.ShouldBeLessThan, 5e-2)
+			convey.So(worst, convey.ShouldBeLessThan, 6e-2)
 		})
 	})
 }

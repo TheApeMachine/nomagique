@@ -231,25 +231,30 @@ func (window *ignitionWindow) score(
 		buyRejection,
 		ignitionRatioScale(window.returns, moveBaseline),
 	)
+
 	buy.Strength = max(
 		buy.Ignition,
 		buy.Compression,
 		buy.Trend,
 		buy.Exhaustion,
 	)
+
 	buy.Value = buy.Strength
+	
 	sell.Exhaustion = ignitionExhaustion(
 		window.lastRVOL,
 		rvol,
 		sellRejection,
 		ignitionRatioScale(window.returns, moveBaseline),
 	)
+	
 	sell.Strength = max(
 		sell.Ignition,
 		sell.Compression,
 		sell.Trend,
 		sell.Exhaustion,
 	)
+	
 	sell.Value = sell.Strength
 	legacy := buy
 

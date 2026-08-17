@@ -95,14 +95,3 @@ func (defaultCausalEngine DefaultCausalEngine) AbductiveCounterfactual(
 
 	return counterfactual, noise, err
 }
-
-// Node represents a state-action configuration in the MCTS tree.
-type Node struct {
-	State          State
-	Action         float64 // The action that transitioned the environment to this State
-	Parent         *Node
-	Children       []*Node
-	Visits         int
-	TotalReward    float64
-	UntakenActions []float64
-}

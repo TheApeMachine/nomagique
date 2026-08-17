@@ -142,6 +142,28 @@ func (graphState *GraphState) History() [][]float64 {
 	return rows
 }
 
+func (graphState *GraphState) Current() string {
+	if graphState == nil {
+		return ""
+	}
+
+	return graphState.current
+}
+
+func (graphState *GraphState) Visited() []string {
+	if graphState == nil {
+		return nil
+	}
+
+	visitedList := make([]string, 0, len(graphState.visited))
+
+	for node := range graphState.visited {
+		visitedList = append(visitedList, node)
+	}
+
+	return visitedList
+}
+
 func (graphState *GraphState) targets() []string {
 	if graphState.current == "" {
 		return graphState.graph.Roots()

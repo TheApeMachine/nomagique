@@ -1,126 +1,173 @@
 package mcts
 
 import (
-	"errors"
-	"math"
-
-	"github.com/theapemachine/nomagique/causal"
+	"encoding/json"
+	"fmt"
 )
 
-// CausalState represents a flat slice of float64 features representing
-// the state variables and actions, matching the row-major format used in causal.Table.
-type CausalState []float64
-
-type CausalMCTSNode struct {
-	State       CausalState
-	Action      float64
-	Parent      *CausalMCTSNode
-	Children    []*CausalMCTSNode
-	Visits      int
-	TotalReward float64
-
-	// Causal metadata mapped to your library
-	TreatmentNode int   // Index of the Action variable in the state vector
-	TargetNode    int   // Index of the Reward/Target variable in the state vector
-	ControlNodes  []int // Indices of the confounding/control variables
-	MinHistory    int   // Minimum rows required to run structural fits
+/*
+Node contains search statistics and decomposition required to audit why
+a branch was selected. Parent and state are excluded from direct JSON serialization.
+*/
+type Node struct {
+	State                   State
+	Action                  float64
+	Parent                  *Node
+	Children                []*Node
+	UntakenActions          []float64
+	Visits                  int
+	TotalReward             float64
+	ObservedReward          float64
+	CounterfactualReward    float64
+	CounterfactualMass      float64
+	CounterfactualPrecision float64
+	Exploitation            float64
+	Exploration             float64
+	CausalExpectation       float64
+	SelectionScore          float64
+	SCMReady                bool
+	SCMReason               string
+	Selected                bool
+	Principal               bool
+	Depth                   int
 }
 
-// SelectBestChild incorporates interventional expectations into UCT selection
-func (n *CausalMCTSNode) SelectBestChild(c float64, table causal.NodeTable) (*CausalMCTSNode, error) {
-	if len(n.Children) == 0 {
-		return nil, errors.New("no children to select from")
+/*
+EffectiveVisits combines real rollout visits and precision-weighted virtual experience.
+*/
+func (node *Node) EffectiveVisits() float64 {
+	if node == nil {
+		return 0
 	}
 
-	var bestChild *CausalMCTSNode
-	bestScore := math.Inf(-1)
-
-	for _, child := range n.Children {
-		if child.Visits == 0 {
-			// Eagerly select unexplored nodes to maintain expansion parity
-			return child, nil
-		}
-
-		// 1. Classical Exploitation/Exploration
-		if n.Visits <= 0 {
-			return nil, errors.New("mcts: parent visits must be strictly positive for UCT log")
-		}
-
-		exploitation := child.TotalReward / float64(child.Visits)
-		exploration := c * math.Sqrt(math.Log(float64(n.Visits))/float64(child.Visits))
-		uct := exploitation + exploration
-
-		// 2. Interventional Bias using do-calculus
-		// We calculate E[Target | do(Action)] over the historically observed table
-		interventionalExpectation, err := table.DoExpectation(
-			child.TreatmentNode,
-			child.Action,
-			child.ControlNodes...,
-		)
-
-		// If the causal engine cannot find a stable fit yet, fall back gracefully
-		if err != nil {
-			interventionalExpectation = 0.0
-		}
-
-		// Blend UCT with the causal expectation.
-		// This biases selection towards actions with proven causal influence.
-		causalScore := uct + (0.5 * interventionalExpectation)
-
-		if causalScore > bestScore {
-			bestScore = causalScore
-			bestChild = child
-		}
-	}
-
-	return bestChild, nil
+	return float64(node.Visits) + node.CounterfactualMass
 }
 
-// CounterfactualUpdate backpropagates virtual rewards to unexplored sibling nodes.
-// When a real rollout completes, we use its final trajectory row to calculate
-// what the reward *would have been* for alternative sibling actions.
-func (n *CausalMCTSNode) CounterfactualUpdate(
-	actualRow []float64,
-	table causal.NodeTable,
-	features []int,
-	linear bool,
-) {
-	// Increment visits and update with actual reward
-	n.Visits++
-	actualReward := actualRow[n.TargetNode]
-	n.TotalReward += actualReward
-
-	if n.Parent == nil {
-		return
+/*
+MeanReward returns the precision-weighted value used for exploitation.
+*/
+func (node *Node) MeanReward() float64 {
+	if node == nil {
+		return 0
 	}
 
-	// Iterate through sibling nodes to perform counterfactual retroaction
-	for _, sibling := range n.Parent.Children {
-		if sibling == n {
-			continue // Already updated with real reward
-		}
+	effectiveVisits := node.EffectiveVisits()
 
-		// Abduct, Act, and Predict alternative sibling rewards
-		_, counterfactualReward, noise, err := table.AbductiveCounterfactual(
-			features,
-			linear,
-			actualRow,
-			n.TargetNode,
-			n.TreatmentNode,
-			sibling.Action, // Intervene with sibling's action
-		)
+	if effectiveVisits == 0 {
+		return 0
+	}
 
-		if err == nil && !math.IsNaN(counterfactualReward) && !math.IsInf(counterfactualReward, 0) {
-			// Scale virtual reward by SCM reconstruction precision
-			precision := 1.0 / (1.0 + math.Abs(noise))
+	return node.TotalReward / effectiveVisits
+}
 
-			if precision > 1.0 {
-				precision = 1.0
-			}
+/*
+NodeTrace is the stable wire representation consumed by the reasoning UI.
+*/
+type NodeTrace struct {
+	Action                  float64            `json:"action"`
+	ActionName              string             `json:"actionName"`
+	Depth                   int                `json:"depth"`
+	Visits                  int                `json:"visits"`
+	EffectiveVisits         float64            `json:"effectiveVisits"`
+	ObservedReward          float64            `json:"observedReward"`
+	CounterfactualReward    float64            `json:"counterfactualReward"`
+	CounterfactualMass      float64            `json:"counterfactualMass"`
+	CounterfactualPrecision float64            `json:"counterfactualPrecision"`
+	TotalReward             float64            `json:"totalReward"`
+	MeanReward              float64            `json:"meanReward"`
+	Exploitation            float64            `json:"exploitation"`
+	Exploration             float64            `json:"exploration"`
+	CausalExpectation       float64            `json:"causalExpectation"`
+	SelectionScore          float64            `json:"selectionScore"`
+	SCMReady                bool               `json:"scmReady"`
+	SCMReason               string             `json:"scmReason,omitempty"`
+	Selected                bool               `json:"selected"`
+	Principal               bool               `json:"principal"`
+	State                   map[string]float64 `json:"state,omitempty"`
+	Children                []NodeTrace        `json:"children,omitempty"`
+}
 
-			// Update sibling with virtual experience (weighted fraction of the visit value)
-			sibling.Visits++
-			sibling.TotalReward += counterfactualReward * precision
+/*
+Trace creates an acyclic, named snapshot of the explored tree.
+*/
+func (node *Node) Trace() NodeTrace {
+	if node == nil {
+		return NodeTrace{}
+	}
+
+	actionName := fmt.Sprintf("action_%.0f", node.Action)
+
+	if node.Depth == 0 {
+		actionName = "root"
+	}
+
+	if graphState, supported := node.State.(*GraphState); supported && graphState != nil {
+		current := graphState.Current()
+
+		if current != "" {
+			actionName = current
 		}
 	}
+
+	trace := NodeTrace{
+		Action:                  node.Action,
+		ActionName:              actionName,
+		Depth:                   node.Depth,
+		Visits:                  node.Visits,
+		EffectiveVisits:         node.EffectiveVisits(),
+		ObservedReward:          node.ObservedReward,
+		CounterfactualReward:    node.CounterfactualReward,
+		CounterfactualMass:      node.CounterfactualMass,
+		CounterfactualPrecision: node.CounterfactualPrecision,
+		TotalReward:             node.TotalReward,
+		MeanReward:              node.MeanReward(),
+		Exploitation:            node.Exploitation,
+		Exploration:             node.Exploration,
+		CausalExpectation:       node.CausalExpectation,
+		SelectionScore:          node.SelectionScore,
+		SCMReady:                node.SCMReady,
+		SCMReason:               node.SCMReason,
+		Selected:                node.Selected,
+		Principal:               node.Principal,
+	}
+
+	if len(node.Children) == 0 {
+		return trace
+	}
+
+	trace.Children = make([]NodeTrace, len(node.Children))
+
+	for childIndex, child := range node.Children {
+		trace.Children[childIndex] = child.Trace()
+	}
+
+	return trace
+}
+
+/*
+MarshalJSON publishes the inspectable trace instead of pointer-linked internals.
+*/
+func (node *Node) MarshalJSON() ([]byte, error) {
+	if node == nil {
+		return []byte("null"), nil
+	}
+
+	return json.Marshal(node.Trace())
+}
+
+/*
+Child returns the explored branch for one action.
+*/
+func (node *Node) Child(action float64) *Node {
+	if node == nil {
+		return nil
+	}
+
+	for _, child := range node.Children {
+		if child.Action == action {
+			return child
+		}
+	}
+
+	return nil
 }

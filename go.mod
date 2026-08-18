@@ -36,8 +36,8 @@ require (
 	github.com/gopherjs/gopherjs v1.20.2 // indirect
 	github.com/jtolds/gls v4.20.0+incompatible // indirect
 	github.com/smarty/assertions v1.16.0 // indirect
-	github.com/theapemachine/errnie v1.2.5
+	github.com/theapemachine/errnie v1.2.7
 	gonum.org/v1/gonum v0.17.0
 )
 
-replace github.com/bytedance/sonic => ../sonic
+// replace github.com/bytedance/sonic => ../sonic

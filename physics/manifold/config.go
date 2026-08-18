@@ -28,7 +28,6 @@ type Config struct {
 	GasPMin                 float64
 	KThermal                float64
 	MaxModes                uint32
-	MaxParticles            uint32
 	BoundaryXLow            uint32
 	BoundaryXHigh           uint32
 	BoundaryYLow            uint32
@@ -226,25 +225,6 @@ func ApplyDerivedGasParams(config *Config) {
 	inverseSpacingSum := config.inverseSpacingSum()
 	config.KThermal = envelopeRho * config.CV * gasCellSpacing * gasCellSpacing *
 		vonNeumannLimit / (config.DeltaT * inverseSpacingSum) * diffusionCFLSafety
-}
-
-/*
-CarrierCapacity returns the allocated buffer capacity for resident particles and oscillators.
-*/
-func (config Config) CarrierCapacity() uint32 {
-	if config.MaxParticles > 0 {
-		return config.MaxParticles
-	}
-
-	if config.MaxModes > 0 {
-		if config.MaxModes < 65536 {
-			return 65536
-		}
-
-		return config.MaxModes
-	}
-
-	return 65536
 }
 
 func (config Config) inverseSpacingSum() float64 {

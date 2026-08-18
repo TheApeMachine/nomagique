@@ -18,7 +18,6 @@ typedef struct ManifoldConfig {
     float gas_p_min;
     float k_thermal;
     uint32_t max_carriers;
-    uint32_t max_particles;
     float hbar_eff;
     float g_interaction;
     float energy_decay;
@@ -177,21 +176,6 @@ int manifold_solver_read_oscillators(
     void *handle,
     ManifoldOscillator *out,
     uint32_t count,
-    char *err_out,
-    int err_cap
-);
-
-int manifold_solver_read_volumetric_fields(
-    void *handle,
-    float *density_out,
-    float *momentum_out,
-    float *e_int_out,
-    float *wave_re_out,
-    float *wave_im_out,
-    uint32_t y_slices,
-    uint32_t *grid_x,
-    uint32_t *grid_y,
-    uint32_t *grid_z,
     char *err_out,
     int err_cap
 );

@@ -563,14 +563,6 @@ func TestSolverProductionConfig(t *testing.T) {
 			convey.So(rhoErr, convey.ShouldBeNil)
 			convey.So(len(rho), convey.ShouldEqual, int(config.GridZ))
 			convey.So(len(rho[0]), convey.ShouldEqual, int(config.GridX))
-
-			vol, volErr := solver.ReadVolumetricFields(int(config.GridY))
-			convey.So(volErr, convey.ShouldBeNil)
-			convey.So(vol.GridX, convey.ShouldEqual, int(config.GridX))
-			convey.So(vol.GridY, convey.ShouldEqual, int(config.GridY))
-			convey.So(vol.GridZ, convey.ShouldEqual, int(config.GridZ))
-			convey.So(len(vol.Density), convey.ShouldEqual, int(config.GridX)*int(config.GridY)*int(config.GridZ))
-			convey.So(len(vol.Momentum), convey.ShouldEqual, int(config.GridX)*int(config.GridY)*int(config.GridZ)*3)
 		})
 	})
 }

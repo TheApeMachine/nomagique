@@ -33,7 +33,7 @@
 
     params->num_osc = self.numOsc;
     params->max_carriers = self.config.max_carriers;
-    params->num_carriers = self.numOsc;
+    params->num_carriers = *(uint32_t *)self.numCarriers.contents;
     params->dt = self.controls.dt;
     params->coupling_scale = self.config.coupling_scale;
     params->carrier_reg = 0.0f;
@@ -82,13 +82,15 @@
 }
 
 - (void)clearAccumulators {
-    [self runClearCarrierAccums:self.numOsc];
+    [self runClearCarrierAccums:*(uint32_t *)self.numCarriers.contents];
 }
 
 static const float kFp32ExpUnderflowX0 = 103.27893f;
 
 - (uint32_t)deriveNumBins {
-    if (self.numOsc == 0) {
+    uint32_t carrierCount = *(uint32_t *)self.numCarriers.contents;
+
+    if (carrierCount == 0) {
         return 0;
     }
 
@@ -96,7 +98,7 @@ static const float kFp32ExpUnderflowX0 = 103.27893f;
     float wmin = omegaData[0];
     float wmax = omegaData[0];
 
-    for (uint32_t index = 1; index < self.numOsc; index++) {
+    for (uint32_t index = 1; index < carrierCount; index++) {
         float omega = omegaData[index];
         if (omega < wmin) {
             wmin = omega;
@@ -110,7 +112,7 @@ static const float kFp32ExpUnderflowX0 = 103.27893f;
     float gateWidthMax = self.config.gate_width_max;
     float R_max = sqrtf(kFp32ExpUnderflowX0) * gateWidthMax;
     float W = R_max;
-    uint32_t n = self.numOsc;
+    uint32_t n = carrierCount;
     if (n > 0) {
         float derived = range / (float)n;
         if (derived > W) {
@@ -129,7 +131,7 @@ static const float kFp32ExpUnderflowX0 = 103.27893f;
 
     // Compute maxBin
     uint32_t maxBin = 0;
-    for (uint32_t index = 0; index < self.numOsc; index++) {
+    for (uint32_t index = 0; index < carrierCount; index++) {
         float binFloat = (omegaData[index] - wmin) * binParams->inv_bin_width;
         int binIndex = (int)floorf(binFloat);
 
@@ -214,11 +216,11 @@ static const float kFp32ExpUnderflowX0 = 103.27893f;
         return NO;
     }
 
-    *(uint32_t *)self.numCarriers.contents = self.numOsc;
+    uint32_t carrierCount = *(uint32_t *)self.numCarriers.contents;
 
     [self dispatchGridKernel:self.precomputeCarrierAnchorPositions
                      buffers:@[self.particlePos, self.modeAnchorIdx, self.modeAnchorPos, self.modeAnchorWeight, self.numCarriers]
-                 threadCount:(NSUInteger)self.numOsc * kModeAnchors];
+                 threadCount:(NSUInteger)carrierCount * kModeAnchors];
 
     [self dispatchGridKernel:self.prepOscillatorCoupling
                      buffers:@[

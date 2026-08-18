@@ -1,6 +1,7 @@
 package equation
 
 import (
+	"slices"
 	"math"
 	"sort"
 
@@ -26,15 +27,7 @@ func cohortSchemaReady(inputKeys []string) bool {
 	}
 
 	for _, expected := range CohortInputKeys {
-		found := false
-
-		for _, actual := range inputKeys {
-			if actual == expected {
-				found = true
-
-				break
-			}
-		}
+		found := slices.Contains(inputKeys, expected)
 
 		if !found {
 			return false

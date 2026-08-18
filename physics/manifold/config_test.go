@@ -74,15 +74,16 @@ func productionTestConfig() Config {
 	deltaT := 0.1
 
 	config := Config{
-		GridX:    32,
-		GridY:    3,
-		GridZ:    16,
-		DomainX:  float64(halfWidth*2+1) * tickSize,
-		DomainY:  3,
-		DomainZ:  16,
-		DeltaT:   deltaT,
-		Gamma:    gamma,
-		MaxModes: 128,
+		GridX:          32,
+		GridY:          3,
+		GridZ:          16,
+		DomainX:        float64(halfWidth*2+1) * tickSize,
+		DomainY:        3,
+		DomainZ:        16,
+		DeltaT:         deltaT,
+		Gamma:          gamma,
+		MaxModes:       128,
+		MaxOscillators: 128,
 	}
 
 	config = config.stableGasTestConfig(0, 1)

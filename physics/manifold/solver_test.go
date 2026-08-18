@@ -12,15 +12,16 @@ import (
 
 func smallTestConfig() Config {
 	config := Config{
-		GridX:    8,
-		GridY:    1,
-		GridZ:    8,
-		DomainX:  0.16,
-		DomainY:  1,
-		DomainZ:  8,
-		DeltaT:   0.1,
-		Gamma:    5.0 / 3.0,
-		MaxModes: 4,
+		GridX:          8,
+		GridY:          1,
+		GridZ:          8,
+		DomainX:        0.16,
+		DomainY:        1,
+		DomainZ:        8,
+		DeltaT:         0.1,
+		Gamma:          5.0 / 3.0,
+		MaxModes:       4,
+		MaxOscillators: 4,
 	}
 	config = config.stableGasTestConfig(0.4, 1)
 	DefaultMarketGasBoundaries().Apply(&config)
@@ -85,6 +86,59 @@ func TestSolverStep(t *testing.T) {
 	})
 }
 
+/*
+TestSetOscillators proves oscillator count is a particle-pool concern, not a
+carrier-basis concern: a population larger than max_carriers loads onto the
+fixed spectral lattice, steps, and reads back complete.
+*/
+func TestSetOscillators(t *testing.T) {
+	convey.Convey("Given a carrier basis smaller than the oscillator population", t, func() {
+		config := smallTestConfig()
+		config.MaxOscillators = 337
+
+		solver, err := NewSolver(config)
+		convey.So(err, convey.ShouldBeNil)
+		defer solver.Close()
+
+		oscillators := make([]Oscillator, int(config.MaxOscillators))
+
+		for index := range oscillators {
+			posX, posY, posZ := config.testCellCenter(
+				uint32(index)%config.GridX, 0, uint32(index)%config.GridZ,
+			)
+			oscillators[index] = Oscillator{
+				Phase:     float64(index%8) * math.Pi / 8,
+				Omega:     config.GateWidthMax() * (0.5 + float64(index)/float64(len(oscillators))),
+				Amplitude: 0.2,
+				PosX:      posX,
+				PosY:      posY,
+				PosZ:      posZ,
+				Heat:      0.2,
+			}
+		}
+
+		convey.Convey("It should stratify the population onto the lattice and advance coherently", func() {
+			convey.So(solver.SetOscillators(oscillators), convey.ShouldBeNil)
+
+			reading, stepErr := solver.Step()
+
+			convey.So(stepErr, convey.ShouldBeNil)
+			convey.So(math.IsNaN(reading.CoherenceMag2), convey.ShouldBeFalse)
+			convey.So(math.IsInf(reading.CoherenceMag2, 0), convey.ShouldBeFalse)
+
+			readBack, readErr := solver.ReadOscillators(len(oscillators))
+
+			convey.So(readErr, convey.ShouldBeNil)
+			convey.So(readBack, convey.ShouldHaveLength, len(oscillators))
+
+			for index, oscillator := range readBack {
+				if math.IsNaN(oscillator.Phase) || math.IsNaN(oscillator.Omega) {
+					convey.So(fmt.Sprintf("oscillator %d is not finite", index), convey.ShouldBeNil)
+				}
+			}
+		})
+	})
+}
 
 func TestPilotWaveGuidanceCurrentIsMarketScale(t *testing.T) {
 	convey.Convey("Given two L3 carriers with distinct omega on the price axis", t, func() {
@@ -189,14 +243,15 @@ the Euler admissible set instead of producing negative internal energy.
 func TestSolverRunGasTransport(t *testing.T) {
 	convey.Convey("Given a cold near-vacuum cell between separating gas streams", t, func() {
 		config := Config{
-			GridX:    3,
-			GridY:    1,
-			GridZ:    1,
-			DomainX:  3,
-			DomainY:  1,
-			DomainZ:  1,
-			Gamma:    5.0 / 3.0,
-			MaxModes: 4,
+			GridX:          3,
+			GridY:          1,
+			GridZ:          1,
+			DomainX:        3,
+			DomainY:        1,
+			DomainZ:        1,
+			Gamma:          5.0 / 3.0,
+			MaxModes:       4,
+			MaxOscillators: 4,
 		}
 		ApplyDerivedGasParams(&config)
 		config.KThermal = 0
@@ -335,15 +390,16 @@ func TestReadOscillators(t *testing.T) {
 func TestReadOscillatorsDecisionLattice(t *testing.T) {
 	convey.Convey("Given the decision manifold lattice", t, func() {
 		config := Config{
-			GridX:    8,
-			GridY:    11,
-			GridZ:    8,
-			DomainX:  8,
-			DomainY:  11,
-			DomainZ:  8,
-			DeltaT:   0.1,
-			Gamma:    5.0 / 3.0,
-			MaxModes: 11,
+			GridX:          8,
+			GridY:          11,
+			GridZ:          8,
+			DomainX:        8,
+			DomainY:        11,
+			DomainZ:        8,
+			DeltaT:         0.1,
+			Gamma:          5.0 / 3.0,
+			MaxModes:       11,
+			MaxOscillators: 11,
 		}
 		ApplyDerivedGasParams(&config)
 
@@ -503,15 +559,16 @@ func TestSolverWhaleParticleVelocity(t *testing.T) {
 func TestSolverProductionConfig(t *testing.T) {
 	convey.Convey("Given production manifold grid dimensions", t, func() {
 		config := Config{
-			GridX:    32,
-			GridY:    3,
-			GridZ:    16,
-			DomainX:  0.32,
-			DomainY:  3,
-			DomainZ:  16,
-			DeltaT:   0.1,
-			Gamma:    5.0 / 3.0,
-			MaxModes: 32,
+			GridX:          32,
+			GridY:          3,
+			GridZ:          16,
+			DomainX:        0.32,
+			DomainY:        3,
+			DomainZ:        16,
+			DeltaT:         0.1,
+			Gamma:          5.0 / 3.0,
+			MaxModes:       32,
+			MaxOscillators: 32,
 		}
 		carrierMass := 0.1
 		carrierHeat := 0.1
@@ -857,15 +914,16 @@ func TestSingleCarrierDepositMagnitude(t *testing.T) {
 
 func BenchmarkSolverStep(b *testing.B) {
 	config := Config{
-		GridX:    16,
-		GridY:    1,
-		GridZ:    16,
-		DomainX:  0.32,
-		DomainY:  1,
-		DomainZ:  16,
-		DeltaT:   0.1,
-		Gamma:    5.0 / 3.0,
-		MaxModes: 8,
+		GridX:          16,
+		GridY:          1,
+		GridZ:          16,
+		DomainX:        0.32,
+		DomainY:        1,
+		DomainZ:        16,
+		DeltaT:         0.1,
+		Gamma:          5.0 / 3.0,
+		MaxModes:       8,
+		MaxOscillators: 8,
 	}
 	config = config.stableGasTestConfig(0, 1)
 

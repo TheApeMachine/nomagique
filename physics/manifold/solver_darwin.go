@@ -64,6 +64,7 @@ func (config Config) toC() C.ManifoldConfig {
 		gas_p_min:            C.float(config.GasPMin),
 		k_thermal:            C.float(config.KThermal),
 		max_carriers:         C.uint32_t(config.MaxModes),
+		max_oscillators:      C.uint32_t(config.MaxOscillators),
 		hbar_eff:             C.float(config.HbarEffective()),
 		g_interaction:        C.float(config.GInteraction()),
 		energy_decay:         C.float(config.EnergyDecay()),
@@ -260,8 +261,8 @@ func (solver *Solver) SetOscillators(oscillators []Oscillator) error {
 		return fmt.Errorf("physics: at least one oscillator is required")
 	}
 
-	if uint32(len(oscillators)) > solver.config.MaxModes {
-		return fmt.Errorf("physics: oscillator count %d exceeds max_modes %d", len(oscillators), solver.config.MaxModes)
+	if uint32(len(oscillators)) > solver.config.MaxOscillators {
+		return fmt.Errorf("physics: oscillator count %d exceeds max_oscillators %d", len(oscillators), solver.config.MaxOscillators)
 	}
 
 	cOscillators := make([]C.ManifoldOscillator, len(oscillators))

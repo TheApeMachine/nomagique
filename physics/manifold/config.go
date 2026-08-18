@@ -28,6 +28,7 @@ type Config struct {
 	GasPMin                 float64
 	KThermal                float64
 	MaxModes                uint32
+	MaxOscillators          uint32
 	BoundaryXLow            uint32
 	BoundaryXHigh           uint32
 	BoundaryYLow            uint32
@@ -155,17 +156,19 @@ func NewConfig(
 	deltaT float64,
 	gamma float64,
 	maxModes uint32,
+	maxOscillators uint32,
 ) (Config, error) {
 	config := Config{
-		GridX:    gridX,
-		GridY:    gridY,
-		GridZ:    gridZ,
-		DomainX:  float64(halfWidth*2+1) * tickSize,
-		DomainY:  float64(gridY),
-		DomainZ:  float64(gridZ),
-		DeltaT:   deltaT,
-		Gamma:    gamma,
-		MaxModes: maxModes,
+		GridX:          gridX,
+		GridY:          gridY,
+		GridZ:          gridZ,
+		DomainX:        float64(halfWidth*2+1) * tickSize,
+		DomainY:        float64(gridY),
+		DomainZ:        float64(gridZ),
+		DeltaT:         deltaT,
+		Gamma:          gamma,
+		MaxModes:       maxModes,
+		MaxOscillators: maxOscillators,
 	}
 
 	cellVolume := config.CellVolume()
@@ -314,6 +317,14 @@ func (config Config) Validate() error {
 			config.KThermal,
 			config.GasEnvelopeRhoMin,
 		)
+	}
+
+	if config.MaxModes == 0 {
+		return fmt.Errorf("physics: max_modes must reserve at least one carrier")
+	}
+
+	if config.MaxOscillators == 0 {
+		return fmt.Errorf("physics: max_oscillators must reserve at least one oscillator")
 	}
 
 	return config.validateBoundaries()

@@ -12,6 +12,21 @@ static float manifold_wrap_coordinate(float value, float extent) {
 }
 
 /*
+Compares oscillator indices by their omega value so a population larger than
+the carrier basis can be stratified into frequency-order strata.
+*/
+static int manifold_compare_omega(void *omegaData, const void *lhs, const void *rhs) {
+    float left = ((const float *)omegaData)[*(const uint32_t *)lhs];
+    float right = ((const float *)omegaData)[*(const uint32_t *)rhs];
+
+    if (left < right) {
+        return -1;
+    }
+
+    return left > right;
+}
+
+/*
 Process-lifetime Metal host. Never a field solver: field Close must not tear
 down device/library/pipelines, or the next Field create walks freed objects.
 */
@@ -390,11 +405,12 @@ static ManifoldSolver *manifold_shared_metal_host(
     (void)error;
     size_t cellBytes = (size_t)self.numCells * sizeof(float);
     uint32_t maxModes = self.config.max_carriers;
+    uint32_t maxOsc = self.config.max_oscillators;
     size_t gasPrimBytes = (size_t)self.numCells * 32;
-    size_t particleCicBytes = (size_t)maxModes * 4 * sizeof(float);
+    size_t particleCicBytes = (size_t)maxOsc * 4 * sizeof(float);
     size_t gpuOnlyBytes = cellBytes * 4 + cellBytes * 2 + gasPrimBytes +
         (size_t)maxModes * kModeAnchors * 3 * sizeof(float) +
-        (size_t)maxModes * 4 * sizeof(float) +
+        (size_t)maxOsc * 4 * sizeof(float) +
         particleCicBytes * 2;
     MTLHeapDescriptor *heapDescriptor = [[MTLHeapDescriptor alloc] init];
     heapDescriptor.size = gpuOnlyBytes + (4u << 20);
@@ -424,38 +440,38 @@ static ManifoldSolver *manifold_shared_metal_host(
         options:MTLResourceStorageModeShared
     ]];
 
-    self.oscPhase = [self trackResident:[self.device newBufferWithLength:(size_t)maxModes * sizeof(float) options:MTLResourceStorageModeShared]];
-    self.oscOmega = [self trackResident:[self.device newBufferWithLength:(size_t)maxModes * sizeof(float) options:MTLResourceStorageModeShared]];
-    self.oscAmp = [self trackResident:[self.device newBufferWithLength:(size_t)maxModes * sizeof(float) options:MTLResourceStorageModeShared]];
-    self.oscHeat = [self trackResident:[self.device newBufferWithLength:(size_t)maxModes * sizeof(float) options:MTLResourceStorageModeShared]];
-    self.particlePos = [self trackResident:[self.device newBufferWithLength:(size_t)maxModes * 3 * sizeof(float) options:MTLResourceStorageModeShared]];
-    self.particleVel = [self trackResident:[self.device newBufferWithLength:(size_t)maxModes * 3 * sizeof(float) options:MTLResourceStorageModeShared]];
-    self.particleMass = [self trackResident:[self.device newBufferWithLength:(size_t)maxModes * sizeof(float) options:MTLResourceStorageModeShared]];
-    self.particleEnergy = [self trackResident:[self.device newBufferWithLength:(size_t)maxModes * sizeof(float) options:MTLResourceStorageModeShared]];
-    self.particlePosSorted = [self trackResident:[self.device newBufferWithLength:(size_t)maxModes * 3 * sizeof(float) options:MTLResourceStorageModeShared]];
-    self.particleVelSorted = [self trackResident:[self.device newBufferWithLength:(size_t)maxModes * 3 * sizeof(float) options:MTLResourceStorageModeShared]];
-    self.particleMassSorted = [self trackResident:[self.device newBufferWithLength:(size_t)maxModes * sizeof(float) options:MTLResourceStorageModeShared]];
-    self.particleHeatSorted = [self trackResident:[self.device newBufferWithLength:(size_t)maxModes * sizeof(float) options:MTLResourceStorageModeShared]];
-    self.particleEnergySorted = [self trackResident:[self.device newBufferWithLength:(size_t)maxModes * sizeof(float) options:MTLResourceStorageModeShared]];
-    self.particleCellIdx = [self trackResident:[self.device newBufferWithLength:(size_t)maxModes * sizeof(uint32_t) options:MTLResourceStorageModeShared]];
+    self.oscPhase = [self trackResident:[self.device newBufferWithLength:(size_t)maxOsc * sizeof(float) options:MTLResourceStorageModeShared]];
+    self.oscOmega = [self trackResident:[self.device newBufferWithLength:(size_t)maxOsc * sizeof(float) options:MTLResourceStorageModeShared]];
+    self.oscAmp = [self trackResident:[self.device newBufferWithLength:(size_t)maxOsc * sizeof(float) options:MTLResourceStorageModeShared]];
+    self.oscHeat = [self trackResident:[self.device newBufferWithLength:(size_t)maxOsc * sizeof(float) options:MTLResourceStorageModeShared]];
+    self.particlePos = [self trackResident:[self.device newBufferWithLength:(size_t)maxOsc * 3 * sizeof(float) options:MTLResourceStorageModeShared]];
+    self.particleVel = [self trackResident:[self.device newBufferWithLength:(size_t)maxOsc * 3 * sizeof(float) options:MTLResourceStorageModeShared]];
+    self.particleMass = [self trackResident:[self.device newBufferWithLength:(size_t)maxOsc * sizeof(float) options:MTLResourceStorageModeShared]];
+    self.particleEnergy = [self trackResident:[self.device newBufferWithLength:(size_t)maxOsc * sizeof(float) options:MTLResourceStorageModeShared]];
+    self.particlePosSorted = [self trackResident:[self.device newBufferWithLength:(size_t)maxOsc * 3 * sizeof(float) options:MTLResourceStorageModeShared]];
+    self.particleVelSorted = [self trackResident:[self.device newBufferWithLength:(size_t)maxOsc * 3 * sizeof(float) options:MTLResourceStorageModeShared]];
+    self.particleMassSorted = [self trackResident:[self.device newBufferWithLength:(size_t)maxOsc * sizeof(float) options:MTLResourceStorageModeShared]];
+    self.particleHeatSorted = [self trackResident:[self.device newBufferWithLength:(size_t)maxOsc * sizeof(float) options:MTLResourceStorageModeShared]];
+    self.particleEnergySorted = [self trackResident:[self.device newBufferWithLength:(size_t)maxOsc * sizeof(float) options:MTLResourceStorageModeShared]];
+    self.particleCellIdx = [self trackResident:[self.device newBufferWithLength:(size_t)maxOsc * sizeof(uint32_t) options:MTLResourceStorageModeShared]];
     self.scatterCellCounts = [self trackResident:[self.device newBufferWithLength:cellBytes options:MTLResourceStorageModeShared]];
     self.scatterCellStarts = [self trackResident:[self.device newBufferWithLength:cellBytes options:MTLResourceStorageModeShared]];
     self.scatterCellOffsets = [self trackResident:[self.device newBufferWithLength:cellBytes options:MTLResourceStorageModeShared]];
-    self.sortedOriginalIdx = [self trackResident:[self.device newBufferWithLength:(size_t)maxModes * sizeof(uint32_t) options:MTLResourceStorageModeShared]];
+    self.sortedOriginalIdx = [self trackResident:[self.device newBufferWithLength:(size_t)maxOsc * sizeof(uint32_t) options:MTLResourceStorageModeShared]];
     self.rhoAtomic = [self trackResident:[self.device newBufferWithLength:cellBytes options:MTLResourceStorageModeShared]];
     self.momAtomic = [self trackResident:[self.device newBufferWithLength:cellBytes * 3 options:MTLResourceStorageModeShared]];
     self.eAtomic = [self trackResident:[self.device newBufferWithLength:cellBytes options:MTLResourceStorageModeShared]];
     self.gravityPotential = [self trackResident:[self.device newBufferWithLength:cellBytes options:MTLResourceStorageModeShared]];
     self.sortScatterParams = [self trackResident:[self.device newBufferWithLength:sizeof(SortScatterParamsHost) options:MTLResourceStorageModeShared]];
     self.picGatherParams = [self trackResident:[self.device newBufferWithLength:sizeof(PicGatherParamsHost) options:MTLResourceStorageModeShared]];
-    self.particleExcitation = [self trackResident:[self.device newBufferWithLength:(size_t)maxModes * sizeof(float) options:MTLResourceStorageModeShared]];
-    self.particleVelIn = [self trackResident:[self.device newBufferWithLength:(size_t)maxModes * 3 * sizeof(float) options:MTLResourceStorageModeShared]];
-    self.particleHeatIn = [self trackResident:[self.device newBufferWithLength:(size_t)maxModes * sizeof(float) options:MTLResourceStorageModeShared]];
+    self.particleExcitation = [self trackResident:[self.device newBufferWithLength:(size_t)maxOsc * sizeof(float) options:MTLResourceStorageModeShared]];
+    self.particleVelIn = [self trackResident:[self.device newBufferWithLength:(size_t)maxOsc * 3 * sizeof(float) options:MTLResourceStorageModeShared]];
+    self.particleHeatIn = [self trackResident:[self.device newBufferWithLength:(size_t)maxOsc * sizeof(float) options:MTLResourceStorageModeShared]];
     self.hashCellCounts = [self trackResident:[self.device newBufferWithLength:cellBytes options:MTLResourceStorageModeShared]];
     self.hashCellStarts = [self trackResident:[self.device newBufferWithLength:((size_t)self.numCells + 1u) * sizeof(uint32_t) options:MTLResourceStorageModeShared]];
     self.hashCellOffsets = [self trackResident:[self.device newBufferWithLength:cellBytes options:MTLResourceStorageModeShared]];
-    self.hashSortedIdx = [self trackResident:[self.device newBufferWithLength:(size_t)maxModes * sizeof(uint32_t) options:MTLResourceStorageModeShared]];
-    self.hashParticleCellIdx = [self trackResident:[self.device newBufferWithLength:(size_t)maxModes * sizeof(uint32_t) options:MTLResourceStorageModeShared]];
+    self.hashSortedIdx = [self trackResident:[self.device newBufferWithLength:(size_t)maxOsc * sizeof(uint32_t) options:MTLResourceStorageModeShared]];
+    self.hashParticleCellIdx = [self trackResident:[self.device newBufferWithLength:(size_t)maxOsc * sizeof(uint32_t) options:MTLResourceStorageModeShared]];
     self.hashNumCellsBuf = [self trackResident:[self.device newBufferWithLength:sizeof(uint32_t) options:MTLResourceStorageModeShared]];
     self.hashNumParticlesBuf = [self trackResident:[self.device newBufferWithLength:sizeof(uint32_t) options:MTLResourceStorageModeShared]];
     *(uint32_t *)self.hashNumCellsBuf.contents = self.numCells;
@@ -469,10 +485,10 @@ static ManifoldSolver *manifold_shared_metal_host(
     self.modeProjectParams = [self trackResident:[self.device newBufferWithLength:sizeof(ModeProjectParamsHost) options:MTLResourceStorageModeShared]];
     self.pilotWaveParams = [self trackResident:[self.device newBufferWithLength:sizeof(PilotWaveParamsHost) options:MTLResourceStorageModeShared]];
     self.particleGenParams = [self trackResident:[self.device newBufferWithLength:sizeof(ParticleGenParamsHost) options:MTLResourceStorageModeShared]];
-    self.particleRandomVals = [self trackResident:[self.device newBufferWithLength:(size_t)maxModes * 4 * sizeof(float) options:MTLResourceStorageModeShared]];
-    self.reduceGroupStats = [self trackResident:[self.device newBufferWithLength:(size_t)maxModes * 4 * sizeof(float) options:MTLResourceStorageModeShared]];
+    self.particleRandomVals = [self trackResident:[self.device newBufferWithLength:(size_t)maxOsc * 4 * sizeof(float) options:MTLResourceStorageModeShared]];
+    self.reduceGroupStats = [self trackResident:[self.device newBufferWithLength:(size_t)maxOsc * 4 * sizeof(float) options:MTLResourceStorageModeShared]];
     self.reduceStatsOut = [self trackResident:[self.device newBufferWithLength:4 * sizeof(float) options:MTLResourceStorageModeShared]];
-    self.hashBlockSums = [self trackResident:[self.device newBufferWithLength:(size_t)maxModes * sizeof(uint32_t) options:MTLResourceStorageModeShared]];
+    self.hashBlockSums = [self trackResident:[self.device newBufferWithLength:(size_t)maxOsc * sizeof(uint32_t) options:MTLResourceStorageModeShared]];
     self.gravityReady = NO;
     self.modeReal = [self trackResident:[self.device newBufferWithLength:(size_t)maxModes * sizeof(float) options:MTLResourceStorageModeShared]];
     self.modeImag = [self trackResident:[self.device newBufferWithLength:(size_t)maxModes * sizeof(float) options:MTLResourceStorageModeShared]];
@@ -481,7 +497,7 @@ static ManifoldSolver *manifold_shared_metal_host(
     self.modeAnchorIdx = [self trackResident:[self.device newBufferWithLength:(size_t)maxModes * 8 * sizeof(uint32_t) options:MTLResourceStorageModeShared]];
     self.modeAnchorWeight = [self trackResident:[self.device newBufferWithLength:(size_t)maxModes * 8 * sizeof(float) options:MTLResourceStorageModeShared]];
     self.modeAnchorPos = [self trackResident:[self newGPUBufferWithLength:(size_t)maxModes * kModeAnchors * 3 * sizeof(float)]];
-    self.oscCouplingPrep = [self trackResident:[self newGPUBufferWithLength:(size_t)maxModes * 4 * sizeof(float)]];
+    self.oscCouplingPrep = [self trackResident:[self newGPUBufferWithLength:(size_t)maxOsc * 4 * sizeof(float)]];
     self.accums = [self trackResident:[self.device newBufferWithLength:(size_t)maxModes * sizeof(CarrierAccumHost) options:MTLResourceStorageModeShared]];
     self.numCarriers = [self trackResident:[self.device newBufferWithLength:sizeof(uint32_t) options:MTLResourceStorageModeShared]];
     self.omegaMinKey = [self trackResident:[self.device newBufferWithLength:sizeof(uint32_t) options:MTLResourceStorageModeShared]];
@@ -494,9 +510,9 @@ static ManifoldSolver *manifold_shared_metal_host(
     self.numBinsBuf = [self trackResident:[self.device newBufferWithLength:sizeof(uint32_t) options:MTLResourceStorageModeShared]];
     self.gateWidthMaxBuf = [self trackResident:[self.device newBufferWithLength:sizeof(float) options:MTLResourceStorageModeShared]];
     *(float *)self.gateWidthMaxBuf.contents = self.config.gate_width_max;
-    self.scanBlockSums = [self trackResident:[self.device newBufferWithLength:(size_t)maxModes * sizeof(uint32_t) options:MTLResourceStorageModeShared]];
-    self.scanBlockPrefix = [self trackResident:[self.device newBufferWithLength:(size_t)maxModes * sizeof(uint32_t) options:MTLResourceStorageModeShared]];
-    self.scanBlockScratch = [self trackResident:[self.device newBufferWithLength:(size_t)maxModes * sizeof(uint32_t) options:MTLResourceStorageModeShared]];
+    self.scanBlockSums = [self trackResident:[self.device newBufferWithLength:(size_t)maxOsc * sizeof(uint32_t) options:MTLResourceStorageModeShared]];
+    self.scanBlockPrefix = [self trackResident:[self.device newBufferWithLength:(size_t)maxOsc * sizeof(uint32_t) options:MTLResourceStorageModeShared]];
+    self.scanBlockScratch = [self trackResident:[self.device newBufferWithLength:(size_t)maxOsc * sizeof(uint32_t) options:MTLResourceStorageModeShared]];
     self.coherenceParams = [self trackResident:[self.device newBufferWithLength:sizeof(CoherenceParamsHost) options:MTLResourceStorageModeShared]];
     self.gpeParams = [self trackResident:[self.device newBufferWithLength:sizeof(GPEParamsHost) options:MTLResourceStorageModeShared]];
 
@@ -702,9 +718,9 @@ static ManifoldSolver *manifold_shared_metal_host(
         return NO;
     }
 
-    if (count > self.config.max_carriers) {
+    if (count > self.config.max_oscillators) {
         if (error != nil) {
-            *error = @"oscillator count exceeds max_carriers";
+            *error = @"oscillator count exceeds max_oscillators";
         }
 
         return NO;
@@ -729,7 +745,6 @@ static ManifoldSolver *manifold_shared_metal_host(
     }
 
     self.numOsc = count;
-    *(uint32_t *)self.numCarriers.contents = count;
 
     float *phaseData = (float *)self.oscPhase.contents;
     float *omegaData = (float *)self.oscOmega.contents;
@@ -779,20 +794,80 @@ static ManifoldSolver *manifold_shared_metal_host(
 
     [self initializeParticleStateFromOscillators:oscillators count:count];
 
-    for (uint32_t index = 0; index < count; index++) {
-        const ManifoldOscillator *oscillator = &oscillators[index];
-        modeRealData[index] = cosf(oscillator->phase) * oscillator->amplitude;
-        modeImagData[index] = sinf(oscillator->phase) * oscillator->amplitude;
-        modeOmegaData[index] = oscillator->omega;
-        modeGateData[index] = fmaxf(self.config.gate_width_min, self.config.gate_width_max * 0.5f);
-        anchorIdx[index * 8 + 0] = index;
-        anchorWeight[index * 8 + 0] = 1.0f;
+    if (count <= self.config.max_carriers) {
+        *(uint32_t *)self.numCarriers.contents = count;
 
-        for (uint32_t slot = 1; slot < 8; slot++) {
-            anchorIdx[index * 8 + slot] = 0xFFFFFFFFu;
-            anchorWeight[index * 8 + slot] = 0.0f;
+        for (uint32_t index = 0; index < count; index++) {
+            const ManifoldOscillator *oscillator = &oscillators[index];
+            modeRealData[index] = cosf(oscillator->phase) * oscillator->amplitude;
+            modeImagData[index] = sinf(oscillator->phase) * oscillator->amplitude;
+            modeOmegaData[index] = oscillator->omega;
+            modeGateData[index] = fmaxf(self.config.gate_width_min, self.config.gate_width_max * 0.5f);
+            anchorIdx[index * 8 + 0] = index;
+            anchorWeight[index * 8 + 0] = 1.0f;
+
+            for (uint32_t slot = 1; slot < 8; slot++) {
+                anchorIdx[index * 8 + slot] = 0xFFFFFFFFu;
+                anchorWeight[index * 8 + slot] = 0.0f;
+            }
+        }
+
+        return YES;
+    }
+
+    // The population outnumbers the carrier basis: oscillators are particles,
+    // carriers are the fixed spectral lattice. Each carrier takes the omega
+    // midpoint of one frequency-order stratum and anchors onto eight of its
+    // oscillators, while the mode field starts dark and only rises where the
+    // coherent drive of the stratum clears the noise floor.
+    uint32_t carriers = self.config.max_carriers;
+    uint32_t *omegaOrder = malloc((size_t)count * sizeof(uint32_t));
+
+    if (omegaOrder == NULL) {
+        if (error != nil) {
+            *error = @"carrier stratification allocation failed";
+        }
+
+        return NO;
+    }
+
+    for (uint32_t index = 0; index < count; index++) {
+        omegaOrder[index] = index;
+    }
+
+    qsort_r(omegaOrder, count, sizeof(uint32_t), omegaData, manifold_compare_omega);
+    *(uint32_t *)self.numCarriers.contents = carriers;
+
+    for (uint32_t mode = 0; mode < carriers; mode++) {
+        uint32_t left = (uint32_t)(((uint64_t)mode * count) / carriers);
+        uint32_t right = (uint32_t)(((uint64_t)(mode + 1) * count) / carriers);
+
+        if (right <= left) {
+            right = left + 1u;
+        }
+
+        if (right > count) {
+            right = count;
+        }
+
+        modeRealData[mode] = 0.0f;
+        modeImagData[mode] = 0.0f;
+        modeOmegaData[mode] = 0.5f * (omegaData[omegaOrder[left]] + omegaData[omegaOrder[right - 1u]]);
+        modeGateData[mode] = fmaxf(self.config.gate_width_min, self.config.gate_width_max * 0.5f);
+
+        for (uint32_t slot = 0; slot < 8; slot++) {
+            uint32_t at = left + (uint32_t)(((uint64_t)slot * (right - left)) / 8u);
+
+            if (at >= right) {
+                at = right - 1u;
+            }
+
+            anchorIdx[mode * 8 + slot] = omegaOrder[at];
+            anchorWeight[mode * 8 + slot] = 1.0f;
         }
     }
+
+    free(omegaOrder);
 
     return YES;
 }
@@ -977,15 +1052,16 @@ static ManifoldSolver *manifold_shared_metal_host(
         (uy_yp - uy_ym) / (2.0f * dy) +
         (uz_zp - uz_zm) / (2.0f * dz);
     float coherenceMag2 = 0.0f;
+    uint32_t carrierCount = *(uint32_t *)self.numCarriers.contents;
 
-    for (uint32_t index = 0; index < self.numOsc; index++) {
+    for (uint32_t index = 0; index < carrierCount; index++) {
         float re = modeRealData[index];
         float im = modeImagData[index];
         coherenceMag2 += re * re + im * im;
     }
 
-    if (self.numOsc > 0) {
-        coherenceMag2 /= (float)self.numOsc;
+    if (carrierCount > 0) {
+        coherenceMag2 /= (float)carrierCount;
     }
 
     // GuidanceSpeed is the mean |v| after pilot-wave gather — the Bohm current

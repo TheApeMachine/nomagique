@@ -33,7 +33,7 @@ func TestEngineNewField(t *testing.T) {
 	})
 
 	Convey("Given the production 64-cubed Metal configuration", t, func() {
-		config, err := NewConfig(64, 64, 64, 1, 32, 0.1, 5.0/3.0, 128)
+		config, err := NewConfig(64, 64, 64, 1, 32, 0.1, 5.0/3.0, 128, 128)
 		So(err, ShouldBeNil)
 		DefaultMarketGasBoundaries().Apply(&config)
 
@@ -60,7 +60,7 @@ footprint rather than a configured estimate.
 */
 func TestEngineFieldBytes(t *testing.T) {
 	Convey("Given a production-grid Engine", t, func() {
-		config, err := NewConfig(64, 64, 64, 1, 32, 0.1, 5.0/3.0, 128)
+		config, err := NewConfig(64, 64, 64, 1, 32, 0.1, 5.0/3.0, 128, 128)
 		So(err, ShouldBeNil)
 		DefaultMarketGasBoundaries().Apply(&config)
 		engine, err := NewEngine(config)
@@ -120,7 +120,7 @@ allocation instead of retaining completed command resources on Go threads.
 */
 func TestEngineAllocatedBytes(t *testing.T) {
 	Convey("Given one warmed production-grid Field", t, func() {
-		config, err := NewConfig(64, 64, 64, 1, 32, 0.1, 5.0/3.0, 128)
+		config, err := NewConfig(64, 64, 64, 1, 32, 0.1, 5.0/3.0, 128, 128)
 		So(err, ShouldBeNil)
 		DefaultMarketGasBoundaries().Apply(&config)
 

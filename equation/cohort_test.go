@@ -73,6 +73,20 @@ func TestCohort_Measure(testingTB *testing.T) {
 			wantCat:  1,
 			eligible: true,
 		},
+		{
+			// A flat frame with no correlation spread classifies into no
+			// regime: an honest ineligible reading, not an error.
+			name: "flat frame is ineligible not an error",
+			batch: cohortBatch(
+				3,
+				60,
+				0.5,
+				[]float64{0.0, 0.0},
+				[]float64{0.0, 0.0, 0.0, 0.0},
+				[]float64{0.5, 0.5, 0.5, 0.5},
+			),
+			eligible: false,
+		},
 	}
 
 	for _, testCase := range cases {
@@ -84,9 +98,17 @@ func TestCohort_Measure(testingTB *testing.T) {
 			output, err := cohort.Measure(frame)
 
 			if !testCase.eligible {
-				Convey("It should reject invalid payload", func() {
-					So(err, ShouldNotBeNil)
+				Convey("It should reject invalid or ineligible payload without error", func() {
+					So(output.Eligible, ShouldBeFalse)
 				})
+
+				// A short schema header is a caller error; a valid schema
+				// whose frame is simply not currently eligible is not.
+				if len(testCase.batch) < len(equation.CohortInputKeys) {
+					So(err, ShouldNotBeNil)
+				} else {
+					So(err, ShouldBeNil)
+				}
 
 				return
 			}

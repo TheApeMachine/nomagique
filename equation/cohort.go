@@ -67,12 +67,12 @@ func (cohort *Cohort) Measure(frame FeatureFrame) (CohortOutput, error) {
 
 	outcome := evaluateCohort(frame, frame.Inputs)
 
+	// An unclassified or non-confident frame is an honest reading for a
+	// ticker that is not currently in a herd/alpha/noise/stress regime. It is
+	// not a caller or schema error, so it must not be logged or surfaced as
+	// one: report it as an ineligible (zero-evidence) outcome instead.
 	if !outcome.Eligible || outcome.Strength <= 0 {
-		return CohortOutput{}, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"cohort: insufficient signal eligibility",
-			nil,
-		))
+		return CohortOutput{}, nil
 	}
 
 	return outcome, nil

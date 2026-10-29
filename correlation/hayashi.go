@@ -154,6 +154,8 @@ const (
 
 type HayashiError string
 
+var _ error = (*HayashiError)(nil)
+
 func (hayashiError HayashiError) Error() string {
 	return string(hayashiError)
 }

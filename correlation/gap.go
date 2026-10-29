@@ -95,6 +95,8 @@ const (
 
 type GapError string
 
+var _ error = (*GapError)(nil)
+
 func (gapError GapError) Error() string {
 	return string(gapError)
 }

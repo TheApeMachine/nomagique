@@ -3,254 +3,220 @@ package store
 import (
 	"context"
 	"testing"
+
+	. "github.com/smartystreets/goconvey/convey"
 )
 
-func TestGridObserveSkipsUnpinnedLabelsWithoutError(t *testing.T) {
-	grid := NewGrid(context.Background())
-
-	// pumpdump has pinned labels and we add an unpinned one
-	sources := map[string]map[string]float64{
-		"pumpdump": {
-			"coiled_compression": 0.5,
-			"unpinned_metric":    0.9,
-		},
-	}
-
-	regions, err := grid.Observe("BTC/USD", sources, false)
-	if err != nil {
-		t.Fatalf("expected Observe to succeed despite unpinned label, got: %v", err)
-	}
-
-	if len(regions) == 0 {
-		t.Fatal("expected at least one region from pinned label, got 0")
-	}
+type gridFixture struct {
+	*Grid
 }
 
-func TestGridObserveBrightnessNonZero(t *testing.T) {
-	grid := NewGrid(context.Background())
+func newGridFixture() *gridFixture {
+	return &gridFixture{Grid: NewGrid(context.Background())}
+}
 
-	sources := map[string]map[string]float64{
-		"pumpdump": {
-			"coiled_compression": 1.5,
-			"rejection_tick":     0.3,
-		},
-		"correlation": {
-			"structural_alignment": 0.8,
-		},
-		"depthflow": {
-			"bid_ladder_build": 2.0,
-		},
-	}
+func (fix *gridFixture) zeroSources(sources map[string]map[string]float64) map[string]map[string]float64 {
+	out := make(map[string]map[string]float64, len(sources))
 
-	regions, err := grid.Observe("BTC/USD", sources, false)
-	if err != nil {
-		t.Fatalf("Observe failed: %v", err)
-	}
+	for source, labels := range sources {
+		out[source] = make(map[string]float64, len(labels))
 
-	if len(regions) == 0 {
-		t.Fatal("expected regions, got 0")
-	}
-
-	nonZero := 0
-	for _, r := range regions {
-		if r.Brightness > 0 {
-			nonZero++
-			t.Logf("region R%02d brightness=%.4f deformation=%.4f counts=%d",
-				r.Key, r.Brightness, r.Deformation, r.Counts)
+		for label := range labels {
+			out[source][label] = 0
 		}
 	}
 
-	if nonZero == 0 {
-		t.Fatal("expected at least one region with Brightness > 0, all were 0")
-	}
+	return out
 }
 
-func TestGridObserveEnterSparkTop2Corroboration(t *testing.T) {
-	grid := NewGrid(context.Background())
-
-	regions, err := grid.Observe("PEP/USD", map[string]map[string]float64{
-		"pumpdump": {"coiled_compression": 2.0},
-		"cvd":      {"aggressor_backing": 1.0},
-	}, false)
-	if err != nil {
-		t.Fatalf("Observe failed: %v", err)
+func (fix *gridFixture) pulse(symbol string, sources map[string]map[string]float64) ([]*Region, error) {
+	if _, err := fix.Observe(symbol, fix.zeroSources(sources)); err != nil {
+		return nil, err
 	}
 
-	var r00 *Region
-	for _, r := range regions {
-		if r.Key == 0 {
-			r00 = r
-			break
-		}
-	}
-
-	if r00 == nil {
-		t.Fatal("expected R00 from coiled + cvd corroboration")
-	}
-
-	if r00.Counts != 2 {
-		t.Fatalf("expected 2 metrics on R00, got %d", r00.Counts)
-	}
-
-	if r00.Brightness <= 0 {
-		t.Fatalf("expected positive R00 brightness, got %.4f", r00.Brightness)
-	}
+	return fix.Observe(symbol, sources)
 }
 
-func TestGridObserveCoiledLightsEnterDetector(t *testing.T) {
-	grid := NewGrid(context.Background())
+func (fix *gridFixture) litBrightness(regions []*Region) map[uint8]float64 {
+	bright := make(map[uint8]float64)
 
-	regions, err := grid.Observe("PEP/USD", map[string]map[string]float64{
-		"pumpdump": {"coiled_compression": 1.2},
-	}, false)
-	if err != nil {
-		t.Fatalf("Observe failed: %v", err)
-	}
-
-	bright := map[uint8]float64{}
 	for _, r := range regions {
 		if r.Brightness > 0 {
 			bright[r.Key] = r.Brightness
 		}
 	}
 
-	if bright[0] <= 0 {
-		t.Fatalf("expected enter detector R00 lit, got %v", bright)
-	}
-	if bright[6] > 0 {
-		t.Fatalf("coiled_compression must not light hold detector R06, got %v", bright)
-	}
+	return bright
 }
 
-func TestGridObserveBoardCoiledLightsEnterConfidence(t *testing.T) {
-	grid := NewGrid(context.Background())
+func TestGridObserve(t *testing.T) {
+	Convey("Given a grid with priors seeded by a flat tick", t, func() {
+		fix := newGridFixture()
 
-	regions, err := grid.Observe("PEAQ/USD", map[string]map[string]float64{
-		"pumpdump": {"board_coiled": 1.4},
-	}, false)
-	if err != nil {
-		t.Fatalf("Observe failed: %v", err)
-	}
+		Convey("Unpinned labels fail validation", func() {
+			_, err := fix.Observe("BTC/USD", map[string]map[string]float64{
+				"pumpdump": {
+					"coiled_compression": 0.5,
+					"unpinned_metric":    0.9,
+				},
+			})
 
-	bright := map[uint8]float64{}
-	for _, r := range regions {
-		if r.Brightness > 0 {
-			bright[r.Key] = r.Brightness
-		}
-	}
+			So(err, ShouldNotBeNil)
+		})
 
-	if bright[9] <= 0 {
-		t.Fatalf("expected enter confidence R09 lit, got %v", bright)
-	}
-}
+		Convey("A metric pulse yields lit regions", func() {
+			regions, err := fix.pulse("BTC/USD", map[string]map[string]float64{
+				"pumpdump": {
+					"coiled_compression": 1.5,
+					"rejection_tick":     0.3,
+				},
+				"correlation": {
+					"structural_alignment": 0.8,
+				},
+				"depthflow": {
+					"bid_ladder_build": 2.0,
+				},
+			})
 
-func TestGridObserveAskLadderReleaseLightsExitOpposition(t *testing.T) {
-	grid := NewGrid(context.Background())
+			So(err, ShouldBeNil)
+			So(len(regions), ShouldBeGreaterThan, 0)
 
-	regions, err := grid.Observe("PEAQ/USD", map[string]map[string]float64{
-		"depthflow": {"ask_ladder_release": 1.9},
-	}, false)
-	if err != nil {
-		t.Fatalf("Observe failed: %v", err)
-	}
-
-	bright := map[uint8]float64{}
-	for _, r := range regions {
-		if r.Brightness > 0 {
-			bright[r.Key] = r.Brightness
-		}
-	}
-
-	if bright[5] <= 0 {
-		t.Fatalf("expected exit opposition R05 lit, got %v", bright)
-	}
-	if bright[7] > 0 {
-		t.Fatalf("ask_ladder_release must not light hold support R07, got %v", bright)
-	}
-}
-
-func TestGridObserveBidLadderBuildLightsHoldSupportOnly(t *testing.T) {
-	grid := NewGrid(context.Background())
-
-	regions, err := grid.Observe("PEAQ/USD", map[string]map[string]float64{
-		"depthflow": {"bid_ladder_build": 2.0},
-	}, false)
-	if err != nil {
-		t.Fatalf("Observe failed: %v", err)
-	}
-
-	bright := map[uint8]float64{}
-	for _, r := range regions {
-		if r.Brightness > 0 {
-			bright[r.Key] = r.Brightness
-		}
-	}
-
-	if bright[7] <= 0 {
-		t.Fatalf("expected hold support R07 lit, got %v", bright)
-	}
-	if bright[5] > 0 {
-		t.Fatalf("bid_ladder_build must not light exit opposition R05, got %v", bright)
-	}
-}
-
-func TestGridObserveDepthflowReleaseLightsExitSupport(t *testing.T) {
-	grid := NewGrid(context.Background())
-
-	sources := map[string]map[string]float64{
-		"depthflow": {
-			"bid_ladder_release": 2.63,
-		},
-	}
-
-	regions, err := grid.Observe("PEAQ/USD", sources, false)
-	if err != nil {
-		t.Fatalf("Observe failed: %v", err)
-	}
-
-	bright := map[uint8]float64{}
-	for _, r := range regions {
-		if r.Brightness > 0 {
-			bright[r.Key] = r.Brightness
-		}
-	}
-
-	if bright[4] <= 0 {
-		t.Fatalf("expected exit support R04 lit, got brightness map %v", bright)
-	}
-	for _, key := range []uint8{2, 8} {
-		if bright[key] > 0 {
-			t.Fatalf("bid_ladder_release must not light R%02d, got %v", key, bright)
-		}
-	}
-}
-
-func TestGridObserveBrightnessStaysNonZeroOnRepeat(t *testing.T) {
-	grid := NewGrid(context.Background())
-
-	sources := map[string]map[string]float64{
-		"pumpdump": {
-			"coiled_compression": 0.8,
-		},
-	}
-
-	// Observe the same signal 5 times — brightness must stay non-zero
-	// because evidence is present, even though the value doesn't change.
-	for tick := 0; tick < 5; tick++ {
-		regions, err := grid.Observe("BTC/USD", sources, false)
-		if err != nil {
-			t.Fatalf("tick %d: Observe failed: %v", tick, err)
-		}
-
-		found := false
-		for _, r := range regions {
-			if r.Key == 0 && r.Brightness > 0 {
-				found = true
+			lit := 0
+			for _, r := range regions {
+				if r.Brightness > 0 {
+					lit++
+				}
 			}
+
+			So(lit, ShouldBeGreaterThan, 0)
+		})
+
+		Convey("Corroborating metrics land on the same region", func() {
+			regions, err := fix.pulse("PEP/USD", map[string]map[string]float64{
+				"pumpdump": {"coiled_compression": 2.0},
+				"cvd":      {"aggressor_backing": 1.0},
+			})
+
+			So(err, ShouldBeNil)
+
+			var r00 *Region
+			for _, r := range regions {
+				if r.Key == 0 {
+					r00 = r
+					break
+				}
+			}
+
+			So(r00, ShouldNotBeNil)
+			So(r00.Counts, ShouldEqual, 2)
+			So(r00.Brightness, ShouldBeGreaterThan, 0)
+		})
+
+		Convey("coiled_compression lights enter detector R00 only", func() {
+			regions, err := fix.pulse("PEP/USD", map[string]map[string]float64{
+				"pumpdump": {"coiled_compression": 1.2},
+			})
+
+			So(err, ShouldBeNil)
+
+			bright := fix.litBrightness(regions)
+
+			So(bright[0], ShouldBeGreaterThan, 0)
+			So(bright[6], ShouldEqual, 0)
+		})
+
+		Convey("board_coiled lights enter confidence R09", func() {
+			regions, err := fix.pulse("PEAQ/USD", map[string]map[string]float64{
+				"pumpdump": {"board_coiled": 1.4},
+			})
+
+			So(err, ShouldBeNil)
+			So(fix.litBrightness(regions)[9], ShouldBeGreaterThan, 0)
+		})
+
+		Convey("ask_ladder_release lights exit opposition R05 not hold support R07", func() {
+			regions, err := fix.pulse("PEAQ/USD", map[string]map[string]float64{
+				"depthflow": {"ask_ladder_release": 1.9},
+			})
+
+			So(err, ShouldBeNil)
+
+			bright := fix.litBrightness(regions)
+
+			So(bright[5], ShouldBeGreaterThan, 0)
+			So(bright[7], ShouldEqual, 0)
+		})
+
+		Convey("bid_ladder_build lights hold support R07 not exit opposition R05", func() {
+			regions, err := fix.pulse("PEAQ/USD", map[string]map[string]float64{
+				"depthflow": {"bid_ladder_build": 2.0},
+			})
+
+			So(err, ShouldBeNil)
+
+			bright := fix.litBrightness(regions)
+
+			So(bright[7], ShouldBeGreaterThan, 0)
+			So(bright[5], ShouldEqual, 0)
+		})
+
+		Convey("bid_ladder_release lights exit support R04 only", func() {
+			regions, err := fix.pulse("PEAQ/USD", map[string]map[string]float64{
+				"depthflow": {"bid_ladder_release": 2.63},
+			})
+
+			So(err, ShouldBeNil)
+
+			bright := fix.litBrightness(regions)
+
+			So(bright[4], ShouldBeGreaterThan, 0)
+			So(bright[2], ShouldEqual, 0)
+			So(bright[8], ShouldEqual, 0)
+		})
+
+		Convey("SNM brightness fades when the metric is flat on repeat", func() {
+			sources := map[string]map[string]float64{
+				"pumpdump": {"coiled_compression": 0.8},
+			}
+
+			regions, err := fix.pulse("BTC/USD", sources)
+			So(err, ShouldBeNil)
+
+			litR00 := false
+			for _, r := range regions {
+				if r.Key == 0 && r.Brightness > 0 {
+					litR00 = true
+				}
+			}
+
+			So(litR00, ShouldBeTrue)
+
+			flat, err := fix.Observe("BTC/USD", sources)
+			So(err, ShouldBeNil)
+
+			for _, r := range flat {
+				if r.Key == 0 {
+					So(r.Brightness, ShouldEqual, 0)
+				}
+			}
+		})
+	})
+}
+
+func TestGridMaturity(t *testing.T) {
+	Convey("Given a grid observing one source for a pair", t, func() {
+		fix := newGridFixture()
+		sig := &Signal{Source: "pumpdump", Symbol: "PEP/USD"}
+
+		So(fix.Maturity(sig), ShouldEqual, 0)
+
+		for range 4 {
+			_, err := fix.Observe("PEP/USD", map[string]map[string]float64{
+				"pumpdump": {"coiled_compression": 0.5},
+			})
+			So(err, ShouldBeNil)
 		}
 
-		if !found {
-			t.Fatalf("tick %d: R00 brightness was 0 despite coiled_compression=0.8", tick)
-		}
-	}
+		So(fix.Maturity(sig), ShouldBeGreaterThan, 0)
+	})
 }

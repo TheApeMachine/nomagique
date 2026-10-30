@@ -14,6 +14,16 @@ type Prior struct {
 	Samples    int64
 	Prediction float64
 	Energy     float64
+	Scales     []float64 // running MAD scale per metric label for SNM
+}
+
+// priorEMANeff is the effective window for prior energy prediction and MAD scales.
+const priorEMANeff = 64.0
+
+// enterOppositionLevelLabels are R02 metrics whose [0,1] level is chronic posture
+// (starved tape), not only a surprise vs prior — enter phase only.
+var enterOppositionLevelLabels = map[string]struct{}{
+	"starved_tape": {},
 }
 
 /*
@@ -64,7 +74,9 @@ type Signal struct {
 
 /*
 Observe applies this tick's metrics for one pair, updates priors, and returns
-the regions those metrics landed in.
+the regions those metrics landed in. When enter is true (symbol not holding a
+lot), R02 starved_tape also honors bounded level so chronic thin tape lights
+enter opposition without requiring a surprise spike.
 */
 func (grid *Grid) Observe(
 	symbol string,
@@ -99,7 +111,7 @@ func (grid *Grid) Observe(
 			continue
 		}
 
-		if err := grid.ingestSignal(&slots, &regions, source, symbol, labels); err != nil {
+		if err := grid.ingestSignal(&slots, &regions, source, symbol, labels, enter); err != nil {
 			return nil, err
 		}
 	}
@@ -151,6 +163,7 @@ func (grid *Grid) ingestSignal(
 	regions *[]*Region,
 	source, symbol string,
 	labels map[string]float64,
+	enterPhase bool,
 ) error {
 	names := make([]string, 0, len(labels))
 
@@ -172,9 +185,7 @@ func (grid *Grid) ingestSignal(
 		Values: values,
 	}
 
-	if err := pinned(symbol, signal); err != nil {
-		return err
-	}
+	pinned(symbol, signal)
 
 	prior := grid.ensurePrior(source, symbol)
 
@@ -183,13 +194,15 @@ func (grid *Grid) ingestSignal(
 	}
 
 	if prior.Samples > 0 {
-		prior.Prediction += (prior.Energy - prior.Prediction) / float64(prior.Samples)
+		alpha := 2.0 / (priorEMANeff + 1.0)
+		prior.Prediction = (1-alpha)*prior.Prediction + alpha*prior.Energy
 	}
 
 	energy := 0.0
 
 	for idx := range signal.Values {
-		snm := grid.SNM(&signal, idx)
+		grid.updateScale(prior, idx, signal.Values[idx])
+		snm := grid.SNM(prior, idx, signal.Values[idx])
 		energy += snm * snm
 	}
 
@@ -223,7 +236,11 @@ func (grid *Grid) ingestSignal(
 				*regions = append(*regions, region)
 			}
 
-			def := math.Abs(grid.SNM(&signal, idx)) * excitation
+			val := signal.Values[idx]
+			snmDef := math.Abs(grid.SNM(prior, idx, val)) * excitation
+			def := enterOppositionLevelDeformation(
+				key, label, val, excitation, snmDef, enterPhase,
+			)
 			region.Deformation += def
 			region.deformations = append(region.deformations, def)
 			region.Counts++
@@ -238,15 +255,15 @@ func (grid *Grid) ingestSignal(
 }
 
 /*
-pinned rejects a label that the source map does not name. An unknown source
-has no pins to check. The error is returned to the caller and is not stored
-on the grid.
+pinned checks whether all labels in a signal are mapped in regionMetricPins.
+Unpinned labels are logged as a warning and skipped during region accumulation,
+rather than failing the entire observation for the symbol.
 */
-func pinned(symbol string, signal Signal) error {
+func pinned(symbol string, signal Signal) {
 	sourcePins, ok := regionMetricPins[signal.Source]
 
 	if !ok {
-		return nil
+		return
 	}
 
 	for _, label := range signal.Labels {
@@ -254,37 +271,44 @@ func pinned(symbol string, signal Signal) error {
 			continue
 		}
 
-		return errnie.Err(
-			errnie.Validation,
-			"grid: "+symbol+" metric "+signal.Source+"/"+label+" is not pinned to a region",
-			nil,
-		)
+		errnie.Warn("grid: " + symbol + " metric " + signal.Source + "/" + label + " is not pinned to a region; skipping")
+	}
+}
+
+func (grid *Grid) updateScale(prior *Prior, idx int, val float64) {
+	if prior == nil {
+		return
 	}
 
-	return nil
+	for len(prior.Scales) <= idx {
+		prior.Scales = append(prior.Scales, 0)
+	}
+
+	alpha := 2.0 / (priorEMANeff + 1.0)
+	absVal := math.Abs(val)
+	if prior.Scales[idx] <= 0 {
+		prior.Scales[idx] = absVal
+		return
+	}
+
+	prior.Scales[idx] = (1-alpha)*prior.Scales[idx] + alpha*absVal
 }
 
 /*
-SNM (Self-Normalized Movement) takes the reference from the prior magnitude
-and the movement itself. It measures a transition, not an isolated value.
-The result stays within \([-1,1]\) without statistical calibration.
+SNM (Self-Normalized Magnitude) soft-clips evidence with a running MAD scale
+so high-volatility regimes stay rankable instead of saturating together.
 */
-func (grid *Grid) SNM(signal *Signal, idx int) float64 {
-	prior := grid.ensurePrior(signal.Source, signal.Symbol)
-
-	if idx >= len(signal.Values) || idx >= len(prior.Signal.Values) {
+func (grid *Grid) SNM(prior *Prior, idx int, val float64) float64 {
+	if val == 0 {
 		return 0
 	}
 
-	rawPrior := prior.Signal.Values[idx]
-	delta := signal.Values[idx] - rawPrior
-	denominator := math.Abs(rawPrior) + math.Abs(delta)
-
-	if denominator == 0 {
-		return 0
+	scale := 1.0
+	if prior != nil && idx < len(prior.Scales) && prior.Scales[idx] > 0 {
+		scale = prior.Scales[idx]
 	}
 
-	return delta / denominator
+	return math.Tanh(val / scale)
 }
 
 /*
@@ -298,6 +322,76 @@ func (grid *Grid) Surprise(prediction, energy float64) float64 {
 	}
 
 	return math.Abs(energy - prediction)
+}
+
+func enterOppositionLevelDeformation(
+	regionKey uint8,
+	label string,
+	val, excitation, snmDef float64,
+	enterPhase bool,
+) float64 {
+	if !enterPhase || regionKey != 2 {
+		return snmDef
+	}
+	if _, ok := enterOppositionLevelLabels[label]; !ok {
+		return snmDef
+	}
+	if val < 0 || val > 1 {
+		return snmDef
+	}
+	// Blend level gently so chronic starved tape lights R02 without swamping netSpark.
+	levelDef := 0.5 * val * excitation
+	if levelDef > snmDef {
+		return levelDef
+	}
+	return snmDef
+}
+
+/*
+SymbolMaturity is the mean grid maturity across enter-story sources that have
+seen this symbol. A single cold source must not veto pairs that are warm on
+pumpdump and depthflow.
+*/
+var enterMaturitySources = map[string]struct{}{
+	"pumpdump":    {},
+	"depthflow":   {},
+	"cvd":         {},
+	"correlation": {},
+	"leadlag":     {},
+}
+
+func (grid *Grid) SymbolMaturity(symbol string) float64 {
+	if grid == nil || symbol == "" || len(grid.Priors) == 0 {
+		return 0
+	}
+
+	var sum float64
+	var count int
+
+	for source, bySymbol := range grid.Priors {
+		if _, ok := enterMaturitySources[source]; !ok {
+			continue
+		}
+
+		prior := bySymbol[symbol]
+		if prior == nil || prior.Samples <= 0 {
+			continue
+		}
+
+		signal := Signal{
+			Source: source,
+			Symbol: symbol,
+			Labels: prior.Signal.Labels,
+		}
+		sum += grid.Maturity(&signal)
+		count++
+	}
+
+	if count == 0 {
+		return 0
+	}
+
+	return sum / float64(count)
 }
 
 /*

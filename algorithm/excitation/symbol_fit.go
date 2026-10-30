@@ -118,7 +118,7 @@ func (symbol *symbol) evaluate(
 	poisson := context.PoissonFit().WithIntensitiesAt(stream, horizon)
 	immediateBuy, immediateSell, _ := model.ImmediateOffspring()
 	totalBuy, totalSell, _ := model.TotalDescendants()
-	outcome := symbol.outcome(context, stream, horizon, fit)
+	outcome := symbol.outcome(context, horizon, fit)
 	outcome.HawkesPoissonLogLikelihoodDelta =
 		fullLikelihood - poisson.LogLikelihood(stream, horizon)
 	outcome.CrossSelfLogLikelihoodDelta =
@@ -141,7 +141,6 @@ func (symbol *symbol) evaluate(
 
 func (symbol *symbol) outcome(
 	context hawkes.FitContext,
-	stream hawkes.ArrivalStream,
 	horizon time.Time,
 	fit hawkes.BivariateFit,
 ) Outcome {

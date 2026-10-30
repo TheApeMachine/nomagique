@@ -99,7 +99,11 @@ func (process *Process) Measure(input Input) (Outcome, bool, error) {
 
 	input.Stream = input.Stream.WithObservationOrigin(input.ObservedFrom)
 
-	outcome, ready := process.symbol(input.Symbol).measure(
+	sym := process.symbol(input.Symbol)
+	sym.mu.Lock()
+	defer sym.mu.Unlock()
+
+	outcome, ready := sym.measure(
 		input.Stream,
 		input.Horizon,
 	)

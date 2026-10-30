@@ -79,21 +79,28 @@ func (sample *Sample) MeasureArrival(
 		))
 	}
 
-	window := sample.window(input.Symbol)
+	sample.mu.Lock()
+	defer sample.mu.Unlock()
 
-	if window.origin.IsZero() || arrival.Before(window.origin) {
-		window.origin = arrival
+	hist := sample.windows[input.Symbol]
+	if hist == nil {
+		hist = &window{arrivals: hawkes.NewArrivalWindow(0)}
+		sample.windows[input.Symbol] = hist
+	}
+
+	if hist.origin.IsZero() || arrival.Before(hist.origin) {
+		hist.origin = arrival
 	}
 
 	if input.Side == "buy" {
-		window.arrivals.AppendBuy(arrival)
+		hist.arrivals.AppendBuy(arrival)
 	}
 
 	if input.Side == "sell" {
-		window.arrivals.AppendSell(arrival)
+		hist.arrivals.AppendSell(arrival)
 	}
 
-	return window.input(input.Symbol)
+	return hist.input(input.Symbol)
 }
 
 /*

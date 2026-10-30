@@ -74,7 +74,7 @@ func (symbol *symbol) measure(
 	}
 
 	if !context.EnoughEvents(observed) {
-		return symbol.retain(symbol.baseline(context, observed, horizon)), true
+		return symbol.retain(symbol.baseline(context, horizon)), true
 	}
 
 	if symbol.hasFit {
@@ -111,7 +111,7 @@ func (symbol *symbol) observation(
 	context, ready := hawkes.NewObservationContext(stream, horizon)
 
 	if ready {
-		return symbol.outcome(context, stream, horizon, hawkes.BivariateFit{})
+		return symbol.outcome(context, horizon, hawkes.BivariateFit{})
 	}
 
 	buyCount, sellCount := stream.ObservationCounts(horizon)
@@ -146,28 +146,19 @@ func (symbol *symbol) observation(
 
 func (symbol *symbol) baseline(
 	context hawkes.FitContext,
-	stream hawkes.ArrivalStream,
 	horizon time.Time,
 ) Outcome {
-	outcome := symbol.outcome(
-		context,
-		stream,
-		horizon,
-		context.PoissonFit(),
-	)
+	outcome := symbol.outcome(context, horizon, context.PoissonFit())
 	outcome.Readiness = Readiness{
 		Observation: true,
 		Intensity:   true,
-		Reason:      symbol.pendingReason(context, stream),
+		Reason:      symbol.pendingReason(context),
 	}
 
 	return outcome
 }
 
-func (symbol *symbol) pendingReason(
-	context hawkes.FitContext,
-	stream hawkes.ArrivalStream,
-) string {
+func (symbol *symbol) pendingReason(context hawkes.FitContext) string {
 	buyCount := context.EventsX
 	sellCount := context.EventsY
 
@@ -220,10 +211,10 @@ func (symbol *symbol) requestFit(
 	}()
 }
 
+// takePending publishes a finished async fit. Caller holds symbol.mu.
+// Measure already owns that lock, and sync.Mutex does not reenter, so a
+// second Lock here stalls the signal ring on the first ready stream.
 func (symbol *symbol) takePending() *fitEpoch {
-	symbol.mu.Lock()
-	defer symbol.mu.Unlock()
-
 	pending := symbol.pending
 	symbol.pending = nil
 

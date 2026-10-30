@@ -35,6 +35,10 @@ type Workspace struct {
 	capacity int
 	stages   [][]*Consumer
 	buffer   []*data.Value
+	dones    []chan struct{}
+	remain   []int32
+	lastN    int32
+	settled  atomic.Value // func(*data.Value)
 	onTrace  atomic.Value
 }
 
@@ -51,11 +55,23 @@ func NewWorkspace(
 	capacity := 8192
 	mask := int64(capacity - 1)
 
+	lastIdx := -1
+	for i, stage := range stages {
+		if len(stage.Nodes) > 0 {
+			lastIdx = i
+		}
+	}
+
 	workspace := &Workspace{
 		mask:     mask,
 		capacity: capacity,
 		stages:   make([][]*Consumer, len(stages)),
 		buffer:   make([]*data.Value, capacity),
+		dones:    make([]chan struct{}, capacity),
+		remain:   make([]int32, capacity),
+	}
+	if lastIdx >= 0 {
+		workspace.lastN = int32(len(stages[lastIdx].Nodes))
 	}
 
 	opts := optionList(
@@ -73,6 +89,7 @@ func NewWorkspace(
 			group = append(group, &stageHandler{
 				consumer:  consumer,
 				workspace: workspace,
+				last:      stageIdx == lastIdx,
 			})
 		}
 
@@ -137,9 +154,23 @@ func (workspace *Workspace) Step(value *data.Value) *data.Value {
 	seq := workspace.channel.Reserve(1)
 
 	slot := seq & workspace.mask
+	done := make(chan struct{})
+	if workspace.lastN > 0 {
+		atomic.StoreInt32(&workspace.remain[slot], workspace.lastN)
+		workspace.dones[slot] = done
+	}
 	workspace.buffer[slot] = value
 
 	workspace.channel.Commit(seq, seq)
+
+	// Step returns the tick only after every ring has handled it. The caller
+	// publishes that value; a frame sent before Commit is missing its layers.
+	if workspace.lastN > 0 {
+		select {
+		case <-done:
+		case <-workspace.Context().Done():
+		}
+	}
 
 	return value
 }
@@ -147,16 +178,50 @@ func (workspace *Workspace) Step(value *data.Value) *data.Value {
 type stageHandler struct {
 	consumer  *Consumer
 	workspace *Workspace
+	last      bool
 }
 
 func (sh *stageHandler) Handle(lower, upper int64) {
 	for seq := lower; seq <= upper; seq++ {
 		value := sh.workspace.buffer[seq&sh.workspace.mask]
 
-		if value == nil {
-			continue
+		if value != nil {
+			sh.consumer.Step(value)
 		}
 
-		sh.consumer.Step(value)
+		if sh.last {
+			sh.workspace.finish(seq)
+		}
+	}
+}
+
+func (workspace *Workspace) OnSettled(fn func(*data.Value)) {
+	if workspace == nil {
+		return
+	}
+	workspace.settled.Store(fn)
+}
+
+func (workspace *Workspace) finish(seq int64) {
+	slot := seq & workspace.mask
+	if atomic.AddInt32(&workspace.remain[slot], -1) != 0 {
+		return
+	}
+
+	if fn, _ := workspace.settled.Load().(func(*data.Value)); fn != nil {
+		if value := workspace.buffer[slot]; value != nil {
+			fn(value)
+		}
+	}
+
+	done := workspace.dones[slot]
+	if done == nil {
+		return
+	}
+
+	select {
+	case <-done:
+	default:
+		close(done)
 	}
 }

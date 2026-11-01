@@ -137,13 +137,13 @@ func TestGridObserve(t *testing.T) {
 			So(regions[0].Brightness, ShouldBeGreaterThan, 0)
 		})
 
-		Convey("peak_score lights board confidence R09", func() {
+		Convey("peak_score lights board confidence approve R18", func() {
 			regions, err := fix.pulse("PEAQ/USD", map[string]map[string]float64{
 				"correlation": {"peak_score": 1.4},
 			})
 
 			So(err, ShouldBeNil)
-			So(regions[9].Brightness, ShouldBeGreaterThan, 0)
+			So(regions[18].Brightness, ShouldBeGreaterThan, 0)
 		})
 
 		Convey("ask_vacuum lights exit opposition R05", func() {
@@ -187,7 +187,7 @@ func TestGridObserve(t *testing.T) {
 			So(flat[0].Brightness, ShouldEqual, 0)
 		})
 
-		Convey("spectral_radius lights hold detector and board confidence", func() {
+		Convey("spectral_radius lights hold detector and board confidence approve", func() {
 			symbol := "CFG/USD"
 
 			_, err := fix.Observe(symbol, map[string]map[string]float64{
@@ -206,7 +206,7 @@ func TestGridObserve(t *testing.T) {
 			})
 			So(err, ShouldBeNil)
 			So(regions[6].Brightness, ShouldBeGreaterThan, 0)
-			So(regions[10].Brightness, ShouldBeGreaterThan, 0)
+			So(regions[18].Brightness, ShouldBeGreaterThan, 0)
 		})
 	})
 }
@@ -226,5 +226,82 @@ func TestGridMaturity(t *testing.T) {
 		}
 
 		So(fix.Maturity(sig), ShouldBeGreaterThan, 0)
+	})
+}
+
+func TestPathToken(t *testing.T) {
+	Convey("PathToken is the brightest action regime; oracles ignored", t, func() {
+		regions := make([]*Region, RegionCount)
+		for key := uint8(0); key < RegionCount; key++ {
+			regions[key] = &Region{Symbol: "BTC/USD", Key: key}
+		}
+
+		regions[10].Brightness = 1
+		regions[14].Brightness = 1
+		regions[0].Brightness = 0.4
+		regions[2].Brightness = 0.9
+
+		token, brightness := PathToken(regions)
+		So(token, ShouldEqual, "R02")
+		So(brightness, ShouldEqual, 0.9)
+	})
+}
+
+func TestGridEmit(t *testing.T) {
+	Convey("Given a full region set with action and oracle brightness", t, func() {
+		regions := make([]*Region, RegionCount)
+		for key := uint8(0); key < RegionCount; key++ {
+			regions[key] = &Region{
+				Symbol:      "BTC/USD",
+				Key:         key,
+				Brightness:  0.5,
+				Deformation: 1.5,
+				Counts:      1,
+			}
+		}
+
+		regions[17].Brightness = 0.9
+		regions[18].Brightness = 0.4
+
+		Convey("Flat keeps Enter, zeros Exit/Hold, oracle winner only", func() {
+			fix := newGridFixture()
+			fix.Emit(regions, false)
+
+			So(regions[0].Brightness, ShouldEqual, 0.5)
+			So(regions[2].Brightness, ShouldEqual, 0.5)
+			So(regions[3].Brightness, ShouldEqual, 0)
+			So(regions[6].Brightness, ShouldEqual, 0)
+			So(regions[8].Brightness, ShouldEqual, 0)
+
+			So(regions[17].Brightness, ShouldEqual, 0.9)
+			So(regions[18].Brightness, ShouldEqual, 0)
+		})
+
+		Convey("Open keeps Exit/Hold, zeros Enter, oracle winner only", func() {
+			regions := make([]*Region, RegionCount)
+			for key := uint8(0); key < RegionCount; key++ {
+				regions[key] = &Region{
+					Symbol:      "BTC/USD",
+					Key:         key,
+					Brightness:  0.5,
+					Deformation: 1.5,
+					Counts:      1,
+				}
+			}
+
+			regions[13].Brightness = 0.2
+			regions[14].Brightness = 0.7
+
+			fix := newGridFixture()
+			fix.Emit(regions, true)
+
+			So(regions[0].Brightness, ShouldEqual, 0)
+			So(regions[2].Brightness, ShouldEqual, 0)
+			So(regions[3].Brightness, ShouldEqual, 0.5)
+			So(regions[7].Brightness, ShouldEqual, 0.5)
+
+			So(regions[13].Brightness, ShouldEqual, 0)
+			So(regions[14].Brightness, ShouldEqual, 0.7)
+		})
 	})
 }

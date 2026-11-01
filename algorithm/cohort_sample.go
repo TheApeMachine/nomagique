@@ -3,6 +3,7 @@ package algorithm
 import (
 	"math"
 	"sort"
+	"sync"
 	"time"
 
 	"github.com/theapemachine/errnie"
@@ -21,8 +22,10 @@ const (
 /*
 CohortSample turns symbol price streams into the feature batch Cohort expects.
 The window is derived from observed per-symbol return history and shared peer depth.
+Measure locks the whole board: peer correlation reads every symbol's history.
 */
 type CohortSample struct {
+	mu      sync.Mutex
 	config  CohortSampleConfig
 	symbols map[string]*cohortSymbol
 }
@@ -78,8 +81,11 @@ Measure observes a tick and emits a feature frame once peer history is ready.
 func (cohortSample *CohortSample) Measure(
 	input CohortSampleInput,
 ) (equation.FeatureFrame, bool, error) {
+	cohortSample.mu.Lock()
+	defer cohortSample.mu.Unlock()
+
 	sample, err := cohortSample.sample(input)
-	
+
 	if err != nil {
 		return equation.FeatureFrame{}, false, err
 	}

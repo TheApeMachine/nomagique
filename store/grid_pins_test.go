@@ -20,4 +20,8 @@ func TestRegionMetricPinsInRange(t *testing.T) {
 			}
 		}
 	})
+
+	Convey("regionMetricPins matches Catalog.Pins", t, func() {
+		So(regionMetricPins, ShouldResemble, Catalog.Pins())
+	})
 }

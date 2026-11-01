@@ -993,14 +993,23 @@ func (rm *ResonanceManifold) TaskPrecision() (float64, bool) {
 		return 0, false
 	}
 
+	sum := 0.0
+	ready := 0
+
 	for rowIndex := range rm.targetDim {
 		if !rm.taskScaleReady[rowIndex] {
-			return 0, false
+			continue
 		}
+
+		sum += rm.taskPrecision.AtVec(rowIndex)
+		ready++
 	}
 
-	return floats.Sum(rm.taskPrecision.RawVector().Data) /
-		float64(rm.targetDim), true
+	if ready == 0 {
+		return 0, false
+	}
+
+	return sum / float64(ready), true
 }
 
 /*
@@ -1334,10 +1343,20 @@ func (rm *ResonanceManifold) updateTaskReliability(
 			beta*math.Log(taskVarianceData[rowIndex])
 	}
 
+	// First supervised pass marks every dim ready — zero residual still
+	// seeds precision at 1 (init variance), so constant/held features do
+	// not block TaskPrecision forever the way a nonzero-error gate would.
 	for rowIndex, ready := range rm.taskScaleReady {
-		if !ready && squaredErrorData[rowIndex] > 0 {
-			rm.taskScaleReady[rowIndex] = true
+		if ready {
+			continue
 		}
+
+		if squaredErrorData[rowIndex] > 0 {
+			taskVarianceData[rowIndex] = squaredErrorData[rowIndex]
+			taskScaleData[rowIndex] = math.Log(squaredErrorData[rowIndex])
+		}
+
+		rm.taskScaleReady[rowIndex] = true
 	}
 
 	if !(floats.Min(taskVarianceData) > 0) ||

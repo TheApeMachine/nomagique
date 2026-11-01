@@ -125,6 +125,10 @@ func (sample *LagSample) Measure(input LagSampleInput) (LagInput, bool, error) {
 	symbol.mu.Lock()
 	defer symbol.mu.Unlock()
 
+	if len(symbol.samples) > 0 && !input.At.After(symbol.samples[len(symbol.samples)-1].At) {
+		return LagInput{}, false, nil
+	}
+
 	move := 0.0
 	if symbol.last > 0 {
 		move = math.Abs(math.Log(input.Price / symbol.last))

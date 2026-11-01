@@ -1,6 +1,7 @@
 package algorithm
 
 import (
+	"sync"
 	"testing"
 	"time"
 
@@ -94,6 +95,38 @@ func TestCohortSampleHistoryIsBounded(testingTB *testing.T) {
 				So(len(symbolState.returns), ShouldBeLessThanOrEqualTo, historyCap)
 				So(len(symbolState.times), ShouldBeLessThanOrEqualTo, historyCap)
 			}
+		})
+	})
+}
+
+func TestCohortSampleConcurrentMeasure(testingTB *testing.T) {
+	Convey("Given concurrent Measure calls across symbols", testingTB, func() {
+		sample := NewCohortSample()
+		base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
+		symbols := []string{"ALPHA/USD", "BETA/USD", "GAMMA/USD", "DELTA/USD"}
+
+		var wg sync.WaitGroup
+
+		for tick := range 16 {
+			for symbolIndex, symbol := range symbols {
+				wg.Add(1)
+
+				go func(tick, symbolIndex int, symbol string) {
+					defer wg.Done()
+
+					_, _, _ = sample.Measure(cohortSampleTicker(
+						symbol,
+						100+float64(tick)+float64(symbolIndex),
+						base.Add(time.Duration(tick)*time.Second),
+					))
+				}(tick, symbolIndex, symbol)
+			}
+		}
+
+		wg.Wait()
+
+		Convey("It should finish without racing the symbols map", func() {
+			So(true, ShouldBeTrue)
 		})
 	})
 }

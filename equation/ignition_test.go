@@ -163,13 +163,15 @@ func TestIgnition_Measure(t *testing.T) {
 		smaller := ignitionInput(4)
 		smaller.Volume = 1
 		_, _, _, volumeErr := ignition.Measure(smaller)
+		So(volumeErr, ShouldBeNil)
+		last := ignition.windows["BTC/USD"].lastTime
 		regressed := ignitionInput(4)
 		regressed.At = ignitionInput(2).At
 		_, _, _, timeErr := ignition.Measure(regressed)
 
-		Convey("It accepts quantity variation and rejects time regression", func() {
-			So(volumeErr, ShouldBeNil)
-			So(timeErr, ShouldNotBeNil)
+		Convey("It accepts quantity variation and ignores late prints", func() {
+			So(timeErr, ShouldBeNil)
+			So(ignition.windows["BTC/USD"].lastTime, ShouldEqual, last)
 		})
 	})
 

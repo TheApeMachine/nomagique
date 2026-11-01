@@ -1,13 +1,25 @@
 package runtime
 
 import (
-	"github.com/bytedance/sonic"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/nomagique/algorithm/excitation"
 	"github.com/theapemachine/nomagique/equation"
 	"github.com/theapemachine/nomagique/market"
 )
+
+/*
+Decision is one symbol's model/desk outcome for a tick: action taken or why not.
+*/
+type Decision struct {
+	Symbol     string  `json:"symbol"`
+	Action     string  `json:"action"`
+	Reason     string  `json:"reason"`
+	Gate       string  `json:"gate,omitempty"`
+	Path       string  `json:"path,omitempty"`
+	Virtual    bool    `json:"virtual,omitempty"`
+	Confidence float64 `json:"confidence,omitempty"`
+}
 
 type Envelope struct {
 	*market.Trade `json:"trade"`
@@ -24,6 +36,7 @@ type Envelope struct {
 	Resonance     map[string]map[string]float64          `json:"resonance"`
 	Regions       map[string][]*Region                   `json:"regions"`
 	Paths         map[string]*Tokens                     `json:"paths"`
+	Decisions     map[string]*Decision                   `json:"decisions"`
 }
 
 func NewEnvelope(trade *market.Trade) *Envelope {
@@ -42,7 +55,23 @@ func NewEnvelope(trade *market.Trade) *Envelope {
 		Resonance:   make(map[string]map[string]float64),
 		Regions:     make(map[string][]*Region),
 		Paths:       make(map[string]*Tokens),
+		Decisions:   make(map[string]*Decision),
 	}
+}
+
+/*
+Decide records the outcome for one symbol on this tick.
+*/
+func (envelope *Envelope) Decide(decision *Decision) {
+	if envelope == nil || decision == nil || decision.Symbol == "" {
+		return
+	}
+
+	if envelope.Decisions == nil {
+		envelope.Decisions = make(map[string]*Decision)
+	}
+
+	envelope.Decisions[decision.Symbol] = decision
 }
 
 /*
@@ -120,6 +149,8 @@ func (envelope *Envelope) Publish(ctx string) []byte {
 		payload = envelope.Paths
 	case "resonance":
 		payload = envelope.Resonance
+	case "decisions":
+		payload = envelope.Decisions
 	case "trade":
 		payload = envelope.Trade
 	case "correlation":
@@ -150,7 +181,7 @@ func (envelope *Envelope) Publish(ctx string) []byte {
 		return nil
 	}
 
-	buf, err := sonic.Marshal(map[string]any{ctx: payload})
+	buf, err := Sonic.Marshal(map[string]any{ctx: payload})
 
 	if err != nil {
 		errnie.Error(errnie.Err(

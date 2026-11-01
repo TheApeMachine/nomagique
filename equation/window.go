@@ -2,6 +2,7 @@ package equation
 
 import (
 	"math"
+	"sync"
 	"time"
 
 	"github.com/theapemachine/errnie"
@@ -14,6 +15,8 @@ symbol. Its target quantities, normalizers, and counter-evidence scales all
 come from retained observations from that same symbol.
 */
 type ignitionWindow struct {
+	mu sync.Mutex
+
 	capacity int
 
 	initialized bool
@@ -36,11 +39,15 @@ type ignitionWindow struct {
 
 /*
 observe validates and advances one symbol without mixing its state into the
-public multi-symbol coordinator.
+public multi-symbol coordinator. Late/out-of-order prints are ignored so the
+causal clock stays monotonic without failing the whole feed.
 */
 func (window *ignitionWindow) observe(
 	input IgnitionInput,
 ) (IgnitionOutput, bool, float64, error) {
+	window.mu.Lock()
+	defer window.mu.Unlock()
+
 	spread := input.Ask - input.Bid
 
 	if !window.initialized {
@@ -57,11 +64,7 @@ func (window *ignitionWindow) observe(
 	}
 
 	if window.haveTime && !input.At.IsZero() && input.At.Before(window.lastTime) {
-		return IgnitionOutput{}, false, 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"ignition: observation time cannot move backwards",
-			nil,
-		))
+		return window.compose(spread), window.ready(), window.maturity(), nil
 	}
 
 	candidate := window.clone()
@@ -71,20 +74,53 @@ func (window *ignitionWindow) observe(
 	}
 
 	candidate.spreads = candidate.appendPositive(candidate.spreads, spread)
-	*window = candidate
+	window.restore(candidate)
 
 	return window.compose(spread), window.ready(), window.maturity(), nil
 }
 
-func (window *ignitionWindow) clone() ignitionWindow {
-	candidate := *window
-	candidate.deltas = append([]float64(nil), window.deltas...)
-	candidate.rates = append([]float64(nil), window.rates...)
-	candidate.returns = append([]float64(nil), window.returns...)
-	candidate.precursors = append([]float64(nil), window.precursors...)
-	candidate.spreads = append([]float64(nil), window.spreads...)
+/*
+clone copies retained fields onto a disposable window. The candidate's mutex is
+unused; the caller already holds the live window lock.
+*/
+func (window *ignitionWindow) clone() *ignitionWindow {
+	return &ignitionWindow{
+		capacity:    window.capacity,
+		initialized: window.initialized,
+		classified:  window.classified,
+		bars:        window.bars,
+		lastTime:    window.lastTime,
+		haveTime:    window.haveTime,
+		barVolume:   window.barVolume,
+		barOpenTime: window.barOpenTime,
+		prevClose:   window.prevClose,
+		lastRVOL:    window.lastRVOL,
+		deltas:      append([]float64(nil), window.deltas...),
+		rates:       append([]float64(nil), window.rates...),
+		returns:     append([]float64(nil), window.returns...),
+		precursors:  append([]float64(nil), window.precursors...),
+		spreads:     append([]float64(nil), window.spreads...),
+		cached:      window.cached,
+	}
+}
 
-	return candidate
+func (window *ignitionWindow) restore(candidate *ignitionWindow) {
+	window.capacity = candidate.capacity
+	window.initialized = candidate.initialized
+	window.classified = candidate.classified
+	window.bars = candidate.bars
+	window.lastTime = candidate.lastTime
+	window.haveTime = candidate.haveTime
+	window.barVolume = candidate.barVolume
+	window.barOpenTime = candidate.barOpenTime
+	window.prevClose = candidate.prevClose
+	window.lastRVOL = candidate.lastRVOL
+	window.deltas = candidate.deltas
+	window.rates = candidate.rates
+	window.returns = candidate.returns
+	window.precursors = candidate.precursors
+	window.spreads = candidate.spreads
+	window.cached = candidate.cached
 }
 
 /*

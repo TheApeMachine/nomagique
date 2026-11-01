@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"slices"
 
@@ -10,9 +11,19 @@ import (
 )
 
 /*
-RegionCount is the number of confluence regions the pins map metrics into.
+RegionCount is Action (9) + Oracle×{Veto,Approve} (7×2) — see regimes.go Catalog.
 */
-const RegionCount = 15
+const RegionCount = 23
+
+const (
+	enterDetector = 0
+	enterLast     = 2
+	exitDetector  = 3
+	exitLast      = 5
+	holdDetector  = 6
+	holdLast      = 8
+	oracleFirst   = 9
+)
 
 /*
 TargetPinsPerRegion is the designed confluence width used as the brightness
@@ -181,6 +192,105 @@ func (grid *Grid) Observe(
 	}
 
 	return regions, nil
+}
+
+/*
+Emit masks Observe output for the inventory regime and collapses each oracle
+to the brighter of Veto/Approve. Priors stay intact; only published brightness
+is gated. Support/Opposition stay lit — path resistance resolves them later.
+*/
+func (grid *Grid) Emit(regions []*Region, open bool) {
+	if len(regions) == 0 {
+		return
+	}
+
+	if open {
+		zeroBand(regions, enterDetector, enterLast)
+	} else {
+		zeroBand(regions, exitDetector, exitLast)
+		zeroBand(regions, holdDetector, holdLast)
+	}
+
+	for veto := uint8(oracleFirst); int(veto)+1 < len(regions) && veto < RegionCount; veto += 2 {
+		approve := veto + 1
+		left := regions[veto]
+		right := regions[approve]
+
+		if left == nil || right == nil {
+			continue
+		}
+
+		if left.Brightness >= right.Brightness {
+			right.Brightness = 0
+			right.Deformation = 0
+			right.Counts = 0
+			continue
+		}
+
+		left.Brightness = 0
+		left.Deformation = 0
+		left.Counts = 0
+	}
+}
+
+func zeroBand(regions []*Region, from, to uint8) {
+	for key := from; key <= to && int(key) < len(regions); key++ {
+		region := regions[key]
+		if region == nil {
+			continue
+		}
+
+		region.Brightness = 0
+		region.Deformation = 0
+		region.Counts = 0
+	}
+}
+
+/*
+Shine lights one region as a hard oracle/action hit (absolute gates).
+*/
+func Shine(region *Region) {
+	if region == nil {
+		return
+	}
+
+	region.Brightness = 1
+	region.Deformation = TargetPinsPerRegion
+	region.Counts = 1
+}
+
+/*
+PathToken is the single dominant microstructural regime (R00–R08) after Emit.
+Oracles stay on the board for Tradable(); they are not sequencer alphabet.
+*/
+func PathToken(regions []*Region) (token string, brightness float64) {
+	if len(regions) == 0 {
+		return "", 0
+	}
+
+	limit := len(regions)
+	if limit > int(holdLast)+1 {
+		limit = int(holdLast) + 1
+	}
+
+	var action *Region
+
+	for key := uint8(0); key < uint8(limit); key++ {
+		region := regions[key]
+		if region == nil || region.Brightness <= 0 {
+			continue
+		}
+
+		if action == nil || region.Brightness > action.Brightness {
+			action = region
+		}
+	}
+
+	if action == nil {
+		return "", 0
+	}
+
+	return fmt.Sprintf("R%02d", action.Key), action.Brightness
 }
 
 /*

@@ -101,17 +101,16 @@ func LagInputFromFields(fields []float64) (LagInput, error) {
 }
 
 /*
-Measure classifies typed lead-lag evidence.
+Measure classifies typed lead-lag evidence. Ineligible readings return an empty
+outcome without error so warmup stays quiet on the feed.
 */
 func (lag *Lag) Measure(input LagInput) (LagOutcome, error) {
 	lag.outcome = lag.evaluate(input)
 
 	if !lag.outcome.Eligible || lag.outcome.Strength <= 0 {
-		return LagOutcome{}, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"lag: insufficient signal eligibility",
-			nil,
-		))
+		lag.outcome = LagOutcome{}
+
+		return LagOutcome{}, nil
 	}
 
 	return lag.outcome, nil

@@ -56,14 +56,32 @@ type BookflowInput struct {
 BookflowOutput contains the float-only book-flow scores.
 */
 type BookflowOutput struct {
-	Value                float64
-	HypothesisSeparation float64
-	LoadedScore          float64
-	SpoofScore           float64
-	ThinScore            float64
-	NeutralScore         float64
-	Category             float64
-	Ready                bool
+	Value                float64 `json:"value"`
+	HypothesisSeparation float64 `json:"hypothesis_separation"`
+	LoadedScore          float64 `json:"loaded_score"`
+	SpoofScore           float64 `json:"spoof_score"`
+	ThinScore            float64 `json:"thin_score"`
+	NeutralScore         float64 `json:"neutral_score"`
+	Category             float64 `json:"category"`
+	Ready                bool    `json:"ready"`
+}
+
+/*
+Map returns scored labels for the grid.
+*/
+func (output *BookflowOutput) Map() map[string]float64 {
+	if output == nil {
+		return nil
+	}
+
+	return map[string]float64{
+		"loaded_score":          output.LoadedScore,
+		"spoof_score":           output.SpoofScore,
+		"thin_score":            output.ThinScore,
+		"neutral_score":         output.NeutralScore,
+		"hypothesis_separation": output.HypothesisSeparation,
+		"value":                 output.Value,
+	}
 }
 
 /*

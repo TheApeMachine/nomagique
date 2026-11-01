@@ -1,8 +1,8 @@
 package equation
 
 import (
-	"slices"
 	"math"
+	"slices"
 	"sort"
 
 	"github.com/theapemachine/errnie"
@@ -41,16 +41,36 @@ func cohortSchemaReady(inputKeys []string) bool {
 CohortOutput carries typed classifier evidence.
 */
 type CohortOutput struct {
-	Correlation float64
-	Energy      float64
-	Category    int
-	Strength    float64
-	Eligible    bool
-	HerdScore   float64
-	AlphaScore  float64
-	NoiseScore  float64
-	StressScore float64
-	PeakScore   float64
+	Correlation float64 `json:"correlation"`
+	Energy      float64 `json:"energy"`
+	Category    int     `json:"category"`
+	Strength    float64 `json:"strength"`
+	Eligible    bool    `json:"eligible"`
+	HerdScore   float64 `json:"herd_score"`
+	AlphaScore  float64 `json:"alpha_score"`
+	NoiseScore  float64 `json:"noise_score"`
+	StressScore float64 `json:"stress_score"`
+	PeakScore   float64 `json:"peak_score"`
+}
+
+/*
+Map returns scored labels for the grid.
+*/
+func (output *CohortOutput) Map() map[string]float64 {
+	if output == nil {
+		return nil
+	}
+
+	return map[string]float64{
+		"herd_score":   output.HerdScore,
+		"alpha_score":  output.AlphaScore,
+		"noise_score":  output.NoiseScore,
+		"stress_score": output.StressScore,
+		"peak_score":   output.PeakScore,
+		"correlation":  output.Correlation,
+		"energy":       output.Energy,
+		"strength":     output.Strength,
+	}
 }
 
 /*

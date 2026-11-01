@@ -15,14 +15,31 @@ const lagPayloadFields = 11
 LagOutcome holds lead-lag classification scores.
 */
 type LagOutcome struct {
-	InefficientScore float64
-	SyncScore        float64
-	DecoupledScore   float64
-	StallScore       float64
-	Strength         float64
-	Category         int
-	Eligible         bool
-	Price            float64
+	InefficientScore float64 `json:"inefficient_score"`
+	SyncScore        float64 `json:"sync_score"`
+	DecoupledScore   float64 `json:"decoupled_score"`
+	StallScore       float64 `json:"stall_score"`
+	Strength         float64 `json:"strength"`
+	Category         int     `json:"category"`
+	Eligible         bool    `json:"eligible"`
+	Price            float64 `json:"price"`
+}
+
+/*
+Map returns scored labels for the grid.
+*/
+func (outcome *LagOutcome) Map() map[string]float64 {
+	if outcome == nil {
+		return nil
+	}
+
+	return map[string]float64{
+		"inefficient_score": outcome.InefficientScore,
+		"sync_score":        outcome.SyncScore,
+		"decoupled_score":   outcome.DecoupledScore,
+		"stall_score":       outcome.StallScore,
+		"strength":          outcome.Strength,
+	}
 }
 
 /*

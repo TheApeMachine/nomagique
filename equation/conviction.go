@@ -25,14 +25,33 @@ type ConvictionInput struct {
 ConvictionOutput contains the float-only conviction scores.
 */
 type ConvictionOutput struct {
-	Value          float64
-	SurgeScore     float64
-	DivergentScore float64
-	SlumpScore     float64
-	Strength       float64
-	Category       float64
-	Breadth        float64
-	Change         float64
+	Value          float64 `json:"value"`
+	SurgeScore     float64 `json:"surge_score"`
+	DivergentScore float64 `json:"divergent_score"`
+	SlumpScore     float64 `json:"slump_score"`
+	Strength       float64 `json:"strength"`
+	Category       float64 `json:"category"`
+	Breadth        float64 `json:"breadth"`
+	Change         float64 `json:"change"`
+}
+
+/*
+Map returns scored labels for the grid.
+*/
+func (output *ConvictionOutput) Map() map[string]float64 {
+	if output == nil {
+		return nil
+	}
+
+	return map[string]float64{
+		"surge_score":     output.SurgeScore,
+		"divergent_score": output.DivergentScore,
+		"slump_score":     output.SlumpScore,
+		"breadth":         output.Breadth,
+		"change":          output.Change,
+		"value":           output.Value,
+		"strength":        output.Strength,
+	}
 }
 
 /*

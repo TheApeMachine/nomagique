@@ -1,6 +1,7 @@
 package excitation
 
 import (
+	"math"
 	"sort"
 	"sync"
 	"time"
@@ -16,12 +17,12 @@ out-of-sample validation exists, while ModelUpdated identifies the events that
 actually established a new parameter epoch.
 */
 type Readiness struct {
-	Observation  bool
-	Intensity    bool
-	HawkesFit    bool
-	ModelUpdated bool
-	Forecast     bool
-	Reason       string
+	Observation  bool   `json:"observation"`
+	Intensity    bool   `json:"intensity"`
+	HawkesFit    bool   `json:"hawkes_fit"`
+	ModelUpdated bool   `json:"model_updated"`
+	Forecast     bool   `json:"forecast"`
+	Reason       string `json:"reason"`
 }
 
 /*
@@ -30,26 +31,55 @@ It carries no market category or trading gate because those interpretations
 belong to the consuming logic and strategy layers.
 */
 type Outcome struct {
-	Fit                             hawkes.BivariateFit
-	ObservedFrom                    time.Time
-	At                              time.Time
-	Horizon                         time.Duration
-	FitObservedFrom                 time.Time
-	FitAt                           time.Time
-	HawkesPoissonLogLikelihoodDelta float64
-	CrossSelfLogLikelihoodDelta     float64
-	ImmediateBuyOffspring           float64
-	ImmediateSellOffspring          float64
-	TotalBuyDescendants             float64
-	TotalSellDescendants            float64
-	EventCount                      int
-	BuyEventCount                   int
-	SellEventCount                  int
-	BuyArrivalRate                  float64
-	SellArrivalRate                 float64
-	MinimumFitEvents                int
-	Maturity                        float64
-	Readiness                       Readiness
+	Fit                             hawkes.BivariateFit `json:"fit"`
+	ObservedFrom                    time.Time           `json:"observed_from"`
+	At                              time.Time           `json:"at"`
+	Horizon                         time.Duration       `json:"horizon"`
+	FitObservedFrom                 time.Time           `json:"fit_observed_from"`
+	FitAt                           time.Time           `json:"fit_at"`
+	HawkesPoissonLogLikelihoodDelta float64             `json:"hawkes_poisson_log_likelihood_delta"`
+	CrossSelfLogLikelihoodDelta     float64             `json:"cross_self_log_likelihood_delta"`
+	ImmediateBuyOffspring           float64             `json:"immediate_buy_offspring"`
+	ImmediateSellOffspring          float64             `json:"immediate_sell_offspring"`
+	TotalBuyDescendants             float64             `json:"total_buy_descendants"`
+	TotalSellDescendants            float64             `json:"total_sell_descendants"`	
+	EventCount                      int                 `json:"event_count"`
+	BuyEventCount                   int                 `json:"buy_event_count"`
+	SellEventCount                  int                 `json:"sell_event_count"`
+	BuyArrivalRate                  float64             `json:"buy_arrival_rate"`
+	SellArrivalRate                 float64             `json:"sell_arrival_rate"`
+	MinimumFitEvents                int                 `json:"minimum_fit_events"`
+	Maturity                        float64             `json:"maturity"`
+	Readiness                       Readiness           `json:"readiness"`
+}
+
+/*
+Map returns scored labels for the grid.
+*/
+func (outcome *Outcome) Map() map[string]float64 {
+	if outcome == nil {
+		return nil
+	}
+
+	buy := outcome.TotalBuyDescendants
+	sell := outcome.TotalSellDescendants
+	asymmetry := 0.0
+
+	if total := buy + sell; total > 0 {
+		asymmetry = math.Abs(buy-sell) / total
+	}
+
+	return map[string]float64{
+		"spectral_radius":          outcome.Fit.SpectralRadius,
+		"immediate_buy_offspring":  outcome.ImmediateBuyOffspring,
+		"immediate_sell_offspring": outcome.ImmediateSellOffspring,
+		"total_buy_descendants":    buy,
+		"total_sell_descendants":   sell,
+		"buy_arrival_rate":         outcome.BuyArrivalRate,
+		"sell_arrival_rate":        outcome.SellArrivalRate,
+		"branching_asymmetry":      asymmetry,
+		"maturity":                 outcome.Maturity,
+	}
 }
 
 /*

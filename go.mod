@@ -12,6 +12,7 @@ require (
 	github.com/aws/smithy-go v1.28.7
 	github.com/bytedance/sonic v1.15.2
 	github.com/google/uuid v1.6.0
+	github.com/shopspring/decimal v1.6.0
 	github.com/smarty/go-disruptor v0.5.0
 	github.com/smartystreets/goconvey v1.8.1
 	github.com/stretchr/testify v1.11.1

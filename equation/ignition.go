@@ -40,15 +40,15 @@ families. Buy scores positive log returns; Sell scores the same observations
 under reciprocal price, which is exactly the negative original log return.
 */
 type IgnitionSideOutput struct {
-	Value       float64
-	RVOL        float64
-	Precursor   float64
-	Compression float64
-	Ignition    float64
-	Trend       float64
-	Exhaustion  float64
-	Strength    float64
-	Category    float64
+	Value       float64 `json:"value"`
+	RVOL        float64 `json:"rvol"`
+	Precursor   float64 `json:"precursor"`
+	Compression float64 `json:"compression"`
+	Ignition    float64 `json:"ignition"`
+	Trend       float64 `json:"trend"`
+	Exhaustion  float64 `json:"exhaustion"`
+	Strength    float64 `json:"strength"`
+	Category    float64 `json:"category"`
 }
 
 /*
@@ -57,18 +57,39 @@ fields retain the legacy wire contract and carry the stronger directional
 family, while Spread remains the current executable quote spread.
 */
 type IgnitionOutput struct {
-	Value       float64
-	RVOL        float64
-	Precursor   float64
-	Spread      float64
-	Compression float64
-	Ignition    float64
-	Trend       float64
-	Exhaustion  float64
-	Strength    float64
-	Category    float64
-	Buy         IgnitionSideOutput
-	Sell        IgnitionSideOutput
+	Value       float64            `json:"value"`
+	RVOL        float64            `json:"rvol"`
+	Precursor   float64            `json:"precursor"`
+	Spread      float64            `json:"spread"`
+	Compression float64            `json:"compression"`
+	Ignition    float64            `json:"ignition"`
+	Trend       float64            `json:"trend"`
+	Exhaustion  float64            `json:"exhaustion"`
+	Strength    float64            `json:"strength"`
+	Category    float64            `json:"category"`
+	Buy         IgnitionSideOutput `json:"buy"`
+	Sell        IgnitionSideOutput `json:"sell"`
+}
+
+/*
+Map returns scored labels for the grid.
+*/
+func (output *IgnitionOutput) Map() map[string]float64 {
+	if output == nil {
+		return nil
+	}
+
+	return map[string]float64{
+		"rvol":        output.RVOL,
+		"precursor":   output.Precursor,
+		"spread":      output.Spread,
+		"compression": output.Compression,
+		"ignition":    output.Ignition,
+		"trend":       output.Trend,
+		"exhaustion":  output.Exhaustion,
+		"value":       output.Value,
+		"strength":    output.Strength,
+	}
 }
 
 /*

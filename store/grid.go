@@ -9,6 +9,23 @@ import (
 	"github.com/theapemachine/nomagique/runtime"
 )
 
+/*
+RegionCount is the number of confluence regions the pins map metrics into.
+*/
+const RegionCount = 15
+
+/*
+TargetPinsPerRegion is the designed confluence width used as the brightness
+divisor so a solitary blip cannot outscore a full confluence.
+*/
+const TargetPinsPerRegion = 3.0
+
+/*
+snmEpsilon floors the SNM denominator so a jump from 0 to a tiny value cannot
+claim |SNM| = 1.0.
+*/
+const snmEpsilon = 1e-4
+
 type Prior struct {
 	Signal     Signal
 	Samples    int64
@@ -17,18 +34,12 @@ type Prior struct {
 }
 
 /*
-Grid is not a grid at all, it is a "group by" over Measurement
-and Metric pins into 15 multi-signal confluence regions.
+Grid groups metrics by pin into multi-signal confluence regions.
 */
 type Grid struct {
 	*runtime.System
 	Priors map[string]map[string]*Prior
 }
-
-/*
-RegionCount is the number of confluence regions the pins map metrics into.
-*/
-const RegionCount = 15
 
 func NewGrid(ctx context.Context) *Grid {
 	return &Grid{
@@ -38,19 +49,9 @@ func NewGrid(ctx context.Context) *Grid {
 }
 
 /*
-Region is one confluence region's evidence in a frame: Deformation is the sum
-of its self-normalized metric magnitudes |SNM|, Counts how many metrics it holds,
-and Brightness their average in [0, 1]. The JSON tags are the dashboard
-contract: the Impulse Map renders the grid's own accepted regions from the
-training frame's grid/regions layer.
+Region is the grid's view of runtime.Region.
 */
-type Region struct {
-	Symbol      string  `json:"symbol"`
-	Key         uint8   `json:"key"`
-	Deformation float64 `json:"deformation"`
-	Brightness  float64 `json:"brightness"`
-	Counts      int     `json:"counts"`
-}
+type Region = runtime.Region
 
 type Signal struct {
 	Source string
@@ -60,8 +61,8 @@ type Signal struct {
 }
 
 /*
-Observe applies this tick's grouped metrics for one pair, then returns the
-lit regions at or above the brightness midpoint.
+Observe applies this tick's grouped metrics and returns the full region set
+(keys 0..RegionCount-1) for the symbol.
 */
 func (grid *Grid) Observe(
 	symbol string, sources map[string]map[string]float64,
@@ -82,8 +83,10 @@ func (grid *Grid) Observe(
 		))
 	}
 
-	var byKey [RegionCount]*Region
-	regions := make([]*Region, 0, RegionCount)
+	regions := make([]*Region, RegionCount)
+	for key := uint8(0); key < RegionCount; key++ {
+		regions[key] = &Region{Symbol: symbol, Key: key}
+	}
 
 	for source, labels := range sources {
 		if len(labels) == 0 {
@@ -129,9 +132,13 @@ func (grid *Grid) Observe(
 
 		energy := 0.0
 
-		for idx := range signal.Values {
-			snm := grid.SNM(&signal, idx)
+		for _, label := range signal.Labels {
+			snm := grid.SNM(&signal, label)
 			energy += snm * snm
+		}
+
+		if n := len(signal.Labels); n > 0 {
+			energy /= float64(n)
 		}
 
 		excitation := 1 + grid.Surprise(prior.Prediction, energy)
@@ -144,10 +151,15 @@ func (grid *Grid) Observe(
 			continue
 		}
 
-		for idx, label := range signal.Labels {
+		for _, label := range signal.Labels {
 			targets := sourcePins[label]
 
 			if len(targets) == 0 {
+				continue
+			}
+
+			move := math.Abs(grid.SNM(&signal, label)) * excitation
+			if move <= 0 {
 				continue
 			}
 
@@ -156,17 +168,10 @@ func (grid *Grid) Observe(
 					continue
 				}
 
-				region := byKey[key]
-
-				if region == nil {
-					region = &Region{Symbol: symbol, Key: key}
-					byKey[key] = region
-					regions = append(regions, region)
-				}
-
-				region.Deformation += math.Abs(grid.SNM(&signal, idx)) * excitation
+				region := regions[key]
+				region.Deformation += move
 				region.Counts++
-				region.Brightness = region.Deformation / float64(region.Counts)
+				region.Brightness = region.Deformation / TargetPinsPerRegion
 			}
 		}
 
@@ -175,13 +180,12 @@ func (grid *Grid) Observe(
 		prior.Samples++
 	}
 
-	return grid.finalizeRegions(regions), nil
+	return regions, nil
 }
 
 /*
 pinned rejects a label that the source map does not name. An unknown source
-has no pins to check. The error is returned to the caller and is not stored
-on the grid.
+has no pins to check.
 */
 func pinned(symbol string, signal Signal) error {
 	sourcePins, ok := regionMetricPins[signal.Source]
@@ -205,62 +209,37 @@ func pinned(symbol string, signal Signal) error {
 	return nil
 }
 
-func (grid *Grid) finalizeRegions(regions []*Region) []*Region {
-	if len(regions) == 0 {
-		return nil
-	}
-
-	slices.SortFunc(regions, func(a, b *Region) int {
-		if a.Brightness > b.Brightness {
-			return -1
-		}
-
-		if a.Brightness < b.Brightness {
-			return 1
-		}
-
-		return int(a.Key) - int(b.Key)
-	})
-
-	midB := (regions[0].Brightness + regions[len(regions)-1].Brightness) / 2
-
-	cut, _ := slices.BinarySearchFunc(regions, midB, func(r *Region, mid float64) int {
-		if r.Brightness >= mid {
-			return -1
-		}
-
-		return 1
-	})
-
-	return regions[:cut]
-}
-
 /*
 SNM (Self-Normalized Movement) takes the reference from the prior magnitude
-and the movement itself. It measures a transition, not an isolated value.
-The result stays within \([-1,1]\) without statistical calibration.
+of the same label and the movement itself.
 */
-func (grid *Grid) SNM(signal *Signal, idx int) float64 {
+func (grid *Grid) SNM(signal *Signal, label string) float64 {
 	prior := grid.Priors[signal.Source][signal.Symbol]
 
-	if prior == nil || idx >= len(signal.Values) || idx >= len(prior.Signal.Values) {
+	if prior == nil || label == "" {
 		return 0
 	}
 
-	rawPrior := prior.Signal.Values[idx]
-	delta := signal.Values[idx] - rawPrior
-	denominator := math.Abs(rawPrior) + math.Abs(delta)
-
-	if denominator == 0 {
+	curIdx := slices.Index(signal.Labels, label)
+	if curIdx < 0 || curIdx >= len(signal.Values) {
 		return 0
 	}
+
+	priorIdx := slices.Index(prior.Signal.Labels, label)
+	if priorIdx < 0 || priorIdx >= len(prior.Signal.Values) {
+		return 0
+	}
+
+	rawPrior := prior.Signal.Values[priorIdx]
+	delta := signal.Values[curIdx] - rawPrior
+	denominator := math.Abs(rawPrior) + math.Abs(delta) + snmEpsilon
 
 	return delta / denominator
 }
 
 /*
-Surprise returns the MDL prediction error: how much the current
-total metric energy deviates from the expected regime baseline.
+Surprise returns how much current metric energy deviates from the expected
+regime baseline.
 */
 func (grid *Grid) Surprise(prediction, energy float64) float64 {
 	if prediction <= 0 {
@@ -271,8 +250,7 @@ func (grid *Grid) Surprise(prediction, energy float64) float64 {
 }
 
 /*
-Maturity calculates sensor readiness based strictly on
-empirical sample history and metric completeness (warm-up gate).
+Maturity is sensor readiness from sample history and metric completeness.
 */
 func (grid *Grid) Maturity(signal *Signal) float64 {
 	prior := grid.Priors[signal.Source][signal.Symbol]
@@ -282,7 +260,6 @@ func (grid *Grid) Maturity(signal *Signal) float64 {
 	}
 
 	samplesCount := float64(prior.Samples)
-
 	maturity := 1.0 - (1.0 / samplesCount)
 
 	if expected := float64(len(regionMetricPins[prior.Signal.Source])); expected > 0 {

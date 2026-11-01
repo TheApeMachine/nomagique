@@ -27,12 +27,29 @@ type DepthInput struct {
 DepthOutput contains the float-only liquidity scores.
 */
 type DepthOutput struct {
-	Value         float64
-	ScarcityScore float64
-	MedianScore   float64
-	DepthScore    float64
-	Strength      float64
-	Category      float64
+	Value         float64 `json:"value"`
+	ScarcityScore float64 `json:"scarcity_score"`
+	MedianScore   float64 `json:"median_score"`
+	DepthScore    float64 `json:"depth_score"`
+	Strength      float64 `json:"strength"`
+	Category      float64 `json:"category"`
+}
+
+/*
+Map returns scored labels for the grid.
+*/
+func (output *DepthOutput) Map() map[string]float64 {
+	if output == nil {
+		return nil
+	}
+
+	return map[string]float64{
+		"scarcity_score": output.ScarcityScore,
+		"median_score":   output.MedianScore,
+		"depth_score":    output.DepthScore,
+		"value":          output.Value,
+		"strength":       output.Strength,
+	}
 }
 
 /*

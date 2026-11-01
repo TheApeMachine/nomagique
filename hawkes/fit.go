@@ -115,16 +115,16 @@ const criticalBranch = 1.0
 BivariateFit holds joint Hawkes MLE parameters and horizon intensities.
 */
 type BivariateFit struct {
-	MuX            float64
-	MuY            float64
-	AlphaXX        float64
-	AlphaXY        float64
-	AlphaYX        float64
-	AlphaYY        float64
-	Beta           float64
-	IntensityX     float64
-	IntensityY     float64
-	SpectralRadius float64
+	MuX            float64 `json:"mu_x"`
+	MuY            float64 `json:"mu_y"`
+	AlphaXX        float64 `json:"alpha_xx"`
+	AlphaXY        float64 `json:"alpha_xy"`
+	AlphaYX        float64 `json:"alpha_yx"`
+	AlphaYY        float64 `json:"alpha_yy"`
+	Beta           float64 `json:"beta"`
+	IntensityX     float64 `json:"intensity_x"`
+	IntensityY     float64 `json:"intensity_y"`
+	SpectralRadius float64 `json:"spectral_radius"`
 }
 
 /*

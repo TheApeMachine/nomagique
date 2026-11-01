@@ -79,6 +79,7 @@ func (cohortSample *CohortSample) Measure(
 	input CohortSampleInput,
 ) (equation.FeatureFrame, bool, error) {
 	sample, err := cohortSample.sample(input)
+	
 	if err != nil {
 		return equation.FeatureFrame{}, false, err
 	}
@@ -295,7 +296,7 @@ func (cohortSample *CohortSample) peers(
 		}
 	}
 
-	for leftIndex := 0; leftIndex < len(symbols); leftIndex++ {
+	for leftIndex := range symbols {
 		left := cohortSample.symbols[symbols[leftIndex]]
 
 		for rightIndex := leftIndex + 1; rightIndex < len(symbols); rightIndex++ {

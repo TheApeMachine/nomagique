@@ -28,14 +28,33 @@ type FlowInput struct {
 FlowOutput contains the float-only trade-flow scores.
 */
 type FlowOutput struct {
-	Value       float64
-	Absorption  float64
-	Drive       float64
-	Balance     float64
-	Starvation  float64
-	Net         float64
-	NetFraction float64
-	Category    float64
+	Value       float64 `json:"value"`
+	Absorption  float64 `json:"absorption"`
+	Drive       float64 `json:"drive"`
+	Balance     float64 `json:"balance"`
+	Starvation  float64 `json:"starvation"`
+	Net         float64 `json:"net"`
+	NetFraction float64 `json:"net_fraction"`
+	Category    float64 `json:"category"`
+}
+
+/*
+Map returns scored labels for the grid.
+*/
+func (output *FlowOutput) Map() map[string]float64 {
+	if output == nil {
+		return nil
+	}
+
+	return map[string]float64{
+		"drive":        output.Drive,
+		"absorption":   output.Absorption,
+		"balance":      output.Balance,
+		"starvation":   output.Starvation,
+		"net":          output.Net,
+		"net_fraction": output.NetFraction,
+		"value":        output.Value,
+	}
 }
 
 /*

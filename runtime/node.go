@@ -1,9 +1,5 @@
 package runtime
 
-import (
-	"github.com/theapemachine/nomagique/data"
-)
-
 /*
 Node is the execution contract for an analytical stage in the workspace pipeline.
 It receives an immutable prior WORM Measurement, allocates a fresh Measurement
@@ -11,7 +7,7 @@ from its owned arena, computes its owned facts, finalizes, and returns it.
 The returned Measurement is WORM forever.
 */
 type Node interface {
-	Step(prior *data.Value) *data.Value
+	Step(*Envelope) *Envelope
 	Status() Stage
 	Transition(Stage)
 	Error(...error) error
@@ -49,9 +45,8 @@ func NewConsumer(
 	return consumer
 }
 
-func (consumer *Consumer) Step(value *data.Value) *data.Value {
-	consumer.node.Step(value)
-	return value
+func (consumer *Consumer) Step(envelope *Envelope) *Envelope {
+	return consumer.node.Step(envelope)
 }
 
 func (consumer *Consumer) Name() string {

@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"math"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
@@ -29,24 +30,14 @@ func (fix *gridFixture) zeroSources(sources map[string]map[string]float64) map[s
 	return out
 }
 
-func (fix *gridFixture) pulse(symbol string, sources map[string]map[string]float64) ([]*Region, error) {
+func (fix *gridFixture) pulse(
+	symbol string, sources map[string]map[string]float64,
+) ([]*Region, error) {
 	if _, err := fix.Observe(symbol, fix.zeroSources(sources)); err != nil {
 		return nil, err
 	}
 
 	return fix.Observe(symbol, sources)
-}
-
-func (fix *gridFixture) litBrightness(regions []*Region) map[uint8]float64 {
-	bright := make(map[uint8]float64)
-
-	for _, r := range regions {
-		if r.Brightness > 0 {
-			bright[r.Key] = r.Brightness
-		}
-	}
-
-	return bright
 }
 
 func TestGridObserve(t *testing.T) {
@@ -56,149 +47,166 @@ func TestGridObserve(t *testing.T) {
 		Convey("Unpinned labels fail validation", func() {
 			_, err := fix.Observe("BTC/USD", map[string]map[string]float64{
 				"pumpdump": {
-					"coiled_compression": 0.5,
-					"unpinned_metric":    0.9,
+					"compression":     0.5,
+					"unpinned_metric": 0.9,
 				},
 			})
 
 			So(err, ShouldNotBeNil)
 		})
 
-		Convey("A metric pulse yields lit regions", func() {
+		Convey("Observe returns the full region set", func() {
 			regions, err := fix.pulse("BTC/USD", map[string]map[string]float64{
 				"pumpdump": {
-					"coiled_compression": 1.5,
-					"rejection_tick":     0.3,
+					"compression": 1.5,
+					"exhaustion":  0.3,
 				},
 				"correlation": {
-					"structural_alignment": 0.8,
+					"herd_score": 0.8,
 				},
 				"depthflow": {
-					"bid_ladder_build": 2.0,
+					"loaded_score": 2.0,
 				},
 			})
 
 			So(err, ShouldBeNil)
-			So(len(regions), ShouldBeGreaterThan, 0)
+			So(len(regions), ShouldEqual, RegionCount)
 
-			lit := 0
-			for _, r := range regions {
-				if r.Brightness > 0 {
-					lit++
-				}
+			for key, region := range regions {
+				So(region, ShouldNotBeNil)
+				So(region.Key, ShouldEqual, uint8(key))
+				So(region.Symbol, ShouldEqual, "BTC/USD")
 			}
 
-			So(lit, ShouldBeGreaterThan, 0)
+			So(regions[0].Brightness, ShouldBeGreaterThan, 0)
 		})
 
 		Convey("Corroborating metrics land on the same region", func() {
 			regions, err := fix.pulse("PEP/USD", map[string]map[string]float64{
-				"pumpdump": {"coiled_compression": 2.0},
-				"cvd":      {"aggressor_backing": 1.0},
+				"pumpdump": {"compression": 2.0},
+				"cvd":      {"drive": 1.0},
 			})
 
 			So(err, ShouldBeNil)
-
-			var r00 *Region
-			for _, r := range regions {
-				if r.Key == 0 {
-					r00 = r
-					break
-				}
-			}
-
-			So(r00, ShouldNotBeNil)
-			So(r00.Counts, ShouldEqual, 2)
-			So(r00.Brightness, ShouldBeGreaterThan, 0)
+			So(regions[0].Counts, ShouldEqual, 2)
+			So(regions[0].Brightness, ShouldBeGreaterThan, 0)
 		})
 
-		Convey("coiled_compression lights enter detector R00 only", func() {
+		Convey("Brightness divides by target pins, not observed counts", func() {
+			solo, err := fix.pulse("SOLO/USD", map[string]map[string]float64{
+				"pumpdump": {"compression": 1.0},
+			})
+			So(err, ShouldBeNil)
+			So(solo[0].Counts, ShouldEqual, 1)
+
+			pair, err := fix.pulse("PAIR/USD", map[string]map[string]float64{
+				"pumpdump": {"compression": 1.0},
+				"cvd":      {"drive": 1.0},
+			})
+			So(err, ShouldBeNil)
+			So(pair[0].Counts, ShouldEqual, 2)
+
+			So(pair[0].Brightness, ShouldBeGreaterThan, solo[0].Brightness)
+			So(solo[0].Brightness, ShouldAlmostEqual, solo[0].Deformation/TargetPinsPerRegion, 1e-12)
+		})
+
+		Convey("SNM from a near-zero prior is floored below unit magnitude", func() {
+			symbol := "EPS/USD"
+			_, err := fix.Observe(symbol, map[string]map[string]float64{
+				"depthflow": {"thin_score": 0},
+			})
+			So(err, ShouldBeNil)
+
+			snm := fix.SNM(&Signal{
+				Source: "depthflow",
+				Symbol: symbol,
+				Labels: []string{"thin_score"},
+				Values: []float64{1e-4},
+			}, "thin_score")
+
+			So(math.Abs(snm), ShouldBeLessThan, 1.0)
+			So(math.Abs(snm), ShouldAlmostEqual, 0.5, 1e-9)
+		})
+
+		Convey("compression lights enter detector R00", func() {
 			regions, err := fix.pulse("PEP/USD", map[string]map[string]float64{
-				"pumpdump": {"coiled_compression": 1.2},
+				"pumpdump": {"compression": 1.2},
 			})
 
 			So(err, ShouldBeNil)
-
-			bright := fix.litBrightness(regions)
-
-			So(bright[0], ShouldBeGreaterThan, 0)
-			So(bright[6], ShouldEqual, 0)
+			So(regions[0].Brightness, ShouldBeGreaterThan, 0)
 		})
 
-		Convey("board_coiled lights enter confidence R09", func() {
+		Convey("peak_score lights board confidence R09", func() {
 			regions, err := fix.pulse("PEAQ/USD", map[string]map[string]float64{
-				"pumpdump": {"board_coiled": 1.4},
+				"correlation": {"peak_score": 1.4},
 			})
 
 			So(err, ShouldBeNil)
-			So(fix.litBrightness(regions)[9], ShouldBeGreaterThan, 0)
+			So(regions[9].Brightness, ShouldBeGreaterThan, 0)
 		})
 
-		Convey("ask_ladder_release lights exit opposition R05 not hold support R07", func() {
+		Convey("ask_vacuum lights exit opposition R05", func() {
 			regions, err := fix.pulse("PEAQ/USD", map[string]map[string]float64{
-				"depthflow": {"ask_ladder_release": 1.9},
+				"morphology": {"ask_vacuum": 1.9},
 			})
 
 			So(err, ShouldBeNil)
-
-			bright := fix.litBrightness(regions)
-
-			So(bright[5], ShouldBeGreaterThan, 0)
-			So(bright[7], ShouldEqual, 0)
+			So(regions[5].Brightness, ShouldBeGreaterThan, 0)
 		})
 
-		Convey("bid_ladder_build lights hold support R07 not exit opposition R05", func() {
+		Convey("shape_stable lights hold support R07", func() {
 			regions, err := fix.pulse("PEAQ/USD", map[string]map[string]float64{
-				"depthflow": {"bid_ladder_build": 2.0},
+				"morphology": {"shape_stable": 2.0},
 			})
 
 			So(err, ShouldBeNil)
-
-			bright := fix.litBrightness(regions)
-
-			So(bright[7], ShouldBeGreaterThan, 0)
-			So(bright[5], ShouldEqual, 0)
+			So(regions[7].Brightness, ShouldBeGreaterThan, 0)
 		})
 
-		Convey("bid_ladder_release lights exit support R04 only", func() {
+		Convey("thin_score lights exit support R04", func() {
 			regions, err := fix.pulse("PEAQ/USD", map[string]map[string]float64{
-				"depthflow": {"bid_ladder_release": 2.63},
+				"depthflow": {"thin_score": 2.63},
 			})
 
 			So(err, ShouldBeNil)
-
-			bright := fix.litBrightness(regions)
-
-			So(bright[4], ShouldBeGreaterThan, 0)
-			So(bright[2], ShouldEqual, 0)
-			So(bright[8], ShouldEqual, 0)
+			So(regions[4].Brightness, ShouldBeGreaterThan, 0)
 		})
 
 		Convey("SNM brightness fades when the metric is flat on repeat", func() {
 			sources := map[string]map[string]float64{
-				"pumpdump": {"coiled_compression": 0.8},
+				"pumpdump": {"compression": 0.8},
 			}
 
 			regions, err := fix.pulse("BTC/USD", sources)
 			So(err, ShouldBeNil)
-
-			litR00 := false
-			for _, r := range regions {
-				if r.Key == 0 && r.Brightness > 0 {
-					litR00 = true
-				}
-			}
-
-			So(litR00, ShouldBeTrue)
+			So(regions[0].Brightness, ShouldBeGreaterThan, 0)
 
 			flat, err := fix.Observe("BTC/USD", sources)
 			So(err, ShouldBeNil)
+			So(flat[0].Brightness, ShouldEqual, 0)
+		})
 
-			for _, r := range flat {
-				if r.Key == 0 {
-					So(r.Brightness, ShouldEqual, 0)
-				}
-			}
+		Convey("spectral_radius lights hold detector and board confidence", func() {
+			symbol := "CFG/USD"
+
+			_, err := fix.Observe(symbol, map[string]map[string]float64{
+				"hawkes": {
+					"spectral_radius":     0.4,
+					"branching_asymmetry": 0.2,
+				},
+			})
+			So(err, ShouldBeNil)
+
+			regions, err := fix.Observe(symbol, map[string]map[string]float64{
+				"hawkes": {
+					"spectral_radius":     1.6,
+					"branching_asymmetry": 0.9,
+				},
+			})
+			So(err, ShouldBeNil)
+			So(regions[6].Brightness, ShouldBeGreaterThan, 0)
+			So(regions[10].Brightness, ShouldBeGreaterThan, 0)
 		})
 	})
 }
@@ -212,7 +220,7 @@ func TestGridMaturity(t *testing.T) {
 
 		for range 4 {
 			_, err := fix.Observe("PEP/USD", map[string]map[string]float64{
-				"pumpdump": {"coiled_compression": 0.5},
+				"pumpdump": {"compression": 0.5},
 			})
 			So(err, ShouldBeNil)
 		}

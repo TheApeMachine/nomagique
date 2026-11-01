@@ -1,60 +1,98 @@
 package store
 
 /*
-regionMetricPins maps wire labels to confluence regions (0..14).
+regionMetricPins maps wire labels (envelope.Symbol) to confluence regions.
 
-Every story region R00–R14 has exactly two pinned metrics so top-2 pooling
-is the arithmetic mean of two independent channels (order-statistics unbiased).
+Action: Enter R00–R02, Exit R03–R05, Hold R06–R08.
+Oracle: Board Confidence R09–R11, Friction/Spread R12, Contagion R13, Capacity R14.
+
+A label may pin to more than one region when SIGNALS.md shares it across tokens.
 */
 var regionMetricPins = map[string]map[string][]uint8{
 	"cvd": {
-		"aggressor_backing": {0},
-		"cvd_divergence":    {3},
+		"drive":        {0},
+		"net_fraction": {0},
+		"balance":      {1},
+		"starvation":   {2},
+		"absorption":   {3},
+		"net":          {3},
+		"value":        {0},
 	},
 	"pumpdump": {
-		"coiled_compression": {0},
-		"starved_tape":       {2},
-		"rejection_tick":     {3},
-		"clock_acceleration": {6},
-		"blowoff_dip":        {8},
-		"board_coiled":       {9},
+		"compression": {0, 9},
+		"precursor":   {0},
+		"rvol":        {2},
+		"exhaustion":  {3, 8, 9},
+		"ignition":    {6},
+		"trend":       {5},
+		"spread":      {12},
+		"value":       {0},
+		"strength":    {0},
 	},
 	"correlation": {
-		"structural_alignment":     {1},
-		"board_dispersion_squeeze": {9},
-		"structure_uncoupling":     {13},
+		"herd_score":   {1, 9, 13},
+		"strength":     {1},
+		"peak_score":   {9},
+		"alpha_score":  {13},
+		"noise_score":  {13},
+		"stress_score": {9, 13},
+		"correlation":  {1},
+		"energy":       {1},
 	},
 	"leadlag": {
-		"led_peer_share":   {1},
-		"anchor_breakdown": {13},
+		"inefficient_score": {1},
+		"sync_score":        {1, 13},
+		"decoupled_score":   {13},
+		"stall_score":       {13},
+		"strength":          {1},
 	},
 	"depthflow": {
-		"ask_absorption":     {2},
-		"bid_ladder_release": {4},
-		"ask_ladder_release": {5},
-		"bid_ladder_build":   {7},
-		"board_bid_release":  {11},
+		"loaded_score":          {2, 5, 7},
+		"thin_score":            {4, 8, 11, 14},
+		"spoof_score":           {4},
+		"hypothesis_separation": {6},
+		"neutral_score":         {7},
+		"value":                 {7},
 	},
 	"toxicity": {
-		"retreat_fraction":      {4},
-		"board_withdrawal_rate": {11},
+		"support_score": {1, 7, 12, 14},
+		"bluff_score":   {4},
+		"vacuum_score":  {4, 11, 14},
+		"value":         {4},
+		"strength":      {4},
 	},
 	"morphology": {
+		"bid_notional_lean": {2},
 		"ask_vacuum":        {5},
-		"book_shape_stable": {7},
+		"shape_stable":      {7},
+		"value":             {7},
+		"strength":          {7},
 	},
 	"hawkes": {
-		"supercritical_cascade": {6},
-		"board_cascade":         {10},
+		"spectral_radius":          {6, 10},
+		"branching_asymmetry":      {6, 10},
+		"total_buy_descendants":    {6},
+		"total_sell_descendants":   {6},
+		"buy_arrival_rate":         {7},
+		"sell_arrival_rate":        {8},
+		"immediate_buy_offspring":  {6},
+		"immediate_sell_offspring": {6},
+		"maturity":                 {10},
 	},
 	"sentiment": {
-		"cohort_still_aligned": {10},
+		"surge_score":     {7, 10},
+		"breadth":         {7, 10},
+		"slump_score":     {8, 10},
+		"divergent_score": {13},
+		"change":          {10},
+		"value":           {10},
+		"strength":        {10},
 	},
 	"liquidity": {
-		"spread_expansion":    {8},
-		"market_friction":     {12},
-		"friction_drag_ratio": {12},
-		"capacity_stress":     {14},
-		"liquidation_impact":  {14},
+		"scarcity_score": {8, 12, 14},
+		"median_score":   {12, 14},
+		"depth_score":    {12, 14},
+		"value":          {12},
+		"strength":       {12},
 	},
 }

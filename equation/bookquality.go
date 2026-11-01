@@ -39,13 +39,30 @@ type BookQualityInput struct {
 BookQualityOutput contains the float-only book quality scores.
 */
 type BookQualityOutput struct {
-	Value        float64
-	BluffScore   float64
-	VacuumScore  float64
-	SupportScore float64
-	Strength     float64
-	Category     float64
-	Price        float64
+	Value        float64 `json:"value"`
+	BluffScore   float64 `json:"bluff_score"`
+	VacuumScore  float64 `json:"vacuum_score"`
+	SupportScore float64 `json:"support_score"`
+	Strength     float64 `json:"strength"`
+	Category     float64 `json:"category"`
+	Price        float64 `json:"price"`
+}
+
+/*
+Map returns scored labels for the grid.
+*/
+func (output *BookQualityOutput) Map() map[string]float64 {
+	if output == nil {
+		return nil
+	}
+
+	return map[string]float64{
+		"bluff_score":   output.BluffScore,
+		"vacuum_score":  output.VacuumScore,
+		"support_score": output.SupportScore,
+		"value":         output.Value,
+		"strength":      output.Strength,
+	}
 }
 
 /*

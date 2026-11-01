@@ -6,21 +6,18 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 )
 
-func TestRegionMetricPinCardinality(t *testing.T) {
-	Convey("each confluence region has exactly two pinned metrics", t, func() {
-		counts := make([]int, RegionCount)
-		for _, metrics := range regionMetricPins {
-			for _, regions := range metrics {
+func TestRegionMetricPinsInRange(t *testing.T) {
+	Convey("every pin targets a valid confluence region", t, func() {
+		for source, metrics := range regionMetricPins {
+			for label, regions := range metrics {
+				So(len(regions), ShouldBeGreaterThan, 0)
+
 				for _, key := range regions {
-					if key < RegionCount {
-						counts[key]++
-					}
+					So(key, ShouldBeLessThan, RegionCount)
+					_ = source
+					_ = label
 				}
 			}
-		}
-
-		for region := uint8(0); region < RegionCount; region++ {
-			So(counts[region], ShouldEqual, 2)
 		}
 	})
 }

@@ -17,6 +17,7 @@ type Decision struct {
 	Reason     string  `json:"reason"`
 	Gate       string  `json:"gate,omitempty"`
 	Path       string  `json:"path,omitempty"`
+	Book       string  `json:"book,omitempty"`
 	Virtual    bool    `json:"virtual,omitempty"`
 	Confidence float64 `json:"confidence,omitempty"`
 }

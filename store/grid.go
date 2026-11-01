@@ -268,10 +268,7 @@ func PathToken(regions []*Region) (token string, brightness float64) {
 		return "", 0
 	}
 
-	limit := len(regions)
-	if limit > int(holdLast)+1 {
-		limit = int(holdLast) + 1
-	}
+	limit := min(len(regions), int(holdLast) + 1)
 
 	var action *Region
 

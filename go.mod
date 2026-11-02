@@ -15,6 +15,7 @@ require (
 	github.com/smarty/go-disruptor v0.5.0
 	github.com/smartystreets/goconvey v1.8.1
 	golang.design/x/lockfree v0.1.0
+	golang.org/x/sync v0.24.0
 )
 
 require (

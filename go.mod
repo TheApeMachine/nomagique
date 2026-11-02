@@ -11,11 +11,11 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.114.6
 	github.com/aws/smithy-go v1.28.7
 	github.com/bytedance/sonic v1.15.2
+	github.com/panjf2000/ants/v2 v2.12.1
 	github.com/shopspring/decimal v1.6.0
 	github.com/smarty/go-disruptor v0.5.0
 	github.com/smartystreets/goconvey v1.8.1
 	golang.design/x/lockfree v0.1.0
-	golang.org/x/sync v0.24.0
 )
 
 require (
@@ -52,6 +52,7 @@ require (
 	go.opentelemetry.io/otel/metric v1.43.0 // indirect
 	go.opentelemetry.io/otel/trace v1.43.0 // indirect
 	golang.org/x/arch v0.0.0-20210923205945-b76863e36670 // indirect
+	golang.org/x/sync v0.24.0 // indirect
 	golang.org/x/sys v0.43.0 // indirect
 	golang.org/x/tools v0.42.0 // indirect
 )

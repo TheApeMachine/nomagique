@@ -1294,7 +1294,8 @@ func (rm *ResonanceManifold) updateTaskReliability(
 	beta := math.Max(rm.cfg.PrecisionBeta, 0.1)
 	squaredError := rm.workspace.taskSignal
 	squaredError.MulElemVec(taskError, taskError)
-	candidateVariance := taskError
+
+	candidateVariance := rm.workspace.taskCandidate
 	candidateVariance.ScaleVec(1.0-beta, rm.taskVar)
 
 	varianceFloor := rm.workspace.taskPred

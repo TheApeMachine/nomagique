@@ -7,10 +7,8 @@ import (
 	"fmt"
 	"iter"
 	"net/http"
-	"os"
-	"path/filepath"
+	"runtime"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -21,9 +19,9 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/smithy-go"
 	smithyhttp "github.com/aws/smithy-go/transport/http"
+	"github.com/panjf2000/ants/v2"
 	"github.com/theapemachine/errnie"
 	"golang.design/x/lockfree/lf"
-	"golang.org/x/sync/errgroup"
 )
 
 /*
@@ -31,8 +29,8 @@ Record is one queued upload. The payload lives on disk at Path so a slow
 Seaweed/S3 drain cannot retain Level3 (or any) bodies in the process heap.
 */
 type Record struct {
-	Key  string
-	Path string
+	Key   string
+	Value []byte
 }
 
 type Client struct {
@@ -43,19 +41,13 @@ type Client struct {
 	bucket   string
 	transfer *transfermanager.Client
 	queue    *lf.Queue[Record]
-	spoolDir string
-	closing  atomic.Bool
-	stopped  chan struct{}
+	pool     *ants.Pool
+	running  bool
 }
-
-const uploadWorkers = 16
-
-var (
-	liveClients []*Client
-)
 
 func NewClient(ctx context.Context, bucket string) *Client {
 	ctx, cancel := context.WithCancel(ctx)
+	pool, err := ants.NewPool(runtime.GOMAXPROCS(0))
 
 	cfg, err := config.LoadDefaultConfig(ctx, config.WithHTTPClient(&http.Client{
 		Transport: &http.Transport{
@@ -103,9 +95,6 @@ func NewClient(ctx context.Context, bucket string) *Client {
 		return nil
 	}
 
-	spoolDir := filepath.Join(os.TempDir(), "nomagique-store", bucket)
-	_ = os.MkdirAll(spoolDir, 0o755)
-
 	storeClient := &Client{
 		ctx:      ctx,
 		cancel:   cancel,
@@ -113,127 +102,38 @@ func NewClient(ctx context.Context, bucket string) *Client {
 		bucket:   bucket,
 		transfer: transfermanager.New(client),
 		queue:    lf.NewQueue[Record](),
-		spoolDir: spoolDir,
-		stopped:  make(chan struct{}),
+		pool:     pool,
 	}
-
-	registerClient(storeClient)
-	go storeClient.Run()
 
 	return storeClient
 }
 
-func registerClient(client *Client) {
-	if client == nil {
+func (client *Client) Run() {
+	if client.running {
 		return
 	}
 
-	liveClients = append(liveClients, client)
-}
+	client.running = true
 
-/*
-FlushAll writes every queued object before a restart. The upload loop shares
-the process lifetime, so a return from Run would otherwise drop the tail.
-*/
-func FlushAll() {
-	clients := append([]*Client(nil), liveClients...)
+	for client.queue.Length() > 0 {
+		client.pool.Submit(func() {
+			select {
+			case <-client.ctx.Done():
+				return
+			default:
+			}
 
-	for _, client := range clients {
-		if client == nil {
-			continue
-		}
+			record, ok := client.queue.Dequeue()
 
-		client.closing.Store(true)
-	}
+			if !ok {
+				return
+			}
 
-	for _, client := range clients {
-		if client == nil || client.stopped == nil {
-			continue
-		}
-
-		select {
-		case <-client.stopped:
-		case <-time.After(45 * time.Second):
-			errnie.Warn("[store] timed out waiting to flush uploads")
-		}
-
-		client.Flush()
-	}
-}
-
-func (client *Client) Run() {
-	defer close(client.stopped)
-	defer client.Flush()
-
-	group, ctx := errgroup.WithContext(client.ctx)
-
-	for range uploadWorkers {
-		group.Go(func() error {
-			return client.drain(ctx)
+			client.upload(client.ctx, record.Key, record.Value)
 		})
 	}
 
-	if err := group.Wait(); err != nil {
-		errnie.Error(errnie.Err(
-			errnie.IO, "[store.client] upload workers stopped", err,
-		))
-	}
-}
-
-func (client *Client) drain(ctx context.Context) error {
-	for {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
-
-		if client.closing.Load() {
-			return nil
-		}
-
-		record, ok := client.queue.Dequeue()
-
-		if !ok {
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			case <-time.After(10 * time.Millisecond):
-				continue
-			}
-		}
-
-		client.deliver(ctx, record)
-	}
-}
-
-func (client *Client) Flush() {
-	if client == nil || client.queue == nil {
-		return
-	}
-
-	client.closing.Store(true)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	for {
-		record, ok := client.queue.Dequeue()
-		if !ok {
-			return
-		}
-
-		body, err := os.ReadFile(record.Path)
-		if err != nil {
-			errnie.Error(errnie.Err(
-				errnie.IO, "[store.client] spool read "+record.Path, err,
-			))
-			continue
-		}
-
-		_, _ = client.upload(ctx, record.Key, body)
-		_ = os.Remove(record.Path)
-	}
+	client.running = false
 }
 
 func missingObject(err error) bool {
@@ -242,6 +142,7 @@ func missingObject(err error) bool {
 	}
 
 	var api smithy.APIError
+
 	if errors.As(err, &api) && api.ErrorCode() == "NoSuchKey" {
 		return true
 	}
@@ -264,6 +165,7 @@ func (client *Client) List(
 		}
 
 		pages, err := client.listPages(prefix)
+
 		if err != nil {
 			errnie.Error(errnie.Err(
 				errnie.IO, "[store.client] list objects error", err,
@@ -438,97 +340,9 @@ func (client *Client) object(ctx context.Context, key string) ([]byte, error) {
 }
 
 func (client *Client) WriteAtPrefix(key string, value []byte) (int, error) {
-	if key == "" {
-		return client.upload(client.ctx, "", value)
-	}
-
-	if client.closing.Load() {
-		ctx := client.ctx
-		if ctx == nil || ctx.Err() != nil {
-			ctx = context.Background()
-		}
-
-		return client.upload(ctx, key, value)
-	}
-
-	if client.queue == nil {
-		return 0, errnie.Error(errnie.Err(
-			errnie.IO, "[store.client] upload queue is not ready", nil,
-		))
-	}
-
-	path, err := client.spool(value)
-	if err != nil {
-		return 0, errnie.Error(errnie.Err(
-			errnie.IO, "[store.client] spool write failed", err,
-		))
-	}
-
-	client.queue.Enqueue(Record{Key: key, Path: path})
+	client.queue.Enqueue(Record{Key: key, Value: value})
+	client.Run()
 	return len(value), nil
-}
-
-/*
-spool writes value to a temp file under spoolDir and returns its path.
-*/
-func (client *Client) spool(value []byte) (string, error) {
-	if err := os.MkdirAll(client.spoolDir, 0o755); err != nil {
-		return "", err
-	}
-
-	file, err := os.CreateTemp(client.spoolDir, "part-*.bin")
-	if err != nil {
-		return "", err
-	}
-
-	path := file.Name()
-
-	if _, err = file.Write(value); err != nil {
-		file.Close()
-		os.Remove(path)
-		return "", err
-	}
-
-	if err = file.Close(); err != nil {
-		os.Remove(path)
-		return "", err
-	}
-
-	return path, nil
-}
-
-/*
-deliver uploads one spooled record. A canceled ctx requeues the path; a failed
-upload requeues and backs off so the market path never blocks and nothing drops.
-*/
-func (client *Client) deliver(ctx context.Context, record Record) {
-	if ctx != nil && ctx.Err() != nil {
-		client.queue.Enqueue(record)
-		return
-	}
-
-	body, err := os.ReadFile(record.Path)
-
-	if err != nil {
-		errnie.Error(errnie.Err(
-			errnie.IO, "[store.client] spool read "+record.Path, err,
-		))
-
-		return
-	}
-
-	if _, err = client.upload(ctx, record.Key, body); err != nil {
-		client.queue.Enqueue(record)
-		return
-	}
-
-	err = os.Remove(record.Path)
-
-	if err != nil {
-		errnie.Error(errnie.Err(
-			errnie.IO, "[store.client] remove spool file "+record.Path, err,
-		))
-	}
 }
 
 func (client *Client) upload(ctx context.Context, prefix string, p []byte) (int, error) {
@@ -589,6 +403,7 @@ func (client *Client) DeleteOtherKeys(prefix, keep string) error {
 	}
 
 	pages, err := client.listPages(prefix)
+
 	if err != nil {
 		return errnie.Error(errnie.Err(
 			errnie.IO, "[store.client] list objects error", err,
@@ -605,6 +420,7 @@ func (client *Client) DeleteOtherKeys(prefix, keep string) error {
 				Bucket: aws.String(client.bucket),
 				Key:    aws.String(*object.Key),
 			})
+
 			if err != nil {
 				return errnie.Error(errnie.Err(
 					errnie.IO, "[store.client] delete object error", err,
@@ -628,15 +444,9 @@ func (client *Client) MovePrefix(sourcePrefix, destPrefix string) error {
 				continue
 			}
 
-			dest := destKey(destPrefix, *object.Key, sourcePrefix)
-
-			if dest == *object.Key {
-				continue
-			}
-
 			_, err := client.S3Client.CopyObject(client.ctx, &s3.CopyObjectInput{
 				Bucket:     aws.String(client.bucket),
-				Key:        aws.String(dest),
+				Key:        aws.String(destPrefix + "/" + *object.Key),
 				CopySource: aws.String(client.bucket + "/" + *object.Key),
 			})
 
@@ -660,20 +470,6 @@ func (client *Client) MovePrefix(sourcePrefix, destPrefix string) error {
 	}
 
 	return nil
-}
-
-/*
-destKey is where an object lands when its prefix moves: the path the object holds under the
-source prefix is kept under the destination prefix.
-*/
-func destKey(destPrefix, key, sourcePrefix string) string {
-	rel := strings.TrimPrefix(key, sourcePrefix)
-
-	if rel == "" {
-		return destPrefix
-	}
-
-	return strings.TrimSuffix(destPrefix, "/") + "/" + strings.TrimPrefix(rel, "/")
 }
 
 func (client *Client) Error() error {

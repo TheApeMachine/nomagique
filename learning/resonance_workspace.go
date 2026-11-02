@@ -15,6 +15,7 @@ type resonanceWorkspace struct {
 	taskPred            *mat.VecDense
 	taskError           *mat.VecDense
 	taskSignal          *mat.VecDense
+	taskCandidate       *mat.VecDense
 	weightedErr         []*mat.VecDense
 	belowSignal         []*mat.VecDense
 	correction          []*mat.VecDense
@@ -100,6 +101,7 @@ func newResonanceWorkspace(arch []int, targetDim int) *resonanceWorkspace {
 		workspace.taskPred = mat.NewVecDense(targetDim, nil)
 		workspace.taskError = mat.NewVecDense(targetDim, nil)
 		workspace.taskSignal = mat.NewVecDense(targetDim, nil)
+		workspace.taskCandidate = mat.NewVecDense(targetDim, nil)
 	}
 
 	return workspace

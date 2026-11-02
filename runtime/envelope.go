@@ -14,12 +14,11 @@ Decision is one symbol's model/desk outcome for a tick: action taken or why not.
 type Decision struct {
 	Symbol     string  `json:"symbol"`
 	Action     string  `json:"action"`
-	Reason     string  `json:"reason"`
+	Reason     string  `json:"reason,omitempty"`
 	Gate       string  `json:"gate,omitempty"`
 	Path       string  `json:"path,omitempty"`
-	Book       string  `json:"book,omitempty"`
-	Virtual    bool    `json:"virtual,omitempty"`
-	Confidence float64 `json:"confidence,omitempty"`
+	Tier       string  `json:"tier,omitempty"`
+	Resistance float64 `json:"resistance,omitempty"`
 }
 
 type Envelope struct {

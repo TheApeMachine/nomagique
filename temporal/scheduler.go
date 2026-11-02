@@ -19,6 +19,7 @@ type EventScheduler struct {
 	clock  *SimulatedClock
 	events eventHeap
 	nextID uint64
+	off    *offHeap
 	mu     sync.Mutex
 }
 
@@ -27,6 +28,7 @@ func NewEventScheduler(clock *SimulatedClock) *EventScheduler {
 	es := &EventScheduler{
 		clock:  clock,
 		events: make(eventHeap, 0),
+		off:    newOffHeap(),
 	}
 	heap.Init(&es.events)
 	return es
@@ -75,6 +77,8 @@ func (es *EventScheduler) Cancel(id uint64) {
 			return
 		}
 	}
+
+	es.off.cancel(id)
 }
 
 // ProcessUntil fires all events up to and including the given time
@@ -88,19 +92,55 @@ func (es *EventScheduler) ProcessUntil(untilTime int64) {
 		}
 
 		event := heap.Pop(&es.events).(*ScheduledEvent)
+		es.off.hold(event.id)
 		es.mu.Unlock()
 
 		// Fire callback (unlocked to prevent deadlock if callback schedules events)
 		event.Callback()
 
-		// Reschedule if repeating
-		if event.Repeating {
-			es.mu.Lock()
+		es.mu.Lock()
+		cancelled := es.off.drop(event.id)
+
+		if !cancelled && event.Repeating && event.Interval > 0 {
 			event.Time += event.Interval
 			heap.Push(&es.events, event)
-			es.mu.Unlock()
 		}
+
+		es.mu.Unlock()
 	}
+}
+
+// offHeap tracks events popped for Callback so Cancel still reaches them.
+type offHeap struct {
+	popped    map[uint64]struct{}
+	cancelled map[uint64]struct{}
+}
+
+func newOffHeap() *offHeap {
+	return &offHeap{
+		popped:    map[uint64]struct{}{},
+		cancelled: map[uint64]struct{}{},
+	}
+}
+
+func (set *offHeap) hold(id uint64) {
+	set.popped[id] = struct{}{}
+}
+
+func (set *offHeap) cancel(id uint64) {
+	if _, running := set.popped[id]; !running {
+		return
+	}
+
+	set.cancelled[id] = struct{}{}
+}
+
+func (set *offHeap) drop(id uint64) bool {
+	_, cancelled := set.cancelled[id]
+	delete(set.popped, id)
+	delete(set.cancelled, id)
+
+	return cancelled
 }
 
 // eventHeap implements heap.Interface for priority queue of events

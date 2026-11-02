@@ -36,6 +36,7 @@ type Workspace struct {
 	mask     int64
 	capacity int
 	stages   [][]*Consumer
+	lastFan  int
 }
 
 /*
@@ -103,11 +104,20 @@ func NewWorkspace(
 	}
 
 	workspace.channel = channel
+
+	if lastIdx >= 0 {
+		workspace.lastFan = len(workspace.stages[lastIdx])
+	}
+
 	go workspace.channel.Listen()
 
 	return workspace
 }
 
+/*
+Step publishes the envelope into the disruptor and blocks until every node
+in the last ring has finished, so the caller can safely read/marshal it.
+*/
 func (workspace *Workspace) Step(envelope *Envelope) *Envelope {
 	if workspace.Status() != READY {
 		errnie.Warn(workspace.Name() + ": Step called before READY; dropping event")
@@ -140,9 +150,13 @@ func (workspace *Workspace) Step(envelope *Envelope) *Envelope {
 		}
 	}
 
+	envelope.arm(workspace.lastFan)
+
 	seq := workspace.channel.Reserve(1)
 	ringBuffer[seq&workspace.mask] = envelope
 	workspace.channel.Commit(seq, seq)
+
+	envelope.await()
 
 	return envelope
 }
@@ -157,8 +171,18 @@ func (sh *stageHandler) Handle(lower, upper int64) {
 	for seq := lower; seq <= upper; seq++ {
 		envelope := ringBuffer[seq&bufferMask]
 
-		if envelope != nil {
-			sh.consumer.Step(envelope)
+		if envelope == nil {
+			continue
 		}
+
+		sh.consume(envelope)
 	}
+}
+
+func (sh *stageHandler) consume(envelope *Envelope) {
+	if sh.last {
+		defer envelope.release()
+	}
+
+	sh.consumer.Step(envelope)
 }

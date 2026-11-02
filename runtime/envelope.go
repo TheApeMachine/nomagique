@@ -1,6 +1,8 @@
 package runtime
 
 import (
+	"sync"
+
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/nomagique/algorithm/excitation"
@@ -37,6 +39,22 @@ type Envelope struct {
 	Regions       map[string][]*Region                   `json:"regions"`
 	Paths         map[string]*Tokens                     `json:"paths"`
 	Decisions     map[string]*Decision                   `json:"decisions"`
+	pipe          sync.WaitGroup                         `json:"-"`
+}
+
+// arm counts last-ring consumers that must finish before await returns.
+func (envelope *Envelope) arm(n int) {
+	if n > 0 {
+		envelope.pipe.Add(n)
+	}
+}
+
+func (envelope *Envelope) release() {
+	envelope.pipe.Done()
+}
+
+func (envelope *Envelope) await() {
+	envelope.pipe.Wait()
 }
 
 func NewEnvelope(trade *market.Trade) *Envelope {

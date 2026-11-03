@@ -1,8 +1,6 @@
 package runtime
 
 import (
-	"sync"
-
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/nomagique/algorithm/excitation"
@@ -39,7 +37,7 @@ type Envelope struct {
 	Regions       map[string][]*Region                   `json:"regions"`
 	Paths         map[string]*Tokens                     `json:"paths"`
 	Decisions     map[string]*Decision                   `json:"decisions"`
-	pipe          sync.WaitGroup                         `json:"-"`
+	N             uint64                                 `json:"n,omitempty"`
 }
 
 func NewEnvelope(trade *market.Trade) *Envelope {

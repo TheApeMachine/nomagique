@@ -36,7 +36,6 @@ type Workspace struct {
 	mask     int64
 	capacity int
 	stages   [][]*Consumer
-	lastFan  int
 }
 
 /*
@@ -49,13 +48,6 @@ func NewWorkspace(
 ) *Workspace {
 	capacity := bufferSize
 	mask := int64(capacity - 1)
-
-	lastIdx := -1
-	for i, stage := range stages {
-		if len(stage.Nodes) > 0 {
-			lastIdx = i
-		}
-	}
 
 	workspace := &Workspace{
 		mask:     mask,
@@ -77,9 +69,7 @@ func NewWorkspace(
 			consumers = append(consumers, consumer)
 
 			group = append(group, &stageHandler{
-				consumer:  consumer,
-				workspace: workspace,
-				last:      stageIdx == lastIdx,
+				consumer: consumer,
 			})
 		}
 
@@ -105,10 +95,6 @@ func NewWorkspace(
 
 	workspace.channel = channel
 
-	if lastIdx >= 0 {
-		workspace.lastFan = len(workspace.stages[lastIdx])
-	}
-
 	go workspace.channel.Listen()
 
 	return workspace
@@ -116,8 +102,7 @@ func NewWorkspace(
 
 /*
 Step publishes the envelope into the disruptor and returns immediately so the
-ingress Read loop never stalls. Callers that need a finished tick (S3 marshal)
-must Wait on the envelope after Step.
+ingress Read loop never stalls behind the pipeline.
 */
 func (workspace *Workspace) Step(envelope *Envelope) *Envelope {
 	if workspace.Status() != READY {
@@ -159,9 +144,7 @@ func (workspace *Workspace) Step(envelope *Envelope) *Envelope {
 }
 
 type stageHandler struct {
-	consumer  *Consumer
-	workspace *Workspace
-	last      bool
+	consumer *Consumer
 }
 
 func (sh *stageHandler) Handle(lower, upper int64) {
@@ -172,10 +155,6 @@ func (sh *stageHandler) Handle(lower, upper int64) {
 			continue
 		}
 
-		sh.consume(envelope)
+		sh.consumer.Step(envelope)
 	}
-}
-
-func (sh *stageHandler) consume(envelope *Envelope) {
-	sh.consumer.Step(envelope)
 }

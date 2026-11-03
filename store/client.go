@@ -116,7 +116,7 @@ func (client *Client) Run() {
 	client.running = true
 
 	for client.queue.Length() > 0 {
-		client.pool.Submit(func() {
+		task := func() {
 			select {
 			case <-client.ctx.Done():
 				return
@@ -130,7 +130,13 @@ func (client *Client) Run() {
 			}
 
 			client.upload(client.ctx, record.Key, record.Value)
-		})
+		}
+
+		// Never block the caller when the upload pool is saturated — that
+		// stalled Enter on the model ring and froze the whole disruptor.
+		if err := client.pool.Submit(task); err != nil {
+			go task()
+		}
 	}
 
 	client.running = false

@@ -115,8 +115,9 @@ func NewWorkspace(
 }
 
 /*
-Step publishes the envelope into the disruptor and blocks until every node
-in the last ring has finished, so the caller can safely read/marshal it.
+Step publishes the envelope into the disruptor and returns immediately so the
+ingress Read loop never stalls. Callers that need a finished tick (S3 marshal)
+must Wait on the envelope after Step.
 */
 func (workspace *Workspace) Step(envelope *Envelope) *Envelope {
 	if workspace.Status() != READY {
@@ -150,13 +151,9 @@ func (workspace *Workspace) Step(envelope *Envelope) *Envelope {
 		}
 	}
 
-	envelope.arm(workspace.lastFan)
-
 	seq := workspace.channel.Reserve(1)
 	ringBuffer[seq&workspace.mask] = envelope
 	workspace.channel.Commit(seq, seq)
-
-	envelope.await()
 
 	return envelope
 }
@@ -180,9 +177,5 @@ func (sh *stageHandler) Handle(lower, upper int64) {
 }
 
 func (sh *stageHandler) consume(envelope *Envelope) {
-	if sh.last {
-		defer envelope.release()
-	}
-
 	sh.consumer.Step(envelope)
 }

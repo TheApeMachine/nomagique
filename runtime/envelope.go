@@ -42,21 +42,6 @@ type Envelope struct {
 	pipe          sync.WaitGroup                         `json:"-"`
 }
 
-// arm counts last-ring consumers that must finish before await returns.
-func (envelope *Envelope) arm(n int) {
-	if n > 0 {
-		envelope.pipe.Add(n)
-	}
-}
-
-func (envelope *Envelope) release() {
-	envelope.pipe.Done()
-}
-
-func (envelope *Envelope) await() {
-	envelope.pipe.Wait()
-}
-
 func NewEnvelope(trade *market.Trade) *Envelope {
 	return &Envelope{
 		Trade:       trade,

@@ -9,7 +9,7 @@ type Regime struct {
 	Key      uint8
 	Category string
 	Kind     string // action | oracle — PathToken uses action only; oracles gate Tradable
-	Phase    string // enter | exit | hold | volume | day | spread | book | board | contagion | capacity
+	Phase    string // enter | exit | hold | volume | day | spread | book | board | contagion | capacity | peak
 	Side     string // detector | support | opposition | veto | approve
 	Metrics  []Metric
 }
@@ -242,6 +242,10 @@ var Catalog = Regimes{
 			{"toxicity", "support_score"},
 		},
 	},
+
+	// --- Oracle: 24h Peak (broker-painted) ---
+	{Key: 23, Category: "range_peak", Kind: "oracle", Phase: "peak", Side: "veto"},
+	{Key: 24, Category: "range_room", Kind: "oracle", Phase: "peak", Side: "approve"},
 }
 
 // Pins builds source → label → region keys for Observe.

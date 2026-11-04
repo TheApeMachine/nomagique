@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"hash/crc32"
 	"strings"
+
+	"github.com/shopspring/decimal"
 )
 
 /*
@@ -22,6 +24,26 @@ func trimChecksum(value string) string {
 }
 
 /*
+checksumToken formats a book decimal the way Kraken's CRC expects: fixed to the
+value's stored scale (pair/lot decimals), then strip "." and leading zeros.
+Decimal.String() drops trailing zeros ("2641.63120" → "2641.6312") and breaks
+the venue checksum; StringFixed keeps them.
+*/
+func checksumToken(value *decimal.Decimal) string {
+	if value == nil {
+		return ""
+	}
+
+	places := int32(0)
+
+	if exp := value.Exponent(); exp < 0 {
+		places = -exp
+	}
+
+	return trimChecksum(value.StringFixed(places))
+}
+
+/*
 L2Checksum verifies top-of-book L2 state against the venue checksum.
 */
 func (book *Book) L2Checksum(checksum string) *ChecksumResult {
@@ -33,7 +55,7 @@ func (book *Book) L2Checksum(checksum string) *ChecksumResult {
 			break
 		}
 
-		part := trimChecksum(cursor.Price.String()) + trimChecksum(cursor.Quantity.String())
+		part := checksumToken(cursor.Price) + checksumToken(cursor.Quantity)
 		result.Asks += part
 		cursor = cursor.Higher
 	}
@@ -45,7 +67,7 @@ func (book *Book) L2Checksum(checksum string) *ChecksumResult {
 			break
 		}
 
-		part := trimChecksum(cursor.Price.String()) + trimChecksum(cursor.Quantity.String())
+		part := checksumToken(cursor.Price) + checksumToken(cursor.Quantity)
 		result.Bids += part
 		cursor = cursor.Lower
 	}
@@ -68,7 +90,7 @@ func (book *Book) L3Checksum(checksum string) *ChecksumResult {
 		}
 
 		for _, order := range cursor.Queue() {
-			part := trimChecksum(order.LimitPrice.String()) + trimChecksum(order.Quantity.String())
+			part := checksumToken(order.LimitPrice) + checksumToken(order.Quantity)
 			result.Asks += part
 		}
 
@@ -83,7 +105,7 @@ func (book *Book) L3Checksum(checksum string) *ChecksumResult {
 		}
 
 		for _, order := range cursor.Queue() {
-			part := trimChecksum(order.LimitPrice.String()) + trimChecksum(order.Quantity.String())
+			part := checksumToken(order.LimitPrice) + checksumToken(order.Quantity)
 			result.Bids += part
 		}
 

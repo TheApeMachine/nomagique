@@ -1499,15 +1499,18 @@ func (rm *ResonanceManifold) projectTemporalOperatorNorm() error {
 
 	decomposition := &rm.workspace.temporalSVD
 
+	// Under extreme correlated moves A can be ill-conditioned; Factorize then
+	// fails and would halt Learn. Fall back to a Frobenius rescale Â = A·τ/‖A‖_F
+	// so the temporal update still contracts instead of aborting.
 	if ok := decomposition.Factorize(rm.A, mat.SVDNone); !ok {
-		return errors.New("resonance: temporal singular-value decomposition failed")
+		return rm.rescaleTemporalByFrobenius()
 	}
 
 	singularValues := decomposition.Values(rm.workspace.svdValues)
 
 	if len(singularValues) == 0 || math.IsNaN(singularValues[0]) ||
 		math.IsInf(singularValues[0], 0) {
-		return errors.New("resonance: temporal operator norm must be finite")
+		return rm.rescaleTemporalByFrobenius()
 	}
 
 	operatorNorm := singularValues[0]
@@ -1517,6 +1520,25 @@ func (rm *ResonanceManifold) projectTemporalOperatorNorm() error {
 	}
 
 	denseScaleInPlace(rm.A, rm.cfg.TemporalNormMax/operatorNorm)
+
+	return nil
+}
+
+/*
+rescaleTemporalByFrobenius projects A by Â = A · τ / ‖A‖_F when SVD is unavailable.
+*/
+func (rm *ResonanceManifold) rescaleTemporalByFrobenius() error {
+	frobenius := mat.Norm(rm.A, 2)
+
+	if frobenius == 0 || math.IsNaN(frobenius) || math.IsInf(frobenius, 0) {
+		return errors.New("resonance: temporal frobenius norm must be finite and positive")
+	}
+
+	if frobenius <= rm.cfg.TemporalNormMax {
+		return nil
+	}
+
+	denseScaleInPlace(rm.A, rm.cfg.TemporalNormMax/frobenius)
 
 	return nil
 }

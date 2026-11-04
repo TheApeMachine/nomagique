@@ -11,9 +11,9 @@ import (
 )
 
 /*
-RegionCount is Action (9) + Oracle×{Veto,Approve} (7×2) — see regimes.go Catalog.
+RegionCount is Action (9) + Oracle×{Veto,Approve} (8×2) — see regimes.go Catalog.
 */
-const RegionCount = 23
+const RegionCount = 25
 
 const (
 	enterDetector = 0
@@ -268,7 +268,7 @@ func PathToken(regions []*Region) (token string, brightness float64) {
 		return "", 0
 	}
 
-	limit := min(len(regions), int(holdLast) + 1)
+	limit := min(len(regions), int(holdLast)+1)
 
 	var action *Region
 

@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"runtime"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -17,8 +19,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
 	"github.com/aws/aws-sdk-go-v2/feature/s3/transfermanager"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
-	"github.com/aws/smithy-go"
-	smithyhttp "github.com/aws/smithy-go/transport/http"
 	"github.com/panjf2000/ants/v2"
 	"github.com/theapemachine/errnie"
 	"golang.design/x/lockfree/lf"
@@ -34,20 +34,51 @@ type Record struct {
 }
 
 type Client struct {
-	ctx      context.Context
-	cancel   context.CancelFunc
-	err      error
-	S3Client *s3.Client
-	bucket   string
-	transfer *transfermanager.Client
-	queue    *lf.Queue[Record]
-	pool     *ants.Pool
-	running  bool
+	ctx          context.Context
+	cancel       context.CancelFunc
+	err          error
+	S3Client     *s3.Client
+	bucket       string
+	transfer     *transfermanager.Client
+	queue        *lf.Queue[Record]
+	downloadPool *ants.Pool
+	uploadPool   *ants.Pool
+	running      bool
+	closed       atomic.Bool
+	uploads      sync.WaitGroup
 }
 
-func NewClient(ctx context.Context, bucket string) *Client {
-	ctx, cancel := context.WithCancel(ctx)
-	pool, err := ants.NewPool(runtime.GOMAXPROCS(0))
+func NewClient(parent context.Context, bucket string) *Client {
+	// Survive parent cancel (SIGINT) so Flush can still finish uploads.
+	ctx, cancel := context.WithCancel(context.WithoutCancel(parent))
+
+	downloadPool, err := ants.NewPool(
+		runtime.GOMAXPROCS(0),
+		ants.WithNonblocking(true),
+	)
+
+	if err != nil {
+		errnie.Error(errnie.Err(
+			errnie.IO, "[store.client] download pool error", err,
+		))
+
+		cancel()
+		return nil
+	}
+
+	// I/O-bound uploads: larger than GOMAXPROCS, blocking so Run waits
+	// for a worker instead of spinning on ErrPoolOverload.
+	uploadPool, err := ants.NewPool(runtime.GOMAXPROCS(0) * 8)
+
+	if err != nil {
+		downloadPool.Release()
+		errnie.Error(errnie.Err(
+			errnie.IO, "[store.client] upload pool error", err,
+		))
+
+		cancel()
+		return nil
+	}
 
 	cfg, err := config.LoadDefaultConfig(ctx, config.WithHTTPClient(&http.Client{
 		Transport: &http.Transport{
@@ -61,6 +92,8 @@ func NewClient(ctx context.Context, bucket string) *Client {
 	}))
 
 	if err != nil {
+		downloadPool.Release()
+		uploadPool.Release()
 		errnie.Error(errnie.Err(
 			errnie.IO, "[store.client] error", err,
 		))
@@ -87,6 +120,8 @@ func NewClient(ctx context.Context, bucket string) *Client {
 	})
 
 	if err != nil && !strings.Contains(err.Error(), "BucketAlready") {
+		downloadPool.Release()
+		uploadPool.Release()
 		errnie.Error(errnie.Err(
 			errnie.IO, "[store.client] create bucket error", err,
 		))
@@ -96,13 +131,14 @@ func NewClient(ctx context.Context, bucket string) *Client {
 	}
 
 	storeClient := &Client{
-		ctx:      ctx,
-		cancel:   cancel,
-		S3Client: client,
-		bucket:   bucket,
-		transfer: transfermanager.New(client),
-		queue:    lf.NewQueue[Record](),
-		pool:     pool,
+		ctx:          ctx,
+		cancel:       cancel,
+		S3Client:     client,
+		bucket:       bucket,
+		transfer:     transfermanager.New(client),
+		queue:        lf.NewQueue[Record](),
+		downloadPool: downloadPool,
+		uploadPool:   uploadPool,
 	}
 
 	return storeClient
@@ -116,12 +152,10 @@ func (client *Client) Run() {
 	client.running = true
 
 	for client.queue.Length() > 0 {
+		client.uploads.Add(1)
+
 		task := func() {
-			select {
-			case <-client.ctx.Done():
-				return
-			default:
-			}
+			defer client.uploads.Done()
 
 			record, ok := client.queue.Dequeue()
 
@@ -132,29 +166,38 @@ func (client *Client) Run() {
 			client.upload(client.ctx, record.Key, record.Value)
 		}
 
-		// Never block the caller when the upload pool is saturated — that
-		// stalled Enter on the model ring and froze the whole disruptor.
-		if err := client.pool.Submit(task); err != nil {
-			go task()
+		if err := client.uploadPool.Submit(task); err != nil {
+			client.uploads.Done()
+			errnie.Error(errnie.Err(
+				errnie.IO, "[store.client] submit task error", err,
+			))
+
+			break
 		}
 	}
 
 	client.running = false
 }
 
-func missingObject(err error) bool {
-	if err == nil {
-		return false
+/*
+Flush submits every queued upload and waits until they finish.
+*/
+func (client *Client) Flush() {
+	for {
+		client.Run()
+
+		if client.queue.Length() == 0 {
+			break
+		}
+
+		if client.uploadPool.IsClosed() {
+			break
+		}
+
+		time.Sleep(10 * time.Millisecond)
 	}
 
-	var api smithy.APIError
-
-	if errors.As(err, &api) && api.ErrorCode() == "NoSuchKey" {
-		return true
-	}
-
-	var respErr *smithyhttp.ResponseError
-	return errors.As(err, &respErr) && respErr.HTTPStatusCode() == 404
+	client.uploads.Wait()
 }
 
 /*
@@ -170,57 +213,47 @@ func (client *Client) List(
 			return
 		}
 
-		pages, err := client.listPages(prefix)
+		var token *string
 
-		if err != nil {
-			errnie.Error(errnie.Err(
-				errnie.IO, "[store.client] list objects error", err,
-			))
+		for {
+			page, err := client.S3Client.ListObjectsV2(client.ctx, &s3.ListObjectsV2Input{
+				Bucket:            aws.String(client.bucket),
+				Prefix:            aws.String(prefix),
+				ContinuationToken: token,
+			})
 
-			return
-		}
+			if err != nil {
+				errnie.Error(errnie.Err(
+					errnie.IO, "[store.client] list objects error", err,
+				))
 
-		for i := range pages {
-			if !yield(&pages[i]) {
 				return
 			}
+
+			if page == nil {
+				return
+			}
+
+			if !yield(page) {
+				return
+			}
+
+			if page.IsTruncated == nil || !*page.IsTruncated || page.NextContinuationToken == nil {
+				return
+			}
+
+			if token != nil && *token == *page.NextContinuationToken {
+				errnie.Error(errnie.Err(
+					errnie.IO,
+					"[store.client] list continuation error",
+					fmt.Errorf("list continuation for %s did not advance", prefix),
+				))
+
+				return
+			}
+
+			token = page.NextContinuationToken
 		}
-	}
-}
-
-/*
-listPages reads every page before the caller sees one. A later page that
-fails discards the earlier pages instead of pretending the prefix ended.
-*/
-func (client *Client) listPages(prefix string) ([]s3.ListObjectsV2Output, error) {
-	var token *string
-	pages := make([]s3.ListObjectsV2Output, 0, 1)
-
-	for {
-		page, err := client.S3Client.ListObjectsV2(client.ctx, &s3.ListObjectsV2Input{
-			Bucket:            aws.String(client.bucket),
-			Prefix:            aws.String(prefix),
-			ContinuationToken: token,
-		})
-		if err != nil {
-			return nil, err
-		}
-
-		if page == nil {
-			return pages, nil
-		}
-
-		pages = append(pages, *page)
-
-		if page.IsTruncated == nil || !*page.IsTruncated || page.NextContinuationToken == nil {
-			return pages, nil
-		}
-
-		if token != nil && *token == *page.NextContinuationToken {
-			return nil, fmt.Errorf("list continuation for %s did not advance", prefix)
-		}
-
-		token = page.NextContinuationToken
 	}
 }
 
@@ -247,29 +280,82 @@ func (client *Client) ListKeys(prefix string) iter.Seq[string] {
 }
 
 /*
-Fetch returns the raw object body for JSON envelopes and path books.
+Download returns the raw object body.
 */
-func (client *Client) Fetch(ctx context.Context, key string) []byte {
-	raw, err := client.object(ctx, key)
+func (client *Client) Download(ctx context.Context, key string) ([]byte, error) {
+	body := manager.NewWriteAtBuffer(make([]byte, 0, 4096))
 
-	if err == nil {
-		return raw
-	}
+	_, err := client.transfer.DownloadObject(ctx, &transfermanager.DownloadObjectInput{
+		Bucket:   aws.String(client.bucket),
+		Key:      aws.String(key),
+		WriterAt: body,
+	})
 
-	if !missingObject(err) {
-		errnie.Error(errnie.Err(
+	if err != nil {
+		return nil, errnie.Error(errnie.Err(
 			errnie.IO, "[store.client] download error", err,
 		))
 	}
 
-	return nil
+	return body.Bytes(), nil
 }
 
 /*
-Download returns the raw object body.
+BulkDownload downloads every object under prefix in parallel.
+Results keep ListKeys order: each body lands at its key index.
 */
-func (client *Client) Download(ctx context.Context, key string) []byte {
-	return client.Fetch(ctx, key)
+func (client *Client) BulkDownload(ctx context.Context, prefix string) [][]byte {
+	keys := make([]string, 0)
+
+	for key := range client.ListKeys(prefix) {
+		keys = append(keys, key)
+	}
+
+	results := make([][]byte, len(keys))
+
+	var (
+		failed atomic.Bool
+		wg     sync.WaitGroup
+	)
+
+	for i, key := range keys {
+		wg.Add(1)
+
+		if err := client.downloadPool.Submit(func() {
+			defer wg.Done()
+
+			if failed.Load() || ctx.Err() != nil {
+				return
+			}
+
+			raw, err := client.Download(ctx, key)
+
+			if err != nil {
+				errnie.Error(errnie.Err(
+					errnie.IO, "[store.client] download error", err,
+				))
+
+				failed.Store(true)
+				return
+			}
+
+			results[i] = raw
+		}); err != nil {
+			errnie.Error(errnie.Err(
+				errnie.IO, "[store.client] submit task error", err,
+			))
+
+			return nil
+		}
+	}
+
+	wg.Wait()
+
+	if failed.Load() {
+		return nil
+	}
+
+	return results
 }
 
 /*
@@ -287,13 +373,9 @@ func (client *Client) Stream(ctx context.Context, prefix string) iter.Seq[[]byte
 				return
 			}
 
-			raw, err := client.object(ctx, key)
+			raw, err := client.Download(ctx, key)
 
 			if err != nil {
-				if missingObject(err) {
-					continue
-				}
-
 				errnie.Error(errnie.Err(
 					errnie.IO, "[store.client] download error", err,
 				))
@@ -318,34 +400,13 @@ func (client *Client) Write([]byte) (int, error) {
 	))
 }
 
-/*
-object downloads one key. An empty key or a nil client is not an error.
-*/
-func (client *Client) object(ctx context.Context, key string) ([]byte, error) {
-	if client == nil || key == "" {
-		return nil, nil
-	}
-
-	if ctx == nil {
-		ctx = client.ctx
-	}
-
-	body := manager.NewWriteAtBuffer(make([]byte, 0, 4096))
-
-	_, err := client.transfer.DownloadObject(ctx, &transfermanager.DownloadObjectInput{
-		Bucket:   aws.String(client.bucket),
-		Key:      aws.String(key),
-		WriterAt: body,
-	})
-
-	if err != nil {
-		return nil, err
-	}
-
-	return body.Bytes(), nil
-}
-
 func (client *Client) WriteAtPrefix(key string, value []byte) (int, error) {
+	if client.closed.Load() {
+		return 0, errnie.Error(errnie.Err(
+			errnie.IO, "[store.client] write after close", nil,
+		))
+	}
+
 	client.queue.Enqueue(Record{Key: key, Value: value})
 	client.Run()
 	return len(value), nil
@@ -408,15 +469,7 @@ func (client *Client) DeleteOtherKeys(prefix, keep string) error {
 		return nil
 	}
 
-	pages, err := client.listPages(prefix)
-
-	if err != nil {
-		return errnie.Error(errnie.Err(
-			errnie.IO, "[store.client] list objects error", err,
-		))
-	}
-
-	for _, page := range pages {
+	for page := range client.List(prefix) {
 		for _, object := range page.Contents {
 			if object.Key == nil || *object.Key == keep {
 				continue
@@ -483,6 +536,27 @@ func (client *Client) Error() error {
 }
 
 func (client *Client) Close() error {
+	if !client.closed.CompareAndSwap(false, true) {
+		return client.err
+	}
+
+	client.Flush()
 	client.cancel()
-	return nil
+
+	var errs error
+
+	if err := client.uploadPool.ReleaseTimeout(30 * time.Second); err != nil {
+		errs = errors.Join(errs, errnie.Error(errnie.Err(
+			errnie.IO, "[store.client] upload pool release", err,
+		)))
+	}
+
+	if err := client.downloadPool.ReleaseTimeout(5 * time.Second); err != nil {
+		errs = errors.Join(errs, errnie.Error(errnie.Err(
+			errnie.IO, "[store.client] download pool release", err,
+		)))
+	}
+
+	client.err = errors.Join(client.err, errs)
+	return client.err
 }

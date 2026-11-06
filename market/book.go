@@ -43,8 +43,10 @@ func NewBook() *Book {
 	asks.Direction = SideAsk
 
 	return &Book{
-		MaxDepth:       1e10,
-		NoBookCrossing: true,
+		MaxDepth: 1e10,
+		// Crossed L3 frames are venue desync, not something to heal by
+		// deleting levels. Callers verify checksum and resubscribe instead.
+		NoBookCrossing: false,
 		EnableMaxDepth: true,
 		Bids:           bids,
 		Asks:           asks,

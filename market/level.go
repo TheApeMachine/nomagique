@@ -37,39 +37,48 @@ func (level *Level) update(delta *Delta) {
 		level.queue = nil
 		qty := *delta.Quantity
 		level.Quantity = &qty
-	} else {
-		order, existed := level.orders[delta.ID]
+		level.Timestamp = delta.Timestamp
+		level.queueDirty.Store(true)
+		return
+	}
 
+	order, existed := level.orders[delta.ID]
+
+	if delta.Quantity.Sign() <= 0 {
 		if existed {
-			diff := delta.Quantity.Sub(*order.Quantity)
-			sum := level.Quantity.Add(diff)
-			level.Quantity = &sum
-			qty := *delta.Quantity
-			order.Quantity = &qty
-			order.Timestamp = delta.Timestamp
-		} else if delta.Quantity.Sign() > 0 {
-			limit := *delta.Price
-			qty := *delta.Quantity
-			level.orders[delta.ID] = &Order{
-				ID:         delta.ID,
-				LimitPrice: &limit,
-				Quantity:   &qty,
-				Timestamp:  delta.Timestamp,
-				Level:      level,
-			}
-
-			if level.Quantity == nil {
-				level.Quantity = &qty
-			} else {
-				sum := level.Quantity.Add(qty)
-				level.Quantity = &sum
-			}
+			without := level.Quantity.Sub(*order.Quantity)
+			level.Quantity = &without
+			delete(level.orders, delta.ID)
 		}
 
-		if delta.Quantity.Sign() <= 0 {
-			delete(level.orders, delta.ID)
-			diff := level.Quantity.Sub(*delta.Quantity)
-			level.Quantity = &diff
+		level.Timestamp = delta.Timestamp
+		level.queueDirty.Store(true)
+		return
+	}
+
+	if existed {
+		without := level.Quantity.Sub(*order.Quantity)
+		sum := without.Add(*delta.Quantity)
+		level.Quantity = &sum
+		qty := *delta.Quantity
+		order.Quantity = &qty
+		order.Timestamp = delta.Timestamp
+	} else {
+		limit := *delta.Price
+		qty := *delta.Quantity
+		level.orders[delta.ID] = &Order{
+			ID:         delta.ID,
+			LimitPrice: &limit,
+			Quantity:   &qty,
+			Timestamp:  delta.Timestamp,
+			Level:      level,
+		}
+
+		if level.Quantity == nil {
+			level.Quantity = &qty
+		} else {
+			sum := level.Quantity.Add(qty)
+			level.Quantity = &sum
 		}
 	}
 

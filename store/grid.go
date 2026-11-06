@@ -105,12 +105,15 @@ func (grid *Grid) Observe(
 		}
 
 		names := make([]string, 0, len(labels))
+
 		for label := range labels {
 			names = append(names, label)
 		}
+
 		slices.Sort(names)
 
 		values := make([]float64, len(names))
+
 		for i, label := range names {
 			values[i] = labels[label]
 		}
@@ -170,6 +173,7 @@ func (grid *Grid) Observe(
 			}
 
 			move := math.Abs(grid.SNM(&signal, label)) * excitation
+
 			if move <= 0 {
 				continue
 			}
@@ -328,11 +332,13 @@ func (grid *Grid) SNM(signal *Signal, label string) float64 {
 	}
 
 	curIdx := slices.Index(signal.Labels, label)
+
 	if curIdx < 0 || curIdx >= len(signal.Values) {
 		return 0
 	}
 
 	priorIdx := slices.Index(prior.Signal.Labels, label)
+
 	if priorIdx < 0 || priorIdx >= len(prior.Signal.Values) {
 		return 0
 	}

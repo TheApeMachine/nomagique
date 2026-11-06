@@ -8,7 +8,7 @@ region index Emit and the trie still address; Category is the regime name.
 type Regime struct {
 	Key      uint8
 	Category string
-	Kind     string // action | oracle — PathToken uses action only; oracles gate Tradable
+	Kind     string // action | oracle
 	Phase    string // enter | exit | hold | volume | day | spread | book | board | contagion | capacity | peak
 	Side     string // detector | support | opposition | veto | approve
 	Metrics  []Metric
@@ -25,8 +25,9 @@ func (regime Regime) Name() string {
 }
 
 /*
-Regimes is the catalog of confluence categories. Broker-painted oracle sides
-may list no envelope Metrics and are lit by the desk before Emit.
+Regimes is the catalog of confluence categories. Desk oracle pairs
+(volume / day / spread / book / peak) are set from Observe bools. Board /
+contagion / capacity stay metric-pinned.
 */
 type Regimes []Regime
 
@@ -149,35 +150,15 @@ var Catalog = Regimes{
 
 	// --- Oracle: Day Move ---
 	{Key: 11, Category: "flat_session", Kind: "oracle", Phase: "day", Side: "veto"},
-	{
-		Key: 12, Category: "session_move", Kind: "oracle", Phase: "day", Side: "approve",
-		Metrics: []Metric{{"sentiment", "change"}},
-	},
+	{Key: 12, Category: "session_move", Kind: "oracle", Phase: "day", Side: "approve"},
 
 	// --- Oracle: Spread ---
-	{
-		Key: 13, Category: "blown_spread", Kind: "oracle", Phase: "spread", Side: "veto",
-		Metrics: []Metric{{"liquidity", "scarcity_score"}},
-	},
-	{
-		Key: 14, Category: "tight_touch", Kind: "oracle", Phase: "spread", Side: "approve",
-		Metrics: []Metric{
-			{"pumpdump", "spread"},
-			{"liquidity", "median_score"},
-			{"liquidity", "value"},
-			{"liquidity", "strength"},
-		},
-	},
+	{Key: 13, Category: "blown_spread", Kind: "oracle", Phase: "spread", Side: "veto"},
+	{Key: 14, Category: "tight_touch", Kind: "oracle", Phase: "spread", Side: "approve"},
 
 	// --- Oracle: Book Integrity ---
 	{Key: 15, Category: "brittle_book", Kind: "oracle", Phase: "book", Side: "veto"},
-	{
-		Key: 16, Category: "firm_book", Kind: "oracle", Phase: "book", Side: "approve",
-		Metrics: []Metric{
-			{"toxicity", "support_score"},
-			{"liquidity", "depth_score"},
-		},
-	},
+	{Key: 16, Category: "firm_book", Kind: "oracle", Phase: "book", Side: "approve"},
 
 	// --- Oracle: Board Confidence ---
 	{
@@ -243,7 +224,7 @@ var Catalog = Regimes{
 		},
 	},
 
-	// --- Oracle: 24h Peak (broker-painted) ---
+	// --- Oracle: 24h Peak ---
 	{Key: 23, Category: "range_peak", Kind: "oracle", Phase: "peak", Side: "veto"},
 	{Key: 24, Category: "range_room", Kind: "oracle", Phase: "peak", Side: "approve"},
 }

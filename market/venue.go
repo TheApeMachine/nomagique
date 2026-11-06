@@ -14,6 +14,7 @@ type MarketType interface {
 type Venue interface {
 	Read([]byte) MarketType
 	Balance() MarketType
+	TradeBalance() MarketType
 	Level3() MarketType
 	Trade() MarketType
 	Execution() MarketType

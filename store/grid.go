@@ -2,8 +2,8 @@ package store
 
 import (
 	"context"
-	"maps"
 	"math"
+	"sync"
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/runtime"
@@ -72,18 +72,37 @@ type Prior struct {
 }
 
 /*
+gridSymbol holds one symbol's source priors so Observe for BTC never waits
+on ETH's scoring pass.
+*/
+type gridSymbol struct {
+	mu     sync.Mutex
+	priors map[string]*Prior
+}
+
+/*
 Grid groups metrics by pin into multi-signal confluence regions.
 */
 type Grid struct {
 	*runtime.System
-	Priors map[string]map[string]*Prior
+	symbols sync.Map
 }
 
 func NewGrid(ctx context.Context) *Grid {
 	return &Grid{
 		System: runtime.NewSystem(ctx, "grid"),
-		Priors: make(map[string]map[string]*Prior),
 	}
+}
+
+func (grid *Grid) symbol(name string) *gridSymbol {
+	if loaded, ok := grid.symbols.Load(name); ok {
+		return loaded.(*gridSymbol)
+	}
+
+	created := &gridSymbol{priors: make(map[string]*Prior)}
+	actual, _ := grid.symbols.LoadOrStore(name, created)
+
+	return actual.(*gridSymbol)
 }
 
 /*
@@ -96,6 +115,9 @@ Observe scores Catalog pins from metrics, applies desk oracle bools, then
 returns enter (flat) or the stronger of hold/exit (open), plus one side of
 each oracle pair. Metric brightness is tanh-squashed into (0,1); desk lamps
 are hard 0/1. Tied metric oracles fail closed to veto.
+
+Observe takes ownership of each sources[source] label map for this symbol —
+callers must not reuse those inner maps after the call.
 */
 func (grid *Grid) Observe(
 	symbol string,
@@ -125,19 +147,18 @@ func (grid *Grid) Observe(
 		regions[key] = &Region{Symbol: symbol, Key: key}
 	}
 
+	lane := grid.symbol(symbol)
+	lane.mu.Lock()
+
 	for source, metrics := range sources {
 		if len(metrics) == 0 {
 			continue
 		}
 
-		if grid.Priors[source] == nil {
-			grid.Priors[source] = make(map[string]*Prior)
-		}
-
-		prior := grid.Priors[source][symbol]
+		prior := lane.priors[source]
 
 		if prior == nil {
-			grid.Priors[source][symbol] = &Prior{Metrics: maps.Clone(metrics)}
+			lane.priors[source] = &Prior{Metrics: metrics}
 			continue
 		}
 
@@ -148,7 +169,7 @@ func (grid *Grid) Observe(
 		sourcePins, ok := regionMetricPins[source]
 
 		if !ok {
-			prior.Metrics = maps.Clone(metrics)
+			prior.Metrics = metrics
 			prior.Samples++
 			continue
 		}
@@ -161,7 +182,7 @@ func (grid *Grid) Observe(
 				continue
 			}
 
-			snm := grid.SNM(source, symbol, label, metrics)
+			snm := snmFrom(prior, label, metrics)
 			energy += snm * snm
 			pinned++
 		}
@@ -179,7 +200,7 @@ func (grid *Grid) Observe(
 				continue
 			}
 
-			move := math.Abs(grid.SNM(source, symbol, label, metrics)) * excitation
+			move := math.Abs(snmFrom(prior, label, metrics)) * excitation
 
 			if move <= 0 {
 				continue
@@ -203,10 +224,12 @@ func (grid *Grid) Observe(
 			}
 		}
 
-		prior.Metrics = maps.Clone(metrics)
+		prior.Metrics = metrics
 		prior.Energy = energy
 		prior.Samples++
 	}
+
+	lane.mu.Unlock()
 
 	for idx, ok := range []bool{volume, day, spread, book, peak} {
 		key := oracleMap[idx][ok]
@@ -260,8 +283,14 @@ of the same label and the movement itself.
 func (grid *Grid) SNM(
 	source, symbol, label string, metrics map[string]float64,
 ) float64 {
-	prior := grid.Priors[source][symbol]
+	lane := grid.symbol(symbol)
+	lane.mu.Lock()
+	defer lane.mu.Unlock()
 
+	return snmFrom(lane.priors[source], label, metrics)
+}
+
+func snmFrom(prior *Prior, label string, metrics map[string]float64) float64 {
 	if prior == nil || label == "" {
 		return 0
 	}
@@ -300,7 +329,11 @@ func (grid *Grid) Surprise(prediction, energy float64) float64 {
 Maturity is sensor readiness from sample history and metric completeness.
 */
 func (grid *Grid) Maturity(source, symbol string) float64 {
-	prior := grid.Priors[source][symbol]
+	lane := grid.symbol(symbol)
+	lane.mu.Lock()
+	defer lane.mu.Unlock()
+
+	prior := lane.priors[source]
 
 	if prior == nil || prior.Samples <= 0 {
 		return 0

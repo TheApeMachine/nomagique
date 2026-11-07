@@ -19,8 +19,10 @@ import (
 	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
 	"github.com/aws/aws-sdk-go-v2/feature/s3/transfermanager"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/bytedance/sonic"
 	"github.com/panjf2000/ants/v2"
 	"github.com/theapemachine/errnie"
+	nmruntime "github.com/theapemachine/nomagique/runtime"
 	"golang.design/x/lockfree/lf"
 )
 
@@ -29,23 +31,22 @@ Record is one queued upload. The payload lives on disk at Path so a slow
 Seaweed/S3 drain cannot retain Level3 (or any) bodies in the process heap.
 */
 type Record struct {
-	Key   string
-	Value []byte
+	Key      string
+	Value    []byte
+	Envelope *nmruntime.Envelope
 }
 
 type Client struct {
-	ctx          context.Context
-	cancel       context.CancelFunc
-	err          error
-	S3Client     *s3.Client
-	bucket       string
-	transfer     *transfermanager.Client
-	queue        *lf.Queue[Record]
-	downloadPool *ants.Pool
-	uploadPool   *ants.Pool
-	running      bool
-	closed       atomic.Bool
-	uploads      sync.WaitGroup
+	ctx      context.Context
+	cancel   context.CancelFunc
+	err      error
+	S3Client *s3.Client
+	bucket   string
+	transfer *transfermanager.Client
+	queue    *lf.Queue[Record]
+	running  atomic.Bool
+	closed   atomic.Bool
+	uploads  sync.WaitGroup
 }
 
 func NewClient(parent context.Context, bucket string) *Client {
@@ -131,73 +132,73 @@ func NewClient(parent context.Context, bucket string) *Client {
 	}
 
 	storeClient := &Client{
-		ctx:          ctx,
-		cancel:       cancel,
-		S3Client:     client,
-		bucket:       bucket,
-		transfer:     transfermanager.New(client),
-		queue:        lf.NewQueue[Record](),
-		downloadPool: downloadPool,
-		uploadPool:   uploadPool,
+		ctx:      ctx,
+		cancel:   cancel,
+		S3Client: client,
+		bucket:   bucket,
+		transfer: transfermanager.New(client),
+		queue:    lf.NewQueue[Record](),
 	}
 
+	storeClient.Run()
 	return storeClient
 }
 
+/*
+Run starts the upload drainers once. Hot paths must only Enqueue.
+*/
 func (client *Client) Run() {
-	if client.running {
+	if !client.running.CompareAndSwap(false, true) {
 		return
 	}
 
-	client.running = true
+	for range 2 {
+		go client.loop()
+	}
+}
 
-	for client.queue.Length() > 0 {
-		client.uploads.Add(1)
-
-		task := func() {
-			defer client.uploads.Done()
-
-			record, ok := client.queue.Dequeue()
-
-			if !ok {
-				return
+func (client *Client) loop() {
+	for {
+		select {
+		case <-client.ctx.Done():
+			for range client.queue.Length() {
+				client.drain()
 			}
 
-			client.upload(client.ctx, record.Key, record.Value)
+			return
+		default:
 		}
 
-		if err := client.uploadPool.Submit(task); err != nil {
-			client.uploads.Done()
-			errnie.Error(errnie.Err(
-				errnie.IO, "[store.client] submit task error", err,
-			))
-
-			break
+		if !client.drain() {
+			time.Sleep(time.Millisecond)
 		}
 	}
-
-	client.running = false
 }
 
 /*
-Flush submits every queued upload and waits until they finish.
+drain uploads one queued record. False means the queue was empty.
 */
-func (client *Client) Flush() {
-	for {
-		client.Run()
+func (client *Client) drain() bool {
+	record, ok := client.queue.Dequeue()
 
-		if client.queue.Length() == 0 {
-			break
-		}
-
-		if client.uploadPool.IsClosed() {
-			break
-		}
-
-		time.Sleep(10 * time.Millisecond)
+	if !ok {
+		return false
 	}
 
-	client.uploads.Wait()
+	if record.Envelope != nil {
+		var err error
+		record.Value, err = sonic.Marshal(record.Envelope)
+
+		if err != nil {
+			errnie.Error(errnie.Err(
+				errnie.IO, "failed to marshal envelope", err,
+			))
+			return true
+		}
+	}
+
+	client.upload(client.ctx, record.Key, record.Value)
+	return true
 }
 
 /*
@@ -319,11 +320,7 @@ func (client *Client) BulkDownload(ctx context.Context, prefix string) [][]byte 
 	)
 
 	for i, key := range keys {
-		wg.Add(1)
-
-		if err := client.downloadPool.Submit(func() {
-			defer wg.Done()
-
+		wg.Go(func() {
 			if failed.Load() || ctx.Err() != nil {
 				return
 			}
@@ -340,13 +337,7 @@ func (client *Client) BulkDownload(ctx context.Context, prefix string) [][]byte 
 			}
 
 			results[i] = raw
-		}); err != nil {
-			errnie.Error(errnie.Err(
-				errnie.IO, "[store.client] submit task error", err,
-			))
-
-			return nil
-		}
+		})
 	}
 
 	wg.Wait()
@@ -408,8 +399,19 @@ func (client *Client) WriteAtPrefix(key string, value []byte) (int, error) {
 	}
 
 	client.queue.Enqueue(Record{Key: key, Value: value})
-	client.Run()
 	return len(value), nil
+}
+
+func (client *Client) WriteAtPrefixWithEnvelope(key string, envelope *nmruntime.Envelope) (int, error) {
+	if client.closed.Load() {
+		return 0, errnie.Error(errnie.Err(
+			errnie.IO, "[store.client] write after close", nil,
+		))
+	}
+
+	client.queue.Enqueue(Record{Key: key, Envelope: envelope})
+
+	return 0, nil
 }
 
 func (client *Client) upload(ctx context.Context, prefix string, p []byte) (int, error) {
@@ -540,22 +542,9 @@ func (client *Client) Close() error {
 		return client.err
 	}
 
-	client.Flush()
 	client.cancel()
 
 	var errs error
-
-	if err := client.uploadPool.ReleaseTimeout(30 * time.Second); err != nil {
-		errs = errors.Join(errs, errnie.Error(errnie.Err(
-			errnie.IO, "[store.client] upload pool release", err,
-		)))
-	}
-
-	if err := client.downloadPool.ReleaseTimeout(5 * time.Second); err != nil {
-		errs = errors.Join(errs, errnie.Error(errnie.Err(
-			errnie.IO, "[store.client] download pool release", err,
-		)))
-	}
 
 	client.err = errors.Join(client.err, errs)
 	return client.err

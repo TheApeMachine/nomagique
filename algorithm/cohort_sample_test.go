@@ -131,6 +131,27 @@ func TestCohortSampleConcurrentMeasure(testingTB *testing.T) {
 	})
 }
 
+func TestPriceAtCohortForwardFills(testingTB *testing.T) {
+	Convey("priceAtCohort uses the last price at or before the cutoff", testingTB, func() {
+		state := &cohortSymbol{
+			times:  []int64{1_000, 2_000, 3_000},
+			prices: []float64{10, 11, 12},
+		}
+
+		price, ok := priceAtCohort(state, 2_500)
+		So(ok, ShouldBeTrue)
+		So(price, ShouldEqual, 11)
+
+		price, ok = priceAtCohort(state, 500)
+		So(ok, ShouldBeFalse)
+		So(price, ShouldEqual, 0)
+
+		price, ok = priceAtCohort(state, 3_000)
+		So(ok, ShouldBeTrue)
+		So(price, ShouldEqual, 12)
+	})
+}
+
 func BenchmarkCohortSample(testingTB *testing.B) {
 	sample := NewCohortSample()
 	base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)

@@ -9,6 +9,29 @@ import (
 	"github.com/theapemachine/nomagique/runtime"
 )
 
+func TestEnvelope_MetricsMemoizes(testingTB *testing.T) {
+	Convey("Given an envelope", testingTB, func() {
+		envelope := runtime.NewEnvelope(nil)
+		envelope.Resonance["ETH/USD"] = map[string]float64{"surprise": 0.4}
+
+		first := envelope.Metrics()
+		second := envelope.Metrics()
+
+		Convey("Metrics returns the same cache on later calls", func() {
+			So(second, ShouldEqual, first)
+			So(first["ETH/USD"]["resonance"]["surprise"], ShouldEqual, 0.4)
+		})
+
+		envelope.Resonance["ETH/USD"] = map[string]float64{"surprise": 1.2}
+		third := envelope.Metrics()
+
+		Convey("Later calls overlay Resonance onto the cache", func() {
+			So(third, ShouldEqual, first)
+			So(third["ETH/USD"]["resonance"]["surprise"], ShouldEqual, 1.2)
+		})
+	})
+}
+
 func TestEnvelope_Publish(testingTB *testing.T) {
 	Convey("Given an envelope with region rows", testingTB, func() {
 		envelope := runtime.NewEnvelope(nil)

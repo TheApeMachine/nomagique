@@ -38,6 +38,9 @@ type Envelope struct {
 	Paths         map[string]*Tokens                     `json:"paths"`
 	Decisions     map[string]*Decision                   `json:"decisions"`
 	N             uint64                                 `json:"n,omitempty"`
+	// metricsCache is built once per tick; Resonance is overlaid on later reads
+	// so training sees solver output without rebuilding every signal Map().
+	metricsCache map[string]map[string]map[string]float64 `json:"-"`
 }
 
 func NewEnvelope(trade *market.Trade) *Envelope {
@@ -61,7 +64,7 @@ func NewEnvelope(trade *market.Trade) *Envelope {
 }
 
 /*
-Decide records the outcome for one symbol on this tick.
+Decide records the outcome for one symbol (and tier, when set) on this tick.
 */
 func (envelope *Envelope) Decide(decision *Decision) {
 	if envelope == nil || decision == nil || decision.Symbol == "" {
@@ -72,69 +75,98 @@ func (envelope *Envelope) Decide(decision *Decision) {
 		envelope.Decisions = make(map[string]*Decision)
 	}
 
-	envelope.Decisions[decision.Symbol] = decision
+	key := decision.Symbol
+
+	if decision.Tier != "" {
+		key = decision.Symbol + "/" + decision.Tier
+	}
+
+	envelope.Decisions[key] = decision
 }
 
 /*
 Metrics gathers every symbol's mapped signal readings into the
 symbol → source → label → value shape grid.Observe expects.
+Built once per envelope; later calls only overlay Resonance.
+Observe may take ownership of the inner label maps.
 */
 func (envelope *Envelope) Metrics() map[string]map[string]map[string]float64 {
+	if envelope == nil {
+		return make(map[string]map[string]map[string]float64)
+	}
+
+	if envelope.metricsCache == nil {
+		envelope.metricsCache = envelope.buildMetrics()
+	} else {
+		envelope.overlayResonance(envelope.metricsCache)
+	}
+
+	return envelope.metricsCache
+}
+
+func putMetric(
+	out map[string]map[string]map[string]float64,
+	symbol, source string,
+	labels map[string]float64,
+) {
+	if symbol == "" || len(labels) == 0 {
+		return
+	}
+
+	sources := out[symbol]
+	if sources == nil {
+		sources = make(map[string]map[string]float64)
+		out[symbol] = sources
+	}
+
+	sources[source] = labels
+}
+
+func (envelope *Envelope) buildMetrics() map[string]map[string]map[string]float64 {
 	out := make(map[string]map[string]map[string]float64)
 
-	if envelope == nil {
-		return out
-	}
-
-	put := func(symbol, source string, labels map[string]float64) {
-		if symbol == "" || len(labels) == 0 {
-			return
-		}
-
-		sources := out[symbol]
-		if sources == nil {
-			sources = make(map[string]map[string]float64)
-			out[symbol] = sources
-		}
-
-		sources[source] = labels
-	}
-
 	for symbol, reading := range envelope.Correlation {
-		put(symbol, "correlation", reading.Map())
+		putMetric(out, symbol, "correlation", reading.Map())
 	}
 	for symbol, reading := range envelope.CVD {
-		put(symbol, "cvd", reading.Map())
+		putMetric(out, symbol, "cvd", reading.Map())
 	}
 	for symbol, reading := range envelope.DepthFlow {
-		put(symbol, "depthflow", reading.Map())
+		putMetric(out, symbol, "depthflow", reading.Map())
 	}
 	for symbol, reading := range envelope.Hawkes {
-		put(symbol, "hawkes", reading.Map())
+		putMetric(out, symbol, "hawkes", reading.Map())
 	}
 	for symbol, reading := range envelope.LeadLag {
-		put(symbol, "leadlag", reading.Map())
+		putMetric(out, symbol, "leadlag", reading.Map())
 	}
 	for symbol, reading := range envelope.Liquidity {
-		put(symbol, "liquidity", reading.Map())
+		putMetric(out, symbol, "liquidity", reading.Map())
 	}
 	for symbol, reading := range envelope.Morphology {
-		put(symbol, "morphology", reading.Map())
+		putMetric(out, symbol, "morphology", reading.Map())
 	}
 	for symbol, reading := range envelope.Pumpdump {
-		put(symbol, "pumpdump", reading.Map())
+		putMetric(out, symbol, "pumpdump", reading.Map())
 	}
 	for symbol, reading := range envelope.Sentiment {
-		put(symbol, "sentiment", reading.Map())
+		putMetric(out, symbol, "sentiment", reading.Map())
 	}
 	for symbol, reading := range envelope.Toxicity {
-		put(symbol, "toxicity", reading.Map())
-	}
-	for symbol, reading := range envelope.Resonance {
-		put(symbol, "resonance", reading)
+		putMetric(out, symbol, "toxicity", reading.Map())
 	}
 
+	envelope.overlayResonance(out)
+
 	return out
+}
+
+func (envelope *Envelope) overlayResonance(
+	out map[string]map[string]map[string]float64,
+) {
+	for symbol, reading := range envelope.Resonance {
+		putMetric(out, symbol, "resonance", reading)
+	}
 }
 
 /*

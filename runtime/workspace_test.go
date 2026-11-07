@@ -23,8 +23,8 @@ func (node *markNode) Step(envelope *Envelope) *Envelope {
 	return envelope
 }
 
-func TestWorkspaceStepAwaitsLastRing(t *testing.T) {
-	Convey("Step returns only after the last ring has written the envelope", t, func() {
+func TestWorkspaceStepPublishesWithoutWaiting(t *testing.T) {
+	Convey("Step returns before the last ring finishes the envelope", t, func() {
 		done := &atomic.Bool{}
 		ws := NewWorkspace(context.Background(), "test", []Ring{{
 			Group: "only",
@@ -43,6 +43,13 @@ func TestWorkspaceStepAwaitsLastRing(t *testing.T) {
 		}})
 
 		out := ws.Step(NewEnvelope(trade))
+
+		So(done.Load(), ShouldBeFalse)
+
+		deadline := time.Now().Add(time.Second)
+		for !done.Load() && time.Now().Before(deadline) {
+			time.Sleep(time.Millisecond)
+		}
 
 		So(done.Load(), ShouldBeTrue)
 		So(out.Decisions["BTC/USD"], ShouldNotBeNil)

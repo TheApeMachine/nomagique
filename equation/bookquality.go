@@ -161,6 +161,28 @@ func classifyBookQuality(
 		return 1, toxicBluffStrength, bluffScore, 0, 0, nil
 	}
 
+	// Cancels with no fills are pure liquidity pulls — maximal vacuum, not
+	// "no category". Cap strength so downstream classifiers stay finite.
+	if (cancelBid > 0 && fillBid <= 0) || (cancelAsk > 0 && fillAsk <= 0) {
+		strength := 1.0
+
+		if vacuumStrengthCap > 0 {
+			strength = math.Min(strength, vacuumStrengthCap)
+		}
+
+		vacuumScore, err = probability.MagnitudeMargin(math.Max(cancelBid, cancelAsk))
+
+		if err != nil {
+			return 0, 0, 0, 0, 0, err
+		}
+
+		if vacuumStrengthCap > 0 {
+			vacuumScore = math.Min(vacuumScore, vacuumStrengthCap)
+		}
+
+		return 2, strength, 0, vacuumScore, 0, nil
+	}
+
 	bidRatio := 0.0
 
 	if cancelBid > 0 && fillBid > 0 {
@@ -171,10 +193,6 @@ func classifyBookQuality(
 		}
 	}
 
-	if cancelBid > 0 && fillBid <= 0 {
-		return 0, 0, 0, 0, 0, errNoBookQualityCategory
-	}
-
 	askRatio := 0.0
 
 	if cancelAsk > 0 && fillAsk > 0 {
@@ -183,10 +201,6 @@ func classifyBookQuality(
 		if err != nil {
 			return 0, 0, 0, 0, 0, err
 		}
-	}
-
-	if cancelAsk > 0 && fillAsk <= 0 {
-		return 0, 0, 0, 0, 0, errNoBookQualityCategory
 	}
 
 	maxRatio := math.Max(bidRatio, askRatio)

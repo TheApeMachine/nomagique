@@ -9,6 +9,7 @@ import (
 )
 
 type Window struct {
+	mu              sync.Mutex
 	ledger          flow.SideFlowLedger
 	vacuumGate      *flow.GateQuantile
 	churnGate       *flow.GateQuantile

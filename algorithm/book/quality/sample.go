@@ -104,6 +104,9 @@ func (sample *Sample) MeasureBook(
 	}
 
 	window := sample.window(input.Symbol)
+	window.mu.Lock()
+	defer window.mu.Unlock()
+
 	frame := Frame{}
 	window.observeLevels(input.Bids, flow.SideBid, &frame)
 	window.observeLevels(input.Asks, flow.SideAsk, &frame)
@@ -128,6 +131,9 @@ func (sample *Sample) MeasureLevel3(
 	}
 
 	window := sample.window(input.Symbol)
+	window.mu.Lock()
+	defer window.mu.Unlock()
+
 	frame := Frame{}
 	window.observeOrderEvents(input.Bids, flow.SideBid, &frame)
 	window.observeOrderEvents(input.Asks, flow.SideAsk, &frame)
@@ -163,6 +169,9 @@ func (sample *Sample) MeasureTrade(
 	}
 
 	window := sample.window(input.Symbol)
+	window.mu.Lock()
+	defer window.mu.Unlock()
+
 	window.tradePrices = append(window.tradePrices, input.Price)
 	output := window.snapshot()
 

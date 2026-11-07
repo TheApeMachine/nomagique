@@ -65,6 +65,9 @@ func (estimator *BivariateEstimator) maximizeLikelihoodRestricted(
 		&optimize.Settings{
 			GradientThreshold: 1e-6,
 			MajorIterations:   lbfgsMajorIterations,
+			// Keep L-BFGS single-threaded: Concurrent>1 spawns channel workers
+			// per fit and shows up as optimize.minimize contentions under load.
+			Concurrent: 1,
 		},
 		&optimize.LBFGS{Store: lbfgsMemory},
 	)
@@ -161,7 +164,10 @@ func (estimator *BivariateEstimator) multiStartSeeds(
 
 	if estimator.prior.Valid() {
 		if priorSeed, ok := logParamsFromFit(estimator.prior); ok {
-			seeds = append(seeds, priorSeed)
+			// Warm start: prior + base only. LocalScales multi-start is for
+			// cold fits; under tick load it multiplies L-BFGS channel workers.
+			seeds = append(seeds, priorSeed, baseLog)
+			return seeds
 		}
 	}
 

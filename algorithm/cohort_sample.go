@@ -459,16 +459,38 @@ func pearsonCohort(left, right []float64) (float64, bool) {
 	return math.Max(-1, math.Min(1, correlation)), true
 }
 
+/*
+priceAtCohort forward-fills the last observed price at or before timestamp.
+Synthetic grid cutoffs almost never equal exchange trade times.
+*/
 func priceAtCohort(symbolState *cohortSymbol, timestamp int64) (float64, bool) {
-	for index, observed := range symbolState.times {
-		if observed == timestamp && index < len(symbolState.prices) {
-			price := symbolState.prices[index]
-
-			return price, price > 0
-		}
+	if symbolState == nil || len(symbolState.times) == 0 {
+		return 0, false
 	}
 
-	return 0, false
+	var price float64
+	found := false
+
+	for index, observed := range symbolState.times {
+		if observed > timestamp {
+			break
+		}
+
+		if index >= len(symbolState.prices) {
+			continue
+		}
+
+		candidate := symbolState.prices[index]
+
+		if candidate <= 0 {
+			continue
+		}
+
+		price = candidate
+		found = true
+	}
+
+	return price, found
 }
 
 func cohortFeatures(

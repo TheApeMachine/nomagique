@@ -138,9 +138,8 @@ func BenchmarkBivariateFit_LogLikelihoodGradient(testingTB *testing.B) {
 	}
 
 	testingTB.ReportAllocs()
-	testingTB.ResetTimer()
 
-	for iteration := 0; iteration < testingTB.N; iteration++ {
+	for testingTB.Loop() {
 		benchmarkLogLikelihood, benchmarkGradient, benchmarkGradientOK =
 			fit.LogLikelihoodGradient(stream, horizon)
 	}

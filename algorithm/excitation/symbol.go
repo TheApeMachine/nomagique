@@ -9,6 +9,9 @@ import (
 	"github.com/theapemachine/nomagique/hawkes"
 )
 
+/*
+forecastPendingReason documents why intensity can be ready while forecast gates stay closed.
+*/
 const forecastPendingReason = "forecast readiness requires residual and out-of-sample validation"
 
 /*
@@ -35,6 +38,9 @@ type symbol struct {
 	fitSignal       chan struct{}
 }
 
+/*
+fitEpoch is an immutable publish bundle from one completed Hawkes estimation.
+*/
 type fitEpoch struct {
 	model        hawkes.BivariateFit
 	restricted   hawkes.BivariateFit
@@ -44,6 +50,9 @@ type fitEpoch struct {
 	eventCount   int
 }
 
+/*
+newSymbol wires adaptive workspace, revision counting, and async fit signaling.
+*/
 func newSymbol() *symbol {
 	return &symbol{
 		adaptive:  hawkes.NewArrivalWorkspace(),
@@ -53,6 +62,9 @@ func newSymbol() *symbol {
 	}
 }
 
+/*
+measure ingests one observation horizon and returns Hawkes outcomes for envelope mapping.
+*/
 func (symbol *symbol) measure(
 	stream hawkes.ArrivalStream,
 	horizon time.Time,
@@ -96,6 +108,9 @@ func (symbol *symbol) measure(
 	return symbol.retain(symbol.publish(&epoch, context, observed, horizon)), true
 }
 
+/*
+retain caches the latest readable outcome for Process.Outcome queries.
+*/
 func (symbol *symbol) retain(outcome Outcome) Outcome {
 	symbol.lastOutcome = outcome
 	symbol.lastReady = true
@@ -103,6 +118,9 @@ func (symbol *symbol) retain(outcome Outcome) Outcome {
 	return outcome
 }
 
+/*
+observation emits counts-only outcomes when the window is not yet fittable.
+*/
 func (symbol *symbol) observation(
 	stream hawkes.ArrivalStream,
 	horizon time.Time,
@@ -144,6 +162,9 @@ func (symbol *symbol) observation(
 	}
 }
 
+/*
+baseline projects Poisson intensities while Hawkes parameters are still pending.
+*/
 func (symbol *symbol) baseline(
 	context hawkes.FitContext,
 	horizon time.Time,
@@ -158,6 +179,9 @@ func (symbol *symbol) baseline(
 	return outcome
 }
 
+/*
+pendingReason explains maturity gates so readiness Reason is actionable upstream.
+*/
 func (symbol *symbol) pendingReason(context hawkes.FitContext) string {
 	buyCount := context.EventsX
 	sellCount := context.EventsY
@@ -178,6 +202,9 @@ func (symbol *symbol) pendingReason(context hawkes.FitContext) string {
 	)
 }
 
+/*
+requestFit snapshots arrivals and fits asynchronously without blocking Measure.
+*/
 func (symbol *symbol) requestFit(
 	context hawkes.FitContext,
 	stream hawkes.ArrivalStream,
@@ -211,9 +238,10 @@ func (symbol *symbol) requestFit(
 	}()
 }
 
-// takePending publishes a finished async fit. Caller holds symbol.mu.
-// Measure already owns that lock, and sync.Mutex does not reenter, so a
-// second Lock here stalls the signal ring on the first ready stream.
+/*
+takePending moves a finished async fit out for publication. Caller holds symbol.mu
+because Measure already owns that lock and the mutex must not reenter here.
+*/
 func (symbol *symbol) takePending() *fitEpoch {
 	pending := symbol.pending
 	symbol.pending = nil
@@ -221,6 +249,9 @@ func (symbol *symbol) takePending() *fitEpoch {
 	return pending
 }
 
+/*
+notifyFit wakes AwaitFit waiters when a background fit completes or fails.
+*/
 func (symbol *symbol) notifyFit() {
 	select {
 	case symbol.fitSignal <- struct{}{}:
@@ -228,6 +259,9 @@ func (symbol *symbol) notifyFit() {
 	}
 }
 
+/*
+awaitFit blocks until an in-flight fit finishes and an epoch is pending publish.
+*/
 func (symbol *symbol) awaitFit() bool {
 	if !symbol.fitting.Load() && symbol.peekPending() {
 		return true
@@ -242,6 +276,9 @@ func (symbol *symbol) awaitFit() bool {
 	return symbol.peekPending() || !symbol.fitting.Load()
 }
 
+/*
+peekPending reports whether a completed epoch waits without consuming it.
+*/
 func (symbol *symbol) peekPending() bool {
 	symbol.mu.Lock()
 	defer symbol.mu.Unlock()

@@ -6,6 +6,10 @@ import (
 	"github.com/theapemachine/errnie"
 )
 
+/*
+SoftmaxScoresNormalized is the shared stabilized softmax used by classifiers
+and tests; single-score input returns unity without calling exp on infinities.
+*/
 func SoftmaxScoresNormalized(scores []float64) ([]float64, error) {
 	if len(scores) == 0 {
 		return nil, errnie.Error(errnie.Err(

@@ -39,6 +39,9 @@ func (stream ArrivalStream) BetweenInto(
 	return workspace.StreamFrom(start, buyTimes, sellTimes)
 }
 
+/*
+Feeds algorithm/excitation and equation Hawkes stages — betweenTimes turns marked trade arrivals into fitted intensities and categories.
+*/
 func betweenTimes(times []time.Time, start, end time.Time) []time.Time {
 	first := sort.Search(len(times), func(index int) bool {
 		return !times[index].Before(start)

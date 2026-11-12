@@ -4,6 +4,10 @@ import (
 	"math"
 )
 
+/*
+defaultStandardizerSigmaBound caps extreme z-scores so a single outlier cannot
+dominate downstream softmax or scoring after moments have stabilized.
+*/
 const defaultStandardizerSigmaBound = 8.0
 
 /*
@@ -114,6 +118,10 @@ func (standardizer *Standardizer) Precision() float64 {
 	return standardizer.precision()
 }
 
+/*
+precision estimates how much of a full z-score prior moments support; Measure
+uses it as the scoring scale instead of a fixed warmup count.
+*/
 func (standardizer *Standardizer) precision() float64 {
 	if standardizer.count < 2 || standardizer.variance() <= 0 {
 		return 0
@@ -155,6 +163,10 @@ func (standardizer *Standardizer) Reset() {
 	standardizer.count = 0
 }
 
+/*
+observe updates Welford moments after scoring so the current sample cannot
+inflate the scale used to judge itself.
+*/
 func (standardizer *Standardizer) observe(sample float64) {
 	standardizer.count++
 	delta := sample - standardizer.mean
@@ -163,6 +175,10 @@ func (standardizer *Standardizer) observe(sample float64) {
 	standardizer.m2 += delta * delta2
 }
 
+/*
+variance returns the unbiased sample variance used as spread for z-scoring;
+zero before two observations signals not-ready rather than a numeric default.
+*/
 func (standardizer *Standardizer) variance() float64 {
 	if standardizer.count < 2 {
 		return 0

@@ -7,6 +7,10 @@ import (
 	"github.com/theapemachine/nomagique/algorithm/book/flow"
 )
 
+/*
+Frame accumulates per-frame cancel, fill, and touch-add volume before a window
+finish builds equation.BookQualityInput for symm envelope wiring.
+*/
 type Frame struct {
 	cancelBid      float64
 	fillBid        float64
@@ -18,6 +22,9 @@ type Frame struct {
 	touchCancelAsk float64
 }
 
+/*
+FrameAdd records resting liquidity added on one side during a book frame.
+*/
 func FrameAdd(frame *Frame, side flow.Side, quantity float64) {
 	if side == flow.SideBid {
 		frame.addBid += quantity
@@ -28,6 +35,9 @@ func FrameAdd(frame *Frame, side flow.Side, quantity float64) {
 	frame.addAsk += quantity
 }
 
+/*
+FrameFill records matched volume attributed to one side for cancel/fill ratios.
+*/
 func FrameFill(frame *Frame, side flow.Side, quantity float64) {
 	if side == flow.SideBid {
 		frame.fillBid += quantity
@@ -38,6 +48,9 @@ func FrameFill(frame *Frame, side flow.Side, quantity float64) {
 	frame.fillAsk += quantity
 }
 
+/*
+FrameCancel records withdrawn quantity, tagging touch cancels for bluff churn.
+*/
 func FrameCancel(
 	frame *Frame,
 	side flow.Side,
@@ -61,6 +74,9 @@ func FrameCancel(
 	}
 }
 
+/*
+CancelFillRatio is the vacuum/support ratio equation.BookQuality expects from sampled flow.
+*/
 func CancelFillRatio(cancel, fill float64) float64 {
 	if cancel <= 0 || fill <= 0 {
 		return 0
@@ -69,6 +85,9 @@ func CancelFillRatio(cancel, fill float64) float64 {
 	return cancel / fill
 }
 
+/*
+TradedAt corroborates L3 deletes as fills when prints land near recent trade prices.
+*/
 func TradedAt(price float64, trades []float64) bool {
 	if price <= 0 || len(trades) == 0 {
 		return false
@@ -85,6 +104,9 @@ func TradedAt(price float64, trades []float64) bool {
 	return false
 }
 
+/*
+MedianAbsoluteDeviation sets trade-matching tolerance from the local print distribution.
+*/
 func MedianAbsoluteDeviation(values []float64) float64 {
 	if len(values) < 2 {
 		return 0
@@ -100,6 +122,9 @@ func MedianAbsoluteDeviation(values []float64) float64 {
 	return Median(deviations)
 }
 
+/*
+Median is a robust center for touch tolerance without pulling in heavy statistics deps.
+*/
 func Median(values []float64) float64 {
 	if len(values) == 0 {
 		return 0

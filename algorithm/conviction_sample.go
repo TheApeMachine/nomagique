@@ -10,6 +10,12 @@ import (
 	"github.com/theapemachine/nomagique/statistic"
 )
 
+/*
+defaultSurgeGate bounds sampling or gates so equation feature frames stay well-posed for symm envelope wiring.
+*/
+/*
+convictionMinPeers bounds sampling or gates so equation feature frames stay well-posed for symm envelope wiring.
+*/
 const (
 	convictionMinPeers = 2
 	defaultSurgeGate   = 0.5
@@ -31,6 +37,9 @@ type ConvictionSampleInput struct {
 	At     time.Time
 }
 
+/*
+convictionSymbol holds per-symbol sampling state that feeds equation Measure and Map outputs into resonance features.
+*/
 type convictionSymbol struct {
 	mu      sync.Mutex
 	last    float64
@@ -108,6 +117,9 @@ func (sample *ConvictionSample) Measure(
 	}, true, nil
 }
 
+/*
+convictionStats holds per-symbol sampling state that feeds equation Measure and Map outputs into resonance features.
+*/
 type convictionStats struct {
 	leader          string
 	leaderMagnitude float64
@@ -115,6 +127,9 @@ type convictionStats struct {
 	surgeThreshold  float64
 }
 
+/*
+(…).statistics supports algorithm sampling that supplies equation inputs symm maps into runtime.Envelope.
+*/
 func (sample *ConvictionSample) statistics() (convictionStats, bool) {
 	type peer struct {
 		symbol  string
@@ -204,6 +219,9 @@ func (sample *ConvictionSample) statistics() (convictionStats, bool) {
 	return stats, true
 }
 
+/*
+(…).symbol supports algorithm sampling that supplies equation inputs symm maps into runtime.Envelope.
+*/
 func (sample *ConvictionSample) symbol(name string) *convictionSymbol {
 	if existing, ok := sample.symbols.Load(name); ok {
 		return existing.(*convictionSymbol)

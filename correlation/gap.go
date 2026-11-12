@@ -7,8 +7,16 @@ import (
 	"gonum.org/v1/gonum/stat"
 )
 
+/*
+gapPayloadHeader is the leading scalar count pair in a gap batch payload
+before synchronous and asynchronous segment slices are laid out.
+*/
 const gapPayloadHeader = 2
 
+/*
+gapSegments decodes the packed batch layout; malformed lengths return ok false
+so Pearson and Hayashi paths fail closed instead of reading past the buffer.
+*/
 func gapSegments(batch []float64) (syncLeft, syncRight, asyncLeft, asyncRight []float64, ok bool) {
 	if len(batch) < gapPayloadHeader {
 		return nil, nil, nil, nil, false
@@ -39,6 +47,10 @@ func gapSegments(batch []float64) (syncLeft, syncRight, asyncLeft, asyncRight []
 	return syncLeft, syncRight, asyncLeft, asyncRight, true
 }
 
+/*
+gapPearson estimates synchronous gap correlation when aligned segments exist;
+non-finite gonum output is discarded so downstream gates see a hard false.
+*/
 func gapPearson(batch []float64, weights []float64) (float64, bool) {
 	syncLeft, syncRight, _, _, ok := gapSegments(batch)
 
@@ -67,6 +79,10 @@ func gapPearson(batch []float64, weights []float64) (float64, bool) {
 	return correlationValue, true
 }
 
+/*
+gapHayashi runs asynchronous Hayashi–Yoshida on the decoded async segments
+when sync layout is present but irregular sampling drives the estimate.
+*/
 func gapHayashi(batch []float64, maxInterval time.Duration) (float64, bool) {
 	_, _, asyncLeft, asyncRight, ok := gapSegments(batch)
 
@@ -84,6 +100,9 @@ func gapHayashi(batch []float64, maxInterval time.Duration) (float64, bool) {
 	return hayashiYoshidaCorrelation(left, right, maxInterval)
 }
 
+/*
+GapErrorType categorizes gap-batch validation failures for typed error routing.
+*/
 type GapErrorType string
 
 const (
@@ -93,10 +112,16 @@ const (
 	GapErrorNonFiniteGap         GapErrorType = "require finite gap"
 )
 
+/*
+GapError is a string error for gap correlation preconditions.
+*/
 type GapError string
 
 var _ error = (*GapError)(nil)
 
+/*
+Error satisfies the error interface for GapError constants.
+*/
 func (gapError GapError) Error() string {
 	return string(gapError)
 }

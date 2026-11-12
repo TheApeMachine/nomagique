@@ -7,15 +7,24 @@ import (
 	"github.com/theapemachine/errnie"
 )
 
+/*
+bufferSize and bufferMask size the LMAX ring; capacity must stay a power of two
+so sequence masking stays O(1) on every symm tick.
+*/
 const (
 	bufferSize = 1024 * 64 // must be a power of 2
 	bufferMask = bufferSize - 1
 )
 
-// ringBuffer is owned by the caller of go-disruptor (see README): Reserve a
-// slot, write the payload, then Commit so handler groups can see it.
+/*
+ringBuffer holds in-flight Envelopes between Reserve and Commit; go-disruptor
+documents caller-owned storage so ingress never blocks behind handlers.
+*/
 var ringBuffer = [bufferSize]*Envelope{}
 
+/*
+optionList builds disruptor.Options without a helper package in symm boot wiring.
+*/
 func optionList[O any](initial ...O) []O {
 	return initial
 }
@@ -30,6 +39,10 @@ type Ring struct {
 	Nodes []Node
 }
 
+/*
+Workspace is the symm disruptor pipeline: staged handler groups, shared System
+lifecycle, and non-blocking Step from the market ingress loop.
+*/
 type Workspace struct {
 	*System
 	channel  disruptor.Disruptor
@@ -143,10 +156,16 @@ func (workspace *Workspace) Step(envelope *Envelope) *Envelope {
 	return envelope
 }
 
+/*
+stageHandler adapts Consumer to disruptor.Handler without exporting ring seq math.
+*/
 type stageHandler struct {
 	consumer *Consumer
 }
 
+/*
+Handle drains [lower,upper] sequences and invokes each slot's Consumer.Step.
+*/
 func (sh *stageHandler) Handle(lower, upper int64) {
 	for seq := lower; seq <= upper; seq++ {
 		envelope := ringBuffer[seq&bufferMask]

@@ -9,6 +9,21 @@ import (
 	"github.com/theapemachine/nomagique/correlation"
 )
 
+/*
+lagSampleBaselineMin bounds sampling or gates so equation feature frames stay well-posed for symm envelope wiring.
+*/
+/*
+lagSampleHistoryCap bounds sampling or gates so equation feature frames stay well-posed for symm envelope wiring.
+*/
+/*
+lagSampleMinObs bounds sampling or gates so equation feature frames stay well-posed for symm envelope wiring.
+*/
+/*
+lagSampleBarInterval bounds sampling or gates so equation feature frames stay well-posed for symm envelope wiring.
+*/
+/*
+lagSampleMaxInterval bounds sampling or gates so equation feature frames stay well-posed for symm envelope wiring.
+*/
 const (
 	lagSampleHistoryCap   = 128
 	lagSampleMinObs       = 8
@@ -47,6 +62,9 @@ type LagSampleInput struct {
 	At     time.Time
 }
 
+/*
+lagSymbol holds per-symbol sampling state that feeds equation Measure and Map outputs into resonance features.
+*/
 type lagSymbol struct {
 	mu       sync.Mutex
 	samples  []correlation.Sample
@@ -64,6 +82,9 @@ func NewLagSample(config ...LagSampleConfig) *LagSample {
 	}
 }
 
+/*
+lagSampleConfig supports algorithm sampling that supplies equation inputs symm maps into runtime.Envelope.
+*/
 func lagSampleConfig(config []LagSampleConfig) LagSampleConfig {
 	resolved := LagSampleConfig{
 		HistoryCap:  lagSampleHistoryCap,
@@ -179,6 +200,9 @@ func (sample *LagSample) Measure(input LagSampleInput) (LagInput, bool, error) {
 	}, true, nil
 }
 
+/*
+(…).symbol supports algorithm sampling that supplies equation inputs symm maps into runtime.Envelope.
+*/
 func (sample *LagSample) symbol(name string) *lagSymbol {
 	if existing, ok := sample.symbols.Load(name); ok {
 		return existing.(*lagSymbol)
@@ -195,6 +219,9 @@ func (sample *LagSample) symbol(name string) *lagSymbol {
 	return actual.(*lagSymbol)
 }
 
+/*
+(…).peer supports algorithm sampling that supplies equation inputs symm maps into runtime.Envelope.
+*/
 func (sample *LagSample) peer(symbol string) ([]correlation.Sample, bool) {
 	var peer []correlation.Sample
 

@@ -69,6 +69,10 @@ func (softmax *Softmax) Measure(input SoftmaxInput) (SoftmaxOutput, error) {
 	return softmax.output(probabilities), nil
 }
 
+/*
+scores aligns input categories to the configured key order so Measure always
+feeds distribute a fixed-length vector even when callers omit categories.
+*/
 func (softmax *Softmax) scores(input SoftmaxInput) ([]float64, error) {
 	if softmax == nil || len(softmax.config.Inputs) == 0 {
 		return nil, errnie.Error(errnie.Err(
@@ -100,6 +104,10 @@ func (softmax *Softmax) scores(input SoftmaxInput) ([]float64, error) {
 	return scores, nil
 }
 
+/*
+Score resolves one category's logit and rejects duplicate keys so softmax
+normalization cannot double-count the same semantic outcome.
+*/
 func (input SoftmaxInput) Score(category string) (float64, error) {
 	found := false
 	score := 0.0
@@ -136,6 +144,9 @@ func (input SoftmaxInput) Score(category string) (float64, error) {
 	return score, nil
 }
 
+/*
+output reattaches category labels to the probability vector for stable exports.
+*/
 func (softmax *Softmax) output(probabilities []float64) SoftmaxOutput {
 	output := SoftmaxOutput{
 		Probabilities: make([]CategoryScore, len(softmax.config.Inputs)),
@@ -152,6 +163,10 @@ func (softmax *Softmax) output(probabilities []float64) SoftmaxOutput {
 	return output
 }
 
+/*
+distribute validates finiteness then chooses raw in-process softmax versus
+the shared normalized path when config demands unit-sum outputs.
+*/
 func (softmax *Softmax) distribute(scores []float64, normalize bool) ([]float64, error) {
 	if len(scores) == 0 {
 		return nil, errnie.Error(errnie.Err(
@@ -178,6 +193,10 @@ func (softmax *Softmax) distribute(scores []float64, normalize bool) ([]float64,
 	return softmax.raw(scores)
 }
 
+/*
+raw applies log-sum-exp stabilization before normalizing so large logits do
+not overflow while still producing a proper probability mass.
+*/
 func (softmax *Softmax) raw(scores []float64) ([]float64, error) {
 	probabilities := make([]float64, len(scores))
 	maxScore := scores[0]
@@ -209,6 +228,10 @@ func (softmax *Softmax) raw(scores []float64) ([]float64, error) {
 	return probabilities, nil
 }
 
+/*
+normalized delegates to SoftmaxScoresNormalized so batch and streaming callers
+share one numerically vetted implementation.
+*/
 func (softmax *Softmax) normalized(scores []float64) ([]float64, error) {
 	return SoftmaxScoresNormalized(scores)
 }

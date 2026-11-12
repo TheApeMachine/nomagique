@@ -145,6 +145,10 @@ leaking an application-specific order-side type into nomagique.
 */
 type decaySide int
 
+/*
+decayShort and decayLong tag which held side exitSide scores so long and short
+Map families stay symmetric in symm envelope wiring.
+*/
 const (
 	decayShort decaySide = -1
 	decayLong  decaySide = 1
@@ -347,6 +351,9 @@ func imbalanceFlip(current, priorMean float64, side decaySide) float64 {
 	return 0
 }
 
+/*
+classifyDecay picks the dominant exit urgency family for each decay side output.
+*/
 func classifyDecay(thinning, widen, fade, flip float64) int {
 	best := thinning
 	category := 1

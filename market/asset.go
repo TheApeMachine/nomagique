@@ -2,6 +2,9 @@ package market
 
 import "github.com/shopspring/decimal"
 
+/*
+Asset is one leg of Balance book state desk tiers size from before Enter spends.
+*/
 type Asset struct {
 	updater func(asset *Asset)
 	Symbol  string          `json:"symbol"`
@@ -10,6 +13,9 @@ type Asset struct {
 	Equity  decimal.Decimal `json:"equity"`
 }
 
+/*
+NewAsset wires the balance updater callback so venue fills refresh capital in place.
+*/
 func NewAsset(
 	updater func(asset *Asset),
 	symbol string,

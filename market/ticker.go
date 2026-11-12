@@ -26,6 +26,9 @@ type Ticker struct {
 	onChange func(MarketType)
 }
 
+/*
+NewTicker seeds oracle inputs (volume, day move, 24h range) Price polls into rows.
+*/
 func NewTicker(rows map[string]*TickerData) *Ticker {
 	if rows == nil {
 		rows = make(map[string]*TickerData)
@@ -34,14 +37,23 @@ func NewTicker(rows map[string]*TickerData) *Ticker {
 	return &Ticker{Rows: rows}
 }
 
+/*
+OnChange lets Price.applyTicker refresh rows when the public ticker websocket fires.
+*/
 func (ticker *Ticker) OnChange(fn func(MarketType)) {
 	ticker.onChange = fn
 }
 
+/*
+Request is empty: ticker is a broadcast push channel.
+*/
 func (ticker *Ticker) Request() map[string]any {
 	return map[string]any{}
 }
 
+/*
+Set stores one symbol's quote under lock for grid day/volume/peak desk bools.
+*/
 func (ticker *Ticker) Set(symbol string, row *TickerData) {
 	if ticker == nil || symbol == "" || row == nil {
 		return
@@ -59,6 +71,9 @@ func (ticker *Ticker) Set(symbol string, row *TickerData) {
 	ticker.Rows[symbol] = &copied
 }
 
+/*
+Of returns a copy of one row so callers cannot mutate shared ticker state.
+*/
 func (ticker *Ticker) Of(symbol string) *TickerData {
 	if ticker == nil {
 		return nil
@@ -80,6 +95,9 @@ func (ticker *Ticker) Of(symbol string) *TickerData {
 	return &copied
 }
 
+/*
+VolumeUSD feeds liquid_quote / quiet_tape oracle lamps on Observe.
+*/
 func (ticker *Ticker) VolumeUSD(symbol string) float64 {
 	row := ticker.Of(symbol)
 	if row == nil {
@@ -89,6 +107,9 @@ func (ticker *Ticker) VolumeUSD(symbol string) float64 {
 	return row.VolumeUSD
 }
 
+/*
+ChangePct feeds session_move / flat_session oracle lamps on Observe.
+*/
 func (ticker *Ticker) ChangePct(symbol string) float64 {
 	row := ticker.Of(symbol)
 	if row == nil {
@@ -149,6 +170,9 @@ func (ticker *Ticker) FromMarket(other MarketType) MarketType {
 	return src.ToMarket(ticker)
 }
 
+/*
+MarshalJSON snapshots ticker rows for UI and persisted diagnostics.
+*/
 func (ticker *Ticker) MarshalJSON() ([]byte, error) {
 	ticker.mu.RLock()
 	defer ticker.mu.RUnlock()
@@ -159,6 +183,9 @@ func (ticker *Ticker) MarshalJSON() ([]byte, error) {
 	}{Rows: ticker.Rows})
 }
 
+/*
+UnmarshalJSON reloads ticker rows from store; preserves onChange for live Price wiring.
+*/
 func (ticker *Ticker) UnmarshalJSON(data []byte) error {
 	var decoded struct {
 		Rows map[string]*TickerData `json:"rows"`

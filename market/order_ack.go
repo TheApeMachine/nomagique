@@ -19,6 +19,9 @@ type OrderAck struct {
 	onChange func(MarketType)
 }
 
+/*
+NewOrderAck maps venue submit responses into a typed ack desk tiers correlate by req_id.
+*/
 func NewOrderAck(data map[string]any) *OrderAck {
 	out := &OrderAck{}
 
@@ -45,14 +48,23 @@ func NewOrderAck(data map[string]any) *OrderAck {
 	return out
 }
 
+/*
+OnChange registers tier handlers for submit success/failure without blocking Send.
+*/
 func (ack *OrderAck) OnChange(fn func(MarketType)) {
 	ack.onChange = fn
 }
 
+/*
+Request is empty: acks arrive on the private websocket response stream.
+*/
 func (ack *OrderAck) Request() map[string]any {
 	return map[string]any{}
 }
 
+/*
+ToMarket copies ack fields into the tier slot preserving timing and onChange.
+*/
 func (ack *OrderAck) ToMarket(other MarketType) MarketType {
 	dst, ok := other.(*OrderAck)
 
@@ -73,6 +85,9 @@ func (ack *OrderAck) ToMarket(other MarketType) MarketType {
 	return dst
 }
 
+/*
+FromMarket imports a peer ack for replay and paper order tracking.
+*/
 func (ack *OrderAck) FromMarket(other MarketType) MarketType {
 	src, ok := other.(*OrderAck)
 
@@ -83,11 +98,17 @@ func (ack *OrderAck) FromMarket(other MarketType) MarketType {
 	return src.ToMarket(ack)
 }
 
+/*
+MarshalJSON persists submit outcomes on diagnostic store keys.
+*/
 func (ack *OrderAck) MarshalJSON() ([]byte, error) {
 	type alias OrderAck
 	return json.Marshal((*alias)(ack))
 }
 
+/*
+UnmarshalJSON reloads ack state from persisted frames; keeps onChange wired.
+*/
 func (ack *OrderAck) UnmarshalJSON(data []byte) error {
 	type alias OrderAck
 	var decoded alias

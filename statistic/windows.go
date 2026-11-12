@@ -120,6 +120,10 @@ func ResolveWindowSet(history []float64, config WindowsConfig) (WindowsOutput, e
 	return output, nil
 }
 
+/*
+windowsOutput fills return-lag hints from long-window scale when callers omit
+them, keeping adaptive and fixed window paths consistent.
+*/
 func windowsOutput(shortWindow, longWindow, returnLagHint int) WindowsOutput {
 	returnLag := returnLagHint
 
@@ -139,6 +143,10 @@ func windowsOutput(shortWindow, longWindow, returnLagHint int) WindowsOutput {
 	}
 }
 
+/*
+adaptiveLongWindow lengthens the long horizon when coefficient of variation is
+high so noisy series get enough tail for a stable long estimator.
+*/
 func adaptiveLongWindow(history []float64, shortWindow int) int {
 	sampleCount := len(history)
 	spread := 0.0

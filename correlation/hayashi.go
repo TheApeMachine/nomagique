@@ -14,6 +14,10 @@ type Sample struct {
 	Value float64
 }
 
+/*
+samplesFromScalars unpacks interleaved Unix-second and value pairs from flat
+buffers; non-finite scalars abort so Hayashi paths do not ingest poison times.
+*/
 func samplesFromScalars(values []float64) ([]Sample, bool) {
 	if len(values) < 4 || len(values)%2 != 0 {
 		return nil, false
@@ -43,6 +47,10 @@ func samplesFromScalars(values []float64) ([]Sample, bool) {
 	return samples, true
 }
 
+/*
+hayashiYoshidaCorrelation integrates overlapping log-return products under
+maxInterval so irregular async series correlate without calendar alignment.
+*/
 func hayashiYoshidaCorrelation(
 	left, right []Sample,
 	maxInterval time.Duration,
@@ -117,6 +125,10 @@ func hayashiYoshidaCorrelation(
 	return correlation, true
 }
 
+/*
+varianceSum accumulates realized variance from valid consecutive returns only;
+invalid intervals are skipped so the denominator reflects tradeable spans.
+*/
 func varianceSum(samples []Sample, maxInterval time.Duration) float64 {
 	if len(samples) < 2 {
 		return 0
@@ -136,6 +148,10 @@ func varianceSum(samples []Sample, maxInterval time.Duration) float64 {
 	return sum
 }
 
+/*
+validInterval enforces strict time order, positive prices, and optional duration
+caps that keep Hayashi products from spanning stale or crossed quotes.
+*/
 func validInterval(left, right Sample, maxInterval time.Duration) bool {
 	if !left.At.Before(right.At) || left.Value <= 0 || right.Value <= 0 {
 		return false
@@ -144,6 +160,9 @@ func validInterval(left, right Sample, maxInterval time.Duration) bool {
 	return maxInterval <= 0 || right.At.Sub(left.At) <= maxInterval
 }
 
+/*
+HayashiErrorType categorizes Hayashi input validation failures.
+*/
 type HayashiErrorType string
 
 const (
@@ -152,10 +171,16 @@ const (
 	HayashiErrorRequirePairedSamples    HayashiErrorType = "require paired timestamp/value samples"
 )
 
+/*
+HayashiError is a string error for asynchronous correlation preconditions.
+*/
 type HayashiError string
 
 var _ error = (*HayashiError)(nil)
 
+/*
+Error satisfies the error interface for HayashiError constants.
+*/
 func (hayashiError HayashiError) Error() string {
 	return string(hayashiError)
 }

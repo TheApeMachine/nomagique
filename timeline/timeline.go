@@ -34,10 +34,18 @@ func New(times []time.Time) Timeline {
 	return Timeline{times: times}
 }
 
+/*
+Times exposes the ordered event sequence for decay and correlation callers
+that need raw timestamps without copying the internal slice.
+*/
 func (timeline Timeline) Times() []time.Time {
 	return timeline.times
 }
 
+/*
+Len reports how many events are retained; gap and span helpers use it for
+early exits when history is too short for stable estimates.
+*/
 func (timeline Timeline) Len() int {
 	return len(timeline.times)
 }

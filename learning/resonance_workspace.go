@@ -2,6 +2,10 @@ package learning
 
 import "gonum.org/v1/gonum/mat"
 
+/*
+resonanceWorkspace holds every scratch vector the manifold reuses across settle
+and learn so per-tick inference stays allocation-free after construction.
+*/
 type resonanceWorkspace struct {
 	xCol                *mat.VecDense
 	yCol                *mat.VecDense
@@ -36,6 +40,10 @@ type resonanceWorkspace struct {
 	svdValues           []float64
 }
 
+/*
+newResonanceWorkspace sizes buffers from arch depth once so ResonanceManifold
+and symm's per-symbol solver share the same memory layout assumptions.
+*/
 func newResonanceWorkspace(arch []int, targetDim int) *resonanceWorkspace {
 	numLinks := len(arch) - 1
 	topDim := arch[len(arch)-1]

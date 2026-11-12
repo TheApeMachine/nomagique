@@ -14,6 +14,10 @@ any resting state is touched.
 */
 type Side byte
 
+/*
+SideBid and SideAsk are the only sides book-flow sampling applies so equation
+inputs never mix invalid ledger directions.
+*/
 const (
 	SideBid Side = 'b'
 	SideAsk Side = 'a'
@@ -296,6 +300,9 @@ func (book *Book) Imbalance(
 	return (bidWeight - askWeight) / total
 }
 
+/*
+side returns the ledger for a validated direction without duplicating bid/ask branches upstream.
+*/
 func (book *Book) side(side Side) *SideBook {
 	if side == SideBid {
 		return book.bids

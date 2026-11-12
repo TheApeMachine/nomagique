@@ -13,6 +13,15 @@ import (
 	"gonum.org/v1/gonum/stat"
 )
 
+/*
+cohortMinimumPeers bounds sampling or gates so equation feature frames stay well-posed for symm envelope wiring.
+*/
+/*
+cohortHistoryCap bounds sampling or gates so equation feature frames stay well-posed for symm envelope wiring.
+*/
+/*
+cohortMinimumWindow bounds sampling or gates so equation feature frames stay well-posed for symm envelope wiring.
+*/
 const (
 	cohortMinimumWindow = 2
 	cohortMinimumPeers  = 1
@@ -46,6 +55,9 @@ type CohortSampleInput struct {
 	At     time.Time
 }
 
+/*
+cohortSymbol holds per-symbol sampling state that feeds equation Measure and Map outputs into resonance features.
+*/
 type cohortSymbol struct {
 	lastPrice float64
 	prices    []float64
@@ -63,6 +75,9 @@ func NewCohortSample(config ...CohortSampleConfig) *CohortSample {
 	}
 }
 
+/*
+cohortSampleConfig supports algorithm sampling that supplies equation inputs symm maps into runtime.Envelope.
+*/
 func cohortSampleConfig(config []CohortSampleConfig) CohortSampleConfig {
 	if len(config) == 0 {
 		return CohortSampleConfig{HistoryCap: cohortHistoryCap}
@@ -119,12 +134,18 @@ func (cohortSample *CohortSample) Measure(
 	return equation.NewFeatureFrame(equation.CohortInputKeys, features), true, nil
 }
 
+/*
+cohortTick holds per-symbol sampling state that feeds equation Measure and Map outputs into resonance features.
+*/
 type cohortTick struct {
 	name  string
 	price float64
 	at    int64
 }
 
+/*
+(…).sample supports algorithm sampling that supplies equation inputs symm maps into runtime.Envelope.
+*/
 func (cohortSample *CohortSample) sample(input CohortSampleInput) (cohortTick, error) {
 	tick := cohortTick{
 		name:  input.Symbol,
@@ -153,6 +174,9 @@ func (cohortSample *CohortSample) sample(input CohortSampleInput) (cohortTick, e
 	return tick, nil
 }
 
+/*
+(…).observe supports algorithm sampling that supplies equation inputs symm maps into runtime.Envelope.
+*/
 func (cohortSample *CohortSample) observe(tick cohortTick) {
 	symbolState := cohortSample.symbol(tick.name)
 
@@ -183,6 +207,9 @@ func (cohortSample *CohortSample) observe(tick cohortTick) {
 	symbolState.lastPrice = tick.price
 }
 
+/*
+(…).symbol supports algorithm sampling that supplies equation inputs symm maps into runtime.Envelope.
+*/
 func (cohortSample *CohortSample) symbol(name string) *cohortSymbol {
 	existing, ok := cohortSample.symbols[name]
 
@@ -196,6 +223,9 @@ func (cohortSample *CohortSample) symbol(name string) *cohortSymbol {
 	return symbolState
 }
 
+/*
+(…).historyCap supports algorithm sampling that supplies equation inputs symm maps into runtime.Envelope.
+*/
 func (cohortSample *CohortSample) historyCap() int {
 	if cohortSample.config.HistoryCap < cohortMinimumWindow {
 		return cohortHistoryCap
@@ -204,6 +234,9 @@ func (cohortSample *CohortSample) historyCap() int {
 	return cohortSample.config.HistoryCap
 }
 
+/*
+(…).window supports algorithm sampling that supplies equation inputs symm maps into runtime.Envelope.
+*/
 func (cohortSample *CohortSample) window(symbol string) int {
 	symbolState := cohortSample.symbols[symbol]
 
@@ -238,6 +271,9 @@ func (cohortSample *CohortSample) window(symbol string) int {
 	return shortWindow
 }
 
+/*
+(…).commonDepth supports algorithm sampling that supplies equation inputs symm maps into runtime.Envelope.
+*/
 func (cohortSample *CohortSample) commonDepth() int {
 	commonDepth := 0
 
@@ -254,6 +290,9 @@ func (cohortSample *CohortSample) commonDepth() int {
 	return commonDepth
 }
 
+/*
+(…).peers supports algorithm sampling that supplies equation inputs symm maps into runtime.Envelope.
+*/
 func (cohortSample *CohortSample) peers(
 	target string,
 	window int,
@@ -322,6 +361,9 @@ func (cohortSample *CohortSample) peers(
 		float64(gridInterval) / float64(time.Second)
 }
 
+/*
+(…).gridInterval supports algorithm sampling that supplies equation inputs symm maps into runtime.Envelope.
+*/
 func (cohortSample *CohortSample) gridInterval() int64 {
 	deltas := make([]float64, 0, len(cohortSample.symbols))
 
@@ -344,6 +386,9 @@ func (cohortSample *CohortSample) gridInterval() int64 {
 	return int64(median)
 }
 
+/*
+(…).sortedSymbols supports algorithm sampling that supplies equation inputs symm maps into runtime.Envelope.
+*/
 func (cohortSample *CohortSample) sortedSymbols() []string {
 	symbols := make([]string, 0, len(cohortSample.symbols))
 
@@ -356,6 +401,9 @@ func (cohortSample *CohortSample) sortedSymbols() []string {
 	return symbols
 }
 
+/*
+(…).currentTime supports algorithm sampling that supplies equation inputs symm maps into runtime.Envelope.
+*/
 func (cohortSample *CohortSample) currentTime() int64 {
 	current := int64(0)
 
@@ -374,6 +422,9 @@ func (cohortSample *CohortSample) currentTime() int64 {
 	return current
 }
 
+/*
+pairCorrelationCohort supports algorithm sampling that supplies equation inputs symm maps into runtime.Envelope.
+*/
 func pairCorrelationCohort(
 	left *cohortSymbol,
 	right *cohortSymbol,
@@ -397,6 +448,9 @@ func pairCorrelationCohort(
 	)
 }
 
+/*
+gridReturnsCohort supports algorithm sampling that supplies equation inputs symm maps into runtime.Envelope.
+*/
 func gridReturnsCohort(
 	symbolState *cohortSymbol,
 	gridInterval int64,
@@ -426,6 +480,9 @@ func gridReturnsCohort(
 	return logReturnsCohort(prices)
 }
 
+/*
+pearsonCohort supports algorithm sampling that supplies equation inputs symm maps into runtime.Envelope.
+*/
 func pearsonCohort(left, right []float64) (float64, bool) {
 	if len(left) != len(right) || len(left) < cohortMinimumWindow {
 		return 0, false
@@ -493,6 +550,9 @@ func priceAtCohort(symbolState *cohortSymbol, timestamp int64) (float64, bool) {
 	return price, found
 }
 
+/*
+cohortFeatures supports algorithm sampling that supplies equation inputs symm maps into runtime.Envelope.
+*/
 func cohortFeatures(
 	window int,
 	barSpacingSeconds float64,
@@ -515,6 +575,9 @@ func cohortFeatures(
 	return features
 }
 
+/*
+appendRingInt64 supports algorithm sampling that supplies equation inputs symm maps into runtime.Envelope.
+*/
 func appendRingInt64(values []int64, value int64, capacity int) []int64 {
 	values = append(values, value)
 
@@ -525,6 +588,9 @@ func appendRingInt64(values []int64, value int64, capacity int) []int64 {
 	return values[len(values)-capacity:]
 }
 
+/*
+logReturnsCohort supports algorithm sampling that supplies equation inputs symm maps into runtime.Envelope.
+*/
 func logReturnsCohort(prices []float64) []float64 {
 	if len(prices) < 2 {
 		return nil
@@ -543,12 +609,18 @@ func logReturnsCohort(prices []float64) []float64 {
 	return returns
 }
 
+/*
+cohortReturnInterval holds per-symbol sampling state that feeds equation Measure and Map outputs into resonance features.
+*/
 type cohortReturnInterval struct {
 	start int64
 	end   int64
 	value float64
 }
 
+/*
+returnIntervalsCohort supports algorithm sampling that supplies equation inputs symm maps into runtime.Envelope.
+*/
 func returnIntervalsCohort(
 	symbolState *cohortSymbol,
 	windowStart int64,
@@ -585,6 +657,9 @@ func returnIntervalsCohort(
 	return intervals
 }
 
+/*
+hayashiYoshidaCohort supports algorithm sampling that supplies equation inputs symm maps into runtime.Envelope.
+*/
 func hayashiYoshidaCohort(
 	left []cohortReturnInterval,
 	right []cohortReturnInterval,
@@ -627,6 +702,9 @@ func hayashiYoshidaCohort(
 	return math.Max(-1, math.Min(1, correlation)), true
 }
 
+/*
+medianAbsoluteIntervalsCohort supports algorithm sampling that supplies equation inputs symm maps into runtime.Envelope.
+*/
 func medianAbsoluteIntervalsCohort(intervals []cohortReturnInterval) float64 {
 	absValues := make([]float64, 0, len(intervals))
 

@@ -22,12 +22,18 @@ type Level struct {
 	queueDirty atomic.Bool
 }
 
+/*
+NewLevel allocates per-order state for L3 queue walks and checksum verification.
+*/
 func NewLevel() *Level {
 	return &Level{
 		orders: make(map[string]*Order),
 	}
 }
 
+/*
+update applies add/modify/delete at one price; aggregate qty drives level survival.
+*/
 func (level *Level) update(delta *Delta) {
 	px := *delta.Price
 	level.Price = &px

@@ -17,6 +17,9 @@ type TradeBalance struct {
 	onChange      func(MarketType)
 }
 
+/*
+NewTradeBalance decodes margin poll fields tiers use for risk and Enter gates.
+*/
 func NewTradeBalance(data map[string]any) *TradeBalance {
 	out := &TradeBalance{}
 
@@ -39,14 +42,23 @@ func NewTradeBalance(data map[string]any) *TradeBalance {
 	return out
 }
 
+/*
+OnChange hooks desk refresh when equity or free margin moves on poll frames.
+*/
 func (balance *TradeBalance) OnChange(fn func(MarketType)) {
 	balance.onChange = fn
 }
 
+/*
+Request is empty: trade balance arrives on scheduled venue polls.
+*/
 func (balance *TradeBalance) Request() map[string]any {
 	return map[string]any{}
 }
 
+/*
+ToMarket merges margin snapshot into tier state for stoploss and sizing checks.
+*/
 func (balance *TradeBalance) ToMarket(other MarketType) MarketType {
 	dst, ok := other.(*TradeBalance)
 
@@ -64,6 +76,9 @@ func (balance *TradeBalance) ToMarket(other MarketType) MarketType {
 	return dst
 }
 
+/*
+FromMarket copies peer margin into this slot for paper tier mirroring.
+*/
 func (balance *TradeBalance) FromMarket(other MarketType) MarketType {
 	src, ok := other.(*TradeBalance)
 
@@ -74,11 +89,17 @@ func (balance *TradeBalance) FromMarket(other MarketType) MarketType {
 	return src.ToMarket(balance)
 }
 
+/*
+MarshalJSON embeds margin on ticks uploaded with envelope batches.
+*/
 func (balance *TradeBalance) MarshalJSON() ([]byte, error) {
 	type alias TradeBalance
 	return json.Marshal((*alias)(balance))
 }
 
+/*
+UnmarshalJSON restores margin from store replay without losing onChange.
+*/
 func (balance *TradeBalance) UnmarshalJSON(data []byte) error {
 	type alias TradeBalance
 	var decoded alias

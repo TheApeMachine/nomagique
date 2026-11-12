@@ -26,14 +26,23 @@ func NewBalance(data map[string]any) *Balance {
 	}
 }
 
+/*
+OnChange lets Desk tiers register Apply without importing venue packages.
+*/
 func (balance *Balance) OnChange(fn func(MarketType)) {
 	balance.onChange = fn
 }
 
+/*
+Request is empty: balance arrives on venue push, not a poll subscription.
+*/
 func (balance *Balance) Request() map[string]any {
 	return map[string]any{}
 }
 
+/*
+Cash returns quote currency for paper tier sizing and ledger checks.
+*/
 func (balance *Balance) Cash(quote string) *decimal.Decimal {
 	for _, asset := range balance.Assets {
 		if asset.Symbol == quote {

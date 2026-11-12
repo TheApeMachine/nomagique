@@ -76,6 +76,10 @@ func IntensityAt(
 	return intensity
 }
 
+/*
+excitationSum aggregates surviving exponential impulse mass before horizon;
+events after horizon are skipped so intensity kernels stay causal in event time.
+*/
 func excitationSum(events timeline.Timeline, horizon time.Time, beta float64) float64 {
 	sum := 0.0
 

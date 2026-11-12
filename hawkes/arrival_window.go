@@ -95,6 +95,9 @@ func (window *ArrivalWindow) Stream() ArrivalStream {
 	)
 }
 
+/*
+Feeds algorithm/excitation and equation Hawkes stages — (…).append turns marked trade arrivals into fitted intensities and categories.
+*/
 func (window *ArrivalWindow) append(event MarkedEvent) {
 	window.events = append(window.events, event)
 

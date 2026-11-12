@@ -8,6 +8,9 @@ import (
 	"github.com/theapemachine/nomagique/hawkes"
 )
 
+/*
+computeFit runs bivariate and self-only estimators and rejects fits without offspring readiness.
+*/
 func (symbol *symbol) computeFit(
 	context hawkes.FitContext,
 	stream hawkes.ArrivalStream,
@@ -51,6 +54,9 @@ func (symbol *symbol) computeFit(
 	}, true
 }
 
+/*
+publish commits a new parameter epoch and resets the event-driven refit schedule.
+*/
 func (symbol *symbol) publish(
 	epoch *fitEpoch,
 	context hawkes.FitContext,
@@ -79,6 +85,9 @@ func (symbol *symbol) publish(
 	return outcome
 }
 
+/*
+project evaluates the retained fit between refits and surfaces remaining schedule events.
+*/
 func (symbol *symbol) project(
 	context hawkes.FitContext,
 	stream hawkes.ArrivalStream,
@@ -103,6 +112,9 @@ func (symbol *symbol) project(
 	return outcome
 }
 
+/*
+evaluate attaches likelihood deltas and offspring metrics to the base outcome shell.
+*/
 func (symbol *symbol) evaluate(
 	context hawkes.FitContext,
 	stream hawkes.ArrivalStream,
@@ -139,6 +151,9 @@ func (symbol *symbol) evaluate(
 	return outcome
 }
 
+/*
+outcome builds the portable Hawkes reading symm maps into envelope features.
+*/
 func (symbol *symbol) outcome(
 	context hawkes.FitContext,
 	horizon time.Time,
@@ -178,6 +193,9 @@ func (symbol *symbol) outcome(
 	}
 }
 
+/*
+context trims the observation window to the adaptive trade horizon before fitting.
+*/
 func (symbol *symbol) context(
 	stream hawkes.ArrivalStream,
 	horizon time.Time,

@@ -21,12 +21,18 @@ type EvidenceRegistry struct {
 	entries map[int64]EvidenceEntry
 }
 
+/*
+NewEvidenceRegistry supports algorithm sampling that supplies equation inputs symm maps into runtime.Envelope.
+*/
 func NewEvidenceRegistry() *EvidenceRegistry {
 	return &EvidenceRegistry{
 		entries: make(map[int64]EvidenceEntry),
 	}
 }
 
+/*
+(…).Flag supports algorithm sampling that supplies equation inputs symm maps into runtime.Envelope.
+*/
 func (registry *EvidenceRegistry) Flag(
 	key int64,
 	churnRatio float64,
@@ -47,6 +53,9 @@ func (registry *EvidenceRegistry) Flag(
 	registry.entries[key] = entry
 }
 
+/*
+(…).ActiveExpiry supports algorithm sampling that supplies equation inputs symm maps into runtime.Envelope.
+*/
 func (registry *EvidenceRegistry) ActiveExpiry(
 	keys []int64,
 	at time.Time,
@@ -72,6 +81,9 @@ func (registry *EvidenceRegistry) ActiveExpiry(
 	return time.Time{}, 0, 0, false
 }
 
+/*
+(…).Clone supports algorithm sampling that supplies equation inputs symm maps into runtime.Envelope.
+*/
 func (registry *EvidenceRegistry) Clone() *EvidenceRegistry {
 	if registry == nil {
 		return NewEvidenceRegistry()
@@ -86,6 +98,9 @@ func (registry *EvidenceRegistry) Clone() *EvidenceRegistry {
 	return next
 }
 
+/*
+(…).NearTouchStrength supports algorithm sampling that supplies equation inputs symm maps into runtime.Envelope.
+*/
 func (registry *EvidenceRegistry) NearTouchStrength(
 	mid float64,
 	proximityPct float64,

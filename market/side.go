@@ -13,12 +13,18 @@ type BookSide struct {
 	Levels    map[string]*Level `json:"levels,omitempty"`
 }
 
+/*
+NewBookSide initializes the price→level map before the first L3 snapshot applies.
+*/
 func NewBookSide() *BookSide {
 	return &BookSide{
 		Levels: make(map[string]*Level),
 	}
 }
 
+/*
+FindAdjacent picks the nearer neighbor for insert when both extremes exist.
+*/
 func (side *BookSide) FindAdjacent(price *decimal.Decimal) *Level {
 	if side.High == nil || side.Low == nil {
 		return nil
@@ -42,6 +48,9 @@ func (side *BookSide) FindAdjacent(price *decimal.Decimal) *Level {
 	return side.FindAdjacentAbove(price)
 }
 
+/*
+FindAdjacentBelow walks toward the touch from above for bid/ask ladder links.
+*/
 func (side *BookSide) FindAdjacentBelow(price *decimal.Decimal) *Level {
 	if side.Low == nil || price.Cmp(*side.Low.Price) <= 0 {
 		return nil
@@ -69,6 +78,9 @@ func (side *BookSide) FindAdjacentBelow(price *decimal.Decimal) *Level {
 	return nearest
 }
 
+/*
+FindAdjacentAbove walks toward the touch from below when inserting new levels.
+*/
 func (side *BookSide) FindAdjacentAbove(price *decimal.Decimal) *Level {
 	if side.High == nil || price.Cmp(*side.High.Price) >= 0 {
 		return nil
@@ -96,6 +108,9 @@ func (side *BookSide) FindAdjacentAbove(price *decimal.Decimal) *Level {
 	return nearest
 }
 
+/*
+apply routes one L3 delta into insert, update, or delete on this side.
+*/
 func (side *BookSide) apply(delta *Delta) {
 	level, ok := side.Levels[delta.Price.String()]
 
@@ -113,6 +128,9 @@ func (side *BookSide) apply(delta *Delta) {
 	}
 }
 
+/*
+insert links a new price level into the doubly-linked ladder and Levels map.
+*/
 func (side *BookSide) insert(delta *Delta) {
 	level := NewLevel()
 	level.update(delta)
@@ -149,6 +167,9 @@ func (side *BookSide) insert(delta *Delta) {
 	side.Levels[level.Price.String()] = level
 }
 
+/*
+delete removes an emptied level and repairs High/Low after L3 qty-zero events.
+*/
 func (side *BookSide) delete(level *Level) {
 	if side.High == level {
 		side.High = level.Lower

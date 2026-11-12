@@ -13,12 +13,18 @@ type Books struct {
 	books map[string]*Book
 }
 
+/*
+NewBooks creates the symbol→book map virtual tiers seed before live L3 arrives.
+*/
 func NewBooks() *Books {
 	return &Books{
 		books: make(map[string]*Book),
 	}
 }
 
+/*
+Create registers one symbol book with depth cap for broker Expect/Wait boot.
+*/
 func (books *Books) Create(symbol string, depth int) *Book {
 	books.mu.Lock()
 	defer books.mu.Unlock()
@@ -32,12 +38,18 @@ func (books *Books) Create(symbol string, depth int) *Book {
 	return book
 }
 
+/*
+Get returns the lane-local book signals read without cross-symbol locking.
+*/
 func (books *Books) Get(symbol string) *Book {
 	books.mu.RLock()
 	defer books.mu.RUnlock()
 	return books.books[strings.ToUpper(symbol)]
 }
 
+/*
+Symbols lists subscribed books for desk fan-out and invalidation callbacks.
+*/
 func (books *Books) Symbols() []string {
 	books.mu.RLock()
 	defer books.mu.RUnlock()

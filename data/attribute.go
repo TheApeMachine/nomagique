@@ -100,6 +100,10 @@ func AttributeOk[T any](payload []byte, path ...any) (T, error) {
 	return out, nil
 }
 
+/*
+convertLookup tries the fast path from sonic's dynamic type before raw JSON
+fallback, keeping hot attribute reads off full unmarshaling when possible.
+*/
 func convertLookup[T any](value any) (T, bool) {
 	if typed, ok := value.(T); ok {
 		return typed, true
@@ -112,6 +116,10 @@ func convertLookup[T any](value any) (T, bool) {
 	return slicePeek[T](value)
 }
 
+/*
+numericPeek bridges venue quirks (string decimals, JSON number as float64)
+into the requested scalar T without losing finiteness checks.
+*/
 func numericPeek[T any](value any) (T, bool) {
 	var zero T
 
@@ -201,6 +209,10 @@ func numericPeek[T any](value any) (T, bool) {
 	return zero, false
 }
 
+/*
+slicePeek normalizes heterogeneous JSON arrays into typed []string or []float64
+slices when the caller's T is a homogeneous collection.
+*/
 func slicePeek[T any](value any) (T, bool) {
 	var zero T
 

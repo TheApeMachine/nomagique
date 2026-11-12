@@ -9,6 +9,10 @@ import (
 	"github.com/theapemachine/nomagique/probability"
 )
 
+/*
+errNoBookQualityCategory separates an honest neutral reading from validation
+failures so Measure can emit price-only output without alarming resonance logic.
+*/
 var errNoBookQualityCategory = errors.New("no book quality category matched")
 
 /*
@@ -138,12 +142,20 @@ func (bookQuality *BookQuality) Measure(
 	}, nil
 }
 
+/*
+neutral preserves executable price when no bluff, vacuum, or support story wins,
+keeping the Map wire shape stable for empty-feature ticks.
+*/
 func (bookQuality *BookQuality) neutral(lastPrice float64) BookQualityOutput {
 	return BookQualityOutput{
 		Price: lastPrice,
 	}
 }
 
+/*
+classifyBookQuality ranks cancel/fill and depth evidence so bluff, vacuum, and
+support scores exported via Map match what algorithm/book/quality sampled.
+*/
 func classifyBookQuality(
 	cancelBid, fillBid, cancelAsk, fillAsk float64,
 	bidDepth, askDepth float64,
@@ -269,6 +281,10 @@ func classifyBookQuality(
 	return 0, 0, 0, 0, 0, errNoBookQualityCategory
 }
 
+/*
+toxicBluffEvidence scales churn into a bounded margin so bluff_score does not
+dominate resonance when the gate is still widening.
+*/
 func toxicBluffEvidence(churnRatio, churnGate float64) (float64, error) {
 	if churnRatio <= 0 {
 		return 0, fmt.Errorf("churn ratio must be positive")

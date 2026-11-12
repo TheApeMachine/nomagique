@@ -201,11 +201,19 @@ func (flow *Flow) Measure(input FlowInput) (FlowOutput, error) {
 	}, nil
 }
 
+/*
+flowCategoryStarvation and basisPointsPerUnit anchor starvation detection and
+price-response scaling for drive and absorption Map keys consumed by symm.
+*/
 const (
 	flowCategoryStarvation = 4
 	basisPointsPerUnit     = 10000
 )
 
+/*
+impactEfficiencyScale derives a local efficiency denominator so absorption does
+not fire on noise when flat-threshold context exists in the window.
+*/
 func impactEfficiencyScale(
 	flatThreshold float64,
 	firstPrice float64,
@@ -223,6 +231,10 @@ func impactEfficiencyScale(
 	return magnitudeScale(impactEfficiency)
 }
 
+/*
+medianAbsoluteMove summarizes typical step size so flat-price tests compare
+drift to the tick's own microstructure, not a fixed bps floor.
+*/
 func medianAbsoluteMove(prices []float64) float64 {
 	moves := priceMoves(prices)
 
@@ -244,6 +256,9 @@ func medianAbsoluteMove(prices []float64) float64 {
 	return median
 }
 
+/*
+priceMoves extracts pairwise changes for robust move gates used inside Measure.
+*/
 func priceMoves(prices []float64) []float64 {
 	moves := make([]float64, 0, len(prices)-1)
 
@@ -254,6 +269,10 @@ func priceMoves(prices []float64) []float64 {
 	return moves
 }
 
+/*
+flowFlatPrice widens the flat band with sqrt(trade count) so wide windows are
+not misread as absorption on statistically tiny drift.
+*/
 func flowFlatPrice(priceDrift, stepThreshold float64, tradeCount int) bool {
 	if stepThreshold <= 0 {
 		return priceDrift == 0
@@ -264,6 +283,10 @@ func flowFlatPrice(priceDrift, stepThreshold float64, tradeCount int) bool {
 	return math.Abs(priceDrift) <= windowThreshold
 }
 
+/*
+flowCategory selects the dominant CVD story so category and Map strengths stay
+aligned for trade_flow features in resonance.
+*/
 func flowCategory(
 	highNet, flowAligned, flatPrice bool,
 	gross, grossFloor float64,
@@ -293,6 +316,10 @@ func flowCategory(
 	return 3
 }
 
+/*
+flowStarvationPressure scores sub-floor gross so starvation surfaces before
+drive and balance when flow is too thin to move price.
+*/
 func flowStarvationPressure(
 	gross float64,
 	grossFloor float64,
@@ -317,6 +344,10 @@ func flowStarvationPressure(
 	return 1 - pressure
 }
 
+/*
+flowHiddenAbsorption flags aggressive net with muted impact, the signature that
+should win absorption over balance in the exported Map.
+*/
 func flowHiddenAbsorption(
 	highNet bool,
 	flowPressure float64,

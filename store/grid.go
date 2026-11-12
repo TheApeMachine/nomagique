@@ -14,6 +14,10 @@ RegionCount is Action (9) + Oracle×{Veto,Approve} (8×2) — see regimes.go Cat
 */
 const RegionCount = 25
 
+/*
+enterFirst through oracleFirst bound action and oracle slices Observe returns
+so desk tiers address fixed region keys without scanning Catalog.
+*/
 const (
 	enterFirst  uint8 = 0
 	enterLast   uint8 = 2
@@ -64,6 +68,9 @@ var pinCounts = func() [RegionCount]int {
 	return counts
 }()
 
+/*
+Prior holds one signal source's last metrics and EMA energy for SNM on the next tick.
+*/
 type Prior struct {
 	Metrics    map[string]float64
 	Samples    int64
@@ -88,12 +95,18 @@ type Grid struct {
 	symbols sync.Map
 }
 
+/*
+NewGrid roots a runtime.System so Observe can refuse work after pipeline ERROR.
+*/
 func NewGrid(ctx context.Context) *Grid {
 	return &Grid{
 		System: runtime.NewSystem(ctx, "grid"),
 	}
 }
 
+/*
+symbol load-or-creates per-symbol priors so envelope.Metrics fan-in stays parallel.
+*/
 func (grid *Grid) symbol(name string) *gridSymbol {
 	if loaded, ok := grid.symbols.Load(name); ok {
 		return loaded.(*gridSymbol)
@@ -290,6 +303,9 @@ func (grid *Grid) SNM(
 	return snmFrom(lane.priors[source], label, metrics)
 }
 
+/*
+snmFrom is the per-label movement ratio Observe uses to light Catalog pins.
+*/
 func snmFrom(prior *Prior, label string, metrics map[string]float64) float64 {
 	if prior == nil || label == "" {
 		return 0

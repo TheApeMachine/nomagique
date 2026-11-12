@@ -109,6 +109,9 @@ func (regime *Regime) Measure(input RegimeInput) (RegimeOutput, error) {
 	}, nil
 }
 
+/*
+Transitive causal layer from symm — dynamicContagionBreak estimates do/backdoor effects on tabular desk features.
+*/
 func dynamicContagionBreak(rows [][]float64, target int, skip []int) float64 {
 	samples := make([]float64, 0, len(rows))
 
@@ -135,6 +138,10 @@ func dynamicContagionBreak(rows [][]float64, target int, skip []int) float64 {
 
 	return center + median(deviations)
 }
+
+/*
+Transitive causal layer from symm — median estimates do/backdoor and counterfactual effects on desk tables.
+*/
 
 func median(values []float64) float64 {
 	if len(values) == 0 {

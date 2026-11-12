@@ -36,6 +36,10 @@ type Record struct {
 	Envelope *nmruntime.Envelope
 }
 
+/*
+Client is the async Seaweed/S3 façade: tick envelopes and Level3 bodies enqueue
+here so broker and strategy never block on upload I/O.
+*/
 type Client struct {
 	ctx      context.Context
 	cancel   context.CancelFunc
@@ -49,6 +53,10 @@ type Client struct {
 	uploads  sync.WaitGroup
 }
 
+/*
+NewClient opens the home-arpa bucket, starts drain loops, and survives parent
+cancel so Flush can finish envelope persistence after SIGINT.
+*/
 func NewClient(parent context.Context, bucket string) *Client {
 	// Survive parent cancel (SIGINT) so Flush can still finish uploads.
 	ctx, cancel := context.WithCancel(context.WithoutCancel(parent))
@@ -157,6 +165,9 @@ func (client *Client) Run() {
 	}
 }
 
+/*
+loop is one upload drainer: spins until ctx done, then empties the lock-free queue.
+*/
 func (client *Client) loop() {
 	for {
 		select {
@@ -391,6 +402,9 @@ func (client *Client) Write([]byte) (int, error) {
 	))
 }
 
+/*
+WriteAtPrefix enqueues a keyed blob (e.g. Level3 on disk) without holding heap bodies.
+*/
 func (client *Client) WriteAtPrefix(key string, value []byte) (int, error) {
 	if client.closed.Load() {
 		return 0, errnie.Error(errnie.Err(
@@ -402,6 +416,9 @@ func (client *Client) WriteAtPrefix(key string, value []byte) (int, error) {
 	return len(value), nil
 }
 
+/*
+WriteAtPrefixWithEnvelope queues tick persistence; marshaling runs on the drain thread.
+*/
 func (client *Client) WriteAtPrefixWithEnvelope(key string, envelope *nmruntime.Envelope) (int, error) {
 	if client.closed.Load() {
 		return 0, errnie.Error(errnie.Err(
@@ -414,6 +431,9 @@ func (client *Client) WriteAtPrefixWithEnvelope(key string, envelope *nmruntime.
 	return 0, nil
 }
 
+/*
+upload performs one S3 PutObject from the drainer pool.
+*/
 func (client *Client) upload(ctx context.Context, prefix string, p []byte) (int, error) {
 	if prefix == "" {
 		return 0, errnie.Error(errnie.Err(
@@ -533,10 +553,16 @@ func (client *Client) MovePrefix(sourcePrefix, destPrefix string) error {
 	return nil
 }
 
+/*
+Error surfaces accumulated client faults without blocking Enqueue.
+*/
 func (client *Client) Error() error {
 	return client.err
 }
 
+/*
+Close stops drainers after the last queued envelope upload is attempted.
+*/
 func (client *Client) Close() error {
 	if !client.closed.CompareAndSwap(false, true) {
 		return client.err

@@ -10,6 +10,10 @@ var (
 	ErrInvalidOutcome = core.ErrInvalidOutcome
 )
 
+/*
+parsePredictedActual normalizes wire layouts where predicted and actual arrive
+either as extras or as primary+extra; zero predicted is rejected before ratios.
+*/
 func parsePredictedActual(
 	primary float64, extras []float64,
 ) (float64, float64, error) {
@@ -38,6 +42,10 @@ func parsePredictedActual(
 	return predicted, actual, nil
 }
 
+/*
+parseBernoulliOutcome maps paired predicted/actual into {0,1} or accepts an
+explicit probability in [0,1] when extras are absent.
+*/
 func parseBernoulliOutcome(primary float64, extras []float64) (float64, error) {
 	if len(extras) > 0 {
 		predicted, actual, err := parsePredictedActual(primary, extras)

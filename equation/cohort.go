@@ -21,6 +21,10 @@ func NewCohort() *Cohort {
 	return &Cohort{}
 }
 
+/*
+cohortSchemaReady guards Measure so algorithm cohort samples cannot reach the
+classifier with a partial feature schema.
+*/
 func cohortSchemaReady(inputKeys []string) bool {
 	if len(inputKeys) < len(CohortInputKeys) {
 		return false
@@ -98,6 +102,10 @@ func (cohort *Cohort) Measure(frame FeatureFrame) (CohortOutput, error) {
 	return outcome, nil
 }
 
+/*
+evaluateCohort unpacks the feature frame built by algorithm/cohort_sample into
+herd, alpha, noise, stress, and peak Map scores.
+*/
 func evaluateCohort(frame FeatureFrame, inputKeys []string) CohortOutput {
 	fields, err := FeatureFields(frame, inputKeys)
 
@@ -181,6 +189,10 @@ func evaluateCohort(frame FeatureFrame, inputKeys []string) CohortOutput {
 	}
 }
 
+/*
+cohortPeakGate gates peak_score so only correlations above the peer tail export
+as breakout energy in resonance.
+*/
 func cohortPeakGate(correlation float64, peerCorrelations []float64) bool {
 	if len(peerCorrelations) < 2 {
 		return correlation > 0
@@ -195,6 +207,10 @@ func cohortPeakGate(correlation float64, peerCorrelations []float64) bool {
 	return correlation >= peakQuantile
 }
 
+/*
+cohortClassifierScores materializes per-category evidence for the Map fan-out
+symm uses on cross-section ticks.
+*/
 func cohortClassifierScores(
 	category int,
 	correlation, energy, upperEnergy float64,
@@ -221,6 +237,10 @@ func cohortClassifierScores(
 	return scores
 }
 
+/*
+cohortEnergyShare normalizes energy against the peer upper quartile so herd and
+stress scores share a common intensity scale.
+*/
 func cohortEnergyShare(energy, upperEnergy float64) float64 {
 	if energy <= 0 || math.IsNaN(energy) || math.IsInf(energy, 0) {
 		return 0
@@ -233,6 +253,9 @@ func cohortEnergyShare(energy, upperEnergy float64) float64 {
 	return math.Min(energy/upperEnergy, 1)
 }
 
+/*
+cohortMaxScore picks the exported strength from the four classifier margins.
+*/
 func cohortMaxScore(scores [4]float64) float64 {
 	best := 0.0
 
@@ -245,6 +268,10 @@ func cohortMaxScore(scores [4]float64) float64 {
 	return best
 }
 
+/*
+classifyCohort compares this symbol's correlation and energy to peer quantiles
+so only one cohort regime drives category on each grid step.
+*/
 func classifyCohort(
 	correlation, energy float64,
 	peerCorrelations, peerEnergies []float64,
@@ -306,6 +333,10 @@ func classifyCohort(
 	return 0
 }
 
+/*
+peerLowMagnitudeCorrelation distinguishes alpha noise from true decorrelation when
+the peer correlation distribution has width.
+*/
 func peerLowMagnitudeCorrelation(
 	correlation float64,
 	correlationSpread float64,
@@ -338,6 +369,9 @@ func peerLowMagnitudeCorrelation(
 	return math.Abs(correlation) < peerMagnitude
 }
 
+/*
+cohortCopySorted copies before sorting so caller-owned peer series stay immutable.
+*/
 func cohortCopySorted(values []float64) []float64 {
 	sorted := append([]float64(nil), values...)
 	sort.Float64s(sorted)
@@ -345,6 +379,9 @@ func cohortCopySorted(values []float64) []float64 {
 	return sorted
 }
 
+/*
+cohortQuantileSorted reads peer quantiles from sorted copies for stable gates.
+*/
 func cohortQuantileSorted(sorted []float64, percentile float64) float64 {
 	if len(sorted) == 0 {
 		return 0

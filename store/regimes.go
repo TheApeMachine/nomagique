@@ -14,12 +14,17 @@ type Regime struct {
 	Metrics  []Metric
 }
 
-// Metric is one Map()-keyed score pinned into a regime category.
+/*
+Metric names one envelope.Metrics label Catalog maps onto a confluence region.
+*/
 type Metric struct {
 	Source string
 	Label  string
 }
 
+/*
+Name is the regime category string desk oracle and UI tables display.
+*/
 func (regime Regime) Name() string {
 	return regime.Category
 }
@@ -229,7 +234,9 @@ var Catalog = Regimes{
 	{Key: 24, Category: "range_room", Kind: "oracle", Phase: "peak", Side: "approve"},
 }
 
-// Pins builds source → label → region keys for Observe.
+/*
+Pins builds source → label → region keys Observe uses to fan metrics into Catalog.
+*/
 func (regimes Regimes) Pins() map[string]map[string][]uint8 {
 	out := make(map[string]map[string][]uint8)
 
@@ -252,7 +259,9 @@ func (regimes Regimes) Pins() map[string]map[string][]uint8 {
 	return out
 }
 
-// ByKey returns the regime for a region key, or a zero Regime.
+/*
+ByKey resolves a runtime.Region key to its Catalog row for UI and replay.
+*/
 func (regimes Regimes) ByKey(key uint8) Regime {
 	for _, regime := range regimes {
 		if regime.Key == key {

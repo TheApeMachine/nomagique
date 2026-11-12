@@ -8,6 +8,10 @@ import (
 	"github.com/theapemachine/nomagique/equation"
 )
 
+/*
+Window retains cancel/fill ledgers, quantile gates, and level maps for one symbol's
+book-quality sampling into equation.BookQualityInput.
+*/
 type Window struct {
 	mu              sync.Mutex
 	ledger          flow.SideFlowLedger
@@ -26,11 +30,17 @@ type Window struct {
 	frameCount      int
 }
 
+/*
+Order tracks one resting order's price and quantity for L3 event attribution.
+*/
 type Order struct {
 	price float64
 	qty   float64
 }
 
+/*
+newWindow wires quantile gates from sample config so thresholds warm with the tape.
+*/
 func newWindow(config SampleConfig) *Window {
 	return &Window{
 		vacuumGate:    flow.NewGateQuantile(config.VacuumGate),
@@ -45,6 +55,9 @@ func newWindow(config SampleConfig) *Window {
 	}
 }
 
+/*
+finish smooths ledger flow, updates gates, and emits inputs for equation.BookQuality Measure.
+*/
 func (window *Window) finish(
 	frame Frame,
 	level3 bool,
@@ -133,6 +146,9 @@ func (window *Window) maturity() float64 {
 	return frameCount / (frameCount + 1)
 }
 
+/*
+observeLevels translates level snapshots into frame cancel/fill/add for one side.
+*/
 func (window *Window) observeLevels(
 	levels []flow.BookLevel,
 	side flow.Side,
@@ -181,6 +197,9 @@ func (window *Window) observeLevels(
 	}
 }
 
+/*
+observeOrderEvents classifies L3 add/modify/delete against trade corroboration.
+*/
 func (window *Window) observeOrderEvents(
 	events []OrderEvent,
 	side flow.Side,
@@ -221,6 +240,9 @@ func (window *Window) observeOrderEvents(
 	}
 }
 
+/*
+upsertOrder moves order quantity between price levels while updating depth and frame adds.
+*/
 func (window *Window) upsertOrder(
 	side flow.Side,
 	orderID string,
@@ -270,6 +292,9 @@ func (window *Window) upsertOrder(
 	}
 }
 
+/*
+deleteOrder removes resting quantity and returns touch context for fill versus cancel.
+*/
 func (window *Window) deleteOrder(
 	side flow.Side,
 	orderID string,

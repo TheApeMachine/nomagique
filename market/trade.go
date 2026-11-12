@@ -7,9 +7,19 @@ import (
 	"github.com/shopspring/decimal"
 )
 
+/*
+Side is the aggressor direction on a print; embedded on Envelope.Trade for signals.
+*/
 type Side string
+
+/*
+OrderType tags market versus limit fills on the public tape frame.
+*/
 type OrderType string
 
+/*
+SideBuy, SideSell and order kinds mirror venue trade payloads desk normalizes.
+*/
 const (
 	SideBuy  Side = "buy"
 	SideSell Side = "sell"
@@ -18,14 +28,23 @@ const (
 	OrderTypeLimit  OrderType = "limit"
 )
 
+/*
+String implements fmt for logging without importing fmt on the hot path.
+*/
 func (side Side) String() string {
 	return string(side)
 }
 
+/*
+String implements fmt for order type labels on persisted trade JSON.
+*/
 func (orderType OrderType) String() string {
 	return string(orderType)
 }
 
+/*
+TradeData is one print on the batch frame the disruptor embeds in runtime.Envelope.
+*/
 type TradeData struct {
 	Symbol    string          `json:"symbol"`
 	Side      Side            `json:"side"`
@@ -36,6 +55,9 @@ type TradeData struct {
 	Timestamp time.Time       `json:"timestamp"`
 }
 
+/*
+Trade is the venue-agnostic tape batch; desk pumps it into Workspace after coalesce.
+*/
 type Trade struct {
 	Channel  string       `json:"channel"`
 	Type     string       `json:"type"`
@@ -43,6 +65,9 @@ type Trade struct {
 	onChange func(MarketType)
 }
 
+/*
+NewTrade wraps decoded prints for Tier OnChange without allocating maps each frame.
+*/
 func NewTrade(
 	channel string,
 	tradeType string,
@@ -55,14 +80,23 @@ func NewTrade(
 	}
 }
 
+/*
+OnChange registers desk pumpTrade so strategy never blocks the public reader.
+*/
 func (trade *Trade) OnChange(fn func(MarketType)) {
 	trade.onChange = fn
 }
 
+/*
+Request is empty: trades arrive on venue push subscriptions.
+*/
 func (trade *Trade) Request() map[string]any {
 	return map[string]any{}
 }
 
+/*
+ToMarket copies prints into the tier-local Trade preserving the onChange hook.
+*/
 func (trade *Trade) ToMarket(other MarketType) MarketType {
 	dst, ok := other.(*Trade)
 
@@ -79,6 +113,9 @@ func (trade *Trade) ToMarket(other MarketType) MarketType {
 	return dst
 }
 
+/*
+FromMarket pulls a peer frame into this Trade for replay and paper tiers.
+*/
 func (trade *Trade) FromMarket(other MarketType) MarketType {
 	src, ok := other.(*Trade)
 
@@ -89,11 +126,17 @@ func (trade *Trade) FromMarket(other MarketType) MarketType {
 	return src.ToMarket(trade)
 }
 
+/*
+MarshalJSON persists tape batches inside envelope ticks uploaded to store.
+*/
 func (trade *Trade) MarshalJSON() ([]byte, error) {
 	type alias Trade
 	return json.Marshal((*alias)(trade))
 }
 
+/*
+UnmarshalJSON reloads trade history from store keys; preserves onChange for live wiring.
+*/
 func (trade *Trade) UnmarshalJSON(data []byte) error {
 	type alias Trade
 	var decoded alias

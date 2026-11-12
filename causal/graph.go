@@ -2,16 +2,26 @@ package causal
 
 import "fmt"
 
+/*
+Transitive causal layer from symm — causalDAG estimates do/backdoor effects on tabular desk features.
+*/
 type causalDAG struct {
 	nodeCount int
 	parents   [][]int
 	children  [][]int
 }
 
+/*
+graphVisit tracks Bayes-ball propagation direction at a DAG node.
+*/
 type graphVisit struct {
 	node       int
 	fromParent bool
 }
+
+/*
+Transitive causal layer from symm — newDAG estimates do/backdoor and counterfactual effects on desk tables.
+*/
 
 func newDAG(parents [][]int) (causalDAG, error) {
 	if len(parents) == 0 {
@@ -54,6 +64,10 @@ func newDAG(parents [][]int) (causalDAG, error) {
 	return dag, nil
 }
 
+/*
+Transitive causal layer from symm — ensureAcyclic estimates do/backdoor and counterfactual effects on desk tables.
+*/
+
 func (dag causalDAG) ensureAcyclic() error {
 	state := make([]int, dag.nodeCount)
 
@@ -89,6 +103,10 @@ func (dag causalDAG) ensureAcyclic() error {
 	return nil
 }
 
+/*
+Transitive causal layer from symm — backdoorAdmissible estimates do/backdoor and counterfactual effects on desk tables.
+*/
+
 func (dag causalDAG) backdoorAdmissible(treatment, target int, controls []int) (bool, error) {
 	if err := dag.validateNode(treatment); err != nil {
 		return false, err
@@ -103,7 +121,6 @@ func (dag causalDAG) backdoorAdmissible(treatment, target int, controls []int) (
 			return false, err
 		}
 	}
-
 	controlSet := nodeSet(controls)
 	descendants := dag.descendants(treatment)
 
@@ -118,7 +135,14 @@ func (dag causalDAG) backdoorAdmissible(treatment, target int, controls []int) (
 	return cutGraph.mSeparated(treatment, target, controlSet), nil
 }
 
+/*
+Transitive causal layer from symm — descendants estimates do/backdoor and counterfactual effects on desk tables.
+*/
+
 func (dag causalDAG) descendants(node int) map[int]struct{} {
+/*
+Transitive causal layer from symm — (…).mSeparated estimates do/backdoor effects on tabular desk features.
+*/
 	reachable := make(map[int]struct{})
 	queue := append([]int(nil), dag.children[node]...)
 
@@ -137,12 +161,20 @@ func (dag causalDAG) descendants(node int) map[int]struct{} {
 	return reachable
 }
 
+/*
+Transitive causal layer from symm — mSeparated estimates do/backdoor and counterfactual effects on desk tables.
+*/
+
 func (dag causalDAG) mSeparated(start, target int, conditioning map[int]struct{}) bool {
 	reachable := dag.bayesBallReachable(start, conditioning)
 	_, connected := reachable[target]
 
 	return !connected
 }
+
+/*
+Transitive causal layer from symm — bayesBallReachable estimates do/backdoor and counterfactual effects on desk tables.
+*/
 
 func (dag causalDAG) bayesBallReachable(start int, conditioning map[int]struct{}) map[int]struct{} {
 	reached := map[int]struct{}{start: {}}
@@ -175,7 +207,6 @@ func (dag causalDAG) bayesBallReachable(start int, conditioning map[int]struct{}
 					queue = append(queue, graphVisit{node: child, fromParent: false})
 				}
 			}
-
 			continue
 		}
 
@@ -199,6 +230,10 @@ func (dag causalDAG) bayesBallReachable(start int, conditioning map[int]struct{}
 	return reached
 }
 
+/*
+Transitive causal layer from symm — withoutOutgoing estimates do/backdoor and counterfactual effects on desk tables.
+*/
+
 func (dag causalDAG) withoutOutgoing(treatment int) causalDAG {
 	parents := make([][]int, dag.nodeCount)
 	children := make([][]int, dag.nodeCount)
@@ -212,7 +247,6 @@ func (dag causalDAG) withoutOutgoing(treatment int) causalDAG {
 
 		children[node] = append([]int(nil), dag.children[node]...)
 	}
-
 	for _, child := range dag.children[treatment] {
 		filtered := parents[child][:0]
 
@@ -234,6 +268,10 @@ func (dag causalDAG) withoutOutgoing(treatment int) causalDAG {
 	}
 }
 
+/*
+Transitive causal layer from symm — validateNode estimates do/backdoor and counterfactual effects on desk tables.
+*/
+
 func (dag causalDAG) validateNode(node int) error {
 	if node < 0 || node >= dag.nodeCount {
 		return fmt.Errorf("causal: node %d outside graph width %d", node, dag.nodeCount)
@@ -241,6 +279,10 @@ func (dag causalDAG) validateNode(node int) error {
 
 	return nil
 }
+
+/*
+Transitive causal layer from symm — nodeSet estimates do/backdoor and counterfactual effects on desk tables.
+*/
 
 func nodeSet(nodes []int) map[int]struct{} {
 	set := make(map[int]struct{}, len(nodes))

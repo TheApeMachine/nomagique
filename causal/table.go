@@ -11,15 +11,25 @@ import (
 	"gonum.org/v1/gonum/stat"
 )
 
+/*
+Transitive causal layer from symm — nodeTable estimates do/backdoor effects on tabular desk features.
+*/
 type nodeTable struct {
 	rows   [][]float64
 	target int
 }
+/*
+Transitive causal layer from symm — newNodeTable estimates do/backdoor effects on tabular desk features.
+*/
 
 type linearModel struct {
 	coefficients []float64
 	predictors   []int
 }
+
+/*
+Transitive causal layer from symm — newNodeTable estimates do/backdoor and counterfactual effects on desk tables.
+*/
 
 func newNodeTable(rows [][]float64, target int, _ ...int) (nodeTable, error) {
 	if len(rows) == 0 {
@@ -63,6 +73,10 @@ func newNodeTable(rows [][]float64, target int, _ ...int) (nodeTable, error) {
 
 	return nodeTable{rows: rows, target: target}, nil
 }
+
+/*
+Transitive causal layer from symm — association estimates do/backdoor and counterfactual effects on desk tables.
+*/
 
 func (nodeTable nodeTable) association(treatment int) (float64, error) {
 	treatmentValues, err := nodeTable.column(treatment)
@@ -110,6 +124,10 @@ func (nodeTable nodeTable) association(treatment int) (float64, error) {
 	return association, nil
 }
 
+/*
+Transitive causal layer from symm — effectScales estimates do/backdoor and counterfactual effects on desk tables.
+*/
+
 func (nodeTable nodeTable) effectScales(treatment int) (float64, float64, error) {
 	treatmentValues, err := nodeTable.column(treatment)
 
@@ -118,7 +136,6 @@ func (nodeTable nodeTable) effectScales(treatment int) (float64, float64, error)
 	}
 
 	targetValues, err := nodeTable.column(nodeTable.target)
-
 	if err != nil {
 		return 0, 0, err
 	}
@@ -132,6 +149,10 @@ func (nodeTable nodeTable) effectScales(treatment int) (float64, float64, error)
 
 	return treatmentScale, targetScale, nil
 }
+
+/*
+Transitive causal layer from symm — backdoorEffect estimates do/backdoor and counterfactual effects on desk tables.
+*/
 
 func (nodeTable nodeTable) backdoorEffect(treatment int, controls ...int) (float64, error) {
 	treatmentValues, err := nodeTable.column(treatment)
@@ -201,6 +222,10 @@ func (nodeTable nodeTable) backdoorEffect(treatment int, controls ...int) (float
 	return dotTarget / denominator, nil
 }
 
+/*
+Transitive causal layer from symm — fitLinearModel estimates do/backdoor and counterfactual effects on desk tables.
+*/
+
 func (nodeTable nodeTable) fitLinearModel(predictors ...int) (linearModel, error) {
 	targetValues, err := nodeTable.column(nodeTable.target)
 
@@ -213,7 +238,6 @@ func (nodeTable nodeTable) fitLinearModel(predictors ...int) (linearModel, error
 	if err != nil {
 		return linearModel{}, err
 	}
-
 	coefficients, err := olsFit(targetValues, predictorColumns...)
 
 	if err != nil {
@@ -234,9 +258,12 @@ func (nodeTable nodeTable) fitLinearModel(predictors ...int) (linearModel, error
 	}, nil
 }
 
+/*
+Transitive causal layer from symm — pairConditionNumber estimates do/backdoor and counterfactual effects on desk tables.
+*/
+
 func (nodeTable nodeTable) pairConditionNumber(left, right int) (float64, error) {
 	leftColumn, err := nodeTable.column(left)
-
 	if err != nil {
 		return 0, err
 	}
@@ -259,6 +286,10 @@ func (nodeTable nodeTable) pairConditionNumber(left, right int) (float64, error)
 
 	return condition, nil
 }
+
+/*
+Transitive causal layer from symm — percentile estimates do/backdoor and counterfactual effects on desk tables.
+*/
 
 func (nodeTable nodeTable) percentile(node int, percentile float64) (float64, error) {
 	values, err := nodeTable.column(node)
@@ -307,6 +338,10 @@ func (nodeTable nodeTable) percentile(node int, percentile float64) (float64, er
 
 	return sorted[j] + g*(sorted[j+1]-sorted[j]), nil
 }
+
+/*
+Transitive causal layer from symm — kernelBackdoorEffect estimates do/backdoor and counterfactual effects on desk tables.
+*/
 
 func (nodeTable nodeTable) kernelBackdoorEffect(
 	treatment int, bandwidth float64, controls ...int,
@@ -424,6 +459,10 @@ func (nodeTable nodeTable) kernelBackdoorEffect(
 	return numerator / denominator, nil
 }
 
+/*
+Transitive causal layer from symm — predict estimates do/backdoor and counterfactual effects on desk tables.
+*/
+
 func (model linearModel) predict(
 	row []float64, overrideNode int, overrideValue float64,
 ) (float64, error) {
@@ -459,12 +498,15 @@ func (model linearModel) predict(
 		if node == overrideNode {
 			value = overrideValue
 		}
-
 		prediction += model.coefficients[predictorIndex+1] * value
 	}
 
 	return prediction, nil
 }
+
+/*
+Transitive causal layer from symm — counterfactualUplift estimates do/backdoor and counterfactual effects on desk tables.
+*/
 
 func (model linearModel) counterfactualUplift(
 	row []float64, treatment int, intervention float64,
@@ -476,13 +518,15 @@ func (model linearModel) counterfactualUplift(
 	}
 
 	counterfactual, err := model.predict(row, treatment, intervention)
-
 	if err != nil {
 		return 0, err
 	}
 
 	return counterfactual - observed, nil
 }
+/*
+Transitive causal layer from symm — (…).validateNode estimates do/backdoor effects on tabular desk features.
+*/
 
 func (nodeTable nodeTable) column(node int) ([]float64, error) {
 	if err := nodeTable.validateNode(node); err != nil {
@@ -498,11 +542,14 @@ func (nodeTable nodeTable) column(node int) ([]float64, error) {
 	return values, nil
 }
 
+/*
+Transitive causal layer from symm — columns estimates do/backdoor and counterfactual effects on desk tables.
+*/
+
 func (nodeTable nodeTable) columns(nodes ...int) ([][]float64, error) {
 	if err := nodeTable.validateNodes(nodes...); err != nil {
 		return nil, err
 	}
-
 	columns := make([][]float64, 0, len(nodes))
 
 	for _, node := range nodes {
@@ -518,6 +565,10 @@ func (nodeTable nodeTable) columns(nodes ...int) ([][]float64, error) {
 	return columns, nil
 }
 
+/*
+Transitive causal layer from symm — validateNodes estimates do/backdoor and counterfactual effects on desk tables.
+*/
+
 func (nodeTable nodeTable) validateNodes(nodes ...int) error {
 	for _, node := range nodes {
 		if err := nodeTable.validateNode(node); err != nil {
@@ -527,6 +578,10 @@ func (nodeTable nodeTable) validateNodes(nodes ...int) error {
 
 	return nil
 }
+
+/*
+Transitive causal layer from symm — validateNode estimates do/backdoor and counterfactual effects on desk tables.
+*/
 
 func (nodeTable nodeTable) validateNode(node int) error {
 	if len(nodeTable.rows) == 0 {
@@ -549,6 +604,10 @@ func (nodeTable nodeTable) validateNode(node int) error {
 
 	return nil
 }
+
+/*
+Transitive causal layer from symm — deriveBandwidth estimates do/backdoor and counterfactual effects on desk tables.
+*/
 
 func deriveBandwidth(rows [][]float64, controls ...int) (float64, error) {
 	if len(rows) < 2 {
@@ -611,6 +670,10 @@ func deriveBandwidth(rows [][]float64, controls ...int) (float64, error) {
 	// Scott's multivariate Gaussian-kernel rule on standardized controls.
 	return math.Pow(sampleCount, -1/(covariateDimension+4)), nil
 }
+
+/*
+Transitive causal layer from symm — intSlice estimates do/backdoor and counterfactual effects on desk tables.
+*/
 
 func intSlice(values []float64) []int {
 	out := make([]int, len(values))

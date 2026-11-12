@@ -10,6 +10,9 @@ import (
 	"github.com/theapemachine/nomagique/statistic"
 )
 
+/*
+flowSampleHistoryCap bounds sampling or gates so equation feature frames stay well-posed for symm envelope wiring.
+*/
 const (
 	flowSampleHistoryCap = 128
 )

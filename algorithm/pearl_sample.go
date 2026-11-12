@@ -36,6 +36,9 @@ type PearlSampleOutput struct {
 	Rows [][]float64
 }
 
+/*
+pearlWindow holds per-symbol sampling state that feeds equation Measure and Map outputs into resonance features.
+*/
 type pearlWindow struct {
 	rows      [][]float64
 	variances []*adaptive.Variance
@@ -114,6 +117,9 @@ func (pearlSample *PearlSample) Measure(
 	return pearlSample.append(input.Key, row, window), pearlSample.ready(window), nil
 }
 
+/*
+(…).append supports algorithm sampling that supplies equation inputs symm maps into runtime.Envelope.
+*/
 func (pearlSample *PearlSample) append(
 	key string,
 	row []float64,
@@ -129,6 +135,9 @@ func (pearlSample *PearlSample) append(
 	}
 }
 
+/*
+(…).trim supports algorithm sampling that supplies equation inputs symm maps into runtime.Envelope.
+*/
 func (window *pearlWindow) trim() {
 	capacity := window.capacity
 
@@ -142,6 +151,9 @@ func (window *pearlWindow) trim() {
 	window.rows = window.rows[:capacity]
 }
 
+/*
+(…).ready supports algorithm sampling that supplies equation inputs symm maps into runtime.Envelope.
+*/
 func (pearlSample *PearlSample) ready(window *pearlWindow) bool {
 	for _, variance := range window.variances {
 		if variance.Count() < 2 {
@@ -152,6 +164,9 @@ func (pearlSample *PearlSample) ready(window *pearlWindow) bool {
 	return len(window.variances) > 0
 }
 
+/*
+(…).window supports algorithm sampling that supplies equation inputs symm maps into runtime.Envelope.
+*/
 func (pearlSample *PearlSample) window(key string, rowWidth int) *pearlWindow {
 	window, ok := pearlSample.windows[key]
 
@@ -165,6 +180,9 @@ func (pearlSample *PearlSample) window(key string, rowWidth int) *pearlWindow {
 	return window
 }
 
+/*
+causalMomentParameterCount supports algorithm sampling that supplies equation inputs symm maps into runtime.Envelope.
+*/
 func causalMomentParameterCount(rowWidth int) int {
 	return 1 + rowWidth + rowWidth*(rowWidth+1)/2
 }

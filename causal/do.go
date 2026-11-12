@@ -1,5 +1,8 @@
 package causal
 
+/*
+Transitive causal layer from symm — doExpectation estimates do/backdoor effects on tabular desk features.
+*/
 func doExpectation(
 	nodeTable nodeTable,
 	treatment int,

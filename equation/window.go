@@ -104,6 +104,10 @@ func (window *ignitionWindow) clone() *ignitionWindow {
 	}
 }
 
+/*
+restore rolls back speculative window state when observation validation fails so
+cached ignition Map values never commit from a partial tick.
+*/
 func (window *ignitionWindow) restore(candidate *ignitionWindow) {
 	window.capacity = candidate.capacity
 	window.initialized = candidate.initialized

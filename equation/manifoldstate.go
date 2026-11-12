@@ -49,6 +49,10 @@ func (manifoldstate *Manifoldstate) Measure(frame FeatureFrame) (ManifoldstateOu
 	return outcome, nil
 }
 
+/*
+evaluateManifoldstate turns pressure-gradient and coherence features from
+sampling into herd, shock, drift, and noise Map evidence.
+*/
 func evaluateManifoldstate(frame FeatureFrame, inputKeys []string) ManifoldstateOutput {
 	fields, err := FeatureFields(frame, inputKeys)
 

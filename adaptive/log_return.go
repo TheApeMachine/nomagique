@@ -32,6 +32,10 @@ type LogReturn struct {
 	samples map[string]*logReturnRing
 }
 
+/*
+logReturnRing is a fixed-capacity ring per series so lagged log returns stay
+bounded while timestamps remain available for monotonicity checks.
+*/
 type logReturnRing struct {
 	values []LogReturnSample
 	head   int
@@ -164,6 +168,10 @@ func (logReturn *LogReturn) Measure(sample LogReturnSample) (LogReturnOutput, er
 	}, nil
 }
 
+/*
+ring lazily allocates a series ring and enforces MaxSeries so unrelated
+instruments cannot exhaust memory in one LogReturn instance.
+*/
 func (logReturn *LogReturn) ring(series string) (*logReturnRing, error) {
 	existing, ok := logReturn.samples[series]
 
@@ -188,6 +196,10 @@ func (logReturn *LogReturn) ring(series string) (*logReturnRing, error) {
 	return ring, nil
 }
 
+/*
+push overwrites the oldest slot once the ring is full so only ReturnLag+1
+samples influence the next lagged return.
+*/
 func (ring *logReturnRing) push(sample LogReturnSample) {
 	if ring.count < len(ring.values) {
 		ring.values[ring.count] = sample
@@ -202,10 +214,17 @@ func (ring *logReturnRing) push(sample LogReturnSample) {
 	ring.count++
 }
 
+/*
+latest is the anchor for event-time ordering guards before a new sample is accepted.
+*/
 func (ring *logReturnRing) latest() LogReturnSample {
 	return ring.values[ring.head]
 }
 
+/*
+atLag walks backward from head in ring order so lag indexing matches the
+configured return horizon regardless of overwrite position.
+*/
 func (ring *logReturnRing) atLag(lag int) LogReturnSample {
 	capacity := len(ring.values)
 	index := ring.head - lag

@@ -6,8 +6,14 @@ import (
 	"github.com/shopspring/decimal"
 )
 
+/*
+SideKind tags bid versus ask deltas broker BookManager applies from Level3.
+*/
 type SideKind string
 
+/*
+SideBid and SideAsk route venue L3 events into the correct book half.
+*/
 const (
 	SideBid SideKind = "bid"
 	SideAsk SideKind = "ask"
@@ -36,6 +42,10 @@ type Book struct {
 	Asks           *BookSide `json:"asks,omitempty"`
 }
 
+/*
+NewBook builds an L3-ready book with depth caps; symm leaves crossing off so
+checksum misses trigger resubscribe instead of silent heals.
+*/
 func NewBook() *Book {
 	bids := NewBookSide()
 	bids.Direction = SideBid
@@ -53,6 +63,9 @@ func NewBook() *Book {
 	}
 }
 
+/*
+Midpoint feeds signals and oracle spread gates when both sides have liquidity.
+*/
 func (book *Book) Midpoint() *decimal.Decimal {
 	bid, ask := book.BestBid(), book.BestAsk()
 
@@ -70,6 +83,9 @@ func (book *Book) Midpoint() *decimal.Decimal {
 	}
 }
 
+/*
+Spread is touch-to-touch percent spread for desk tight_touch / blown_spread oracles.
+*/
 func (book *Book) Spread() *decimal.Decimal {
 	bid, ask := book.BestBid(), book.BestAsk()
 
@@ -82,6 +98,9 @@ func (book *Book) Spread() *decimal.Decimal {
 	return &spread
 }
 
+/*
+Update applies one L3 delta then optional cross/depth enforcement after broker ingest.
+*/
 func (book *Book) Update(delta *Delta) {
 	switch delta.Direction {
 	case SideAsk:
@@ -99,11 +118,29 @@ func (book *Book) Update(delta *Delta) {
 	}
 }
 
-func (book *Book) BestBid() *Level  { return book.Bids.High }
-func (book *Book) BestAsk() *Level  { return book.Asks.Low }
+/*
+BestBid is top-of-book bid for TouchBid sizing and L2/L3 checksum walks.
+*/
+func (book *Book) BestBid() *Level { return book.Bids.High }
+
+/*
+BestAsk is top-of-book ask for TouchAsk and spread oracles.
+*/
+func (book *Book) BestAsk() *Level { return book.Asks.Low }
+
+/*
+WorstAsk is the deepest ask level depth enforcement may delete.
+*/
 func (book *Book) WorstAsk() *Level { return book.Asks.High }
+
+/*
+WorstBid is the deepest bid level depth enforcement may delete.
+*/
 func (book *Book) WorstBid() *Level { return book.Bids.Low }
 
+/*
+EnforceOrder heals crossed books when NoBookCrossing is enabled (paper sim paths).
+*/
 func (book *Book) EnforceOrder() {
 	zero := decimal.Zero
 
@@ -127,6 +164,9 @@ func (book *Book) EnforceOrder() {
 	}
 }
 
+/*
+EnforceDepth trims far levels so L3 replay and signals stay within MaxDepth.
+*/
 func (book *Book) EnforceDepth() {
 	zero := decimal.Zero
 

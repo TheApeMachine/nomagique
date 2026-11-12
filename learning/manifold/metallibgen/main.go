@@ -10,11 +10,19 @@ import (
 	"strings"
 )
 
+/*
+Build-time Metal pipeline for learning.manifold — metalLanguageCandidates keeps kernels.metallib aligned with the CPU ResonanceManifold path.
+*/
+
 var metalLanguageCandidates = []string{
 	"metal4.1",
 	"metal4.0",
 	"metal3.0",
 }
+
+/*
+Build-time Metal pipeline for learning.manifold — main keeps kernels.metallib aligned with the CPU ResonanceManifold path.
+*/
 
 func main() {
 	packageDir, err := filepath.Abs(".")
@@ -44,11 +52,19 @@ func main() {
 	}
 }
 
+/*
+Build-time Metal pipeline for learning.manifold — Generator keeps kernels.metallib aligned with the CPU ResonanceManifold path.
+*/
+
 type Generator struct {
 	packageDir string
 	tempDir    string
 	metalStd   string
 }
+
+/*
+Build-time Metal pipeline for learning.manifold — NewGenerator keeps kernels.metallib aligned with the CPU ResonanceManifold path.
+*/
 
 func NewGenerator(packageDir string, tempDir string) *Generator {
 	return &Generator{
@@ -56,6 +72,10 @@ func NewGenerator(packageDir string, tempDir string) *Generator {
 		tempDir:    tempDir,
 	}
 }
+
+/*
+Build-time Metal pipeline for learning.manifold — Generate keeps kernels.metallib aligned with the CPU ResonanceManifold path.
+*/
 
 func (generator *Generator) Generate() error {
 	sources, err := generator.SourceFiles()
@@ -75,6 +95,10 @@ func (generator *Generator) Generate() error {
 
 	return nil
 }
+
+/*
+Build-time Metal pipeline for learning.manifold — resolveMetalLanguageStd keeps kernels.metallib aligned with the CPU ResonanceManifold path.
+*/
 
 func (generator *Generator) resolveMetalLanguageStd(sources []string) (string, error) {
 	for _, metalStd := range metalLanguageCandidates {
@@ -108,6 +132,10 @@ func (generator *Generator) resolveMetalLanguageStd(sources []string) (string, e
 	return "", fmt.Errorf("no Metal language revision compiles and loads on this host")
 }
 
+/*
+Build-time Metal pipeline for learning.manifold — buildMetallib keeps kernels.metallib aligned with the CPU ResonanceManifold path.
+*/
+
 func (generator *Generator) buildMetallib(sources []string) error {
 	for _, source := range sources {
 		if err := generator.Run("xcrun", generator.MetalArgs(source)...); err != nil {
@@ -117,6 +145,10 @@ func (generator *Generator) buildMetallib(sources []string) error {
 
 	return generator.Run("xcrun", generator.MetallibArgs(sources)...)
 }
+
+/*
+Build-time Metal pipeline for learning.manifold — compilerSupportsStd keeps kernels.metallib aligned with the CPU ResonanceManifold path.
+*/
 
 func (generator *Generator) compilerSupportsStd(metalStd string) bool {
 	probeSource := filepath.Join(generator.tempDir, "std_probe.metal")
@@ -143,6 +175,10 @@ func (generator *Generator) compilerSupportsStd(metalStd string) bool {
 
 	return err == nil
 }
+
+/*
+Build-time Metal pipeline for learning.manifold — SourceFiles keeps kernels.metallib aligned with the CPU ResonanceManifold path.
+*/
 
 func (generator *Generator) SourceFiles() ([]string, error) {
 	var sources []string
@@ -182,6 +218,10 @@ func (generator *Generator) SourceFiles() ([]string, error) {
 	return sources, nil
 }
 
+/*
+Build-time Metal pipeline for learning.manifold — MetalArgs keeps kernels.metallib aligned with the CPU ResonanceManifold path.
+*/
+
 func (generator *Generator) MetalArgs(source string) []string {
 	args := []string{
 		"-sdk",
@@ -203,6 +243,10 @@ func (generator *Generator) MetalArgs(source string) []string {
 	)
 }
 
+/*
+Build-time Metal pipeline for learning.manifold — needsStrictFP keeps kernels.metallib aligned with the CPU ResonanceManifold path.
+*/
+
 func (generator *Generator) needsStrictFP(source string) bool {
 	baseName := filepath.Base(source)
 
@@ -222,6 +266,10 @@ func (generator *Generator) needsStrictFP(source string) bool {
 	}
 }
 
+/*
+Build-time Metal pipeline for learning.manifold — MetallibArgs keeps kernels.metallib aligned with the CPU ResonanceManifold path.
+*/
+
 func (generator *Generator) MetallibArgs(sources []string) []string {
 	args := []string{
 		"-sdk",
@@ -240,6 +288,10 @@ func (generator *Generator) MetallibArgs(sources []string) []string {
 	)
 }
 
+/*
+Build-time Metal pipeline for learning.manifold — AirPath keeps kernels.metallib aligned with the CPU ResonanceManifold path.
+*/
+
 func (generator *Generator) AirPath(source string) string {
 	relativePath, err := filepath.Rel(generator.packageDir, source)
 
@@ -253,6 +305,10 @@ func (generator *Generator) AirPath(source string) string {
 	return filepath.Join(generator.tempDir, stem+".air")
 }
 
+/*
+Build-time Metal pipeline for learning.manifold — Run keeps kernels.metallib aligned with the CPU ResonanceManifold path.
+*/
+
 func (generator *Generator) Run(name string, args ...string) error {
 	command := exec.Command(name, args...)
 	command.Stdout = os.Stdout
@@ -264,6 +320,10 @@ func (generator *Generator) Run(name string, args ...string) error {
 
 	return nil
 }
+
+/*
+Build-time Metal pipeline for learning.manifold — fatal keeps kernels.metallib aligned with the CPU ResonanceManifold path.
+*/
 
 func fatal(err error) {
 	fmt.Fprintln(os.Stderr, err)

@@ -7,6 +7,9 @@ import (
 	"github.com/theapemachine/nomagique/algorithm/book/flow"
 )
 
+/*
+sideBook returns the level map for a validated book side.
+*/
 func (window *Window) sideBook(side flow.Side) *sync.Map {
 	if side == flow.SideBid {
 		return window.bids
@@ -15,6 +18,9 @@ func (window *Window) sideBook(side flow.Side) *sync.Map {
 	return window.asks
 }
 
+/*
+sideOrders returns the order-id map for L3 attribution on one side.
+*/
 func (window *Window) sideOrders(side flow.Side) *sync.Map {
 	if side == flow.SideBid {
 		return window.bidOrders
@@ -23,6 +29,9 @@ func (window *Window) sideOrders(side flow.Side) *sync.Map {
 	return window.askOrders
 }
 
+/*
+isTouchPrice reports whether a level price is currently at the touch on that side.
+*/
 func (window *Window) isTouchPrice(side flow.Side, price float64) bool {
 	if side == flow.SideBid {
 		return price == window.bestBid()
@@ -31,6 +40,9 @@ func (window *Window) isTouchPrice(side flow.Side, price float64) bool {
 	return price == window.bestAsk()
 }
 
+/*
+bestBid scans resting bid levels for the highest touch price.
+*/
 func (window *Window) bestBid() float64 {
 	best := 0.0
 
@@ -47,6 +59,9 @@ func (window *Window) bestBid() float64 {
 	return best
 }
 
+/*
+bestAsk scans resting ask levels for the lowest touch price.
+*/
 func (window *Window) bestAsk() float64 {
 	best := 0.0
 
@@ -63,6 +78,9 @@ func (window *Window) bestAsk() float64 {
 	return best
 }
 
+/*
+midPrice derives lastPrice for equation inputs from the current two-sided touch.
+*/
 func (window *Window) midPrice() float64 {
 	bestBid := window.bestBid()
 	bestAsk := window.bestAsk()
@@ -78,6 +96,9 @@ func (window *Window) midPrice() float64 {
 	return bestAsk
 }
 
+/*
+threshold resolves the active vacuum gate, falling back to empirical low band when cold.
+*/
 func (window *Window) threshold(maxRatio float64) float64 {
 	threshold := window.vacuumGate.Value(0)
 	vacuumLow := window.vacuumLow()
@@ -89,14 +110,23 @@ func (window *Window) threshold(maxRatio float64) float64 {
 	return threshold
 }
 
+/*
+vacuumLow reads the lower vacuum quantile used for support gate derivation.
+*/
 func (window *Window) vacuumLow() float64 {
 	return window.vacuumGate.Value(window.resolvedVacuumLowPercentile())
 }
 
+/*
+vacuumPeak reads the peak vacuum ratio retained for strength caps in equation inputs.
+*/
 func (window *Window) vacuumPeak() float64 {
 	return window.vacuumGate.Value(0)
 }
 
+/*
+churnRatio scores touch cancel relative to touch adds for bluff detection this frame.
+*/
 func (window *Window) churnRatio(frame Frame) float64 {
 	churnRatio := 0.0
 
@@ -123,6 +153,9 @@ func (window *Window) churnRatio(frame Frame) float64 {
 	return churnRatio
 }
 
+/*
+previousChurn estimates churn when this frame lacks adds but still cancels at touch.
+*/
 func (window *Window) previousChurn(frame Frame) float64 {
 	churnRatio := 0.0
 
@@ -137,6 +170,9 @@ func (window *Window) previousChurn(frame Frame) float64 {
 	return churnRatio
 }
 
+/*
+toxicity fuses bid and ask bluff evidence for ToxicNear and ToxicBluffStrength inputs.
+*/
 func (window *Window) toxicity(
 	frame Frame,
 	churnRatio float64,
@@ -172,6 +208,9 @@ func (window *Window) toxicity(
 	)
 }
 
+/*
+toxicSide scores one side's touch churn against size and proximity for bluff export.
+*/
 func (window *Window) toxicSide(
 	touchCancel float64,
 	addVolume float64,
@@ -205,6 +244,9 @@ func (window *Window) toxicSide(
 	return true, math.Max(toxicBluffStrength, churnRatio)
 }
 
+/*
+touchProximity converts quoted spread into a relative near-touch band for toxicity.
+*/
 func (window *Window) touchProximity(mid float64) float64 {
 	bestBid := window.bestBid()
 	bestAsk := window.bestAsk()
@@ -222,6 +264,9 @@ func (window *Window) touchProximity(mid float64) float64 {
 	return spread
 }
 
+/*
+medianLevelQty summarizes typical resting size for large-block cancel thresholds.
+*/
 func (window *Window) medianLevelQty() float64 {
 	quantities := make([]float64, 0)
 
@@ -248,6 +293,9 @@ func (window *Window) medianLevelQty() float64 {
 	return Median(quantities)
 }
 
+/*
+resolvedGatePercentile ramps quantile selectivity as frames accumulate stable evidence.
+*/
 func (window *Window) resolvedGatePercentile(configured float64, highSelectivity bool) float64 {
 	if configured > 0 {
 		return configured
@@ -270,6 +318,9 @@ func (window *Window) resolvedGatePercentile(configured float64, highSelectivity
 	return floor + (ceiling-floor)*ramp
 }
 
+/*
+resolvedVacuumLowPercentile anchors support gates to a conservative vacuum quantile.
+*/
 func (window *Window) resolvedVacuumLowPercentile() float64 {
 	if window.vacuumLowPct > 0 {
 		return window.vacuumLowPct
@@ -280,6 +331,9 @@ func (window *Window) resolvedVacuumLowPercentile() float64 {
 	return math.Max(0.1, highBand*0.25)
 }
 
+/*
+runGate observes a sample when present otherwise returns the current gate value.
+*/
 func (window *Window) runGate(
 	gate *flow.GateQuantile,
 	sample float64,

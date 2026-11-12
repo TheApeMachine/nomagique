@@ -7,6 +7,10 @@ import (
 	"github.com/theapemachine/nomagique/statistic"
 )
 
+/*
+minBookGateHistory and maxBookImbalanceDisagreement bound spoof and separation
+scales so Map outputs stay comparable once symm fans them into envelope keys.
+*/
 const (
 	minBookGateHistory           = 3
 	maxBookImbalanceDisagreement = 2.0
@@ -268,6 +272,10 @@ func bookflowMedianAbsolute(values []float64) float64 {
 	return median
 }
 
+/*
+bookflowLoadedScore rewards depth skew confirmed by trade pressure so loaded_score
+in the grid reflects genuine inventory, not quote paint alone.
+*/
 func bookflowLoadedScore(
 	weighted, tradePressure, bookNotional, weightedThreshold float64,
 ) float64 {
@@ -291,6 +299,10 @@ func bookflowLoadedScore(
 	return loadedScore
 }
 
+/*
+bookflowIsSpoofSkew detects touch-depth disagreement that would otherwise read as
+neutral imbalance in downstream resonance features.
+*/
 func bookflowIsSpoofSkew(
 	weighted, level1, weightedThreshold, level1Threshold, spoofContrast float64,
 	ready bool,
@@ -310,6 +322,10 @@ func bookflowIsSpoofSkew(
 	return math.Abs(level1) >= level1Threshold*spoofContrast
 }
 
+/*
+bookflowIsBookThinning flags notional withdrawal against its own median so thin_score
+signals liquidity pull rather than a permanently small book.
+*/
 func bookflowIsBookThinning(
 	bookNotional, baselineNotional float64,
 	ready bool,
@@ -321,6 +337,10 @@ func bookflowIsBookThinning(
 	return bookNotional < baselineNotional
 }
 
+/*
+bookflowClassify picks the dominant hypothesis so category and value align when
+symm maps the output bundle into runtime.Envelope.
+*/
 func bookflowClassify(spoofed, thinning, loaded bool) int {
 	if spoofed {
 		return 2

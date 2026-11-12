@@ -32,6 +32,9 @@ type ExecutionData struct {
 	FeeUsdEquiv   *decimal.Decimal `json:"fee_usd_equiv"`
 }
 
+/*
+Execution batches private fill events tiers merge into ledger and position state.
+*/
 type Execution struct {
 	Channel  string           `json:"channel"`
 	Type     string           `json:"type"`
@@ -40,6 +43,9 @@ type Execution struct {
 	onChange func(MarketType)
 }
 
+/*
+NewExecution normalizes venue decode maps into a typed execution frame.
+*/
 func NewExecution(data map[string]any) *Execution {
 	channel, _ := data["channel"].(string)
 	kind, _ := data["type"].(string)
@@ -64,14 +70,23 @@ func NewExecution(data map[string]any) *Execution {
 	}
 }
 
+/*
+OnChange lets Tier bind fills so they never bypass Apply on the private channel.
+*/
 func (execution *Execution) OnChange(fn func(MarketType)) {
 	execution.onChange = fn
 }
 
+/*
+Request is empty: executions stream on authenticated websocket push.
+*/
 func (execution *Execution) Request() map[string]any {
 	return map[string]any{}
 }
 
+/*
+ToMarket appends fills into the tier execution buffer preserving onChange.
+*/
 func (execution *Execution) ToMarket(other MarketType) MarketType {
 	dst, ok := other.(*Execution)
 
@@ -89,6 +104,9 @@ func (execution *Execution) ToMarket(other MarketType) MarketType {
 	return dst
 }
 
+/*
+FromMarket imports peer execution state for paper tier shadowing.
+*/
 func (execution *Execution) FromMarket(other MarketType) MarketType {
 	src, ok := other.(*Execution)
 
@@ -99,11 +117,17 @@ func (execution *Execution) FromMarket(other MarketType) MarketType {
 	return src.ToMarket(execution)
 }
 
+/*
+MarshalJSON persists execution batches on ticks and store audit trails.
+*/
 func (execution *Execution) MarshalJSON() ([]byte, error) {
 	type alias Execution
 	return json.Marshal((*alias)(execution))
 }
 
+/*
+UnmarshalJSON reloads fills from store replay without dropping callbacks.
+*/
 func (execution *Execution) UnmarshalJSON(data []byte) error {
 	type alias Execution
 	var decoded alias

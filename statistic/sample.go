@@ -50,6 +50,10 @@ type TimedSample struct {
 	At     time.Time
 }
 
+/*
+finiteStatistic guards scalar statistics against NaN and Inf before moments or
+windows incorporate a poison sample.
+*/
 func finiteStatistic(name string, value float64) error {
 	if math.IsNaN(value) || math.IsInf(value, 0) {
 		return errnie.Error(errnie.Err(
@@ -62,6 +66,10 @@ func finiteStatistic(name string, value float64) error {
 	return nil
 }
 
+/*
+finitePositiveStatistic extends finite checks for log-return and ratio stats
+that require strictly positive magnitudes.
+*/
 func finitePositiveStatistic(name string, value float64) error {
 	if err := finiteStatistic(name, value); err != nil {
 		return err

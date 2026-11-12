@@ -109,6 +109,9 @@ func (fit *Fit) Measure(input FitInput) (FitOutput, error) {
 	}, nil
 }
 
+/*
+Feeds algorithm/excitation and equation Hawkes stages — criticalBranch turns marked trade arrivals into fitted intensities and categories.
+*/
 const criticalBranch = 1.0
 
 /*
@@ -156,6 +159,10 @@ func (fit BivariateFit) Params() BivariateParams {
 		Beta:    fit.Beta,
 	}
 }
+
+/*
+Feeds algorithm/excitation and equation Hawkes stages — computeSpectralRadius fits marked trade arrivals into intensities and fit categories.
+*/
 
 func (fit BivariateFit) computeSpectralRadius() float64 {
 	if fit.Beta <= 0 {
@@ -324,11 +331,14 @@ func (fit BivariateFit) ClampSubcritical() BivariateFit {
 	return clamped
 }
 
+/*
+Feeds algorithm/excitation and equation Hawkes stages — withCrossZeroed fits marked trade arrivals into intensities and fit categories.
+*/
+
 func (fit BivariateFit) withCrossZeroed() BivariateFit {
 	if fit.AlphaXY <= 0 && fit.AlphaYX <= 0 {
 		return fit
 	}
-
 	restricted := fit
 	restricted.AlphaXY = 0
 	restricted.AlphaYX = 0
@@ -336,6 +346,10 @@ func (fit BivariateFit) withCrossZeroed() BivariateFit {
 
 	return restricted
 }
+
+/*
+Feeds algorithm/excitation and equation Hawkes stages — compensator fits marked trade arrivals into intensities and fit categories.
+*/
 
 func (fit BivariateFit) compensator(
 	stream ArrivalStream,

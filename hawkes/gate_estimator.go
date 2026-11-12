@@ -76,6 +76,9 @@ func (estimator *FitGateEstimator) Measure(
 	}, true
 }
 
+/*
+Feeds algorithm/excitation and equation Hawkes stages — (…).quantile turns marked trade arrivals into fitted intensities and categories.
+*/
 func (estimator *FitGateEstimator) quantile(
 	history []float64,
 	percentile float64,

@@ -45,6 +45,9 @@ TradeSide identifies aggressive trade direction.
 */
 type TradeSide string
 
+/*
+TradeBuy and TradeSell sign trade pressure so bookflow tradePressure aligns with aggression.
+*/
 const (
 	TradeBuy  TradeSide = "buy"
 	TradeSell TradeSide = "sell"
@@ -207,6 +210,9 @@ func (sample *Sample) maturity(window *Window) float64 {
 	return observations / (observations + 1)
 }
 
+/*
+window owns per-symbol book state under Sample's lock so concurrent first ticks do not fork windows.
+*/
 func (sample *Sample) window(symbol string) *Window {
 	sample.mu.RLock()
 	existing, ok := sample.windows[symbol]
@@ -233,6 +239,9 @@ func (sample *Sample) window(symbol string) *Window {
 	return window
 }
 
+/*
+ingestBook applies an atomic two-sided update and retains imbalance histories for equation.Bookflow.
+*/
 func (sample *Sample) ingestBook(
 	input BookInput,
 	window *Window,
@@ -310,6 +319,9 @@ func (sample *Sample) ingestBook(
 	return nil
 }
 
+/*
+ingestTrade EWMA-smooths signed notional into tradePressure using observed inter-trade gaps.
+*/
 func (sample *Sample) ingestTrade(
 	input TradeInput,
 	window *Window,
@@ -356,6 +368,9 @@ func (sample *Sample) ingestTrade(
 	return nil
 }
 
+/*
+features packages the latest book snapshot and ring histories for equation.Bookflow Measure.
+*/
 func (sample *Sample) features(
 	window *Window,
 ) (equation.BookflowInput, bool, error) {

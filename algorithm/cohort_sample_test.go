@@ -125,8 +125,13 @@ func TestCohortSampleConcurrentMeasure(testingTB *testing.T) {
 
 		wg.Wait()
 
-		Convey("It should finish without racing the symbols map", func() {
-			So(true, ShouldBeTrue)
+		Convey("It should retain per-symbol price history after concurrent measures", func() {
+			for _, symbol := range symbols {
+				state := sample.symbols[symbol]
+				So(state, ShouldNotBeNil)
+				So(len(state.prices), ShouldBeGreaterThan, 10)
+				So(len(state.returns), ShouldBeGreaterThan, 10)
+			}
 		})
 	})
 }

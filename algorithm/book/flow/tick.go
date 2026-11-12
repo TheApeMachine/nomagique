@@ -6,6 +6,9 @@ import (
 	"github.com/theapemachine/errnie"
 )
 
+/*
+LevelTick prefers exchange integer ticks so book updates stay on the instrument lattice.
+*/
 func LevelTick(level BookLevel) (int64, error) {
 	if level.Ticks <= 0 {
 		return 0, errnie.Error(errnie.Err(
@@ -26,10 +29,16 @@ func LevelTick(level BookLevel) (int64, error) {
 	return level.Ticks, nil
 }
 
+/*
+TickPrice projects lattice indices back to float prices for equation mid and spread.
+*/
 func TickPrice(tick int64, tickSize float64) float64 {
 	return float64(tick) * tickSize
 }
 
+/*
+DecayRate scales depth kernels from relative spread so wide markets down-weight deep levels.
+*/
 func DecayRate(mid, spread float64) float64 {
 	if mid <= 0 {
 		return 1

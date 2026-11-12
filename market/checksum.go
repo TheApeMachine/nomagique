@@ -19,6 +19,9 @@ type ChecksumResult struct {
 	Bids           string
 }
 
+/*
+trimChecksum strips decimals the way Kraken CRC compares after token formatting.
+*/
 func trimChecksum(value string) string {
 	return strings.TrimLeft(strings.ReplaceAll(value, ".", ""), "0")
 }

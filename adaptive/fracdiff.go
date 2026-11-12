@@ -120,6 +120,10 @@ func (fractional *FracDiff) Measure(sample float64) (FracDiffOutput, error) {
 	}, nil
 }
 
+/*
+pushHistory retains the ring buffer head so the fixed kernel always reads the
+most recent samples without unbounded allocation between Measure calls.
+*/
 func (fractional *FracDiff) pushHistory(sample float64) {
 	if fractional.count < len(fractional.history) {
 		fractional.history[fractional.count] = sample
@@ -134,6 +138,10 @@ func (fractional *FracDiff) pushHistory(sample float64) {
 	fractional.count++
 }
 
+/*
+outputSum evaluates the truncated fractional-difference kernel against the
+current ring; weights are fixed at construction so lag indexing stays stable.
+*/
 func (fractional *FracDiff) outputSum() float64 {
 	sum := 0.0
 
@@ -220,6 +228,10 @@ func FractionalDifferenceValue(
 	return value, true, nil
 }
 
+/*
+buildFracDiffWeights stops the binomial kernel once tail weights fall below
+threshold so streaming and batch paths share the same effective width.
+*/
 func buildFracDiffWeights(
 	order float64,
 	threshold float64,

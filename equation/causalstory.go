@@ -123,6 +123,10 @@ func (causalStory *CausalStory) Measure(
 	return output, nil
 }
 
+/*
+score fuses uplift and intervention margins into alpha/beta evidence before shock
+and noise compete for the exported causal Map strength.
+*/
 func (causalStory *CausalStory) score(
 	input CausalStoryInput,
 	association float64,
@@ -158,6 +162,10 @@ func (causalStory *CausalStory) score(
 	return output, nil
 }
 
+/*
+validateCausalStory rejects non-finite ladder fields so downstream envelope wiring
+never propagates NaN into resonance features.
+*/
 func validateCausalStory(
 	input CausalStoryInput,
 	interventionScore float64,
@@ -186,6 +194,10 @@ func validateCausalStory(
 	return nil
 }
 
+/*
+shockScore elevates collinear contagion when condition dominates so shock_score
+reflects systemic coupling, not a single rung spike.
+*/
 func shockScore(contagion float64, condition float64, rungTotal float64) float64 {
 	shockEvidence := contagion
 
@@ -200,6 +212,9 @@ func shockScore(contagion float64, condition float64, rungTotal float64) float64
 	return shockEvidence
 }
 
+/*
+noiseScore attributes residual ladder mass to noise when no story wins cleanly.
+*/
 func noiseScore(
 	association float64,
 	intervention float64,
@@ -216,6 +231,10 @@ func noiseScore(
 	return probability.CompetitionMargin(residual, rungTotal)
 }
 
+/*
+chooseCausalCategory requires a unique winner so category and strength in the
+grid match what symm expects from a single causal label.
+*/
 func chooseCausalCategory(output CausalStoryOutput) CausalStoryOutput {
 	scores := []float64{
 		output.AlphaScore,

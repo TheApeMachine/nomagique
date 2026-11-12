@@ -10,6 +10,15 @@ import (
 	"github.com/theapemachine/nomagique/statistic"
 )
 
+/*
+depthMinPeers bounds sampling or gates so equation feature frames stay well-posed for symm envelope wiring.
+*/
+/*
+depthRelativeFloor bounds sampling or gates so equation feature frames stay well-posed for symm envelope wiring.
+*/
+/*
+depthHistoryCap bounds sampling or gates so equation feature frames stay well-posed for symm envelope wiring.
+*/
 const (
 	depthMinPeers      = 2
 	depthHistoryCap    = 64
@@ -36,6 +45,9 @@ type DepthSampleInput struct {
 	At     time.Time
 }
 
+/*
+depthSymbol holds per-symbol sampling state that feeds equation Measure and Map outputs into resonance features.
+*/
 type depthSymbol struct {
 	mu      sync.Mutex
 	at      time.Time
@@ -116,6 +128,9 @@ func (sample *DepthSample) Measure(
 	}, true, nil
 }
 
+/*
+executableTouchDepth supports algorithm sampling that supplies equation inputs symm maps into runtime.Envelope.
+*/
 func executableTouchDepth(input DepthSampleInput) float64 {
 	if input.BidQty <= 0 || input.AskQty <= 0 ||
 		input.Bid <= 0 || input.Ask <= input.Bid ||
@@ -127,6 +142,9 @@ func executableTouchDepth(input DepthSampleInput) float64 {
 	return math.Min(input.BidQty, input.AskQty) * (input.Bid + input.Ask) / 2
 }
 
+/*
+(…).peerDepths supports algorithm sampling that supplies equation inputs symm maps into runtime.Envelope.
+*/
 func (sample *DepthSample) peerDepths(focal string) ([]float64, bool) {
 	type peer struct {
 		depth   float64
@@ -182,6 +200,9 @@ func (sample *DepthSample) peerDepths(focal string) ([]float64, bool) {
 	return depths, len(depths) >= depthMinPeers
 }
 
+/*
+(…).symbol supports algorithm sampling that supplies equation inputs symm maps into runtime.Envelope.
+*/
 func (sample *DepthSample) symbol(name string) *depthSymbol {
 	if existing, ok := sample.symbols.Load(name); ok {
 		return existing.(*depthSymbol)

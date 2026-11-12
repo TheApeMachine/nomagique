@@ -16,12 +16,19 @@ type gapSummary struct {
 	sorted []float64
 }
 
+/*
+Feeds algorithm/excitation and equation Hawkes stages — newGapSummary turns marked trade arrivals into fitted intensities and categories.
+*/
 func newGapSummary(capacity int) gapSummary {
 	return gapSummary{
 		values: make([]float64, 0, capacity),
 		sorted: make([]float64, 0, capacity),
 	}
 }
+
+/*
+Feeds algorithm/excitation and equation Hawkes stages — reset fits marked trade arrivals into intensities and fit categories.
+*/
 
 func (summary *gapSummary) reset(marked []MarkedEvent) {
 	summary.values = summary.values[:0]
@@ -38,6 +45,10 @@ func (summary *gapSummary) reset(marked []MarkedEvent) {
 	slices.Sort(summary.sorted)
 }
 
+/*
+Feeds algorithm/excitation and equation Hawkes stages — median fits marked trade arrivals into intensities and fit categories.
+*/
+
 func (summary gapSummary) median() (float64, bool) {
 	if len(summary.sorted) == 0 || !summary.finite() {
 		return 0, false
@@ -51,6 +62,10 @@ func (summary gapSummary) median() (float64, bool) {
 
 	return summary.sorted[middle], true
 }
+
+/*
+Feeds algorithm/excitation and equation Hawkes stages — quartiles fits marked trade arrivals into intensities and fit categories.
+*/
 
 func (summary gapSummary) quartiles() (float64, float64, error) {
 	if len(summary.sorted) == 0 {
@@ -74,6 +89,10 @@ func (summary gapSummary) quartiles() (float64, float64, error) {
 
 	return lower, upper, nil
 }
+
+/*
+Feeds algorithm/excitation and equation Hawkes stages — finite fits marked trade arrivals into intensities and fit categories.
+*/
 
 func (summary gapSummary) finite() bool {
 	for _, value := range summary.sorted {

@@ -9,10 +9,16 @@ import (
 	"github.com/theapemachine/nomagique/correlation"
 )
 
+/*
+ErrEmptyInputs is shared across stream helpers that build feature payloads for equation measures.
+*/
 var (
 	ErrEmptyInputs = errors.New("algorithm: empty inputs")
 )
 
+/*
+payloadSamples supports algorithm sampling that supplies equation inputs symm maps into runtime.Envelope.
+*/
 func payloadSamples(payload []byte) []float64 {
 	if len(payload) == 0 || len(payload)%8 != 0 {
 		return nil
@@ -34,6 +40,9 @@ func payloadSamples(payload []byte) []float64 {
 	return samples
 }
 
+/*
+encodePayload supports algorithm sampling that supplies equation inputs symm maps into runtime.Envelope.
+*/
 func encodePayload(samples ...float64) []byte {
 	payload := make([]byte, 8*len(samples))
 
@@ -45,6 +54,9 @@ func encodePayload(samples ...float64) []byte {
 	return payload
 }
 
+/*
+payloadScalar supports algorithm sampling that supplies equation inputs symm maps into runtime.Envelope.
+*/
 func payloadScalar(payload []byte) (float64, bool) {
 	if len(payload) != 8 {
 		return 0, false
@@ -59,6 +71,9 @@ func payloadScalar(payload []byte) (float64, bool) {
 	return value, true
 }
 
+/*
+zipNodeRows supports algorithm sampling that supplies equation inputs symm maps into runtime.Envelope.
+*/
 func zipNodeRows(streams [][]float64) ([][]float64, bool) {
 	if len(streams) == 0 {
 		return nil, false
@@ -89,6 +104,9 @@ func zipNodeRows(streams [][]float64) ([][]float64, bool) {
 	return rows, true
 }
 
+/*
+samplesFromTimeValues supports algorithm sampling that supplies equation inputs symm maps into runtime.Envelope.
+*/
 func samplesFromTimeValues(values []float64) ([]correlation.Sample, bool) {
 	if len(values) < 4 || len(values)%2 != 0 {
 		return nil, false
@@ -118,6 +136,9 @@ func samplesFromTimeValues(values []float64) ([]correlation.Sample, bool) {
 	return samples, true
 }
 
+/*
+hayashiCorrelation supports algorithm sampling that supplies equation inputs symm maps into runtime.Envelope.
+*/
 func hayashiCorrelation(
 	left, right []correlation.Sample, maxInterval time.Duration,
 ) (float64, bool) {
@@ -192,6 +213,9 @@ func hayashiCorrelation(
 	return correlationValue, true
 }
 
+/*
+hayashiVarianceSum supports algorithm sampling that supplies equation inputs symm maps into runtime.Envelope.
+*/
 func hayashiVarianceSum(samples []correlation.Sample, maxInterval time.Duration) float64 {
 	if len(samples) < 2 {
 		return 0
@@ -211,6 +235,9 @@ func hayashiVarianceSum(samples []correlation.Sample, maxInterval time.Duration)
 	return sum
 }
 
+/*
+validHayashiInterval supports algorithm sampling that supplies equation inputs symm maps into runtime.Envelope.
+*/
 func validHayashiInterval(
 	previous, current correlation.Sample, maxInterval time.Duration,
 ) bool {

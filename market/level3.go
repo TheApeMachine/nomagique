@@ -19,6 +19,9 @@ type Level3Order struct {
 	Event string `json:"event,omitempty"`
 }
 
+/*
+Level3Data is one symbol's L3 snapshot or delta batch broker converts into Book updates.
+*/
 type Level3Data struct {
 	Symbol   string         `json:"symbol"`
 	Checksum int            `json:"checksum"`
@@ -26,6 +29,9 @@ type Level3Data struct {
 	Asks     []*Level3Order `json:"asks"`
 }
 
+/*
+Level3 is the venue frame type; gaps corrupt books so desk blocks instead of dropping.
+*/
 type Level3 struct {
 	Channel  string        `json:"channel"`
 	Type     string        `json:"type"`
@@ -33,6 +39,9 @@ type Level3 struct {
 	onChange func(MarketType)
 }
 
+/*
+NewLevel3 seeds an empty update frame before the first websocket decode.
+*/
 func NewLevel3() *Level3 {
 	return &Level3{
 		Channel: "level3",
@@ -41,14 +50,23 @@ func NewLevel3() *Level3 {
 	}
 }
 
+/*
+OnChange wires BookManager Apply from desk without venue types in broker/book.
+*/
 func (level3 *Level3) OnChange(fn func(MarketType)) {
 	level3.onChange = fn
 }
 
+/*
+Request is empty: L3 is a push channel after SubscribeBooks.
+*/
 func (level3 *Level3) Request() map[string]any {
 	return map[string]any{}
 }
 
+/*
+ToMarket merges frames into the tier buffer used before checksum and Book.Update.
+*/
 func (level3 *Level3) ToMarket(other MarketType) MarketType {
 	dst, ok := other.(*Level3)
 
@@ -65,6 +83,9 @@ func (level3 *Level3) ToMarket(other MarketType) MarketType {
 	return dst
 }
 
+/*
+FromMarket copies a stored or relayed L3 frame into this slot for replay.
+*/
 func (level3 *Level3) FromMarket(other MarketType) MarketType {
 	src, ok := other.(*Level3)
 
@@ -75,11 +96,17 @@ func (level3 *Level3) FromMarket(other MarketType) MarketType {
 	return src.ToMarket(level3)
 }
 
+/*
+MarshalJSON uses Sonic for large L3 bodies queued to store without heap retention.
+*/
 func (level3 *Level3) MarshalJSON() ([]byte, error) {
 	type alias Level3
 	return sonic.Marshal((*alias)(level3))
 }
 
+/*
+UnmarshalJSON reloads L3 from object storage; keeps onChange for live desk wiring.
+*/
 func (level3 *Level3) UnmarshalJSON(data []byte) error {
 	type alias Level3
 	var decoded alias

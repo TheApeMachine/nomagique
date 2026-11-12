@@ -21,6 +21,11 @@ type Decision struct {
 	Resistance float64 `json:"resistance,omitempty"`
 }
 
+/*
+Envelope is the one disruptor payload per tick: symm nodes read and enrich the
+same struct in ring order, embed the market Trade anchor, and fan signal output
+into store.Grid via Metrics and dashboard facets via Publish.
+*/
 type Envelope struct {
 	*market.Trade `json:"trade"`
 	Correlation   map[string]*equation.CohortOutput      `json:"correlation"`
@@ -43,6 +48,10 @@ type Envelope struct {
 	metricsCache map[string]map[string]map[string]float64 `json:"-"`
 }
 
+/*
+NewEnvelope pre-allocates per-source maps so parallel pipeline nodes can write
+without nil checks on the hot tick path.
+*/
 func NewEnvelope(trade *market.Trade) *Envelope {
 	return &Envelope{
 		Trade:       trade,
@@ -104,6 +113,10 @@ func (envelope *Envelope) Metrics() map[string]map[string]map[string]float64 {
 	return envelope.metricsCache
 }
 
+/*
+putMetric inserts one source's label map into the symbol→source→label cube
+grid.Observe and tick persistence both consume.
+*/
 func putMetric(
 	out map[string]map[string]map[string]float64,
 	symbol, source string,
@@ -122,6 +135,10 @@ func putMetric(
 	sources[source] = labels
 }
 
+/*
+buildMetrics runs once per tick to fan every signal Map() into metricsCache
+before resonance overlay and store observation.
+*/
 func (envelope *Envelope) buildMetrics() map[string]map[string]map[string]float64 {
 	out := make(map[string]map[string]map[string]float64)
 
@@ -161,6 +178,10 @@ func (envelope *Envelope) buildMetrics() map[string]map[string]map[string]float6
 	return out
 }
 
+/*
+overlayResonance merges solver output after the first Metrics read so training
+sees resonance without rebuilding the full signal cube every call.
+*/
 func (envelope *Envelope) overlayResonance(
 	out map[string]map[string]map[string]float64,
 ) {

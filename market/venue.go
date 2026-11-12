@@ -2,6 +2,9 @@ package market
 
 import "encoding/json"
 
+/*
+MarketType is the frame contract venue.Read returns; desk tiers merge via ToMarket.
+*/
 type MarketType interface {
 	json.Marshaler
 	json.Unmarshaler
@@ -11,6 +14,9 @@ type MarketType interface {
 	OnChange(func(MarketType))
 }
 
+/*
+Venue exposes typed channels (Level3, Trade, Book) without symm importing Kraken wire details.
+*/
 type Venue interface {
 	Read([]byte) MarketType
 	Balance() MarketType

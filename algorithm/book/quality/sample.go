@@ -178,6 +178,9 @@ func (sample *Sample) MeasureTrade(
 	return output, output.LastPrice > 0, window.maturity(), nil
 }
 
+/*
+window lazily constructs per-symbol quality state under Sample's sync.Map.
+*/
 func (sample *Sample) window(symbol string) *Window {
 	existing, ok := sample.windows.Load(symbol)
 

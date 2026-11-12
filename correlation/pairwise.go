@@ -6,12 +6,20 @@ import (
 	"github.com/theapemachine/nomagique/statistic"
 )
 
+/*
+intervalSlices groups per-series interval geometry so pairwise correlation
+does not re-parse parallel start/end/return buffers on every pair.
+*/
 type intervalSlices struct {
 	starts []float64
 	ends   []float64
 	rets   []float64
 }
 
+/*
+medianPairwiseAbsCorrelation summarizes cross-series coupling as a robust
+central tendency; failed pairs are skipped so one bad segment does not zero all.
+*/
 func medianPairwiseAbsCorrelation(series []intervalSlices) float64 {
 	if len(series) < 2 {
 		return 0

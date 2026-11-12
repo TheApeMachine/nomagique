@@ -114,6 +114,10 @@ func (conviction *Conviction) Measure(
 	return output, nil
 }
 
+/*
+classifyConviction separates surge, divergent leader, and slump regimes from
+cross-section breadth so conviction Map keys match leader-follower sampling.
+*/
 func classifyConviction(
 	breadth, change, surgeThreshold float64,
 	leader bool,
@@ -129,6 +133,9 @@ func classifyConviction(
 	return 3
 }
 
+/*
+classify forwards to the package classifier so Measure stays a thin adapter.
+*/
 func (conviction *Conviction) classify(
 	breadth, change, surgeThreshold float64,
 	leader bool,

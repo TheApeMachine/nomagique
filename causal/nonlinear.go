@@ -7,7 +7,15 @@ import (
 	"gonum.org/v1/gonum/stat"
 )
 
+/*
+Transitive causal layer from symm — nonLinearStumps estimates do/backdoor and counterfactual effects on desk tables.
+*/
+
 const nonLinearStumps = 8
+
+/*
+Transitive causal layer from symm — stumpSplit estimates do/backdoor and counterfactual effects on desk tables.
+*/
 
 type stumpSplit struct {
 	featureIndex int
@@ -16,12 +24,20 @@ type stumpSplit struct {
 	rightMean    float64
 }
 
+/*
+Transitive causal layer from symm — nonLinearModel estimates do/backdoor and counterfactual effects on desk tables.
+*/
+
 type nonLinearModel struct {
 	intercept   float64
 	stumps      []stumpSplit
 	hasLinear   bool
 	linearModel linearModel
 }
+
+/*
+Transitive causal layer from symm — fitNonLinearTable estimates do/backdoor and counterfactual effects on desk tables.
+*/
 
 func fitNonLinearTable(nodeTable nodeTable, features []int) (nonLinearModel, bool) {
 	if len(features) == 0 {
@@ -91,6 +107,10 @@ func fitNonLinearTable(nodeTable nodeTable, features []int) (nonLinearModel, boo
 	return model, true
 }
 
+/*
+Transitive causal layer from symm — predict estimates do/backdoor and counterfactual effects on desk tables.
+*/
+
 func (model nonLinearModel) predict(
 	row []float64, overrideNode int, overrideValue float64,
 ) (float64, error) {
@@ -118,6 +138,10 @@ func (model nonLinearModel) predict(
 	return prediction, nil
 }
 
+/*
+Transitive causal layer from symm — counterfactualUplift estimates do/backdoor and counterfactual effects on desk tables.
+*/
+
 func (model nonLinearModel) counterfactualUplift(
 	row []float64, treatment int, intervention float64,
 ) (float64, error) {
@@ -135,6 +159,10 @@ func (model nonLinearModel) counterfactualUplift(
 
 	return counterfactual - observed, nil
 }
+
+/*
+Transitive causal layer from symm — bestStump estimates do/backdoor and counterfactual effects on desk tables.
+*/
 
 func bestStump(
 	nodeTable nodeTable,
@@ -178,6 +206,10 @@ func bestStump(
 	return best, bestGain
 }
 
+/*
+Transitive causal layer from symm — featureThresholds estimates do/backdoor and counterfactual effects on desk tables.
+*/
+
 func featureThresholds(nodeTable nodeTable, features []int) map[int][]float64 {
 	thresholds := make(map[int][]float64, len(features))
 
@@ -202,6 +234,10 @@ func featureThresholds(nodeTable nodeTable, features []int) map[int][]float64 {
 	return thresholds
 }
 
+/*
+Transitive causal layer from symm — partitionResiduals estimates do/backdoor and counterfactual effects on desk tables.
+*/
+
 func partitionResiduals(
 	rows [][]float64,
 	residuals []float64,
@@ -221,6 +257,10 @@ func partitionResiduals(
 
 	return leftSum, leftCount, rightSum, rightCount
 }
+
+/*
+Transitive causal layer from symm — splitGain estimates do/backdoor and counterfactual effects on desk tables.
+*/
 
 func splitGain(
 	residuals []float64,
@@ -248,6 +288,10 @@ func splitGain(
 	return before - after
 }
 
+/*
+Transitive causal layer from symm — stumpPredictionRow estimates do/backdoor and counterfactual effects on desk tables.
+*/
+
 func stumpPredictionRow(
 	row []float64,
 	split stumpSplit,
@@ -262,6 +306,10 @@ func stumpPredictionRow(
 
 	return split.rightMean
 }
+
+/*
+Transitive causal layer from symm — featureValue estimates do/backdoor and counterfactual effects on desk tables.
+*/
 
 func featureValue(row []float64, featureIndex int) float64 {
 	return featureValueWithOverride(row, featureIndex, -1, 0)

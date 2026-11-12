@@ -68,6 +68,9 @@ func FitGatesFromHistory(spectralRadii, asymmetries []float64) (FitGates, bool) 
 	}, true
 }
 
+/*
+Feeds algorithm/excitation and equation Hawkes stages — quantileFromHistory turns marked trade arrivals into fitted intensities and categories.
+*/
 func quantileFromHistory(history []float64, percentile float64) (float64, error) {
 	if len(history) == 0 {
 		return 0, errnie.Error(errnie.Err(

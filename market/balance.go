@@ -7,23 +7,35 @@ import (
 )
 
 /*
-Balance is the book wallet: quote cash and per-asset capital / pnl / equity.
-Venue polling belongs behind Feed; this type only holds and serves state.
+Balance is spendable cash plus account equity. Cash comes from Balance REST;
+equity and unrealized come from TradeBalance REST.
 */
 type Balance struct {
-	Quote    string   `json:"quote"`
-	Assets   []*Asset `json:"assets"`
-	onChange func(MarketType)
+	Quote      string           `json:"quote"`
+	Assets     []*Asset         `json:"assets"`
+	Equity     *decimal.Decimal `json:"equity,omitempty"`
+	Unrealized *decimal.Decimal `json:"unrealized,omitempty"`
+	onChange   func(MarketType)
 }
 
 /*
 NewBalance creates a new balance book with the given quote currency.
 */
 func NewBalance(data map[string]any) *Balance {
-	return &Balance{
+	balance := &Balance{
 		Quote:  data["quote"].(string),
 		Assets: data["assets"].([]*Asset),
 	}
+
+	if value, ok := data["equity"].(*decimal.Decimal); ok {
+		balance.Equity = value
+	}
+
+	if value, ok := data["unrealized"].(*decimal.Decimal); ok {
+		balance.Unrealized = value
+	}
+
+	return balance
 }
 
 /*
@@ -54,6 +66,35 @@ func (balance *Balance) Cash(quote string) *decimal.Decimal {
 }
 
 /*
+Reading is the hub wallet shape: cash, unrealized, equity as float64.
+*/
+func (balance *Balance) Reading() map[string]float64 {
+	out := map[string]float64{
+		"cash":       0,
+		"unrealized": 0,
+		"equity":     0,
+	}
+
+	if balance == nil {
+		return out
+	}
+
+	if cash := balance.Cash(balance.Quote); cash != nil {
+		out["cash"], _ = cash.Float64()
+	}
+
+	if balance.Unrealized != nil {
+		out["unrealized"], _ = balance.Unrealized.Float64()
+	}
+
+	if balance.Equity != nil {
+		out["equity"], _ = balance.Equity.Float64()
+	}
+
+	return out
+}
+
+/*
 ToMarket copies this book into other when other is a *Balance.
 */
 func (balance *Balance) ToMarket(other MarketType) MarketType {
@@ -66,6 +107,8 @@ func (balance *Balance) ToMarket(other MarketType) MarketType {
 	onChange := dst.onChange
 	dst.Quote = balance.Quote
 	dst.Assets = append([]*Asset(nil), balance.Assets...)
+	dst.Equity = balance.Equity
+	dst.Unrealized = balance.Unrealized
 	dst.onChange = onChange
 
 	return dst

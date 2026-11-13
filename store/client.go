@@ -417,6 +417,17 @@ func (client *Client) WriteAtPrefix(key string, value []byte) (int, error) {
 }
 
 /*
+QueueDepth is the number of records waiting for async S3 upload.
+*/
+func (client *Client) QueueDepth() int {
+	if client == nil || client.queue == nil {
+		return 0
+	}
+
+	return int(client.queue.Length())
+}
+
+/*
 WriteAtPrefixWithEnvelope queues tick persistence; marshaling runs on the drain thread.
 */
 func (client *Client) WriteAtPrefixWithEnvelope(key string, envelope *nmruntime.Envelope) (int, error) {

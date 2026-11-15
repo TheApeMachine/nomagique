@@ -52,6 +52,7 @@ var Catalog = Regimes{
 			{"cvd", "value"},
 			{"pumpdump", "compression"},
 			{"pumpdump", "precursor"},
+			{"pumpdump", "rvol"},
 			{"pumpdump", "value"},
 			{"pumpdump", "strength"},
 		},
@@ -59,7 +60,6 @@ var Catalog = Regimes{
 	{
 		Key: 1, Category: "cohort_lift", Kind: "action", Phase: "enter", Side: "support",
 		Metrics: []Metric{
-			{"cvd", "balance"},
 			{"correlation", "herd_score"},
 			{"correlation", "strength"},
 			{"correlation", "correlation"},
@@ -74,8 +74,8 @@ var Catalog = Regimes{
 		Key: 2, Category: "adverse_weight", Kind: "action", Phase: "enter", Side: "opposition",
 		Metrics: []Metric{
 			{"cvd", "starvation"},
-			{"pumpdump", "rvol"},
-			{"depthflow", "loaded_score"},
+			{"cvd", "balance"},
+			{"depthflow", "ask_loaded_score"},
 			{"morphology", "bid_notional_lean"},
 		},
 	},
@@ -85,7 +85,6 @@ var Catalog = Regimes{
 		Key: 3, Category: "absorption_fade", Kind: "action", Phase: "exit", Side: "detector",
 		Metrics: []Metric{
 			{"cvd", "absorption"},
-			{"cvd", "net"},
 			{"pumpdump", "exhaustion"},
 		},
 	},

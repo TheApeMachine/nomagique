@@ -41,9 +41,10 @@ var oracleMap = []map[bool]uint8{
 
 /*
 snmEpsilon floors the SNM denominator so a jump from 0 to a tiny value cannot
-claim |SNM| = 1.0.
+claim |SNM| ≈ 1.0. 1e-4 still let 0→0.005 read as ~0.98; 0.05 keeps micro
+jiggles from alternating enter regions up to min_path_length.
 */
-const snmEpsilon = 1e-4
+const snmEpsilon = 0.05
 
 /*
 predictionAlpha is the EMA weight for the energy baseline so Surprise keeps

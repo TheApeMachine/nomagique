@@ -30,9 +30,11 @@ func TestBookflow_Measure(testingTB *testing.T) {
 
 		So(err, ShouldBeNil)
 
-		Convey("It should boost loaded score in the same direction", func() {
+		Convey("It should boost ask-loaded score, not bid-loaded", func() {
 			So(int(output.Category), ShouldEqual, 1)
-			So(output.LoadedScore, ShouldBeGreaterThan, 0.85)
+			So(output.AskLoadedScore, ShouldBeGreaterThan, 0.85)
+			So(output.LoadedScore, ShouldEqual, 0)
+			So(output.Value, ShouldEqual, output.AskLoadedScore)
 		})
 	})
 
@@ -48,6 +50,7 @@ func TestBookflow_Measure(testingTB *testing.T) {
 			So(int(output.Category), ShouldEqual, 1)
 			So(output.LoadedScore, ShouldBeGreaterThan, 0)
 			So(output.LoadedScore, ShouldBeLessThan, 0.85)
+			So(output.AskLoadedScore, ShouldEqual, 0)
 			So(output.HypothesisSeparation, ShouldBeGreaterThan, 0)
 			So(output.Value, ShouldEqual, output.LoadedScore)
 		})

@@ -63,6 +63,7 @@ type BookflowOutput struct {
 	Value                float64 `json:"value"`
 	HypothesisSeparation float64 `json:"hypothesis_separation"`
 	LoadedScore          float64 `json:"loaded_score"`
+	AskLoadedScore       float64 `json:"ask_loaded_score"`
 	SpoofScore           float64 `json:"spoof_score"`
 	ThinScore            float64 `json:"thin_score"`
 	NeutralScore         float64 `json:"neutral_score"`
@@ -72,6 +73,8 @@ type BookflowOutput struct {
 
 /*
 Map returns scored labels for the grid.
+loaded_score is bid inventory; ask_loaded_score is ask inventory — Abs(weighted)
+used to light enter opposition and hold support with the same unsigned reading.
 */
 func (output *BookflowOutput) Map() map[string]float64 {
 	if output == nil {
@@ -80,6 +83,7 @@ func (output *BookflowOutput) Map() map[string]float64 {
 
 	return map[string]float64{
 		"loaded_score":          output.LoadedScore,
+		"ask_loaded_score":      output.AskLoadedScore,
 		"spoof_score":           output.SpoofScore,
 		"thin_score":            output.ThinScore,
 		"neutral_score":         output.NeutralScore,
@@ -145,16 +149,21 @@ func (bookflow *Bookflow) Measure(input BookflowInput) (BookflowOutput, error) {
 
 	category := bookflowClassify(spoofed, thinning, loaded)
 
-	loadedScore := 0.0
+	bidLoaded := 0.0
+	askLoaded := 0.0
 
 	if loaded {
-		loadedScore = bookflowLoadedScore(
+		signed := bookflowLoadedScore(
 			input.Weighted,
 			input.TradePressure,
 			baseline.bookNotional,
 			loadedThreshold,
 		)
+		bidLoaded = math.Max(0, signed)
+		askLoaded = math.Max(0, -signed)
 	}
+
+	loadedMagnitude := math.Max(bidLoaded, askLoaded)
 
 	spoofScore := 0.0
 
@@ -178,7 +187,7 @@ func (bookflow *Bookflow) Measure(input BookflowInput) (BookflowOutput, error) {
 
 	switch category {
 	case 1:
-		value = loadedScore
+		value = loadedMagnitude
 	case 2:
 		value = spoofScore
 	case 3:
@@ -192,7 +201,7 @@ func (bookflow *Bookflow) Measure(input BookflowInput) (BookflowOutput, error) {
 	}
 
 	separation, err := probability.HypothesisSeparation([]float64{
-		loadedScore,
+		loadedMagnitude,
 		spoofScore / maxBookImbalanceDisagreement,
 		thinScore,
 		neutralScore,
@@ -204,7 +213,8 @@ func (bookflow *Bookflow) Measure(input BookflowInput) (BookflowOutput, error) {
 	return BookflowOutput{
 		Value:                value,
 		HypothesisSeparation: separation,
-		LoadedScore:          loadedScore,
+		LoadedScore:          bidLoaded,
+		AskLoadedScore:       askLoaded,
 		SpoofScore:           spoofScore,
 		ThinScore:            thinScore,
 		NeutralScore:         neutralScore,
@@ -273,30 +283,41 @@ func bookflowMedianAbsolute(values []float64) float64 {
 }
 
 /*
-bookflowLoadedScore rewards depth skew confirmed by trade pressure so loaded_score
-in the grid reflects genuine inventory, not quote paint alone.
+bookflowLoadedScore rewards signed depth skew confirmed by trade pressure.
+Positive is bid inventory, negative is ask inventory — callers split the sides
+so enter opposition and hold support are not lit by the same Abs reading.
 */
 func bookflowLoadedScore(
 	weighted, tradePressure, bookNotional, weightedThreshold float64,
 ) float64 {
-	loadedScore := math.Abs(weighted)
+	magnitude := math.Abs(weighted)
+
+	if magnitude <= 0 {
+		return 0
+	}
+
+	sign := 1.0
+
+	if weighted < 0 {
+		sign = -1
+	}
 
 	if bookNotional <= 0 || weightedThreshold <= 0 || tradePressure == 0 {
-		return loadedScore
+		return sign * magnitude
 	}
 
 	pressureRatio := math.Abs(tradePressure) / bookNotional
 	confirmation := pressureRatio / (pressureRatio + weightedThreshold)
 
 	if weighted*tradePressure > 0 {
-		return loadedScore + confirmation - loadedScore*confirmation
+		return sign * (magnitude + confirmation - magnitude*confirmation)
 	}
 
 	if weighted*tradePressure < 0 {
-		return loadedScore * weightedThreshold / (weightedThreshold + pressureRatio)
+		return sign * magnitude * weightedThreshold / (weightedThreshold + pressureRatio)
 	}
 
-	return loadedScore
+	return sign * magnitude
 }
 
 /*

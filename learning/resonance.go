@@ -1420,19 +1420,20 @@ func (rm *ResonanceManifold) updateTaskReliability(
 			beta*math.Log(taskVarianceData[rowIndex])
 	}
 
-	// First supervised pass marks every dim ready — zero residual still
-	// seeds precision at 1 (init variance), so constant/held features do
-	// not block TaskPrecision forever the way a nonzero-error gate would.
+	// Only mark a dim ready once it has seen a nonzero residual. Zero-error
+	// first passes used to seed precision at 1 on constant/flat features and
+	// clear MinTaskRelativePrecision on quiet symbols immediately.
 	for rowIndex, ready := range rm.taskScaleReady {
 		if ready {
 			continue
 		}
 
-		if squaredErrorData[rowIndex] > 0 {
-			taskVarianceData[rowIndex] = squaredErrorData[rowIndex]
-			taskScaleData[rowIndex] = math.Log(squaredErrorData[rowIndex])
+		if squaredErrorData[rowIndex] <= 0 {
+			continue
 		}
 
+		taskVarianceData[rowIndex] = squaredErrorData[rowIndex]
+		taskScaleData[rowIndex] = math.Log(squaredErrorData[rowIndex])
 		rm.taskScaleReady[rowIndex] = true
 	}
 

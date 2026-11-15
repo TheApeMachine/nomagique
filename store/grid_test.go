@@ -159,8 +159,9 @@ func TestGridObserve(t *testing.T) {
 				map[string]float64{"thin_score": 1e-4},
 			)
 
-			So(math.Abs(snm), ShouldBeLessThan, 1.0)
-			So(math.Abs(snm), ShouldAlmostEqual, 0.5, 1e-9)
+			// delta/( |prior| + |delta| + snmEpsilon ) with epsilon 0.05
+			So(math.Abs(snm), ShouldBeLessThan, 0.01)
+			So(math.Abs(snm), ShouldAlmostEqual, 1e-4/(1e-4+0.05), 1e-9)
 		})
 
 		Convey("Open publishes hold when hold support dominates", func() {

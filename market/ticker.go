@@ -3,18 +3,21 @@ package market
 import (
 	"encoding/json"
 	"sync"
+	"time"
 )
 
 /*
 TickerData is one symbol's public ticker quote on the desk.
 */
 type TickerData struct {
-	Symbol    string  `json:"symbol"`
-	VolumeUSD float64 `json:"volume_usd"`
-	ChangePct float64 `json:"change_pct"`
-	High24h   float64 `json:"high_24h"`
-	Low24h    float64 `json:"low_24h"`
-	Last      float64 `json:"last"`
+	Symbol    string    `json:"symbol"`
+	VolumeUSD float64   `json:"volume_usd"`
+	ChangePct float64   `json:"change_pct"`
+	High24h   float64  `json:"high_24h"`
+	Low24h    float64  `json:"low_24h"`
+	Last      float64   `json:"last"`
+	Open      float64   `json:"open"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 /*
@@ -61,6 +64,11 @@ func (ticker *Ticker) Set(symbol string, row *TickerData) {
 
 	copied := *row
 	copied.Symbol = symbol
+
+	if copied.UpdatedAt.IsZero() {
+		copied.UpdatedAt = time.Now().UTC()
+	}
+
 	ticker.Rows[symbol] = &copied
 }
 

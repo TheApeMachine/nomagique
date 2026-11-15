@@ -8,6 +8,27 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 )
 
+func TestLevelLive(t *testing.T) {
+	Convey("Setup", t, func() {
+		Convey("When the level is nil or empty", func() {
+			So((*Level)(nil).Live(), ShouldBeFalse)
+			So(NewLevel().Live(), ShouldBeFalse)
+			So(NewLevel().Notional().IsZero(), ShouldBeTrue)
+		})
+
+		Convey("When price and quantity are positive", func() {
+			level := NewLevel()
+			px := decimal.RequireFromString("100")
+			qty := decimal.RequireFromString("2")
+			level.Price = &px
+			level.Quantity = &qty
+
+			So(level.Live(), ShouldBeTrue)
+			So(level.Notional().String(), ShouldEqual, "200")
+		})
+	})
+}
+
 func TestLevelUpdateCancel(t *testing.T) {
 	Convey("a zero-qty delta removes the order without double-counting", t, func() {
 		level := NewLevel()

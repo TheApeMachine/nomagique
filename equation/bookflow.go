@@ -256,14 +256,14 @@ func bookflowMeasureBaseline(input BookflowInput) bookflowBaseline {
 
 /*
 bookflowMedianAbsolute returns a robust central absolute-depth gate.
-It uses statistic.MedianOf so caller-owned histories are never reordered.
+MedianAbsoluteOf copies before scoring so caller-owned histories stay put.
 */
 func bookflowMedianAbsolute(values []float64) float64 {
 	if len(values) == 0 {
 		return 0
 	}
 
-	median, ok := statistic.MedianOf(values)
+	median, ok := statistic.MedianAbsoluteOf(values)
 
 	if !ok {
 		return 0

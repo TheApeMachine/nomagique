@@ -273,6 +273,39 @@ func TestGridObserve(t *testing.T) {
 			So(fix.byKey(regions, 17), ShouldBeNil)
 		})
 
+		Convey("A drop toward zero does not light the region", func() {
+			fix := newGridFixture()
+			symbol := "DROP/USD"
+			up := map[string]map[string]float64{
+				"pumpdump": {"compression": 1.0},
+			}
+
+			lit, err := fix.pulse(symbol, up, false, true, true, true, true, true)
+			So(err, ShouldBeNil)
+			So(fix.byKey(lit, 0).Brightness, ShouldBeGreaterThan, 0)
+
+			down, err := fix.observe(symbol, map[string]map[string]float64{
+				"pumpdump": {"compression": 0.1},
+			}, false, true, true, true, true, true)
+			So(err, ShouldBeNil)
+			So(fix.byKey(down, 0).Brightness, ShouldEqual, 0)
+		})
+
+		Convey("A drop in stress does not light opposition", func() {
+			fix := newGridFixture()
+			symbol := "STRESS/USD"
+			_, err := fix.pulse(symbol, map[string]map[string]float64{
+				"sentiment": {"slump_score": 2.0},
+			}, true, true, true, true, true, true)
+			So(err, ShouldBeNil)
+
+			faded, err := fix.observe(symbol, map[string]map[string]float64{
+				"sentiment": {"slump_score": 0.2},
+			}, true, true, true, true, true, true)
+			So(err, ShouldBeNil)
+			So(fix.byKey(faded, 8).Brightness, ShouldEqual, 0)
+		})
+
 		Convey("SNM brightness fades when the metric is flat on repeat", func() {
 			fix := newGridFixture()
 			sources := map[string]map[string]float64{

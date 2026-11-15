@@ -17,12 +17,6 @@ const (
 )
 
 /*
-ringBuffer holds in-flight Envelopes between Reserve and Commit; go-disruptor
-documents caller-owned storage so ingress never blocks behind handlers.
-*/
-var ringBuffer = [bufferSize]*Envelope{}
-
-/*
 optionList builds disruptor.Options without a helper package in symm boot wiring.
 */
 func optionList[O any](initial ...O) []O {
@@ -49,6 +43,7 @@ type Workspace struct {
 	mask     int64
 	capacity int
 	stages   [][]*Consumer
+	ring     [bufferSize]*Envelope
 }
 
 /*
@@ -83,6 +78,7 @@ func NewWorkspace(
 
 			group = append(group, &stageHandler{
 				consumer: consumer,
+				ring:     &workspace.ring,
 			})
 		}
 
@@ -150,7 +146,7 @@ func (workspace *Workspace) Step(envelope *Envelope) *Envelope {
 	}
 
 	seq := workspace.channel.Reserve(1)
-	ringBuffer[seq&workspace.mask] = envelope
+	workspace.ring[seq&workspace.mask] = envelope
 	workspace.channel.Commit(seq, seq)
 
 	return envelope
@@ -161,6 +157,7 @@ stageHandler adapts Consumer to disruptor.Handler without exporting ring seq mat
 */
 type stageHandler struct {
 	consumer *Consumer
+	ring     *[bufferSize]*Envelope
 }
 
 /*
@@ -168,7 +165,7 @@ Handle drains [lower,upper] sequences and invokes each slot's Consumer.Step.
 */
 func (sh *stageHandler) Handle(lower, upper int64) {
 	for seq := lower; seq <= upper; seq++ {
-		envelope := ringBuffer[seq&bufferMask]
+		envelope := sh.ring[seq&bufferMask]
 
 		if envelope == nil {
 			continue

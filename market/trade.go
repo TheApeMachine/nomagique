@@ -81,6 +81,39 @@ func NewTrade(
 }
 
 /*
+Batches groups prints by symbol in first-seen order. Prints for one symbol
+stay in array order so a single goroutine can apply them sequentially.
+*/
+func (trade *Trade) Batches() [][]*TradeData {
+	if trade == nil || len(trade.Data) == 0 {
+		return nil
+	}
+
+	index := make(map[string]int, len(trade.Data))
+	batches := make([][]*TradeData, 0)
+
+	for _, data := range trade.Data {
+		symbol := ""
+
+		if data != nil {
+			symbol = data.Symbol
+		}
+
+		slot, ok := index[symbol]
+
+		if !ok {
+			slot = len(batches)
+			index[symbol] = slot
+			batches = append(batches, nil)
+		}
+
+		batches[slot] = append(batches[slot], data)
+	}
+
+	return batches
+}
+
+/*
 OnChange registers desk pumpTrade so strategy never blocks the public reader.
 */
 func (trade *Trade) OnChange(fn func(MarketType)) {

@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"iter"
 	"net/http"
-	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -20,7 +19,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/feature/s3/transfermanager"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/bytedance/sonic"
-	"github.com/panjf2000/ants/v2"
 	"github.com/theapemachine/errnie"
 	nmruntime "github.com/theapemachine/nomagique/runtime"
 	"golang.design/x/lockfree/lf"
@@ -50,44 +48,19 @@ type Client struct {
 	queue    *lf.Queue[Record]
 	running  atomic.Bool
 	closed   atomic.Bool
-	uploads  sync.WaitGroup
+	loops    sync.WaitGroup
+	halt     chan struct{}
+	mu       sync.RWMutex
+	shutdown context.Context
 }
 
 /*
-NewClient opens the home-arpa bucket, starts drain loops, and survives parent
-cancel so Flush can finish envelope persistence after SIGINT.
+NewClient opens the configured bucket and starts drain loops. The client
+context survives parent cancel so Close can finish queued uploads.
 */
-func NewClient(parent context.Context, bucket string) *Client {
-	// Survive parent cancel (SIGINT) so Flush can still finish uploads.
+func NewClient(parent context.Context, bucket, endpoint, region string) *Client {
+	// Survive parent cancel (SIGINT) so Close can still finish uploads.
 	ctx, cancel := context.WithCancel(context.WithoutCancel(parent))
-
-	downloadPool, err := ants.NewPool(
-		runtime.GOMAXPROCS(0),
-		ants.WithNonblocking(true),
-	)
-
-	if err != nil {
-		errnie.Error(errnie.Err(
-			errnie.IO, "[store.client] download pool error", err,
-		))
-
-		cancel()
-		return nil
-	}
-
-	// I/O-bound uploads: larger than GOMAXPROCS, blocking so Run waits
-	// for a worker instead of spinning on ErrPoolOverload.
-	uploadPool, err := ants.NewPool(runtime.GOMAXPROCS(0) * 8)
-
-	if err != nil {
-		downloadPool.Release()
-		errnie.Error(errnie.Err(
-			errnie.IO, "[store.client] upload pool error", err,
-		))
-
-		cancel()
-		return nil
-	}
 
 	cfg, err := config.LoadDefaultConfig(ctx, config.WithHTTPClient(&http.Client{
 		Transport: &http.Transport{
@@ -101,8 +74,6 @@ func NewClient(parent context.Context, bucket string) *Client {
 	}))
 
 	if err != nil {
-		downloadPool.Release()
-		uploadPool.Release()
 		errnie.Error(errnie.Err(
 			errnie.IO, "[store.client] error", err,
 		))
@@ -112,9 +83,9 @@ func NewClient(parent context.Context, bucket string) *Client {
 	}
 
 	client := s3.NewFromConfig(cfg, func(options *s3.Options) {
-		options.BaseEndpoint = aws.String("http://s3.seaweed.home.arpa")
+		options.BaseEndpoint = aws.String(endpoint)
 		options.UsePathStyle = true
-		options.Region = "us-east-1"
+		options.Region = region
 		options.Credentials = credentials.NewStaticCredentialsProvider(
 			"anonymous", "anonymous", "",
 		)
@@ -129,8 +100,6 @@ func NewClient(parent context.Context, bucket string) *Client {
 	})
 
 	if err != nil && !strings.Contains(err.Error(), "BucketAlready") {
-		downloadPool.Release()
-		uploadPool.Release()
 		errnie.Error(errnie.Err(
 			errnie.IO, "[store.client] create bucket error", err,
 		))
@@ -146,6 +115,7 @@ func NewClient(parent context.Context, bucket string) *Client {
 		bucket:   bucket,
 		transfer: transfermanager.New(client),
 		queue:    lf.NewQueue[Record](),
+		halt:     make(chan struct{}),
 	}
 
 	storeClient.Run()
@@ -161,27 +131,35 @@ func (client *Client) Run() {
 	}
 
 	for range 2 {
-		go client.loop()
+		client.loops.Add(1)
+
+		go func() {
+			defer client.loops.Done()
+			client.loop()
+		}()
 	}
 }
 
 /*
-loop is one upload drainer: spins until ctx done, then empties the lock-free queue.
+loop is one upload drainer. Close closes halt, then drains anything left
+with a shutdown context before it cancels client.ctx.
 */
 func (client *Client) loop() {
 	for {
-		select {
-		case <-client.ctx.Done():
-			for range client.queue.Length() {
-				client.drain()
+		if client.drain() {
+			select {
+			case <-client.halt:
+				return
+			default:
 			}
 
-			return
-		default:
+			continue
 		}
 
-		if !client.drain() {
-			time.Sleep(time.Millisecond)
+		select {
+		case <-client.halt:
+			return
+		case <-time.After(time.Millisecond):
 		}
 	}
 }
@@ -196,20 +174,37 @@ func (client *Client) drain() bool {
 		return false
 	}
 
+	client.put(client.opContext(), record)
+	return true
+}
+
+func (client *Client) opContext() context.Context {
+	client.mu.RLock()
+	defer client.mu.RUnlock()
+
+	if client.shutdown != nil {
+		return client.shutdown
+	}
+
+	return client.ctx
+}
+
+func (client *Client) put(ctx context.Context, record Record) {
 	if record.Envelope != nil {
-		var err error
-		record.Value, err = sonic.Marshal(record.Envelope)
+		body, err := sonic.Marshal(record.Envelope)
 
 		if err != nil {
 			errnie.Error(errnie.Err(
 				errnie.IO, "failed to marshal envelope", err,
 			))
-			return true
+
+			return
 		}
+
+		record.Value = body
 	}
 
-	client.upload(client.ctx, record.Key, record.Value)
-	return true
+	client.upload(ctx, record.Key, record.Value)
 }
 
 /*
@@ -406,14 +401,49 @@ func (client *Client) Write([]byte) (int, error) {
 WriteAtPrefix enqueues a keyed blob (e.g. Level3 on disk) without holding heap bodies.
 */
 func (client *Client) WriteAtPrefix(key string, value []byte) (int, error) {
-	if client.closed.Load() {
+	if err := client.enqueue(Record{Key: key, Value: value}); err != nil {
+		return 0, err
+	}
+
+	return len(value), nil
+}
+
+/*
+WriteSync uploads before returning. Settle uses it so the open key is deleted
+only after the closed object is stored.
+*/
+func (client *Client) WriteSync(key string, value []byte) (int, error) {
+	client.mu.RLock()
+	closed := client.closed.Load()
+	ctx := client.ctx
+
+	if client.shutdown != nil {
+		ctx = client.shutdown
+	}
+
+	client.mu.RUnlock()
+
+	if closed {
 		return 0, errnie.Error(errnie.Err(
 			errnie.IO, "[store.client] write after close", nil,
 		))
 	}
 
-	client.queue.Enqueue(Record{Key: key, Value: value})
-	return len(value), nil
+	return client.upload(ctx, key, value)
+}
+
+func (client *Client) enqueue(record Record) error {
+	client.mu.Lock()
+	defer client.mu.Unlock()
+
+	if client.closed.Load() {
+		return errnie.Error(errnie.Err(
+			errnie.IO, "[store.client] write after close", nil,
+		))
+	}
+
+	client.queue.Enqueue(record)
+	return nil
 }
 
 /*
@@ -431,13 +461,9 @@ func (client *Client) QueueDepth() int {
 WriteAtPrefixWithEnvelope queues tick persistence; marshaling runs on the drain thread.
 */
 func (client *Client) WriteAtPrefixWithEnvelope(key string, envelope *nmruntime.Envelope) (int, error) {
-	if client.closed.Load() {
-		return 0, errnie.Error(errnie.Err(
-			errnie.IO, "[store.client] write after close", nil,
-		))
+	if err := client.enqueue(Record{Key: key, Envelope: envelope}); err != nil {
+		return 0, err
 	}
-
-	client.queue.Enqueue(Record{Key: key, Envelope: envelope})
 
 	return 0, nil
 }
@@ -465,6 +491,29 @@ func (client *Client) upload(ctx context.Context, prefix string, p []byte) (int,
 	}
 
 	return len(p), nil
+}
+
+/*
+Delete removes one object. Callers that mean a single leaf must not use
+DeletePrefix — a path prefix also matches longer descendant keys.
+*/
+func (client *Client) Delete(key string) error {
+	if client == nil || client.S3Client == nil || key == "" {
+		return nil
+	}
+
+	_, err := client.S3Client.DeleteObject(client.ctx, &s3.DeleteObjectInput{
+		Bucket: aws.String(client.bucket),
+		Key:    aws.String(key),
+	})
+
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.IO, "[store.client] delete object error", err,
+		))
+	}
+
+	return nil
 }
 
 /*
@@ -572,17 +621,48 @@ func (client *Client) Error() error {
 }
 
 /*
-Close stops drainers after the last queued envelope upload is attempted.
+Close stops new writes, lets drainers finish, then uploads anything still
+queued on a bounded context. client.ctx is canceled only after that drain.
 */
 func (client *Client) Close() error {
 	if !client.closed.CompareAndSwap(false, true) {
 		return client.err
 	}
 
+	shutdown, stop := context.WithTimeout(context.Background(), 30*time.Second)
+	defer stop()
+
+	client.mu.Lock()
+	client.shutdown = shutdown
+	client.mu.Unlock()
+
+	close(client.halt)
+
+	done := make(chan struct{})
+
+	go func() {
+		client.loops.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-shutdown.Done():
+		client.err = errors.Join(client.err, errnie.Error(errnie.Err(
+			errnie.Timeout, "[store.client] shutdown drain timed out", shutdown.Err(),
+		)))
+	}
+
+	for shutdown.Err() == nil {
+		record, ok := client.queue.Dequeue()
+
+		if !ok {
+			break
+		}
+
+		client.put(shutdown, record)
+	}
+
 	client.cancel()
-
-	var errs error
-
-	client.err = errors.Join(client.err, errs)
 	return client.err
 }

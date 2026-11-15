@@ -65,6 +65,7 @@ Frame accumulates touch-cancel and add volume for one atomic side update.
 type Frame struct {
 	touchCancel float64
 	frameAdd    float64
+	changed     bool
 }
 
 /*
@@ -144,13 +145,13 @@ func (book *Book) ApplyLevels(levels []BookLevel, side Side) (Frame, error) {
 ApplyBook validates and applies both sides as one book transaction.
 */
 func (book *Book) ApplyBook(bids, asks []BookLevel) (Frame, Frame, error) {
-	bidOps, err := book.bids.prepare(bids)
+	bidOps, err := book.bids.prepareSnapshot(bids)
 
 	if err != nil {
 		return Frame{}, Frame{}, err
 	}
 
-	askOps, err := book.asks.prepare(asks)
+	askOps, err := book.asks.prepareSnapshot(asks)
 
 	if err != nil {
 		return Frame{}, Frame{}, err

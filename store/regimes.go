@@ -186,8 +186,6 @@ var Catalog = Regimes{
 			{"sentiment", "breadth"},
 			{"sentiment", "value"},
 			{"sentiment", "strength"},
-			{"depthflow", "thin_score"},
-			{"toxicity", "vacuum_score"},
 		},
 	},
 

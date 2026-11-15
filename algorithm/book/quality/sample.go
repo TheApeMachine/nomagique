@@ -144,6 +144,34 @@ func (sample *Sample) MeasureLevel3(
 }
 
 /*
+MeasureLevel3Snapshot scores one full resting order image. Missing order ids
+are deletes, so vanished L3 levels do not remain in the ledger.
+*/
+func (sample *Sample) MeasureLevel3Snapshot(
+	input Level3Input,
+) (equation.BookQualityInput, bool, float64, error) {
+	if input.Symbol == "" {
+		return equation.BookQualityInput{}, false, 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"book-quality-sample: symbol required",
+			nil,
+		))
+	}
+
+	window := sample.window(input.Symbol)
+	window.mu.Lock()
+	defer window.mu.Unlock()
+
+	frame := Frame{}
+	window.replaceOrders(input.Bids, flow.SideBid, &frame)
+	window.replaceOrders(input.Asks, flow.SideAsk, &frame)
+	output := window.finish(frame, true)
+	window.tradePrices = nil
+
+	return output, output.LastPrice > 0, window.maturity(), nil
+}
+
+/*
 MeasureTrade observes one trade update, staging it for later L3 fill/cancel
 corroboration, and reports the currently held book-quality snapshot. A trade
 print carries no book delta of its own, so it is ready as soon as some book
@@ -172,7 +200,7 @@ func (sample *Sample) MeasureTrade(
 	window.mu.Lock()
 	defer window.mu.Unlock()
 
-	window.tradePrices = append(window.tradePrices, input.Price)
+	window.noteTrade(input.Price)
 	output := window.snapshot()
 
 	return output, output.LastPrice > 0, window.maturity(), nil

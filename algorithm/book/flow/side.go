@@ -52,12 +52,50 @@ func (sideBook *SideBook) prepare(levels []BookLevel) ([]levelOp, error) {
 }
 
 /*
+prepareSnapshot validates a full side image and deletes ticks the image omits.
+*/
+func (sideBook *SideBook) prepareSnapshot(levels []BookLevel) ([]levelOp, error) {
+	ops, err := sideBook.prepare(levels)
+
+	if err != nil {
+		return nil, err
+	}
+
+	seen := make(map[int64]struct{}, len(ops))
+
+	for _, op := range ops {
+		seen[op.tick] = struct{}{}
+	}
+
+	for tick, quantity := range sideBook.levels {
+		if _, ok := seen[tick]; ok {
+			continue
+		}
+
+		ops = append(ops, levelOp{
+			tick:     tick,
+			quantity: 0,
+			previous: quantity,
+			touch:    sideBook.isTouchTick(tick),
+		})
+	}
+
+	return ops, nil
+}
+
+/*
 commit applies prepared ops atomically and accumulates touch cancel/add frame metrics.
 */
 func (sideBook *SideBook) commit(ops []levelOp) Frame {
 	frame := Frame{}
 
 	for _, op := range ops {
+		if op.quantity == op.previous {
+			continue
+		}
+
+		frame.changed = true
+
 		if op.quantity == 0 {
 			if op.previous > 0 {
 				sideBook.remove(op.tick, op.previous)

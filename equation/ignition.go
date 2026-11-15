@@ -52,9 +52,10 @@ type IgnitionSideOutput struct {
 }
 
 /*
-IgnitionOutput contains both reciprocal directional families. The top-level
-fields retain the legacy wire contract and carry the stronger directional
-family, while Spread remains the current executable quote spread.
+IgnitionOutput contains both reciprocal directional families. Top-level
+Ignition, Precursor, Trend, and Strength are the buy side used for long
+entry. Sell keeps the reciprocal side, including exhaustion. Spread remains
+the current executable quote spread.
 */
 type IgnitionOutput struct {
 	Value       float64            `json:"value"`

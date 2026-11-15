@@ -70,7 +70,7 @@ func (book *Book) Midpoint() *decimal.Decimal {
 	bid, ask := book.BestBid(), book.BestAsk()
 
 	switch {
-	case bid != nil && ask != nil:
+	case bid != nil && ask != nil && bid.Price != nil && ask.Price != nil:
 		mid := bid.Price.Add(*ask.Price).Mul(decimal.NewFromFloat(0.5))
 		return &mid
 	case bid != nil:
@@ -84,17 +84,24 @@ func (book *Book) Midpoint() *decimal.Decimal {
 }
 
 /*
-Spread is touch-to-touch percent spread for desk tight_touch / blown_spread oracles.
+Spread is touch-to-touch percent of mid for desk tight_touch / blown_spread
+oracles (matches risk.max_entry_spread_pct).
 */
 func (book *Book) Spread() *decimal.Decimal {
-	bid, ask := book.BestBid(), book.BestAsk()
+	zero := decimal.Zero
 
-	if bid == nil || ask == nil {
-		zero := decimal.Zero
+	if !book.Tradable() {
 		return &zero
 	}
 
-	spread := ask.Price.Sub(*bid.Price).Div(*ask.Price).Mul(decimal.NewFromInt(100))
+	bid, ask := book.BestBid(), book.BestAsk()
+	mid := bid.Price.Add(*ask.Price).Mul(decimal.NewFromFloat(0.5))
+
+	if mid.Sign() <= 0 {
+		return &zero
+	}
+
+	spread := ask.Price.Sub(*bid.Price).Div(mid).Mul(decimal.NewFromInt(100))
 	return &spread
 }
 
@@ -121,12 +128,88 @@ func (book *Book) Update(delta *Delta) {
 /*
 BestBid is top-of-book bid for TouchBid sizing and L2/L3 checksum walks.
 */
-func (book *Book) BestBid() *Level { return book.Bids.High }
+func (book *Book) BestBid() *Level {
+	if book == nil || book.Bids == nil {
+		return nil
+	}
+
+	return book.Bids.High
+}
 
 /*
 BestAsk is top-of-book ask for TouchAsk and spread oracles.
 */
-func (book *Book) BestAsk() *Level { return book.Asks.Low }
+func (book *Book) BestAsk() *Level {
+	if book == nil || book.Asks == nil {
+		return nil
+	}
+
+	return book.Asks.Low
+}
+
+/*
+BidPrice is the touch bid price, or nil when the book has no bid.
+*/
+func (book *Book) BidPrice() *decimal.Decimal {
+	if bid := book.BestBid(); bid != nil {
+		return bid.Price
+	}
+
+	return nil
+}
+
+/*
+BidSize is the touch bid quantity, or nil when the book has no bid.
+*/
+func (book *Book) BidSize() *decimal.Decimal {
+	if bid := book.BestBid(); bid != nil {
+		return bid.Quantity
+	}
+
+	return nil
+}
+
+/*
+AskPrice is the touch ask price, or nil when the book has no ask.
+*/
+func (book *Book) AskPrice() *decimal.Decimal {
+	if ask := book.BestAsk(); ask != nil {
+		return ask.Price
+	}
+
+	return nil
+}
+
+/*
+Tradable is a two-sided touch with prices and bid strictly below ask — desk
+sizing and spread gates skip empty or crossed books.
+*/
+func (book *Book) Tradable() bool {
+	if book == nil {
+		return false
+	}
+
+	bid, ask := book.BestBid(), book.BestAsk()
+
+	return bid != nil && ask != nil &&
+		bid.Price != nil && ask.Price != nil &&
+		bid.Price.Cmp(*ask.Price) < 0
+}
+
+/*
+Crossed is an impossible touch: both sides priced with bid at or above ask.
+*/
+func (book *Book) Crossed() bool {
+	if book == nil {
+		return false
+	}
+
+	bid, ask := book.BestBid(), book.BestAsk()
+
+	return bid != nil && ask != nil &&
+		bid.Price != nil && ask.Price != nil &&
+		bid.Price.Cmp(*ask.Price) >= 0
+}
 
 /*
 WorstAsk is the deepest ask level depth enforcement may delete.

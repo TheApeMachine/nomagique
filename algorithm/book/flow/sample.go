@@ -270,6 +270,10 @@ func (sample *Sample) ingestBook(
 		return nil
 	}
 
+	if !bidFrame.changed && !askFrame.changed && len(window.weightedHist) > 0 {
+		return nil
+	}
+
 	mid := window.book.Mid()
 	spread := window.book.Spread()
 	decayRate := DecayRate(mid, spread)

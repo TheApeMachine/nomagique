@@ -25,11 +25,11 @@ lagSampleBarInterval bounds sampling or gates so equation feature frames stay we
 lagSampleMaxInterval bounds sampling or gates so equation feature frames stay well-posed for symm envelope wiring.
 */
 const (
-	lagSampleHistoryCap   = 128
-	lagSampleMinObs       = 8
-	lagSampleBarInterval  = time.Second
-	lagSampleMaxInterval  = 30 * time.Second
-	lagSampleBaselineMin  = 8
+	lagSampleHistoryCap  = 128
+	lagSampleMinObs      = 8
+	lagSampleBarInterval = time.Second
+	lagSampleMaxInterval = 30 * time.Second
+	lagSampleBaselineMin = 8
 )
 
 /*
@@ -46,11 +46,11 @@ type LagSample struct {
 LagSampleConfig controls structural history retention and bar spacing.
 */
 type LagSampleConfig struct {
-	HistoryCap   int
-	MinObs       int
-	BarInterval  time.Duration
-	MaxInterval  time.Duration
-	BaselineMin  int
+	HistoryCap  int
+	MinObs      int
+	BarInterval time.Duration
+	MaxInterval time.Duration
+	BaselineMin int
 }
 
 /*
@@ -143,37 +143,10 @@ func (sample *LagSample) Measure(input LagSampleInput) (LagInput, bool, error) {
 	}
 
 	symbol := sample.symbol(input.Symbol)
-	symbol.mu.Lock()
-	defer symbol.mu.Unlock()
+	own, gate, ok, err := sample.retain(symbol, input)
 
-	if len(symbol.samples) > 0 && !input.At.After(symbol.samples[len(symbol.samples)-1].At) {
-		return LagInput{}, false, nil
-	}
-
-	move := 0.0
-	if symbol.last > 0 {
-		move = math.Abs(math.Log(input.Price / symbol.last))
-	}
-
-	symbol.last = input.Price
-	symbol.samples = append(symbol.samples, correlation.Sample{
-		At:    input.At,
-		Value: input.Price,
-	})
-
-	if len(symbol.samples) > sample.config.HistoryCap {
-		symbol.samples = symbol.samples[len(symbol.samples)-sample.config.HistoryCap:]
-	}
-
-	own := append([]correlation.Sample(nil), symbol.samples...)
-
-	gate, err := symbol.baseline.Measure(move)
-	if err != nil {
+	if err != nil || !ok {
 		return LagInput{}, false, err
-	}
-
-	if gate.Ready <= 0 && len(own) < sample.config.MinObs {
-		return LagInput{}, false, nil
 	}
 
 	peer, peerOK := sample.peer(input.Symbol)
@@ -220,27 +193,107 @@ func (sample *LagSample) symbol(name string) *lagSymbol {
 }
 
 /*
-(…).peer supports algorithm sampling that supplies equation inputs symm maps into runtime.Envelope.
+retain appends one print under the symbol lock and releases it before peer selection.
+*/
+func (sample *LagSample) retain(
+	symbol *lagSymbol,
+	input LagSampleInput,
+) ([]correlation.Sample, MoveBaselineOutput, bool, error) {
+	symbol.mu.Lock()
+	defer symbol.mu.Unlock()
+
+	if len(symbol.samples) > 0 && !input.At.After(symbol.samples[len(symbol.samples)-1].At) {
+		return nil, MoveBaselineOutput{}, false, nil
+	}
+
+	move := 0.0
+
+	if symbol.last > 0 {
+		move = math.Abs(math.Log(input.Price / symbol.last))
+	}
+
+	symbol.last = input.Price
+	symbol.samples = append(symbol.samples, correlation.Sample{
+		At:    input.At,
+		Value: input.Price,
+	})
+
+	if len(symbol.samples) > sample.config.HistoryCap {
+		symbol.samples = symbol.samples[len(symbol.samples)-sample.config.HistoryCap:]
+	}
+
+	own := append([]correlation.Sample(nil), symbol.samples...)
+	gate, err := symbol.baseline.Measure(move)
+
+	if err != nil {
+		return nil, MoveBaselineOutput{}, false, err
+	}
+
+	if gate.Ready <= 0 && len(own) < sample.config.MinObs {
+		return nil, MoveBaselineOutput{}, false, nil
+	}
+
+	return own, gate, true, nil
+}
+
+/*
+peer copies one eligible reference path. BTC/USD wins when it is eligible;
+otherwise the lexicographically first eligible symbol is the peer.
+The caller must not hold symbol.mu: peer locks other symbols.
 */
 func (sample *LagSample) peer(symbol string) ([]correlation.Sample, bool) {
-	var peer []correlation.Sample
+	const anchor = "BTC/USD"
+
+	var (
+		bestName   string
+		best       []correlation.Sample
+		anchorPath []correlation.Sample
+		haveBest   bool
+		haveAnchor bool
+	)
 
 	sample.symbols.Range(func(key, untyped any) bool {
-		if key.(string) == symbol {
+		name := key.(string)
+
+		if name == symbol {
 			return true
 		}
 
 		other := untyped.(*lagSymbol)
 		other.mu.Lock()
-		defer other.mu.Unlock()
+		var copied []correlation.Sample
 
-		if len(other.samples) < sample.config.MinObs {
+		if len(other.samples) >= sample.config.MinObs {
+			copied = append([]correlation.Sample(nil), other.samples...)
+		}
+
+		other.mu.Unlock()
+
+		if copied == nil {
 			return true
 		}
 
-		peer = append([]correlation.Sample(nil), other.samples...)
-		return false
+		if name == anchor {
+			anchorPath = copied
+			haveAnchor = true
+		}
+
+		if !haveBest || name < bestName {
+			bestName = name
+			best = copied
+			haveBest = true
+		}
+
+		return true
 	})
 
-	return peer, len(peer) >= sample.config.MinObs
+	if haveAnchor {
+		return anchorPath, true
+	}
+
+	if !haveBest {
+		return nil, false
+	}
+
+	return best, true
 }

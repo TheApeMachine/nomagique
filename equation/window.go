@@ -280,38 +280,33 @@ func (window *ignitionWindow) score(
 	)
 
 	buy.Value = buy.Strength
-	
+
 	sell.Exhaustion = ignitionExhaustion(
 		window.lastRVOL,
 		rvol,
 		sellRejection,
 		ignitionRatioScale(window.returns, moveBaseline),
 	)
-	
+
 	sell.Strength = max(
 		sell.Ignition,
 		sell.Compression,
 		sell.Trend,
 		sell.Exhaustion,
 	)
-	
-	sell.Value = sell.Strength
-	legacy := buy
 
-	if sell.Strength > buy.Strength {
-		legacy = sell
-	}
+	sell.Value = sell.Strength
 
 	output := IgnitionOutput{
-		Value:       legacy.Value,
+		Value:       buy.Value,
 		RVOL:        rvol,
-		Precursor:   legacy.Precursor,
-		Compression: legacy.Compression,
-		Ignition:    legacy.Ignition,
-		Trend:       legacy.Trend,
-		Exhaustion:  legacy.Exhaustion,
-		Strength:    legacy.Strength,
-		Category:    legacy.Category,
+		Precursor:   buy.Precursor,
+		Compression: buy.Compression,
+		Ignition:    buy.Ignition,
+		Trend:       buy.Trend,
+		Exhaustion:  buy.Exhaustion,
+		Strength:    buy.Strength,
+		Category:    buy.Category,
 		Buy:         buy,
 		Sell:        sell,
 	}

@@ -2,6 +2,7 @@ package algorithm
 
 import (
 	"math"
+	"sort"
 	"sync"
 
 	"github.com/theapemachine/errnie"
@@ -73,17 +74,14 @@ func (sample *MorphologySample) MeasureBook(
 		return equation.MorphologyInput{}, false, nil
 	}
 
+	sort.Slice(bids, func(i, j int) bool {
+		return bids[i].Price > bids[j].Price
+	})
+	sort.Slice(asks, func(i, j int) bool {
+		return asks[i].Price < asks[j].Price
+	})
+
 	bestBid, bestAsk := bids[0].Price, asks[0].Price
-	for _, level := range bids {
-		if level.Price > bestBid {
-			bestBid = level.Price
-		}
-	}
-	for _, level := range asks {
-		if level.Price < bestAsk {
-			bestAsk = level.Price
-		}
-	}
 	if bestAsk <= bestBid {
 		return equation.MorphologyInput{}, false, nil
 	}

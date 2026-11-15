@@ -107,20 +107,20 @@ func TestCohortSampleConcurrentMeasure(testingTB *testing.T) {
 
 		var wg sync.WaitGroup
 
-		for tick := range 16 {
-			for symbolIndex, symbol := range symbols {
-				wg.Add(1)
+		for symbolIndex, symbol := range symbols {
+			wg.Add(1)
 
-				go func(tick, symbolIndex int, symbol string) {
-					defer wg.Done()
+			go func(symbolIndex int, symbol string) {
+				defer wg.Done()
 
+				for tick := range 16 {
 					_, _, _ = sample.Measure(cohortSampleTicker(
 						symbol,
 						100+float64(tick)+float64(symbolIndex),
 						base.Add(time.Duration(tick)*time.Second),
 					))
-				}(tick, symbolIndex, symbol)
-			}
+				}
+			}(symbolIndex, symbol)
 		}
 
 		wg.Wait()
@@ -133,6 +133,40 @@ func TestCohortSampleConcurrentMeasure(testingTB *testing.T) {
 				So(len(state.returns), ShouldBeGreaterThan, 10)
 			}
 		})
+	})
+}
+
+func TestCohortSampleMeasureManySharesBoard(testingTB *testing.T) {
+	Convey("Given a warmed cohort board", testingTB, func() {
+		sample := NewCohortSample()
+		base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
+		symbols := []string{"ALPHA/USD", "BETA/USD", "GAMMA/USD", "DELTA/USD"}
+
+		for tick := range 4 {
+			inputs := make([]CohortSampleInput, 0, len(symbols))
+
+			for symbolIndex, symbol := range symbols {
+				inputs = append(inputs, cohortSampleTicker(
+					symbol,
+					100+float64(tick*symbolIndex)+float64(tick),
+					base.Add(time.Duration(tick)*time.Second),
+				))
+			}
+
+			frames, err := sample.MeasureMany(inputs)
+			So(err, ShouldBeNil)
+
+			if tick == 3 {
+				Convey("MeasureMany emits a frame per ready symbol", func() {
+					So(len(frames), ShouldBeGreaterThanOrEqualTo, 1)
+
+					for _, frame := range frames {
+						So(frame.Inputs, ShouldResemble, equation.CohortInputKeys)
+						So(frame.Features[0], ShouldBeGreaterThanOrEqualTo, 2)
+					}
+				})
+			}
+		}
 	})
 }
 

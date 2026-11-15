@@ -242,8 +242,13 @@ func (lag *Lag) lagOutcome(price float64, lagBars int, corr float64) (LagOutcome
 		return LagOutcome{}, err
 	}
 
-	lagMagnitude := math.Abs(float64(lagBars))
-	lagFraction := lagMagnitude / float64(maxBars)
+	sign := 1.0
+
+	if lagBars < 0 {
+		sign = -1
+	}
+
+	lagFraction := math.Abs(float64(lagBars)) / float64(maxBars)
 	threshold := minLagFraction(maxBars)
 
 	category := 2
@@ -252,11 +257,11 @@ func (lag *Lag) lagOutcome(price float64, lagBars int, corr float64) (LagOutcome
 
 	if lagFraction >= threshold {
 		category = 1
-		inefficientScore = lagFraction * corr
+		inefficientScore = sign * lagFraction * corr
 	}
 
 	if category == 2 {
-		syncScore = corr * (threshold - lagFraction)
+		syncScore = sign * corr * (threshold - lagFraction)
 	}
 
 	strength := lagFraction

@@ -32,6 +32,26 @@ func NewLevel() *Level {
 }
 
 /*
+Live is a priced level with positive size — Walk and cash walks skip otherwise.
+*/
+func (level *Level) Live() bool {
+	return level != nil &&
+		level.Price != nil && level.Quantity != nil &&
+		level.Price.Sign() > 0 && level.Quantity.Sign() > 0
+}
+
+/*
+Notional is price × quantity for a Live level, else zero.
+*/
+func (level *Level) Notional() decimal.Decimal {
+	if !level.Live() {
+		return decimal.Zero
+	}
+
+	return level.Price.Mul(*level.Quantity)
+}
+
+/*
 update applies add/modify/delete at one price; aggregate qty drives level survival.
 */
 func (level *Level) update(delta *Delta) {

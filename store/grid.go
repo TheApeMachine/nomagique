@@ -213,7 +213,9 @@ func (grid *Grid) Observe(
 				continue
 			}
 
-			move := math.Abs(snmFrom(prior, label, metrics)) * excitation
+			snm := snmFrom(prior, label, metrics)
+			level := metrics[label]
+			move := pinMove(snm, level) * excitation
 
 			if move <= 0 {
 				continue
@@ -301,6 +303,21 @@ func (grid *Grid) SNM(
 	defer lane.mu.Unlock()
 
 	return snmFrom(lane.priors[source], label, metrics)
+}
+
+/*
+pinMove is the unsigned contribution of one metric on a catalog pin.
+Bullish pins (detector, support, approve) take an upward move at a positive
+level. Stress pins (opposition, veto) take rising stress. Catalog already
+splits those metrics onto their own keys, so a drop toward zero must not
+light either side the way |delta| did.
+*/
+func pinMove(snm, level float64) float64 {
+	if snm <= 0 || level <= 0 {
+		return 0
+	}
+
+	return snm
 }
 
 /*

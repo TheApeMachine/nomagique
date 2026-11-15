@@ -62,11 +62,10 @@ type Trade struct {
 	Channel  string       `json:"channel"`
 	Type     string       `json:"type"`
 	Data     []*TradeData `json:"data"`
-	onChange func(MarketType)
 }
 
 /*
-NewTrade wraps decoded prints for Tier OnChange without allocating maps each frame.
+NewTrade wraps decoded prints without allocating maps each frame.
 */
 func NewTrade(
 	channel string,
@@ -113,12 +112,6 @@ func (trade *Trade) Batches() [][]*TradeData {
 	return batches
 }
 
-/*
-OnChange registers desk pumpTrade so strategy never blocks the public reader.
-*/
-func (trade *Trade) OnChange(fn func(MarketType)) {
-	trade.onChange = fn
-}
 
 /*
 Request is empty: trades arrive on venue push subscriptions.
@@ -128,7 +121,7 @@ func (trade *Trade) Request() map[string]any {
 }
 
 /*
-ToMarket copies prints into the tier-local Trade preserving the onChange hook.
+ToMarket copies prints into the tier-local Trade.
 */
 func (trade *Trade) ToMarket(other MarketType) MarketType {
 	dst, ok := other.(*Trade)
@@ -137,11 +130,9 @@ func (trade *Trade) ToMarket(other MarketType) MarketType {
 		return other
 	}
 
-	onChange := dst.onChange
 	dst.Channel = trade.Channel
 	dst.Type = trade.Type
 	dst.Data = append([]*TradeData(nil), trade.Data...)
-	dst.onChange = onChange
 
 	return dst
 }
@@ -168,7 +159,7 @@ func (trade *Trade) MarshalJSON() ([]byte, error) {
 }
 
 /*
-UnmarshalJSON reloads trade history from store keys; preserves onChange for live wiring.
+UnmarshalJSON reloads trade history from store keys; reloads from store.
 */
 func (trade *Trade) UnmarshalJSON(data []byte) error {
 	type alias Trade
@@ -178,13 +169,8 @@ func (trade *Trade) UnmarshalJSON(data []byte) error {
 		return err
 	}
 
-	onChange := trade.onChange
 	*trade = Trade(decoded)
-	trade.onChange = onChange
 
-	if trade.onChange != nil {
-		trade.onChange(trade)
-	}
 
 	return nil
 }

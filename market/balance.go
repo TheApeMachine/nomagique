@@ -15,7 +15,6 @@ type Balance struct {
 	Assets     []*Asset         `json:"assets"`
 	Equity     *decimal.Decimal `json:"equity,omitempty"`
 	Unrealized *decimal.Decimal `json:"unrealized,omitempty"`
-	onChange   func(MarketType)
 }
 
 /*
@@ -38,12 +37,6 @@ func NewBalance(data map[string]any) *Balance {
 	return balance
 }
 
-/*
-OnChange lets Desk tiers register Apply without importing venue packages.
-*/
-func (balance *Balance) OnChange(fn func(MarketType)) {
-	balance.onChange = fn
-}
 
 /*
 Request is empty: balance arrives on venue push, not a poll subscription.
@@ -104,12 +97,10 @@ func (balance *Balance) ToMarket(other MarketType) MarketType {
 		return other
 	}
 
-	onChange := dst.onChange
 	dst.Quote = balance.Quote
 	dst.Assets = append([]*Asset(nil), balance.Assets...)
 	dst.Equity = balance.Equity
 	dst.Unrealized = balance.Unrealized
-	dst.onChange = onChange
 
 	return dst
 }
@@ -137,7 +128,7 @@ func (balance *Balance) MarshalJSON() ([]byte, error) {
 
 /*
 UnmarshalJSON deserializes a JSON-encoded byte slice into a balance book.
-Preserves OnChange and notifies after a successful replace.
+Replaces the book from JSON.
 */
 func (balance *Balance) UnmarshalJSON(data []byte) error {
 	type alias Balance
@@ -147,13 +138,8 @@ func (balance *Balance) UnmarshalJSON(data []byte) error {
 		return err
 	}
 
-	onChange := balance.onChange
 	*balance = Balance(decoded)
-	balance.onChange = onChange
 
-	if balance.onChange != nil {
-		balance.onChange(balance)
-	}
 
 	return nil
 }

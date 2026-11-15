@@ -14,7 +14,6 @@ type TradeBalance struct {
 	UnrealizedPnL *decimal.Decimal `json:"unrealized_pnl"`
 	AvailableCash *decimal.Decimal `json:"available_cash"`
 	FreeMargin    *decimal.Decimal `json:"free_margin"`
-	onChange      func(MarketType)
 }
 
 /*
@@ -42,12 +41,6 @@ func NewTradeBalance(data map[string]any) *TradeBalance {
 	return out
 }
 
-/*
-OnChange hooks desk refresh when equity or free margin moves on poll frames.
-*/
-func (balance *TradeBalance) OnChange(fn func(MarketType)) {
-	balance.onChange = fn
-}
 
 /*
 Request is empty: trade balance arrives on scheduled venue polls.
@@ -66,12 +59,10 @@ func (balance *TradeBalance) ToMarket(other MarketType) MarketType {
 		return other
 	}
 
-	onChange := dst.onChange
 	dst.Equity = balance.Equity
 	dst.UnrealizedPnL = balance.UnrealizedPnL
 	dst.AvailableCash = balance.AvailableCash
 	dst.FreeMargin = balance.FreeMargin
-	dst.onChange = onChange
 
 	return dst
 }
@@ -98,7 +89,7 @@ func (balance *TradeBalance) MarshalJSON() ([]byte, error) {
 }
 
 /*
-UnmarshalJSON restores margin from store replay without losing onChange.
+UnmarshalJSON restores margin from store replay.
 */
 func (balance *TradeBalance) UnmarshalJSON(data []byte) error {
 	type alias TradeBalance
@@ -108,13 +99,8 @@ func (balance *TradeBalance) UnmarshalJSON(data []byte) error {
 		return err
 	}
 
-	onChange := balance.onChange
 	*balance = TradeBalance(decoded)
-	balance.onChange = onChange
 
-	if balance.onChange != nil {
-		balance.onChange(balance)
-	}
 
 	return nil
 }

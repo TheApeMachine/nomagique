@@ -23,7 +23,6 @@ Ticker is venue-agnostic public ticker state keyed by symbol.
 type Ticker struct {
 	mu       sync.RWMutex
 	Rows     map[string]*TickerData `json:"rows"`
-	onChange func(MarketType)
 }
 
 /*
@@ -37,12 +36,6 @@ func NewTicker(rows map[string]*TickerData) *Ticker {
 	return &Ticker{Rows: rows}
 }
 
-/*
-OnChange lets Price.applyTicker refresh rows when the public ticker websocket fires.
-*/
-func (ticker *Ticker) OnChange(fn func(MarketType)) {
-	ticker.onChange = fn
-}
 
 /*
 Request is empty: ticker is a broadcast push channel.
@@ -184,7 +177,7 @@ func (ticker *Ticker) MarshalJSON() ([]byte, error) {
 }
 
 /*
-UnmarshalJSON reloads ticker rows from store; preserves onChange for live Price wiring.
+UnmarshalJSON reloads ticker rows from store; reloads from store.
 */
 func (ticker *Ticker) UnmarshalJSON(data []byte) error {
 	var decoded struct {
@@ -196,19 +189,14 @@ func (ticker *Ticker) UnmarshalJSON(data []byte) error {
 	}
 
 	ticker.mu.Lock()
-	onChange := ticker.onChange
 	ticker.Rows = decoded.Rows
 
 	if ticker.Rows == nil {
 		ticker.Rows = make(map[string]*TickerData)
 	}
 
-	ticker.onChange = onChange
 	ticker.mu.Unlock()
 
-	if onChange != nil {
-		onChange(ticker)
-	}
 
 	return nil
 }

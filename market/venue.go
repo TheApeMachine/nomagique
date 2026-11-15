@@ -4,6 +4,7 @@ import "encoding/json"
 
 /*
 MarketType is the frame contract venue.Read returns; desk tiers merge via ToMarket.
+Decode stays pure — callers act on the returned value, not UnmarshalJSON side effects.
 */
 type MarketType interface {
 	json.Marshaler
@@ -11,7 +12,6 @@ type MarketType interface {
 	Request() map[string]any
 	ToMarket(MarketType) MarketType
 	FromMarket(MarketType) MarketType
-	OnChange(func(MarketType))
 }
 
 /*

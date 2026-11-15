@@ -40,7 +40,6 @@ type Execution struct {
 	Type     string           `json:"type"`
 	Data     []*ExecutionData `json:"data"`
 	Sequence int              `json:"sequence"`
-	onChange func(MarketType)
 }
 
 /*
@@ -70,12 +69,6 @@ func NewExecution(data map[string]any) *Execution {
 	}
 }
 
-/*
-OnChange lets Tier bind fills so they never bypass Apply on the private channel.
-*/
-func (execution *Execution) OnChange(fn func(MarketType)) {
-	execution.onChange = fn
-}
 
 /*
 Request is empty: executions stream on authenticated websocket push.
@@ -85,7 +78,7 @@ func (execution *Execution) Request() map[string]any {
 }
 
 /*
-ToMarket appends fills into the tier execution buffer preserving onChange.
+ToMarket appends fills into the tier execution buffer.
 */
 func (execution *Execution) ToMarket(other MarketType) MarketType {
 	dst, ok := other.(*Execution)
@@ -94,12 +87,10 @@ func (execution *Execution) ToMarket(other MarketType) MarketType {
 		return other
 	}
 
-	onChange := dst.onChange
 	dst.Channel = execution.Channel
 	dst.Type = execution.Type
 	dst.Sequence = execution.Sequence
 	dst.Data = append([]*ExecutionData(nil), execution.Data...)
-	dst.onChange = onChange
 
 	return dst
 }
@@ -126,7 +117,7 @@ func (execution *Execution) MarshalJSON() ([]byte, error) {
 }
 
 /*
-UnmarshalJSON reloads fills from store replay without dropping callbacks.
+UnmarshalJSON reloads fills from store replay.
 */
 func (execution *Execution) UnmarshalJSON(data []byte) error {
 	type alias Execution
@@ -136,13 +127,8 @@ func (execution *Execution) UnmarshalJSON(data []byte) error {
 		return err
 	}
 
-	onChange := execution.onChange
 	*execution = Execution(decoded)
-	execution.onChange = onChange
 
-	if execution.onChange != nil {
-		execution.onChange(execution)
-	}
 
 	return nil
 }

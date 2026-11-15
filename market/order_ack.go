@@ -16,7 +16,6 @@ type OrderAck struct {
 	ReqID    int64     `json:"req_id"`
 	TimeIn   time.Time `json:"time_in"`
 	TimeOut  time.Time `json:"time_out"`
-	onChange func(MarketType)
 }
 
 /*
@@ -48,12 +47,6 @@ func NewOrderAck(data map[string]any) *OrderAck {
 	return out
 }
 
-/*
-OnChange registers tier handlers for submit success/failure without blocking Send.
-*/
-func (ack *OrderAck) OnChange(fn func(MarketType)) {
-	ack.onChange = fn
-}
 
 /*
 Request is empty: acks arrive on the private websocket response stream.
@@ -63,7 +56,7 @@ func (ack *OrderAck) Request() map[string]any {
 }
 
 /*
-ToMarket copies ack fields into the tier slot preserving timing and onChange.
+ToMarket copies ack fields into the tier slot preserving timing.
 */
 func (ack *OrderAck) ToMarket(other MarketType) MarketType {
 	dst, ok := other.(*OrderAck)
@@ -72,7 +65,6 @@ func (ack *OrderAck) ToMarket(other MarketType) MarketType {
 		return other
 	}
 
-	onChange := dst.onChange
 	dst.Method = ack.Method
 	dst.OrderID = ack.OrderID
 	dst.Success = ack.Success
@@ -80,7 +72,6 @@ func (ack *OrderAck) ToMarket(other MarketType) MarketType {
 	dst.ReqID = ack.ReqID
 	dst.TimeIn = ack.TimeIn
 	dst.TimeOut = ack.TimeOut
-	dst.onChange = onChange
 
 	return dst
 }
@@ -107,7 +98,7 @@ func (ack *OrderAck) MarshalJSON() ([]byte, error) {
 }
 
 /*
-UnmarshalJSON reloads ack state from persisted frames; keeps onChange wired.
+UnmarshalJSON reloads ack state from persisted frames.
 */
 func (ack *OrderAck) UnmarshalJSON(data []byte) error {
 	type alias OrderAck
@@ -117,13 +108,8 @@ func (ack *OrderAck) UnmarshalJSON(data []byte) error {
 		return err
 	}
 
-	onChange := ack.onChange
 	*ack = OrderAck(decoded)
-	ack.onChange = onChange
 
-	if ack.onChange != nil {
-		ack.onChange(ack)
-	}
 
 	return nil
 }

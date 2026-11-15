@@ -36,7 +36,6 @@ type Level3 struct {
 	Channel  string        `json:"channel"`
 	Type     string        `json:"type"`
 	Data     []*Level3Data `json:"data"`
-	onChange func(MarketType)
 }
 
 /*
@@ -50,12 +49,6 @@ func NewLevel3() *Level3 {
 	}
 }
 
-/*
-OnChange wires BookManager Apply from desk without venue types in broker/book.
-*/
-func (level3 *Level3) OnChange(fn func(MarketType)) {
-	level3.onChange = fn
-}
 
 /*
 Request is empty: L3 is a push channel after SubscribeBooks.
@@ -74,11 +67,9 @@ func (level3 *Level3) ToMarket(other MarketType) MarketType {
 		return other
 	}
 
-	onChange := dst.onChange
 	dst.Channel = level3.Channel
 	dst.Type = level3.Type
 	dst.Data = append([]*Level3Data(nil), level3.Data...)
-	dst.onChange = onChange
 
 	return dst
 }
@@ -105,7 +96,7 @@ func (level3 *Level3) MarshalJSON() ([]byte, error) {
 }
 
 /*
-UnmarshalJSON reloads L3 from object storage; keeps onChange for live desk wiring.
+UnmarshalJSON reloads L3 from object storage.
 */
 func (level3 *Level3) UnmarshalJSON(data []byte) error {
 	type alias Level3
@@ -115,13 +106,8 @@ func (level3 *Level3) UnmarshalJSON(data []byte) error {
 		return err
 	}
 
-	onChange := level3.onChange
 	*level3 = Level3(decoded)
-	level3.onChange = onChange
 
-	if level3.onChange != nil {
-		level3.onChange(level3)
-	}
 
 	return nil
 }

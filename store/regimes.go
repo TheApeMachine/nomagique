@@ -150,19 +150,41 @@ var Catalog = Regimes{
 
 	// --- Oracle: Volume Quote ---
 	{Key: 9, Category: "quiet_tape", Kind: "oracle", Phase: "volume", Side: "veto"},
-	{Key: 10, Category: "liquid_quote", Kind: "oracle", Phase: "volume", Side: "approve"},
+	{
+		Key: 10, Category: "liquid_quote", Kind: "oracle", Phase: "volume", Side: "approve",
+		Metrics: []Metric{
+			{"desk", "tape_accel"},
+			{"desk", "tape_recent"},
+		},
+	},
 
 	// --- Oracle: Day Move ---
 	{Key: 11, Category: "flat_session", Kind: "oracle", Phase: "day", Side: "veto"},
-	{Key: 12, Category: "session_move", Kind: "oracle", Phase: "day", Side: "approve"},
+	{
+		Key: 12, Category: "session_move", Kind: "oracle", Phase: "day", Side: "approve",
+		Metrics: []Metric{
+			{"desk", "session_move"},
+			{"desk", "impulse"},
+		},
+	},
 
 	// --- Oracle: Spread ---
 	{Key: 13, Category: "blown_spread", Kind: "oracle", Phase: "spread", Side: "veto"},
-	{Key: 14, Category: "tight_touch", Kind: "oracle", Phase: "spread", Side: "approve"},
+	{
+		Key: 14, Category: "tight_touch", Kind: "oracle", Phase: "spread", Side: "approve",
+		Metrics: []Metric{
+			{"desk", "spread_room"},
+		},
+	},
 
 	// --- Oracle: Book Integrity ---
 	{Key: 15, Category: "brittle_book", Kind: "oracle", Phase: "book", Side: "veto"},
-	{Key: 16, Category: "firm_book", Kind: "oracle", Phase: "book", Side: "approve"},
+	{
+		Key: 16, Category: "firm_book", Kind: "oracle", Phase: "book", Side: "approve",
+		Metrics: []Metric{
+			{"desk", "touch_backing"},
+		},
+	},
 
 	// --- Oracle: Board Confidence ---
 	{
@@ -228,7 +250,12 @@ var Catalog = Regimes{
 
 	// --- Oracle: 24h Peak ---
 	{Key: 23, Category: "range_peak", Kind: "oracle", Phase: "peak", Side: "veto"},
-	{Key: 24, Category: "range_room", Kind: "oracle", Phase: "peak", Side: "approve"},
+	{
+		Key: 24, Category: "range_room", Kind: "oracle", Phase: "peak", Side: "approve",
+		Metrics: []Metric{
+			{"desk", "peak_room"},
+		},
+	},
 }
 
 /*

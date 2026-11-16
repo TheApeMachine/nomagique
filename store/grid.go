@@ -29,6 +29,12 @@ const (
 )
 
 /*
+deskBoolBoost is the minimum brightness desk learned-oracle bools contribute.
+SNM on the same pair can still win when movement kernels disagree.
+*/
+const deskBoolBoost = 0.55
+
+/*
 oracleMap maps desk bools onto veto/approve keys: volume, day, spread, book, peak.
 */
 var oracleMap = []map[bool]uint8{
@@ -80,12 +86,22 @@ type Prior struct {
 }
 
 /*
+oraclePairs is the number of veto/approve couples from R09 onward.
+*/
+const oraclePairs = int((RegionCount - oracleFirst) / 2)
+
+/*
 gridSymbol holds one symbol's source priors so Observe for BTC never waits
-on ETH's scoring pass.
+on ETH's scoring pass. lastOracle / lastOracleBright remember the last lit
+side of each pair so an idle metric tick re-emits that reading instead of
+going dark. Brightness 0 is off — a held side must keep its last brightness
+or it changes nothing for lamps or oracleAllows.
 */
 type gridSymbol struct {
-	mu     sync.Mutex
-	priors map[string]*Prior
+	mu               sync.Mutex
+	priors           map[string]*Prior
+	lastOracle       [oraclePairs]uint8
+	lastOracleBright [oraclePairs]float64
 }
 
 /*
@@ -248,12 +264,17 @@ func (grid *Grid) Observe(
 	lane.mu.Unlock()
 
 	for idx, ok := range []bool{volume, day, spread, book, peak} {
-		key := oracleMap[idx][ok]
-		other := oracleMap[idx][!ok]
-		regions[key].Brightness = 1
-		regions[other].Brightness = 0
-		regions[other].Deformation = 0
-		regions[other].Counts = 0
+		litKey := oracleMap[idx][ok]
+		darkKey := oracleMap[idx][!ok]
+
+		lit := regions[litKey]
+		if lit.Brightness < deskBoolBoost {
+			lit.Brightness = deskBoolBoost
+		}
+
+		regions[darkKey].Brightness = 0
+		regions[darkKey].Deformation = 0
+		regions[darkKey].Counts = 0
 	}
 
 	from, to := enterFirst, enterLast
@@ -278,16 +299,31 @@ func (grid *Grid) Observe(
 		out = append(out, regions[key])
 	}
 
+	lane.mu.Lock()
+
 	for veto := oracleFirst; veto+1 < RegionCount; veto += 2 {
 		approve := veto + 1
+		pair := int((veto - oracleFirst) / 2)
 
-		if regions[approve].Brightness > regions[veto].Brightness {
+		switch {
+		case regions[approve].Brightness > regions[veto].Brightness:
+			lane.lastOracle[pair] = approve
+			lane.lastOracleBright[pair] = regions[approve].Brightness
 			out = append(out, regions[approve])
-			continue
+		case regions[veto].Brightness > 0:
+			lane.lastOracle[pair] = veto
+			lane.lastOracleBright[pair] = regions[veto].Brightness
+			out = append(out, regions[veto])
+		case lane.lastOracle[pair] != 0 && lane.lastOracleBright[pair] > 0:
+			held := regions[lane.lastOracle[pair]]
+			held.Brightness = lane.lastOracleBright[pair]
+			out = append(out, held)
+		default:
+			out = append(out, regions[veto])
 		}
-
-		out = append(out, regions[veto])
 	}
+
+	lane.mu.Unlock()
 
 	return out, nil
 }

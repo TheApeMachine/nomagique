@@ -31,6 +31,13 @@ func NewZScore() *ZScore {
 }
 
 /*
+Center is the rolling mean surprise uses as regime baseline before each Measure.
+*/
+func (surprise *ZScore) Center() float64 {
+	return surprise.mean
+}
+
+/*
 Measure adds one sample and returns the adaptive z-score.
 */
 func (surprise *ZScore) Measure(sample float64) (ZScoreOutput, error) {

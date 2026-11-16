@@ -225,10 +225,10 @@ func TestGridObserve(t *testing.T) {
 				false, false, false, false, false,
 			)
 			So(err, ShouldBeNil)
-			So(vetoFix.byKey(vetoes, 9).Brightness, ShouldEqual, 1)
+			So(vetoFix.byKey(vetoes, 9).Brightness, ShouldEqual, deskBoolBoost)
 			So(vetoFix.byKey(vetoes, 10), ShouldBeNil)
-			So(vetoFix.byKey(vetoes, 11).Brightness, ShouldEqual, 1)
-			So(vetoFix.byKey(vetoes, 23).Brightness, ShouldEqual, 1)
+			So(vetoFix.byKey(vetoes, 11).Brightness, ShouldEqual, deskBoolBoost)
+			So(vetoFix.byKey(vetoes, 23).Brightness, ShouldEqual, deskBoolBoost)
 			So(vetoFix.byKey(vetoes, 24), ShouldBeNil)
 
 			okFix := newGridFixture()
@@ -239,9 +239,9 @@ func TestGridObserve(t *testing.T) {
 				true, true, true, true, true,
 			)
 			So(err, ShouldBeNil)
-			So(okFix.byKey(ok, 10).Brightness, ShouldEqual, 1)
+			So(okFix.byKey(ok, 10).Brightness, ShouldEqual, deskBoolBoost)
 			So(okFix.byKey(ok, 9), ShouldBeNil)
-			So(okFix.byKey(ok, 24).Brightness, ShouldEqual, 1)
+			So(okFix.byKey(ok, 24).Brightness, ShouldEqual, deskBoolBoost)
 			So(okFix.byKey(ok, 23), ShouldBeNil)
 		})
 
@@ -272,6 +272,29 @@ func TestGridObserve(t *testing.T) {
 			So(err, ShouldBeNil)
 			So(fix.byKey(regions, 18).Brightness, ShouldBeGreaterThan, 0)
 			So(fix.byKey(regions, 17), ShouldBeNil)
+		})
+
+		Convey("An idle tick keeps the last lit oracle side and brightness", func() {
+			fix := newGridFixture()
+			symbol := "HOLD/USD"
+
+			lit, err := fix.pulse(symbol, map[string]map[string]float64{
+				"correlation": {"peak_score": 2.0},
+			}, false, true, true, true, true, true)
+			So(err, ShouldBeNil)
+			So(fix.byKey(lit, 18).Brightness, ShouldBeGreaterThan, 0)
+			prior := fix.byKey(lit, 18).Brightness
+
+			held, err := fix.Observe(
+				symbol,
+				map[string]map[string]float64{},
+				false,
+				true, true, true, true, true,
+			)
+			So(err, ShouldBeNil)
+			So(fix.byKey(held, 18), ShouldNotBeNil)
+			So(fix.byKey(held, 18).Brightness, ShouldEqual, prior)
+			So(fix.byKey(held, 17), ShouldBeNil)
 		})
 
 		Convey("A drop toward zero does not light the region", func() {

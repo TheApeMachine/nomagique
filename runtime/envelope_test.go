@@ -43,7 +43,7 @@ func TestEnvelope_Publish(testingTB *testing.T) {
 		}}
 
 		Convey("It wraps the payload under the regions store key", func() {
-			raw := envelope.Publish("regions")
+			raw := envelope.Publish("regions", "")
 			So(raw, ShouldNotBeNil)
 
 			var frame map[string]any

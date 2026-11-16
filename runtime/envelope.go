@@ -193,7 +193,7 @@ func (envelope *Envelope) overlayResonance(
 /*
 Publish returns JSON {"<ctx>": facet} for the dashboard store keyed by ctx.
 */
-func (envelope *Envelope) Publish(ctx string) []byte {
+func (envelope *Envelope) Publish(ctx string, focusSymbol string) []byte {
 	var payload any
 
 	switch ctx {
@@ -208,25 +208,25 @@ func (envelope *Envelope) Publish(ctx string) []byte {
 	case "trade":
 		payload = envelope.Trade
 	case "correlation":
-		payload = envelope.Correlation
+		payload = envelope.Correlation[focusSymbol]
 	case "cvd":
-		payload = envelope.CVD
+		payload = envelope.CVD[focusSymbol]
 	case "depthflow":
-		payload = envelope.DepthFlow
+		payload = envelope.DepthFlow[focusSymbol]
 	case "hawkes":
-		payload = envelope.Hawkes
+		payload = envelope.Hawkes[focusSymbol]
 	case "leadlag":
-		payload = envelope.LeadLag
+		payload = envelope.LeadLag[focusSymbol]
 	case "liquidity":
-		payload = envelope.Liquidity
+		payload = envelope.Liquidity[focusSymbol]
 	case "morphology":
-		payload = envelope.Morphology
+		payload = envelope.Morphology[focusSymbol]
 	case "pumpdump":
-		payload = envelope.Pumpdump
+		payload = envelope.Pumpdump[focusSymbol]
 	case "sentiment":
-		payload = envelope.Sentiment
+		payload = envelope.Sentiment[focusSymbol]
 	case "toxicity":
-		payload = envelope.Toxicity
+		payload = envelope.Toxicity[focusSymbol]
 	default:
 		payload = envelope
 	}

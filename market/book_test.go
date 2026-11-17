@@ -52,6 +52,7 @@ func TestBookTouchAndChecksum(t *testing.T) {
 			So(book.BidPrice().String(), ShouldEqual, "100")
 			So(book.AskPrice().String(), ShouldEqual, "101")
 			So(book.BidSize().String(), ShouldEqual, "2")
+			So(book.AskSize().String(), ShouldEqual, "3")
 		})
 
 		Convey("L3Checksum produces a stable local checksum", func() {

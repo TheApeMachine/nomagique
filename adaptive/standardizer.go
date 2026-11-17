@@ -106,6 +106,36 @@ func (standardizer *Standardizer) Measure(sample float64) (StandardizerOutput, e
 }
 
 /*
+ZScore standardizes one sample against prior moments without absorbing it into
+Welford state — hot-path oracle reads stay separate from settle-time Learn.
+*/
+func (standardizer *Standardizer) ZScore(sample float64) (StandardizerOutput, error) {
+	if err := finiteAdaptive("standardizer", sample); err != nil {
+		return StandardizerOutput{}, err
+	}
+
+	priorVariance := standardizer.variance()
+	precision := standardizer.precision()
+	ready := priorVariance > 0
+	standardized := 0.0
+
+	if ready {
+		scale := math.Sqrt(priorVariance) / precision
+		zScore := (sample - standardizer.mean) / scale
+		standardized = math.Max(-standardizer.config.SigmaBound, math.Min(standardizer.config.SigmaBound, zScore))
+	}
+
+	return StandardizerOutput{
+		Value:     standardized,
+		Mean:      standardizer.mean,
+		Variance:  priorVariance,
+		Precision: precision,
+		Ready:     ready,
+		Count:     standardizer.count,
+	}, nil
+}
+
+/*
 Precision reports how much of a full z-score the current moments can support,
 which is the reciprocal of the inflation a predictive scale carries for having
 estimated both the centre and the spread from a finite sample.

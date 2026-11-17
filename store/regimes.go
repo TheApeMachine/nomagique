@@ -153,7 +153,7 @@ var Catalog = Regimes{
 	{
 		Key: 10, Category: "liquid_quote", Kind: "oracle", Phase: "volume", Side: "approve",
 		Metrics: []Metric{
-			{"desk", "tape_accel"},
+			{"desk", "tape_ratio"},
 			{"desk", "tape_recent"},
 		},
 	},
@@ -173,7 +173,7 @@ var Catalog = Regimes{
 	{
 		Key: 14, Category: "tight_touch", Kind: "oracle", Phase: "spread", Side: "approve",
 		Metrics: []Metric{
-			{"desk", "spread_room"},
+			{"desk", "spread_pct"},
 		},
 	},
 
@@ -182,7 +182,9 @@ var Catalog = Regimes{
 	{
 		Key: 16, Category: "firm_book", Kind: "oracle", Phase: "book", Side: "approve",
 		Metrics: []Metric{
-			{"desk", "touch_backing"},
+			{"desk", "touch_cash"},
+			{"desk", "backing"},
+			{"desk", "tape_ratio"},
 		},
 	},
 
@@ -253,7 +255,7 @@ var Catalog = Regimes{
 	{
 		Key: 24, Category: "range_room", Kind: "oracle", Phase: "peak", Side: "approve",
 		Metrics: []Metric{
-			{"desk", "peak_room"},
+			{"desk", "peak_frac"},
 		},
 	},
 }

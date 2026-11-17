@@ -181,6 +181,17 @@ func (book *Book) AskPrice() *decimal.Decimal {
 }
 
 /*
+AskSize is the touch ask quantity, or nil when the book has no ask.
+*/
+func (book *Book) AskSize() *decimal.Decimal {
+	if ask := book.BestAsk(); ask != nil {
+		return ask.Quantity
+	}
+
+	return nil
+}
+
+/*
 Tradable is a two-sided touch with prices and bid strictly below ask — desk
 sizing and spread gates skip empty or crossed books.
 */

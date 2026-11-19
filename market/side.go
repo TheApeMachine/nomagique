@@ -145,7 +145,9 @@ func (side *BookSide) insert(delta *Delta) {
 	}
 
 	if nearest != nil {
-		if level.Price.Cmp(*nearest.Price) > 0 {
+		cmp := level.Price.Cmp(*nearest.Price)
+		switch {
+		case cmp > 0:
 			level.Lower = nearest
 			level.Higher = nearest.Higher
 			nearest.Higher = level
@@ -153,7 +155,7 @@ func (side *BookSide) insert(delta *Delta) {
 			if level.Higher != nil {
 				level.Higher.Lower = level
 			}
-		} else if level.Price.Cmp(*nearest.Price) < 0 {
+		case cmp < 0:
 			level.Higher = nearest
 			level.Lower = nearest.Lower
 			nearest.Lower = level
@@ -161,6 +163,10 @@ func (side *BookSide) insert(delta *Delta) {
 			if level.Lower != nil {
 				level.Lower.Higher = level
 			}
+		default:
+			// Same price already linked — fold into nearest instead of orphaning.
+			nearest.update(delta)
+			return
 		}
 	}
 

@@ -2,6 +2,7 @@ package market
 
 import (
 	"sort"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -20,6 +21,7 @@ type Level struct {
 	orders     map[string]*Order
 	queue      []*Order
 	queueDirty atomic.Bool
+	queueMu    sync.Mutex
 }
 
 /*
@@ -114,8 +116,16 @@ func (level *Level) update(delta *Delta) {
 
 /*
 Queue returns resting orders in time priority.
+queueMu serializes rebuild so concurrent Book readers cannot race on queue.
 */
 func (level *Level) Queue() []*Order {
+	if !level.queueDirty.Load() {
+		return level.queue
+	}
+
+	level.queueMu.Lock()
+	defer level.queueMu.Unlock()
+
 	if !level.queueDirty.Load() {
 		return level.queue
 	}

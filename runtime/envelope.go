@@ -1,6 +1,8 @@
 package runtime
 
 import (
+	"sync"
+
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/nomagique/algorithm/excitation"
@@ -46,6 +48,8 @@ type Envelope struct {
 	// metricsCache is built once per tick; Resonance is overlaid on later reads
 	// so training sees solver output without rebuilding every signal Map().
 	metricsCache map[string]map[string]map[string]float64 `json:"-"`
+	// decideMu guards Decisions: Model.Step fans Decide across symbols.
+	decideMu sync.Mutex `json:"-"`
 }
 
 /*
@@ -74,11 +78,15 @@ func NewEnvelope(trade *market.Trade) *Envelope {
 
 /*
 Decide records the outcome for one symbol (and tier, when set) on this tick.
+Safe under Model.Step's per-symbol goroutine fan-out.
 */
 func (envelope *Envelope) Decide(decision *Decision) {
 	if envelope == nil || decision == nil || decision.Symbol == "" {
 		return
 	}
+
+	envelope.decideMu.Lock()
+	defer envelope.decideMu.Unlock()
 
 	if envelope.Decisions == nil {
 		envelope.Decisions = make(map[string]*Decision)

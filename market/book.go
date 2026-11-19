@@ -107,6 +107,8 @@ func (book *Book) Spread() *decimal.Decimal {
 
 /*
 Update applies one L3 delta then optional cross/depth enforcement after broker ingest.
+Depth trim runs once per call — BookManager disables EnableMaxDepth while applying
+a multi-order frame, then calls EnforceDepth after the whole message.
 */
 func (book *Book) Update(delta *Delta) {
 	switch delta.Direction {
@@ -122,6 +124,23 @@ func (book *Book) Update(delta *Delta) {
 
 	if book.EnableMaxDepth {
 		book.EnforceDepth()
+	}
+}
+
+/*
+ApplyDelta mutates the book without cross/depth enforcement — for batch frames
+that must apply every order before a single EnforceDepth.
+*/
+func (book *Book) ApplyDelta(delta *Delta) {
+	if book == nil || delta == nil {
+		return
+	}
+
+	switch delta.Direction {
+	case SideAsk:
+		book.Asks.apply(delta)
+	case SideBid:
+		book.Bids.apply(delta)
 	}
 }
 
@@ -260,27 +279,39 @@ func (book *Book) EnforceOrder() {
 
 /*
 EnforceDepth trims far levels so L3 replay and signals stay within MaxDepth.
+Uses ApplyDelta so trim does not recurse through Update's EnableMaxDepth path.
 */
 func (book *Book) EnforceDepth() {
-	zero := decimal.Zero
+	if book == nil || book.MaxDepth <= 0 {
+		return
+	}
 
-	for len(book.Bids.Levels) > book.MaxDepth {
+	zero := decimal.Zero
+	now := time.Now()
+
+	for book.Bids != nil && len(book.Bids.Levels) > book.MaxDepth {
 		worst := book.WorstBid()
-		book.Update(&Delta{
+		if worst == nil || worst.Price == nil {
+			break
+		}
+		book.ApplyDelta(&Delta{
 			Direction: SideBid,
 			Price:     worst.Price,
 			Quantity:  &zero,
-			Timestamp: time.Now(),
+			Timestamp: now,
 		})
 	}
 
-	for len(book.Asks.Levels) > book.MaxDepth {
+	for book.Asks != nil && len(book.Asks.Levels) > book.MaxDepth {
 		worst := book.WorstAsk()
-		book.Update(&Delta{
+		if worst == nil || worst.Price == nil {
+			break
+		}
+		book.ApplyDelta(&Delta{
 			Direction: SideAsk,
 			Price:     worst.Price,
 			Quantity:  &zero,
-			Timestamp: time.Now(),
+			Timestamp: now,
 		})
 	}
 }

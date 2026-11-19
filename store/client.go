@@ -58,6 +58,9 @@ type Client struct {
 	// older payloads so concurrent PUT cannot overwrite newer mutable state.
 	latestGen map[string]uint64
 	seq       uint64
+	// keyLocks serialize concurrent uploads of the same mutable key so a slow
+	// gen=1 PUT cannot finish after gen=2 and clobber newer state.
+	keyLocks sync.Map
 }
 
 /*
@@ -197,6 +200,9 @@ func (client *Client) opContext() context.Context {
 }
 
 func (client *Client) put(ctx context.Context, record Record) {
+	unlock := client.lockKey(record.Key)
+	defer unlock()
+
 	client.mu.RLock()
 	latest := client.latestGen[record.Key]
 	client.mu.RUnlock()
@@ -220,6 +226,21 @@ func (client *Client) put(ctx context.Context, record Record) {
 	}
 
 	client.upload(ctx, record.Key, record.Value)
+
+	// Re-check after upload: if a newer gen arrived while we held the key lock
+	// it is still queued — leave latestGen so that worker uploads next.
+	client.mu.Lock()
+	if client.latestGen[record.Key] == record.gen {
+		delete(client.latestGen, record.Key)
+	}
+	client.mu.Unlock()
+}
+
+func (client *Client) lockKey(key string) func() {
+	v, _ := client.keyLocks.LoadOrStore(key, &sync.Mutex{})
+	mu := v.(*sync.Mutex)
+	mu.Lock()
+	return mu.Unlock
 }
 
 /*

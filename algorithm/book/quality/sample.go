@@ -138,7 +138,6 @@ func (sample *Sample) MeasureLevel3(
 	window.observeOrderEvents(input.Bids, flow.SideBid, &frame)
 	window.observeOrderEvents(input.Asks, flow.SideAsk, &frame)
 	output := window.finish(frame, true)
-	window.tradePrices = nil
 
 	return output, output.LastPrice > 0, window.maturity(), nil
 }
@@ -166,7 +165,9 @@ func (sample *Sample) MeasureLevel3Snapshot(
 	window.replaceOrders(input.Bids, flow.SideBid, &frame)
 	window.replaceOrders(input.Asks, flow.SideAsk, &frame)
 	output := window.finish(frame, true)
-	window.tradePrices = nil
+	// Keep the trade-price ring across snapshots — clearing it made
+	// MedianAbsoluteDeviation(trades) collapse whenever only one print
+	// landed between L3 frames.
 
 	return output, output.LastPrice > 0, window.maturity(), nil
 }

@@ -137,6 +137,9 @@ func (level *Level) Queue() []*Order {
 	}
 
 	sort.Slice(queue, func(i, j int) bool {
+		if queue[i].Timestamp.Equal(queue[j].Timestamp) {
+			return queue[i].ID < queue[j].ID
+		}
 		return queue[i].Timestamp.Before(queue[j].Timestamp)
 	})
 

@@ -274,7 +274,7 @@ func TestGridObserve(t *testing.T) {
 			So(fix.byKey(regions, 17), ShouldBeNil)
 		})
 
-		Convey("An idle tick keeps the last lit oracle side and brightness", func() {
+		Convey("An idle tick keeps the last lit approve side and brightness", func() {
 			fix := newGridFixture()
 			symbol := "HOLD/USD"
 
@@ -295,6 +295,29 @@ func TestGridObserve(t *testing.T) {
 			So(fix.byKey(held, 18), ShouldNotBeNil)
 			So(fix.byKey(held, 18).Brightness, ShouldEqual, prior)
 			So(fix.byKey(held, 17), ShouldBeNil)
+		})
+
+		Convey("A faded board veto does not sticky-reemit after stress returns to zero", func() {
+			fix := newGridFixture()
+			symbol := "VETO/USD"
+
+			lit, err := fix.pulse(symbol, map[string]map[string]float64{
+				"sentiment": {"slump_score": 2.0},
+			}, false, true, true, true, true, true)
+			So(err, ShouldBeNil)
+			So(fix.byKey(lit, 17).Brightness, ShouldBeGreaterThan, 0)
+
+			quiet, err := fix.Observe(
+				symbol,
+				map[string]map[string]float64{
+					"sentiment": {"slump_score": 2.0},
+				},
+				false,
+				true, true, true, true, true,
+			)
+			So(err, ShouldBeNil)
+			So(fix.byKey(quiet, 17).Brightness, ShouldEqual, 0)
+			So(fix.byKey(quiet, 18), ShouldBeNil)
 		})
 
 		Convey("A drop toward zero does not light the region", func() {

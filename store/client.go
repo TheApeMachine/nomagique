@@ -32,6 +32,8 @@ type Record struct {
 	Key      string
 	Value    []byte
 	Envelope *nmruntime.Envelope
+	// gen is assigned at enqueue; put skips superseded mutable-key uploads.
+	gen uint64
 }
 
 /*
@@ -52,6 +54,10 @@ type Client struct {
 	halt     chan struct{}
 	mu       sync.RWMutex
 	shutdown context.Context
+	// latestGen[key] is the newest enqueue gen for that key — drainers drop
+	// older payloads so concurrent PUT cannot overwrite newer mutable state.
+	latestGen map[string]uint64
+	seq       uint64
 }
 
 /*
@@ -109,13 +115,14 @@ func NewClient(parent context.Context, bucket, endpoint, region string) *Client 
 	}
 
 	storeClient := &Client{
-		ctx:      ctx,
-		cancel:   cancel,
-		S3Client: client,
-		bucket:   bucket,
-		transfer: transfermanager.New(client),
-		queue:    lf.NewQueue[Record](),
-		halt:     make(chan struct{}),
+		ctx:       ctx,
+		cancel:    cancel,
+		S3Client:  client,
+		bucket:    bucket,
+		transfer:  transfermanager.New(client),
+		queue:     lf.NewQueue[Record](),
+		halt:      make(chan struct{}),
+		latestGen: make(map[string]uint64),
 	}
 
 	storeClient.Run()
@@ -190,6 +197,14 @@ func (client *Client) opContext() context.Context {
 }
 
 func (client *Client) put(ctx context.Context, record Record) {
+	client.mu.RLock()
+	latest := client.latestGen[record.Key]
+	client.mu.RUnlock()
+
+	if record.gen != 0 && latest != 0 && record.gen != latest {
+		return
+	}
+
 	if record.Envelope != nil {
 		body, err := sonic.Marshal(record.Envelope)
 
@@ -442,6 +457,13 @@ func (client *Client) enqueue(record Record) error {
 		))
 	}
 
+	if client.latestGen == nil {
+		client.latestGen = make(map[string]uint64)
+	}
+
+	client.seq++
+	record.gen = client.seq
+	client.latestGen[record.Key] = record.gen
 	client.queue.Enqueue(record)
 	return nil
 }

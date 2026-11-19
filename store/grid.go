@@ -93,9 +93,9 @@ const oraclePairs = int((RegionCount - oracleFirst) / 2)
 /*
 gridSymbol holds one symbol's source priors so Observe for BTC never waits
 on ETH's scoring pass. lastOracle / lastOracleBright remember the last lit
-side of each pair so an idle metric tick re-emits that reading instead of
-going dark. Brightness 0 is off — a held side must keep its last brightness
-or it changes nothing for lamps or oracleAllows.
+APPROVE so an idle metric tick re-emits that reading instead of going dark.
+Vetoes are not held: pinMove only fires on rising stress, so a faded veto
+would otherwise sticky-block until an approve snm rises again.
 */
 type gridSymbol struct {
 	mu               sync.Mutex
@@ -311,14 +311,16 @@ func (grid *Grid) Observe(
 			lane.lastOracleBright[pair] = regions[approve].Brightness
 			out = append(out, regions[approve])
 		case regions[veto].Brightness > 0:
-			lane.lastOracle[pair] = veto
-			lane.lastOracleBright[pair] = regions[veto].Brightness
+			lane.lastOracle[pair] = 0
+			lane.lastOracleBright[pair] = 0
 			out = append(out, regions[veto])
-		case lane.lastOracle[pair] != 0 && lane.lastOracleBright[pair] > 0:
-			held := regions[lane.lastOracle[pair]]
+		case lane.lastOracle[pair] == approve && lane.lastOracleBright[pair] > 0:
+			held := regions[approve]
 			held.Brightness = lane.lastOracleBright[pair]
 			out = append(out, held)
 		default:
+			lane.lastOracle[pair] = 0
+			lane.lastOracleBright[pair] = 0
 			out = append(out, regions[veto])
 		}
 	}

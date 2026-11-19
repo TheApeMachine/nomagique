@@ -154,6 +154,7 @@ func (grid *Grid) Observe(
 	sources map[string]map[string]float64,
 	open bool,
 	volume, day, spread, book, peak bool,
+	peakKnown bool,
 ) ([]*Region, error) {
 	if symbol == "" {
 		return nil, errnie.Error(errnie.Err(
@@ -264,6 +265,12 @@ func (grid *Grid) Observe(
 	lane.mu.Unlock()
 
 	for idx, ok := range []bool{volume, day, spread, book, peak} {
+		// Missing ticker peak must not force a hard veto — that sealed the
+		// whole universe during Ticker/Balance REST outages.
+		if idx == 4 && !peakKnown {
+			continue
+		}
+
 		litKey := oracleMap[idx][ok]
 		darkKey := oracleMap[idx][!ok]
 

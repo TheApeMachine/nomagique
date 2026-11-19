@@ -237,10 +237,24 @@ func (client *Client) put(ctx context.Context, record Record) {
 }
 
 func (client *Client) lockKey(key string) func() {
+	// Unique tick/stop keys never collide — locking them grew keyLocks without
+	// bound. Only mutable prefixes need cross-worker serialization.
+	if !mutableStoreKey(key) {
+		return func() {}
+	}
+
 	v, _ := client.keyLocks.LoadOrStore(key, &sync.Mutex{})
 	mu := v.(*sync.Mutex)
 	mu.Lock()
 	return mu.Unlock
+}
+
+func mutableStoreKey(key string) bool {
+	// Position keys are "{tier}/open/{symbol}/{id}" — not a root "open/" prefix.
+	return strings.Contains(key, "/open/") ||
+		strings.HasPrefix(key, "model/") ||
+		strings.HasPrefix(key, "workspace/tick/") ||
+		strings.Contains(key, "/latest")
 }
 
 /*

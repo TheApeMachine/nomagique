@@ -2,6 +2,7 @@ package algorithm
 
 import (
 	"math"
+	"sync"
 	"time"
 
 	"github.com/theapemachine/errnie"
@@ -66,6 +67,7 @@ type LagInput struct {
 Lag classifies anchor stall, inefficient lag, synchronized drift, and decoupling.
 */
 type Lag struct {
+	mu      sync.RWMutex
 	outcome LagOutcome
 }
 
@@ -108,15 +110,19 @@ Measure classifies typed lead-lag evidence. Ineligible readings return an empty
 outcome without error so warmup stays quiet on the feed.
 */
 func (lag *Lag) Measure(input LagInput) (LagOutcome, error) {
-	lag.outcome = lag.evaluate(input)
+	outcome := lag.evaluate(input)
 
-	if !lag.outcome.Eligible || lag.outcome.Strength <= 0 {
-		lag.outcome = LagOutcome{}
-
-		return LagOutcome{}, nil
+	if !outcome.Eligible || outcome.Strength <= 0 {
+		outcome = LagOutcome{}
 	}
 
-	return lag.outcome, nil
+	// Publish under lock so concurrent symbol batches cannot cross-wire
+	// LagReading.Measure or return another symbol's outcome.
+	lag.mu.Lock()
+	lag.outcome = outcome
+	lag.mu.Unlock()
+
+	return outcome, nil
 }
 
 /*
@@ -454,7 +460,11 @@ func (reading *LagReading) Measure() (float64, error) {
 		))
 	}
 
-	return reading.project(reading.lag.outcome), nil
+	reading.lag.mu.RLock()
+	outcome := reading.lag.outcome
+	reading.lag.mu.RUnlock()
+
+	return reading.project(outcome), nil
 }
 
 /*

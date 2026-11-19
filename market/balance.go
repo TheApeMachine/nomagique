@@ -17,6 +17,9 @@ type Balance struct {
 	Assets     []*Asset         `json:"assets"`
 	Equity     *decimal.Decimal `json:"equity,omitempty"`
 	Unrealized *decimal.Decimal `json:"unrealized,omitempty"`
+	// reserved subtracts from Cash between REST Balance polls so concurrent
+	// Enter sizing cannot all spend the same stale free cash.
+	reserved map[string]decimal.Decimal
 }
 
 /*
@@ -48,6 +51,8 @@ func (balance *Balance) Request() map[string]any {
 
 /*
 Cash returns quote currency for paper tier sizing and ledger checks.
+In-flight Enter reservations are subtracted so Allocate sees decaying cash
+between 5s Balance polls.
 */
 func (balance *Balance) Cash(quote string) *decimal.Decimal {
 	if balance == nil {
@@ -60,11 +65,90 @@ func (balance *Balance) Cash(quote string) *decimal.Decimal {
 	for _, asset := range balance.Assets {
 		if asset.Symbol == quote {
 			copied := asset.Capital
+			if reserved, ok := balance.reserved[quote]; ok {
+				copied = copied.Sub(reserved)
+			}
 			return &copied
 		}
 	}
 
 	return nil
+}
+
+/*
+Reserve encumbers quote cash until Release (fill, reject, or Drop).
+*/
+func (balance *Balance) Reserve(quote string, amount decimal.Decimal) {
+	if balance == nil || quote == "" || amount.Sign() <= 0 {
+		return
+	}
+
+	balance.mu.Lock()
+	defer balance.mu.Unlock()
+
+	if balance.reserved == nil {
+		balance.reserved = make(map[string]decimal.Decimal)
+	}
+	balance.reserved[quote] = balance.reserved[quote].Add(amount)
+}
+
+/*
+Release frees a prior Reserve — idempotent when amount exceeds remaining.
+*/
+func (balance *Balance) Release(quote string, amount decimal.Decimal) {
+	if balance == nil || quote == "" || amount.Sign() <= 0 {
+		return
+	}
+
+	balance.mu.Lock()
+	defer balance.mu.Unlock()
+
+	if balance.reserved == nil {
+		return
+	}
+
+	next := balance.reserved[quote].Sub(amount)
+	if next.Sign() <= 0 {
+		delete(balance.reserved, quote)
+		return
+	}
+	balance.reserved[quote] = next
+}
+
+/*
+CommitSpend applies a filled enter to local Assets and clears the matching
+Reserve. Waiting for the 5s Balance poll left reserved parks stuck through
+REST outages and drove Cash to ~0 so Allocate never sized again.
+*/
+func (balance *Balance) CommitSpend(quote string, amount decimal.Decimal) {
+	if balance == nil || quote == "" || amount.Sign() <= 0 {
+		return
+	}
+
+	balance.mu.Lock()
+	defer balance.mu.Unlock()
+
+	for _, asset := range balance.Assets {
+		if asset.Symbol != quote {
+			continue
+		}
+		asset.Capital = asset.Capital.Sub(amount)
+		if asset.Capital.Sign() < 0 {
+			asset.Capital = decimal.Zero
+		}
+		break
+	}
+
+	if balance.reserved == nil {
+		return
+	}
+
+	next := balance.reserved[quote].Sub(amount)
+	if next.Sign() <= 0 {
+		delete(balance.reserved, quote)
+		return
+	}
+	balance.reserved[quote] = next
 }
 
 /*

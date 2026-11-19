@@ -36,7 +36,7 @@ func (fix *gridFixture) observe(
 	open bool,
 	volume, day, spread, book, peak bool,
 ) ([]*Region, error) {
-	return fix.Observe(symbol, sources, open, volume, day, spread, book, peak)
+	return fix.Observe(symbol, sources, open, volume, day, spread, book, peak, true)
 }
 
 func (fix *gridFixture) pulse(
@@ -210,6 +210,7 @@ func TestGridObserve(t *testing.T) {
 				map[string]map[string]float64{},
 				true,
 				true, true, true, true, true,
+				true,
 			)
 
 			So(err, ShouldBeNil)
@@ -223,6 +224,7 @@ func TestGridObserve(t *testing.T) {
 				map[string]map[string]float64{},
 				false,
 				false, false, false, false, false,
+				true,
 			)
 			So(err, ShouldBeNil)
 			So(vetoFix.byKey(vetoes, 9).Brightness, ShouldEqual, deskBoolBoost)
@@ -237,12 +239,31 @@ func TestGridObserve(t *testing.T) {
 				map[string]map[string]float64{},
 				false,
 				true, true, true, true, true,
+				true,
 			)
 			So(err, ShouldBeNil)
 			So(okFix.byKey(ok, 10).Brightness, ShouldEqual, deskBoolBoost)
 			So(okFix.byKey(ok, 9), ShouldBeNil)
 			So(okFix.byKey(ok, 24).Brightness, ShouldEqual, deskBoolBoost)
 			So(okFix.byKey(ok, 23), ShouldBeNil)
+		})
+
+		Convey("Unknown peak does not force a desk peak lamp", func() {
+			fix := newGridFixture()
+			regions, err := fix.Observe(
+				"PEAK/USD",
+				map[string]map[string]float64{},
+				false,
+				true, true, true, true, false,
+				false,
+			)
+			So(err, ShouldBeNil)
+			// Idle fail-closed may still emit key 23 at brightness 0 — that does
+			// not seal oracleAllows. deskBoolBoost must not appear.
+			peakVeto := fix.byKey(regions, 23)
+			So(peakVeto, ShouldNotBeNil)
+			So(peakVeto.Brightness, ShouldEqual, 0)
+			So(fix.byKey(regions, 24), ShouldBeNil)
 		})
 
 		Convey("Idle metric oracles fail closed to veto", func() {
@@ -252,6 +273,7 @@ func TestGridObserve(t *testing.T) {
 				map[string]map[string]float64{},
 				false,
 				true, true, true, true, true,
+				true,
 			)
 
 			So(err, ShouldBeNil)
@@ -290,6 +312,7 @@ func TestGridObserve(t *testing.T) {
 				map[string]map[string]float64{},
 				false,
 				true, true, true, true, true,
+				true,
 			)
 			So(err, ShouldBeNil)
 			So(fix.byKey(held, 18), ShouldNotBeNil)
@@ -314,6 +337,7 @@ func TestGridObserve(t *testing.T) {
 				},
 				false,
 				true, true, true, true, true,
+				true,
 			)
 			So(err, ShouldBeNil)
 			So(fix.byKey(quiet, 17).Brightness, ShouldEqual, 0)

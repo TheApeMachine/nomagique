@@ -173,7 +173,8 @@ var Catalog = Regimes{
 	{
 		Key: 14, Category: "tight_touch", Kind: "oracle", Phase: "spread", Side: "approve",
 		Metrics: []Metric{
-			{"desk", "spread_pct"},
+			// Rising spread_tight (−spread_pct) = tighter touch, not a blowout.
+			{"desk", "spread_tight"},
 		},
 	},
 
@@ -255,7 +256,8 @@ var Catalog = Regimes{
 	{
 		Key: 24, Category: "range_room", Kind: "oracle", Phase: "peak", Side: "approve",
 		Metrics: []Metric{
-			{"desk", "peak_frac"},
+			// Rising peak_room (1−peak_frac) = more room under the 24h high.
+			{"desk", "peak_room"},
 		},
 	},
 }

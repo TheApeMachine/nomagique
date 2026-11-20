@@ -31,7 +31,10 @@ type IgnitionInput struct {
 	Last   float64
 	Bid    float64
 	Ask    float64
-	At     time.Time
+	// BuyVolume / SellVolume split the print for volume-clock VPIN (Easley).
+	BuyVolume  float64
+	SellVolume float64
+	At         time.Time
 }
 
 /*
@@ -68,6 +71,7 @@ type IgnitionOutput struct {
 	Exhaustion  float64            `json:"exhaustion"`
 	Strength    float64            `json:"strength"`
 	Category    float64            `json:"category"`
+	VPIN        float64            `json:"vpin"`
 	Buy         IgnitionSideOutput `json:"buy"`
 	Sell        IgnitionSideOutput `json:"sell"`
 }
@@ -88,6 +92,7 @@ func (output *IgnitionOutput) Map() map[string]float64 {
 		"ignition":    output.Ignition,
 		"trend":       output.Trend,
 		"exhaustion":  output.Exhaustion,
+		"vpin":        output.VPIN,
 		"value":       output.Value,
 		"strength":    output.Strength,
 	}

@@ -49,29 +49,32 @@ func FrameFill(frame *Frame, side flow.Side, quantity float64) {
 }
 
 /*
-FrameCancel records withdrawn quantity, tagging touch cancels for bluff churn.
+FrameCancel records withdrawn quantity. nearWeight ∈ [0,1] scales how much
+counts as near-touch churn (1 at touch, decaying with mid distance — Fabre).
 */
 func FrameCancel(
 	frame *Frame,
 	side flow.Side,
 	quantity float64,
-	touch bool,
+	nearWeight float64,
 ) {
+	if nearWeight < 0 {
+		nearWeight = 0
+	}
+	if nearWeight > 1 {
+		nearWeight = 1
+	}
+
+	near := quantity * nearWeight
+
 	if side == flow.SideBid {
 		frame.cancelBid += quantity
-
-		if touch {
-			frame.touchCancelBid += quantity
-		}
-
+		frame.touchCancelBid += near
 		return
 	}
 
 	frame.cancelAsk += quantity
-
-	if touch {
-		frame.touchCancelAsk += quantity
-	}
+	frame.touchCancelAsk += near
 }
 
 /*

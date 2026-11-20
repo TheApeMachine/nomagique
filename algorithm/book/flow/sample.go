@@ -402,9 +402,25 @@ func (sample *Sample) features(
 		TouchDepth:          window.touchDepth,
 		BookNotional:        window.bookNotional,
 		TradePressure:       window.tradePressure,
+		EventOFI:            window.eventOFI(),
 		WeightedHistory:     window.weightedHist,
 		Level1History:       window.level1Hist,
 		FlatHistory:         window.flatHist,
 		BookNotionalHistory: window.bookNotionalHist,
 	}, true, nil
+}
+
+/*
+eventOFI is Cont multi-level order-flow imbalance from the latest frame:
+net bid depth change minus net ask depth change, scaled by touch depth.
+Positive = liquidity arriving on bids / leaving asks (buy pressure).
+*/
+func (window *Window) eventOFI() float64 {
+	bidNet := window.frameAddBid - window.touchCancelBid
+	askNet := window.frameAddAsk - window.touchCancelAsk
+	raw := bidNet - askNet
+	if window.touchDepth > 0 {
+		return raw / window.touchDepth
+	}
+	return raw
 }

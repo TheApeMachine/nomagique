@@ -41,6 +41,42 @@ func (window *Window) isTouchPrice(side flow.Side, price float64) bool {
 }
 
 /*
+nearCancelWeight is 1 at touch and decays exponentially with mid distance so
+distant spoof cancels do not inflate bluff churn (Fabre & Challet).
+*/
+func (window *Window) nearCancelWeight(price float64) float64 {
+	if price <= 0 {
+		return 0
+	}
+
+	bid := window.bestBid()
+	ask := window.bestAsk()
+	if bid <= 0 || ask <= 0 || ask <= bid {
+		if window.isTouchPrice(flow.SideBid, price) || window.isTouchPrice(flow.SideAsk, price) {
+			return 1
+		}
+		return 0
+	}
+
+	mid := 0.5 * (bid + ask)
+	if mid <= 0 {
+		return 0
+	}
+
+	spread := ask - bid
+	decay := flow.DecayRate(mid, spread)
+	distance := math.Abs(price-mid) / mid
+	weight := math.Exp(-decay * distance)
+	if weight > 1 {
+		return 1
+	}
+	if weight < 0 {
+		return 0
+	}
+	return weight
+}
+
+/*
 bestBid scans resting bid levels for the highest touch price.
 */
 func (window *Window) bestBid() float64 {

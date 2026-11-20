@@ -50,6 +50,7 @@ type BookflowInput struct {
 	TouchDepth          float64
 	BookNotional        float64
 	TradePressure       float64
+	EventOFI            float64 // Cont frame Δq bid−ask (touch-normalized)
 	WeightedHistory     []float64
 	Level1History       []float64
 	FlatHistory         []float64
@@ -67,6 +68,8 @@ type BookflowOutput struct {
 	SpoofScore           float64 `json:"spoof_score"`
 	ThinScore            float64 `json:"thin_score"`
 	NeutralScore         float64 `json:"neutral_score"`
+	PressureZ            float64 `json:"pressure_z"`
+	EventOFI             float64 `json:"event_ofi"`
 	Category             float64 `json:"category"`
 	Ready                bool    `json:"ready"`
 }
@@ -87,6 +90,8 @@ func (output *BookflowOutput) Map() map[string]float64 {
 		"spoof_score":           output.SpoofScore,
 		"thin_score":            output.ThinScore,
 		"neutral_score":         output.NeutralScore,
+		"pressure_z":            output.PressureZ,
+		"event_ofi":             output.EventOFI,
 		"hypothesis_separation": output.HypothesisSeparation,
 		"value":                 output.Value,
 	}
@@ -218,9 +223,38 @@ func (bookflow *Bookflow) Measure(input BookflowInput) (BookflowOutput, error) {
 		SpoofScore:           spoofScore,
 		ThinScore:            thinScore,
 		NeutralScore:         neutralScore,
+		PressureZ:            bookflowPressureZ(input.Weighted, input.WeightedHistory),
+		EventOFI:             input.EventOFI,
 		Category:             float64(category),
 		Ready:                true,
 	}, nil
+}
+
+/*
+bookflowPressureZ is Bolz-style book-pressure z-score vs recent weighted imbalance.
+*/
+func bookflowPressureZ(current float64, history []float64) float64 {
+	if len(history) < minBookGateHistory {
+		return 0
+	}
+
+	mean := 0.0
+	for _, v := range history {
+		mean += v
+	}
+	mean /= float64(len(history))
+
+	var sumSq float64
+	for _, v := range history {
+		d := v - mean
+		sumSq += d * d
+	}
+	std := math.Sqrt(sumSq / float64(len(history)))
+	if std <= 1e-12 {
+		return 0
+	}
+
+	return (current - mean) / std
 }
 
 /*

@@ -12,6 +12,8 @@ import (
 
 /*
 Decision is one symbol's model/desk outcome for a tick: action taken or why not.
+Leaf evidence (Count/Wins/Mean/M2) accumulates on settled path proofs so paper
+promotion requires sample size and significance, not a single lucky win.
 */
 type Decision struct {
 	Symbol     string  `json:"symbol"`
@@ -21,6 +23,10 @@ type Decision struct {
 	Path       string  `json:"path,omitempty"`
 	Tier       string  `json:"tier,omitempty"`
 	Resistance float64 `json:"resistance,omitempty"`
+	Count      int     `json:"count,omitempty"`
+	Wins       int     `json:"wins,omitempty"`
+	MeanPnLPct float64 `json:"mean_pnl_pct,omitempty"`
+	M2         float64 `json:"m2,omitempty"`
 }
 
 /*

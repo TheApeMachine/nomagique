@@ -25,9 +25,12 @@ type ignitionWindow struct {
 	lastTime    time.Time
 	haveTime    bool
 	barVolume   float64
+	barBuy      float64
+	barSell     float64
 	barOpenTime time.Time
 	prevClose   float64
 	lastRVOL    float64
+	lastVPIN    float64
 
 	deltas     []float64
 	rates      []float64
@@ -56,6 +59,8 @@ func (window *ignitionWindow) observe(
 		window.lastTime = input.At
 		window.barOpenTime = input.At
 		window.barVolume = input.Volume
+		window.barBuy = input.BuyVolume
+		window.barSell = input.SellVolume
 		window.deltas = window.appendPositive(window.deltas, input.Volume)
 		window.haveTime = !input.At.IsZero()
 		window.spreads = window.appendPositive(window.spreads, spread)
@@ -92,9 +97,12 @@ func (window *ignitionWindow) clone() *ignitionWindow {
 		lastTime:    window.lastTime,
 		haveTime:    window.haveTime,
 		barVolume:   window.barVolume,
+		barBuy:      window.barBuy,
+		barSell:     window.barSell,
 		barOpenTime: window.barOpenTime,
 		prevClose:   window.prevClose,
 		lastRVOL:    window.lastRVOL,
+		lastVPIN:    window.lastVPIN,
 		deltas:      append([]float64(nil), window.deltas...),
 		rates:       append([]float64(nil), window.rates...),
 		returns:     append([]float64(nil), window.returns...),
@@ -116,9 +124,12 @@ func (window *ignitionWindow) restore(candidate *ignitionWindow) {
 	window.lastTime = candidate.lastTime
 	window.haveTime = candidate.haveTime
 	window.barVolume = candidate.barVolume
+	window.barBuy = candidate.barBuy
+	window.barSell = candidate.barSell
 	window.barOpenTime = candidate.barOpenTime
 	window.prevClose = candidate.prevClose
 	window.lastRVOL = candidate.lastRVOL
+	window.lastVPIN = candidate.lastVPIN
 	window.deltas = candidate.deltas
 	window.rates = candidate.rates
 	window.returns = candidate.returns
@@ -143,6 +154,8 @@ func (window *ignitionWindow) advance(input IgnitionInput, spread float64) error
 
 	barTarget, targetReady := statistic.MedianOf(window.deltas)
 	window.barVolume += input.Volume
+	window.barBuy += input.BuyVolume
+	window.barSell += input.SellVolume
 
 	if !targetReady || barTarget <= 0 || window.barVolume < barTarget ||
 		!window.haveTime || !input.At.After(window.barOpenTime) {
@@ -155,6 +168,8 @@ func (window *ignitionWindow) advance(input IgnitionInput, spread float64) error
 		input.Last,
 		input.At,
 		window.barVolume,
+		window.barBuy,
+		window.barSell,
 		spread,
 	); err != nil {
 		return err
@@ -162,6 +177,8 @@ func (window *ignitionWindow) advance(input IgnitionInput, spread float64) error
 
 	window.deltas = window.appendPositive(window.deltas, input.Volume)
 	window.barVolume = 0
+	window.barBuy = 0
+	window.barSell = 0
 
 	return nil
 }
@@ -172,7 +189,7 @@ closeBar scores an empirical volume bar, then retains it for later baselines.
 func (window *ignitionWindow) closeBar(
 	closePrice float64,
 	at time.Time,
-	barVolume float64,
+	barVolume, barBuy, barSell float64,
 	spread float64,
 ) error {
 	priceMove := math.Log(closePrice / window.prevClose)
@@ -187,6 +204,10 @@ func (window *ignitionWindow) closeBar(
 	}
 
 	barRate := barVolume / duration
+	gross := barBuy + barSell
+	if gross > 0 {
+		window.lastVPIN = math.Abs(barBuy-barSell) / gross
+	}
 
 	if err := window.score(barRate, priceMove, spread); err != nil {
 		return err
@@ -307,6 +328,7 @@ func (window *ignitionWindow) score(
 		Exhaustion:  buy.Exhaustion,
 		Strength:    buy.Strength,
 		Category:    buy.Category,
+		VPIN:        window.lastVPIN,
 		Buy:         buy,
 		Sell:        sell,
 	}

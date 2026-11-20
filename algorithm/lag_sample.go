@@ -237,24 +237,33 @@ func (sample *LagSample) retain(
 }
 
 /*
-peer copies one eligible reference path. BTC/USD wins when it is eligible;
-otherwise the lexicographically first eligible symbol is the peer.
+peer copies the strongest eligible reference path by absolute contemporaneous
+Hayashi correlation (dynamic leader, not a hardcoded BTC/USD anchor).
 The caller must not hold symbol.mu: peer locks other symbols.
 */
 func (sample *LagSample) peer(symbol string) ([]correlation.Sample, bool) {
-	const anchor = "BTC/USD"
+	ownRaw, ok := sample.symbols.Load(symbol)
+	if !ok {
+		return nil, false
+	}
+
+	ownSym := ownRaw.(*lagSymbol)
+	ownSym.mu.Lock()
+	own := append([]correlation.Sample(nil), ownSym.samples...)
+	ownSym.mu.Unlock()
+
+	if len(own) < sample.config.MinObs {
+		return nil, false
+	}
 
 	var (
-		bestName   string
-		best       []correlation.Sample
-		anchorPath []correlation.Sample
-		haveBest   bool
-		haveAnchor bool
+		best     []correlation.Sample
+		bestAbs  float64
+		haveBest bool
 	)
 
 	sample.symbols.Range(func(key, untyped any) bool {
 		name := key.(string)
-
 		if name == symbol {
 			return true
 		}
@@ -262,34 +271,29 @@ func (sample *LagSample) peer(symbol string) ([]correlation.Sample, bool) {
 		other := untyped.(*lagSymbol)
 		other.mu.Lock()
 		var copied []correlation.Sample
-
 		if len(other.samples) >= sample.config.MinObs {
 			copied = append([]correlation.Sample(nil), other.samples...)
 		}
-
 		other.mu.Unlock()
 
 		if copied == nil {
 			return true
 		}
 
-		if name == anchor {
-			anchorPath = copied
-			haveAnchor = true
+		corr, ok := HayashiPairCorrelation(copied, own, sample.config.MaxInterval)
+		if !ok {
+			return true
 		}
 
-		if !haveBest || name < bestName {
-			bestName = name
+		abs := math.Abs(corr)
+		if !haveBest || abs > bestAbs {
 			best = copied
+			bestAbs = abs
 			haveBest = true
 		}
 
 		return true
 	})
-
-	if haveAnchor {
-		return anchorPath, true
-	}
 
 	if !haveBest {
 		return nil, false

@@ -164,12 +164,6 @@ func (window *Window) observeLevels(
 	frame *Frame,
 ) {
 	book := window.sideBook(side)
-	priorTouch := window.bestBid()
-
-	if side == flow.SideAsk {
-		priorTouch = window.bestAsk()
-	}
-
 	seen := make(map[float64]struct{}, len(levels))
 
 	for _, level := range levels {
@@ -185,12 +179,14 @@ func (window *Window) observeLevels(
 		}
 
 		delta := level.Quantity - previousQty
-		touch := level.Price == priorTouch
 
 		if level.Quantity <= 0 {
 			book.Delete(level.Price)
 			window.ledger.AddDepth(side, -previousQty)
-			window.attributeRemoval(frame, side, level.Price, previousQty, touch)
+			window.attributeRemoval(
+				frame, side, level.Price, previousQty,
+				window.nearCancelWeight(level.Price),
+			)
 
 			continue
 		}
@@ -205,7 +201,10 @@ func (window *Window) observeLevels(
 		}
 
 		if delta < 0 {
-			window.attributeRemoval(frame, side, level.Price, -delta, touch)
+			window.attributeRemoval(
+				frame, side, level.Price, -delta,
+				window.nearCancelWeight(level.Price),
+			)
 		}
 	}
 
@@ -231,7 +230,9 @@ func (window *Window) observeLevels(
 		book.Delete(price)
 		qty := previous.(float64)
 		window.ledger.AddDepth(side, -qty)
-		window.attributeRemoval(frame, side, price, qty, price == priorTouch)
+		window.attributeRemoval(
+			frame, side, price, qty, window.nearCancelWeight(price),
+		)
 	}
 }
 
@@ -243,7 +244,7 @@ func (window *Window) attributeRemoval(
 	side flow.Side,
 	price float64,
 	quantity float64,
-	touch bool,
+	nearWeight float64,
 ) {
 	if quantity <= 0 {
 		return
@@ -255,7 +256,7 @@ func (window *Window) attributeRemoval(
 		return
 	}
 
-	FrameCancel(frame, side, quantity, touch)
+	FrameCancel(frame, side, quantity, nearWeight)
 }
 
 /*
@@ -299,7 +300,7 @@ func (window *Window) observeOrderEvents(
 			continue
 		}
 
-		removed, touch := window.deleteOrder(side, event.OrderID, event.Price, event.Quantity)
+		removed, orderPrice := window.deleteOrder(side, event.OrderID, event.Price, event.Quantity)
 
 		if removed <= 0 {
 			continue
@@ -311,7 +312,7 @@ func (window *Window) observeOrderEvents(
 			continue
 		}
 
-		FrameCancel(frame, side, removed, touch)
+		FrameCancel(frame, side, removed, window.nearCancelWeight(orderPrice))
 	}
 }
 
@@ -355,7 +356,7 @@ func (window *Window) replaceOrders(
 		}
 
 		order := existing.(Order)
-		removed, touch := window.deleteOrder(side, id, order.price, order.qty)
+		removed, orderPrice := window.deleteOrder(side, id, order.price, order.qty)
 
 		if removed <= 0 {
 			continue
@@ -367,7 +368,7 @@ func (window *Window) replaceOrders(
 			continue
 		}
 
-		FrameCancel(frame, side, removed, touch)
+		FrameCancel(frame, side, removed, window.nearCancelWeight(orderPrice))
 	}
 }
 
@@ -424,14 +425,15 @@ func (window *Window) upsertOrder(
 }
 
 /*
-deleteOrder removes resting quantity and returns touch context for fill versus cancel.
+deleteOrder removes resting quantity and returns the level price used for
+distance-weighted cancel attribution.
 */
 func (window *Window) deleteOrder(
 	side flow.Side,
 	orderID string,
 	price float64,
 	quantity float64,
-) (float64, bool) {
+) (float64, float64) {
 	orders := window.sideOrders(side)
 	book := window.sideBook(side)
 	previous := Order{}
@@ -448,7 +450,6 @@ func (window *Window) deleteOrder(
 		orderPrice = previous.price
 	}
 
-	touch := window.isTouchPrice(side, orderPrice)
 	currentQty := 0.0
 
 	if existing, ok := book.Load(orderPrice); ok {
@@ -466,5 +467,5 @@ func (window *Window) deleteOrder(
 	window.ledger.AddDepth(side, -removed)
 	orders.Delete(orderID)
 
-	return removed, touch
+	return removed, orderPrice
 }

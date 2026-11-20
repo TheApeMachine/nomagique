@@ -107,27 +107,87 @@ func TestCohortSampleConcurrentMeasure(testingTB *testing.T) {
 
 		var wg sync.WaitGroup
 
-		for tick := range 16 {
-			for symbolIndex, symbol := range symbols {
-				wg.Add(1)
+		for symbolIndex, symbol := range symbols {
+			wg.Add(1)
 
-				go func(tick, symbolIndex int, symbol string) {
-					defer wg.Done()
+			go func(symbolIndex int, symbol string) {
+				defer wg.Done()
 
+				for tick := range 16 {
 					_, _, _ = sample.Measure(cohortSampleTicker(
 						symbol,
 						100+float64(tick)+float64(symbolIndex),
 						base.Add(time.Duration(tick)*time.Second),
 					))
-				}(tick, symbolIndex, symbol)
-			}
+				}
+			}(symbolIndex, symbol)
 		}
 
 		wg.Wait()
 
-		Convey("It should finish without racing the symbols map", func() {
-			So(true, ShouldBeTrue)
+		Convey("It should retain per-symbol price history after concurrent measures", func() {
+			for _, symbol := range symbols {
+				state := sample.symbols[symbol]
+				So(state, ShouldNotBeNil)
+				So(len(state.prices), ShouldBeGreaterThan, 10)
+				So(len(state.returns), ShouldBeGreaterThan, 10)
+			}
 		})
+	})
+}
+
+func TestCohortSampleMeasureManySharesBoard(testingTB *testing.T) {
+	Convey("Given a warmed cohort board", testingTB, func() {
+		sample := NewCohortSample()
+		base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
+		symbols := []string{"ALPHA/USD", "BETA/USD", "GAMMA/USD", "DELTA/USD"}
+
+		for tick := range 4 {
+			inputs := make([]CohortSampleInput, 0, len(symbols))
+
+			for symbolIndex, symbol := range symbols {
+				inputs = append(inputs, cohortSampleTicker(
+					symbol,
+					100+float64(tick*symbolIndex)+float64(tick),
+					base.Add(time.Duration(tick)*time.Second),
+				))
+			}
+
+			frames, err := sample.MeasureMany(inputs)
+			So(err, ShouldBeNil)
+
+			if tick == 3 {
+				Convey("MeasureMany emits a frame per ready symbol", func() {
+					So(len(frames), ShouldBeGreaterThanOrEqualTo, 1)
+
+					for _, frame := range frames {
+						So(frame.Inputs, ShouldResemble, equation.CohortInputKeys)
+						So(frame.Features[0], ShouldBeGreaterThanOrEqualTo, 2)
+					}
+				})
+			}
+		}
+	})
+}
+
+func TestPriceAtCohortForwardFills(testingTB *testing.T) {
+	Convey("priceAtCohort uses the last price at or before the cutoff", testingTB, func() {
+		state := &cohortSymbol{
+			times:  []int64{1_000, 2_000, 3_000},
+			prices: []float64{10, 11, 12},
+		}
+
+		price, ok := priceAtCohort(state, 2_500)
+		So(ok, ShouldBeTrue)
+		So(price, ShouldEqual, 11)
+
+		price, ok = priceAtCohort(state, 500)
+		So(ok, ShouldBeFalse)
+		So(price, ShouldEqual, 0)
+
+		price, ok = priceAtCohort(state, 3_000)
+		So(ok, ShouldBeTrue)
+		So(price, ShouldEqual, 12)
 	})
 }
 

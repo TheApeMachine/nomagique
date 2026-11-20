@@ -41,6 +41,9 @@ type Sample struct {
 	windows map[string]*window
 }
 
+/*
+window retains one symbol's arrival history and observation origin for Hawkes input.
+*/
 type window struct {
 	arrivals *hawkes.ArrivalWindow
 	origin   time.Time
@@ -119,6 +122,9 @@ func (input TradeInput) ArrivalTime() time.Time {
 	return time.Time{}
 }
 
+/*
+window lazily allocates symbol-local arrival retention under Sample's mutex.
+*/
 func (sample *Sample) window(symbol string) *window {
 	sample.mu.RLock()
 	current := sample.windows[symbol]
@@ -141,6 +147,9 @@ func (sample *Sample) window(symbol string) *window {
 	return current
 }
 
+/*
+input packages the bounded arrival stream Process.Measure feeds into fitting.
+*/
 func (window *window) input(symbol string) (Input, bool, error) {
 	stream := window.arrivals.Stream()
 	observedFrom, horizon, ok := stream.Bounds()

@@ -11,12 +11,20 @@ FitCategory names the dominant Hawkes regime for a fitted process.
 */
 type FitCategory int
 
+/*
+Feeds algorithm/excitation and equation Hawkes stages — FitCategoryOrganic/FitCategoryFrenzy/FitCategorySaturation/FitCategoryExhaustion fits marked trade arrivals into intensities and fit categories.
+*/
+
 const (
 	FitCategoryOrganic FitCategory = iota
 	FitCategoryFrenzy
 	FitCategorySaturation
 	FitCategoryExhaustion
 )
+
+/*
+Feeds algorithm/excitation and equation Hawkes stages — uniformFitConfidence fits marked trade arrivals into intensities and fit categories.
+*/
 
 const uniformFitConfidence = 1.0 / 4.0
 
@@ -36,6 +44,10 @@ func ClassifyFit(
 
 	return classifyFitWithGates(fit, asymmetry, preferY, gates)
 }
+
+/*
+Feeds algorithm/excitation and equation Hawkes stages — classifyFitWithGates fits marked trade arrivals into intensities and fit categories.
+*/
 
 func classifyFitWithGates(
 	fit BivariateFit,

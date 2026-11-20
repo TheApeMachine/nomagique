@@ -141,6 +141,9 @@ func (process *Process) Measure(input Input) (Outcome, bool, error) {
 	return outcome, ready, nil
 }
 
+/*
+symbol returns per-market Hawkes state, creating it on first excitation measure.
+*/
 func (process *Process) symbol(symbolName string) *symbol {
 	process.mu.RLock()
 	model := process.symbols[symbolName]

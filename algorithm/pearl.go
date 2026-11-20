@@ -254,6 +254,9 @@ func (output PearlOutput) Outputs() map[string]any {
 	}
 }
 
+/*
+(…).evidenceStrength supports algorithm sampling that supplies equation inputs symm maps into runtime.Envelope.
+*/
 func (output PearlOutput) evidenceStrength() float64 {
 	return math.Max(
 		output.AssociationScore,
@@ -261,6 +264,9 @@ func (output PearlOutput) evidenceStrength() float64 {
 	)
 }
 
+/*
+(…).invertedValue supports algorithm sampling that supplies equation inputs symm maps into runtime.Envelope.
+*/
 func (output PearlOutput) invertedValue() float64 {
 	if output.Inverted {
 		return 1

@@ -108,6 +108,10 @@ func (solver *RidgeSolver) Solve(normal [][]float64, vector []float64) ([]float6
 	return out, nil
 }
 
+/*
+flattenRegularizedSquare packs the normal matrix and adds lambda on the diagonal
+for the dense linear solve path used after conditioning estimates.
+*/
 func flattenRegularizedSquare(matrix [][]float64, lambda float64) []float64 {
 	size := len(matrix)
 	flat := make([]float64, size*size)
@@ -173,6 +177,10 @@ func (solver *RidgeSolver) ridgeLambda(normal [][]float64) float64 {
 	return floor + base*fraction
 }
 
+/*
+machineSqrtEpsilon derives a stable sqrt(epsilon) floor for ridgeLambda so
+regularization tracks float64 resolution rather than a magic constant.
+*/
 func machineSqrtEpsilon() float64 {
 	radicand := math.Nextafter(1, 2) - 1
 	scale := math.Max(1, math.Abs(radicand))
@@ -185,6 +193,10 @@ func machineSqrtEpsilon() float64 {
 	return math.Sqrt(math.Max(0, radicand))
 }
 
+/*
+conditionEstimate bounds normal-matrix ill-conditioning from diagonal scale and
+off-diagonal coupling so ridgeLambda can escalate damping before Cholesky fails.
+*/
 func (solver *RidgeSolver) conditionEstimate(normal [][]float64) float64 {
 	size := len(normal)
 

@@ -13,6 +13,10 @@ type Compression struct {
 	series map[string]*compressionSeries
 }
 
+/*
+compressionSeries holds per-series baseline state so MeasureSeries can tell
+a true first sample from a later drawdown without re-seeding on zero.
+*/
 type compressionSeries struct {
 	initialized bool
 	baseline    float64

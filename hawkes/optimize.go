@@ -8,10 +8,18 @@ import (
 	"gonum.org/v1/gonum/optimize"
 )
 
+/*
+Feeds algorithm/excitation and equation Hawkes stages — lbfgsMemory/lbfgsMajorIterations fits marked trade arrivals into intensities and fit categories.
+*/
+
 const (
 	lbfgsMemory          = 12
 	lbfgsMajorIterations = 80
 )
+
+/*
+Feeds algorithm/excitation and equation Hawkes stages — maximizeLikelihoodRestricted fits marked trade arrivals into intensities and fit categories.
+*/
 
 func (estimator *BivariateEstimator) maximizeLikelihoodRestricted(
 	stream ArrivalStream,
@@ -65,6 +73,9 @@ func (estimator *BivariateEstimator) maximizeLikelihoodRestricted(
 		&optimize.Settings{
 			GradientThreshold: 1e-6,
 			MajorIterations:   lbfgsMajorIterations,
+			// Keep L-BFGS single-threaded: Concurrent>1 spawns channel workers
+			// per fit and shows up as optimize.minimize contentions under load.
+			Concurrent: 1,
 		},
 		&optimize.LBFGS{Store: lbfgsMemory},
 	)
@@ -81,6 +92,10 @@ func (estimator *BivariateEstimator) maximizeLikelihoodRestricted(
 
 	return fit.WithIntensitiesAt(stream, horizon)
 }
+
+/*
+Feeds algorithm/excitation and equation Hawkes stages — negLogLikelihoodRestricted fits marked trade arrivals into intensities and fit categories.
+*/
 
 func (estimator *BivariateEstimator) negLogLikelihoodRestricted(
 	free []float64,
@@ -104,6 +119,10 @@ func (estimator *BivariateEstimator) negLogLikelihoodRestricted(
 
 	return -logLikelihood, fit, true
 }
+
+/*
+Feeds algorithm/excitation and equation Hawkes stages — negLogLikelihoodGradRestricted fits marked trade arrivals into intensities and fit categories.
+*/
 
 func (estimator *BivariateEstimator) negLogLikelihoodGradRestricted(
 	free []float64,
@@ -135,6 +154,10 @@ func (estimator *BivariateEstimator) negLogLikelihoodGradRestricted(
 	return -logLikelihood, negGrad, true
 }
 
+/*
+Feeds algorithm/excitation and equation Hawkes stages — multiStartSeeds fits marked trade arrivals into intensities and fit categories.
+*/
+
 func (estimator *BivariateEstimator) multiStartSeeds(
 	context FitContext,
 ) [][bivariateParamCount]float64 {
@@ -161,7 +184,10 @@ func (estimator *BivariateEstimator) multiStartSeeds(
 
 	if estimator.prior.Valid() {
 		if priorSeed, ok := logParamsFromFit(estimator.prior); ok {
-			seeds = append(seeds, priorSeed)
+			// Warm start: prior + base only. LocalScales multi-start is for
+			// cold fits; under tick load it multiplies L-BFGS channel workers.
+			seeds = append(seeds, priorSeed, baseLog)
+			return seeds
 		}
 	}
 
@@ -178,6 +204,10 @@ func (estimator *BivariateEstimator) multiStartSeeds(
 
 	return seeds
 }
+
+/*
+Feeds algorithm/excitation and equation Hawkes stages — logParamsFromFit fits marked trade arrivals into intensities and fit categories.
+*/
 
 func logParamsFromFit(fit BivariateFit) ([bivariateParamCount]float64, bool) {
 	beta := fit.Beta

@@ -2,6 +2,7 @@ package algorithm
 
 import (
 	"math"
+	"sort"
 	"sync"
 
 	"github.com/theapemachine/errnie"
@@ -16,6 +17,9 @@ type MorphologySample struct {
 	windows *sync.Map
 }
 
+/*
+morphologyWindow holds per-symbol sampling state that feeds equation Measure and Map outputs into resonance features.
+*/
 type morphologyWindow struct {
 	mu              sync.Mutex
 	prevBook        []equation.MorphologyPoint
@@ -70,17 +74,14 @@ func (sample *MorphologySample) MeasureBook(
 		return equation.MorphologyInput{}, false, nil
 	}
 
+	sort.Slice(bids, func(i, j int) bool {
+		return bids[i].Price > bids[j].Price
+	})
+	sort.Slice(asks, func(i, j int) bool {
+		return asks[i].Price < asks[j].Price
+	})
+
 	bestBid, bestAsk := bids[0].Price, asks[0].Price
-	for _, level := range bids {
-		if level.Price > bestBid {
-			bestBid = level.Price
-		}
-	}
-	for _, level := range asks {
-		if level.Price < bestAsk {
-			bestAsk = level.Price
-		}
-	}
 	if bestAsk <= bestBid {
 		return equation.MorphologyInput{}, false, nil
 	}
@@ -129,6 +130,9 @@ func (sample *MorphologySample) MeasureBook(
 	}, true, nil
 }
 
+/*
+askTopNotional supports algorithm sampling that supplies equation inputs symm maps into runtime.Envelope.
+*/
 func askTopNotional(asks []equation.MorphologyLevel) float64 {
 	top3 := 0.0
 	for index := 0; index < len(asks) && index < 3; index++ {
@@ -137,6 +141,9 @@ func askTopNotional(asks []equation.MorphologyLevel) float64 {
 	return top3
 }
 
+/*
+(…).window supports algorithm sampling that supplies equation inputs symm maps into runtime.Envelope.
+*/
 func (sample *MorphologySample) window(symbol string) *morphologyWindow {
 	if existing, ok := sample.windows.Load(symbol); ok {
 		return existing.(*morphologyWindow)

@@ -8,6 +8,9 @@ import (
 	"github.com/theapemachine/errnie"
 )
 
+/*
+levelOp records one validated level mutation so commit can attribute touch cancels and adds.
+*/
 type levelOp struct {
 	tick     int64
 	quantity float64
@@ -15,6 +18,9 @@ type levelOp struct {
 	touch    bool
 }
 
+/*
+prepare validates a side batch before any resting state changes.
+*/
 func (sideBook *SideBook) prepare(levels []BookLevel) ([]levelOp, error) {
 	ops := make([]levelOp, 0, len(levels))
 
@@ -45,10 +51,51 @@ func (sideBook *SideBook) prepare(levels []BookLevel) ([]levelOp, error) {
 	return ops, nil
 }
 
+/*
+prepareSnapshot validates a full side image and deletes ticks the image omits.
+*/
+func (sideBook *SideBook) prepareSnapshot(levels []BookLevel) ([]levelOp, error) {
+	ops, err := sideBook.prepare(levels)
+
+	if err != nil {
+		return nil, err
+	}
+
+	seen := make(map[int64]struct{}, len(ops))
+
+	for _, op := range ops {
+		seen[op.tick] = struct{}{}
+	}
+
+	for tick, quantity := range sideBook.levels {
+		if _, ok := seen[tick]; ok {
+			continue
+		}
+
+		ops = append(ops, levelOp{
+			tick:     tick,
+			quantity: 0,
+			previous: quantity,
+			touch:    sideBook.isTouchTick(tick),
+		})
+	}
+
+	return ops, nil
+}
+
+/*
+commit applies prepared ops atomically and accumulates touch cancel/add frame metrics.
+*/
 func (sideBook *SideBook) commit(ops []levelOp) Frame {
 	frame := Frame{}
 
 	for _, op := range ops {
+		if op.quantity == op.previous {
+			continue
+		}
+
+		frame.changed = true
+
 		if op.quantity == 0 {
 			if op.previous > 0 {
 				sideBook.remove(op.tick, op.previous)
@@ -92,6 +139,9 @@ func (sideBook *SideBook) Apply(levels []BookLevel, tickSize float64) (Frame, er
 	return sideBook.commit(ops), nil
 }
 
+/*
+upsert maintains ordered ticks, depth, and best touch after a quantity change.
+*/
 func (sideBook *SideBook) upsert(tick int64, previous, quantity float64) {
 	if previous == 0 {
 		sideBook.ordered = append(sideBook.ordered, tick)
@@ -103,6 +153,9 @@ func (sideBook *SideBook) upsert(tick int64, previous, quantity float64) {
 	sideBook.refreshBest()
 }
 
+/*
+remove drops a level and refreshes best when liquidity leaves the book.
+*/
 func (sideBook *SideBook) remove(tick int64, previous float64) {
 	delete(sideBook.levels, tick)
 	sideBook.depth -= previous
@@ -120,6 +173,9 @@ func (sideBook *SideBook) remove(tick int64, previous float64) {
 	sideBook.refreshBest()
 }
 
+/*
+sortOrdered keeps bids high-to-low and asks low-to-high so touch is always index zero.
+*/
 func (sideBook *SideBook) sortOrdered() {
 	if sideBook.side == SideBid {
 		sort.Slice(sideBook.ordered, func(left, right int) bool {
@@ -134,6 +190,9 @@ func (sideBook *SideBook) sortOrdered() {
 	})
 }
 
+/*
+refreshBest updates cached touch tick after level map changes.
+*/
 func (sideBook *SideBook) refreshBest() {
 	if len(sideBook.ordered) == 0 {
 		sideBook.hasBest = false
@@ -232,16 +291,25 @@ func (sideBook *SideBook) Len() int {
 	return len(sideBook.levels)
 }
 
+/*
+bestTick exposes the cached touch index for imbalance and toxicity gating.
+*/
 func (sideBook *SideBook) bestTick() (int64, bool) {
 	return sideBook.best, sideBook.hasBest
 }
 
+/*
+isTouchTick marks whether a mutation happened at the current touch for frame attribution.
+*/
 func (sideBook *SideBook) isTouchTick(tick int64) bool {
 	bestTick, ok := sideBook.bestTick()
 
 	return ok && bestTick == tick
 }
 
+/*
+parseTickSize converts economic tick size to exact rationals so lattice changes are comparable.
+*/
 func parseTickSize(tickSize float64) (*big.Rat, error) {
 	if tickSize <= 0 || math.IsNaN(tickSize) || math.IsInf(tickSize, 0) {
 		return nil, errnie.Error(errnie.Err(

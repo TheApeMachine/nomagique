@@ -9,6 +9,10 @@ import (
 	"github.com/theapemachine/nomagique/probability"
 )
 
+/*
+errNoBookQualityCategory separates an honest neutral reading from validation
+failures so Measure can emit price-only output without alarming resonance logic.
+*/
 var errNoBookQualityCategory = errors.New("no book quality category matched")
 
 /*
@@ -138,12 +142,20 @@ func (bookQuality *BookQuality) Measure(
 	}, nil
 }
 
+/*
+neutral preserves executable price when no bluff, vacuum, or support story wins,
+keeping the Map wire shape stable for empty-feature ticks.
+*/
 func (bookQuality *BookQuality) neutral(lastPrice float64) BookQualityOutput {
 	return BookQualityOutput{
 		Price: lastPrice,
 	}
 }
 
+/*
+classifyBookQuality ranks cancel/fill and depth evidence so bluff, vacuum, and
+support scores exported via Map match what algorithm/book/quality sampled.
+*/
 func classifyBookQuality(
 	cancelBid, fillBid, cancelAsk, fillAsk float64,
 	bidDepth, askDepth float64,
@@ -161,6 +173,28 @@ func classifyBookQuality(
 		return 1, toxicBluffStrength, bluffScore, 0, 0, nil
 	}
 
+	// Cancels with no fills are pure liquidity pulls — maximal vacuum, not
+	// "no category". Cap strength so downstream classifiers stay finite.
+	if (cancelBid > 0 && fillBid <= 0) || (cancelAsk > 0 && fillAsk <= 0) {
+		strength := 1.0
+
+		if vacuumStrengthCap > 0 {
+			strength = math.Min(strength, vacuumStrengthCap)
+		}
+
+		vacuumScore, err = probability.MagnitudeMargin(math.Max(cancelBid, cancelAsk))
+
+		if err != nil {
+			return 0, 0, 0, 0, 0, err
+		}
+
+		if vacuumStrengthCap > 0 {
+			vacuumScore = math.Min(vacuumScore, vacuumStrengthCap)
+		}
+
+		return 2, strength, 0, vacuumScore, 0, nil
+	}
+
 	bidRatio := 0.0
 
 	if cancelBid > 0 && fillBid > 0 {
@@ -171,10 +205,6 @@ func classifyBookQuality(
 		}
 	}
 
-	if cancelBid > 0 && fillBid <= 0 {
-		return 0, 0, 0, 0, 0, errNoBookQualityCategory
-	}
-
 	askRatio := 0.0
 
 	if cancelAsk > 0 && fillAsk > 0 {
@@ -183,10 +213,6 @@ func classifyBookQuality(
 		if err != nil {
 			return 0, 0, 0, 0, 0, err
 		}
-	}
-
-	if cancelAsk > 0 && fillAsk <= 0 {
-		return 0, 0, 0, 0, 0, errNoBookQualityCategory
 	}
 
 	maxRatio := math.Max(bidRatio, askRatio)
@@ -255,6 +281,10 @@ func classifyBookQuality(
 	return 0, 0, 0, 0, 0, errNoBookQualityCategory
 }
 
+/*
+toxicBluffEvidence scales churn into a bounded margin so bluff_score does not
+dominate resonance when the gate is still widening.
+*/
 func toxicBluffEvidence(churnRatio, churnGate float64) (float64, error) {
 	if churnRatio <= 0 {
 		return 0, fmt.Errorf("churn ratio must be positive")

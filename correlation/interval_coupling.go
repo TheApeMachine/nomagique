@@ -2,6 +2,10 @@ package correlation
 
 import "math"
 
+/*
+intervalCorrelationSlices combines realized variances with overlap covariance
+so interval-based series correlate when returns live on distinct time spans.
+*/
 func intervalCorrelationSlices(
 	leftStarts, leftEnds, leftRets,
 	rightStarts, rightEnds, rightRets []float64,
@@ -27,6 +31,10 @@ func intervalCorrelationSlices(
 	return correlation, true
 }
 
+/*
+realizedVariance sums squared returns as the Hayashi-style variance term when
+means are implicit in log-return products.
+*/
 func realizedVariance(rets []float64) float64 {
 	total := 0.0
 
@@ -37,6 +45,10 @@ func realizedVariance(rets []float64) float64 {
 	return total
 }
 
+/*
+intervalCovariance walks overlapping time windows between two interval series,
+advancing a sliding right index so complexity stays linear in event count.
+*/
 func intervalCovariance(
 	leftStarts, leftEnds, leftRets,
 	rightStarts, rightEnds, rightRets []float64,

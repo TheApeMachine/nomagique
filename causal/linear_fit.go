@@ -10,6 +10,9 @@ import (
 	"gonum.org/v1/gonum/stat"
 )
 
+/*
+Transitive causal layer from symm — (…).treatmentIdentifiable estimates do/backdoor effects on tabular desk features.
+*/
 func (nodeTable nodeTable) treatmentIdentifiable(
 	treatment int,
 	controls ...int,
@@ -67,6 +70,10 @@ func (nodeTable nodeTable) treatmentIdentifiable(
 	return nil
 }
 
+/*
+Transitive causal layer from symm — standardizedRank estimates do/backdoor and counterfactual effects on desk tables.
+*/
+
 func standardizedRank(columns ...[]float64) (int, error) {
 	if len(columns) == 0 {
 		return 0, nil
@@ -115,6 +122,10 @@ func standardizedRank(columns ...[]float64) (int, error) {
 	return decomposition.Rank(tolerance), nil
 }
 
+/*
+Transitive causal layer from symm — backdoorDenominator estimates do/backdoor and counterfactual effects on desk tables.
+*/
+
 func backdoorDenominator(residualNorm float64) (float64, error) {
 	if residualNorm <= 0 {
 		return 0, io.EOF
@@ -130,6 +141,10 @@ func backdoorDenominator(residualNorm float64) (float64, error) {
 
 	return residualNorm, nil
 }
+
+/*
+Transitive causal layer from symm — olsFit estimates do/backdoor and counterfactual effects on desk tables.
+*/
 
 func olsFit(target []float64, predictors ...[]float64) ([]float64, error) {
 	if len(target) < 2 {
@@ -261,6 +276,10 @@ func olsFit(target []float64, predictors ...[]float64) ([]float64, error) {
 	return coefficients, nil
 }
 
+/*
+Transitive causal layer from symm — residualize estimates do/backdoor and counterfactual effects on desk tables.
+*/
+
 func residualize(target []float64, controls ...[]float64) ([]float64, error) {
 	if len(controls) == 0 {
 		return append([]float64(nil), target...), nil
@@ -287,6 +306,10 @@ func residualize(target []float64, controls ...[]float64) ([]float64, error) {
 	return residuals, nil
 }
 
+/*
+Transitive causal layer from symm — vectorDot estimates do/backdoor and counterfactual effects on desk tables.
+*/
+
 func vectorDot(left, right []float64) (float64, error) {
 	if len(left) != len(right) {
 		return 0, errnie.Error(errnie.Err(
@@ -298,6 +321,10 @@ func vectorDot(left, right []float64) (float64, error) {
 
 	return floats.Dot(left, right), nil
 }
+
+/*
+Transitive causal layer from symm — pairConditionNumber estimates do/backdoor and counterfactual effects on desk tables.
+*/
 
 func pairConditionNumber(left, right []float64) (float64, error) {
 	if len(left) != len(right) || len(left) == 0 {

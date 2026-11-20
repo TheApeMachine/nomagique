@@ -87,6 +87,10 @@ func NewClassifierWeights(
 	}, nil
 }
 
+/*
+balancedTermWeights inverts feature scales so each logit term contributes equal
+variance regardless of unit (bps vs ratio).
+*/
 func balancedTermWeights(
 	terms []string,
 	scales map[string]float64,
@@ -120,10 +124,18 @@ func balancedTermWeights(
 	return weights, nil
 }
 
+/*
+FeatureScales returns a defensive copy so desk tuning cannot mutate the scales
+the balanced weights were derived from.
+*/
 func (weights *ClassifierWeights) FeatureScales() map[string]float64 {
 	return cloneScales(weights.scales)
 }
 
+/*
+positiveScale rejects missing or non-positive scales before they invert into
+inf weights.
+*/
 func positiveScale(scale float64, name string) (float64, error) {
 	if scale <= 0 || math.IsNaN(scale) || math.IsInf(scale, 0) {
 		return 0, errnie.Error(fmt.Errorf(
@@ -149,6 +161,9 @@ func (weights *ClassifierWeights) Scores(features map[string]float64) []float64 
 	return scores
 }
 
+/*
+outputScore sums normalized, optionally inverted terms for one configured output.
+*/
 func (weights *ClassifierWeights) outputScore(
 	outputKey string,
 	features map[string]float64,
@@ -186,6 +201,10 @@ func (weights *ClassifierWeights) Strength(features map[string]float64) float64 
 	return weights.outputScore(weights.outputs[0], features)
 }
 
+/*
+normalizeFeature divides by the feature scale then squashes so outlier ticks
+cannot dominate the logit.
+*/
 func normalizeFeature(value, scale float64) float64 {
 	ratio := value
 
@@ -196,6 +215,10 @@ func normalizeFeature(value, scale float64) float64 {
 	return squashFeature(ratio)
 }
 
+/*
+squashFeature is a soft sign bound — keeps logits in (−1,1) without killing
+gradient at typical feature magnitudes.
+*/
 func squashFeature(value float64) float64 {
 	if math.IsNaN(value) || math.IsInf(value, 0) {
 		return math.NaN()
@@ -204,6 +227,10 @@ func squashFeature(value float64) float64 {
 	return value / (1.0 + math.Abs(value))
 }
 
+/*
+clamp keeps derived term weights inside scale-aware bounds when desk feedback
+retunes coefficients.
+*/
 func (weights *ClassifierWeights) clamp() error {
 	floor, ceiling, err := weightBounds(weights.scales)
 
@@ -224,6 +251,10 @@ func (weights *ClassifierWeights) clamp() error {
 	return nil
 }
 
+/*
+weightBounds derives floor/ceiling from the spread of feature scales so one
+tiny-scale metric cannot own the entire logit.
+*/
 func weightBounds(scales map[string]float64) (float64, float64, error) {
 	minScale := math.MaxFloat64
 	maxScale := 0.0
@@ -248,10 +279,16 @@ func weightBounds(scales map[string]float64) (float64, float64, error) {
 	return floor, ceiling, nil
 }
 
+/*
+clamp is the shared interval projector for weight retuning.
+*/
 func clamp(value, lower, upper float64) float64 {
 	return math.Min(math.Max(value, lower), upper)
 }
 
+/*
+cloneScales copies the scale map so exported views cannot alias internal state.
+*/
 func cloneScales(scales map[string]float64) map[string]float64 {
 	clone := make(map[string]float64, len(scales))
 

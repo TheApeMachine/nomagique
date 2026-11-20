@@ -5,6 +5,9 @@ import (
 	"time"
 )
 
+/*
+Feeds algorithm/excitation and equation Hawkes stages — bivariateParamCount turns marked trade arrivals into fitted intensities and categories.
+*/
 const bivariateParamCount = 7
 
 /*
@@ -35,6 +38,10 @@ type FitContext struct {
 	BranchCrossCandidates []float64
 	LocalScales           []float64
 }
+
+/*
+Feeds algorithm/excitation and equation Hawkes stages — arrivalTune fits marked trade arrivals into intensities and fit categories.
+*/
 
 type arrivalTune struct {
 	totalEvents int
@@ -130,6 +137,10 @@ func NewObservationContext(stream ArrivalStream, horizon time.Time) (FitContext,
 		BranchCeiling:   tune.branchCeiling(),
 	}, true
 }
+
+/*
+Feeds algorithm/excitation and equation Hawkes stages — withSearchGrid fits marked trade arrivals into intensities and fit categories.
+*/
 
 func (context FitContext) withSearchGrid() (FitContext, bool) {
 	tune := arrivalTune{
@@ -240,6 +251,9 @@ func (context FitContext) PoissonFit() BivariateFit {
 CrossBranchCap returns the cross-excitation ceiling given a diagonal branch.
 */
 func (context FitContext) CrossBranchCap(diagonalBranch float64) float64 {
+/*
+Feeds algorithm/excitation and equation Hawkes stages — (…).minFitEvents turns marked trade arrivals into fitted intensities and categories.
+*/
 	headroom := context.BranchCeiling - diagonalBranch
 
 	if headroom <= 0 {
@@ -248,6 +262,10 @@ func (context FitContext) CrossBranchCap(diagonalBranch float64) float64 {
 
 	return headroom
 }
+
+/*
+Feeds algorithm/excitation and equation Hawkes stages — minFitEvents fits marked trade arrivals into intensities and fit categories.
+*/
 
 func (tune arrivalTune) minFitEvents() int {
 	if tune.totalEvents <= 0 {
@@ -261,7 +279,6 @@ func (tune arrivalTune) minFitEvents() int {
 				math.Log(float64(tune.totalEvents)+math.E),
 		),
 	)
-
 	if rateScaled < identifiability {
 		return identifiability
 	}
@@ -272,6 +289,9 @@ func (tune arrivalTune) minFitEvents() int {
 
 	return rateScaled
 }
+/*
+Feeds algorithm/excitation and equation Hawkes stages — (…).scanSteps turns marked trade arrivals into fitted intensities and categories.
+*/
 
 func (tune arrivalTune) minEventsPerSide() int {
 	if tune.totalEvents <= 0 {
@@ -283,11 +303,17 @@ func (tune arrivalTune) minEventsPerSide() int {
 	if perSide < 2 {
 		return 2
 	}
-
 	return perSide
 }
 
+/*
+Feeds algorithm/excitation and equation Hawkes stages — scanSteps fits marked trade arrivals into intensities and fit categories.
+*/
+
 func (tune arrivalTune) scanSteps() int {
+/*
+Feeds algorithm/excitation and equation Hawkes stages — (…).branchCeiling turns marked trade arrivals into fitted intensities and categories.
+*/
 	if tune.totalEvents <= 1 {
 		return 3
 	}
@@ -301,6 +327,10 @@ func (tune arrivalTune) scanSteps() int {
 	return steps
 }
 
+/*
+Feeds algorithm/excitation and equation Hawkes stages — branchFloor fits marked trade arrivals into intensities and fit categories.
+*/
+
 func (tune arrivalTune) branchFloor() float64 {
 	if tune.totalEvents <= 0 {
 		return 0
@@ -309,11 +339,14 @@ func (tune arrivalTune) branchFloor() float64 {
 	return 1 / math.Sqrt(float64(tune.totalEvents))
 }
 
+/*
+Feeds algorithm/excitation and equation Hawkes stages — branchCeiling fits marked trade arrivals into intensities and fit categories.
+*/
+
 func (tune arrivalTune) branchCeiling() float64 {
 	if tune.totalEvents <= 0 {
 		panic("hawkes: branchCeiling requires positive event mass")
 	}
-
 	margin := 1 / math.Sqrt(float64(tune.totalEvents))
 
 	if margin >= criticalBranch {
@@ -323,10 +356,13 @@ func (tune arrivalTune) branchCeiling() float64 {
 	return criticalBranch - margin
 }
 
+/*
+Feeds algorithm/excitation and equation Hawkes stages — branchScanSteps fits marked trade arrivals into intensities and fit categories.
+*/
+
 func (tune arrivalTune) branchScanSteps() int {
 	base := tune.scanSteps()
 	ratio := float64(tune.totalEvents) / float64(bivariateParamCount)
-
 	if ratio <= float64(base) {
 		return base
 	}
@@ -339,6 +375,10 @@ func (tune arrivalTune) branchScanSteps() int {
 
 	return steps
 }
+
+/*
+Feeds algorithm/excitation and equation Hawkes stages — selfBranchShare fits marked trade arrivals into intensities and fit categories.
+*/
 
 func (tune arrivalTune) selfBranchShare() float64 {
 	if tune.totalEvents <= 0 {
@@ -356,6 +396,10 @@ func (tune arrivalTune) selfBranchShare() float64 {
 	return balance + (1-balance)/math.Sqrt(float64(tune.totalEvents))
 }
 
+/*
+Feeds algorithm/excitation and equation Hawkes stages — tradeWindowDuration fits marked trade arrivals into intensities and fit categories.
+*/
+
 func (tune arrivalTune) tradeWindowDuration(
 	medianGapSec float64,
 	minFitEvents int,
@@ -371,6 +415,10 @@ func (tune arrivalTune) tradeWindowDuration(
 	)
 }
 
+/*
+Feeds algorithm/excitation and equation Hawkes stages — muUncertaintyFactors fits marked trade arrivals into intensities and fit categories.
+*/
+
 func (tune arrivalTune) muUncertaintyFactors(count int) ([]float64, error) {
 	if count <= 0 {
 		return []float64{1}, nil
@@ -380,6 +428,10 @@ func (tune arrivalTune) muUncertaintyFactors(count int) ([]float64, error) {
 
 	return linspace(1-spread, 1+spread, tune.scanSteps())
 }
+
+/*
+Feeds algorithm/excitation and equation Hawkes stages — localScaleRange fits marked trade arrivals into intensities and fit categories.
+*/
 
 func (tune arrivalTune) localScaleRange(gapCV float64) (minScale, maxScale float64) {
 	if gapCV <= 0 {

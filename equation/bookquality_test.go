@@ -126,11 +126,10 @@ func TestBookQuality_Measure(testingTB *testing.T) {
 
 		So(err, ShouldBeNil)
 
-		Convey("It should remain neutral instead of inventing a ratio", func() {
-			classified := classifyBookQualityOutput(output)
-
-			So(classified.Confidence, ShouldAlmostEqual, 1.0/3.0)
-			So(classified.Strength, ShouldEqual, 0)
+		Convey("It should classify pure liquidity pulls as vacuum", func() {
+			So(int(output.Category), ShouldEqual, 2)
+			So(output.VacuumScore, ShouldBeGreaterThan, 0)
+			So(output.Strength, ShouldBeGreaterThan, 0)
 		})
 	})
 }

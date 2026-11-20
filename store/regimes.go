@@ -8,25 +8,31 @@ region index Emit and the trie still address; Category is the regime name.
 type Regime struct {
 	Key      uint8
 	Category string
-	Kind     string // action | oracle — PathToken uses action only; oracles gate Tradable
-	Phase    string // enter | exit | hold | volume | day | spread | book | board | contagion | capacity
+	Kind     string // action | oracle
+	Phase    string // enter | exit | hold | volume | day | spread | book | board | contagion | capacity | peak
 	Side     string // detector | support | opposition | veto | approve
 	Metrics  []Metric
 }
 
-// Metric is one Map()-keyed score pinned into a regime category.
+/*
+Metric names one envelope.Metrics label Catalog maps onto a confluence region.
+*/
 type Metric struct {
 	Source string
 	Label  string
 }
 
+/*
+Name is the regime category string desk oracle and UI tables display.
+*/
 func (regime Regime) Name() string {
 	return regime.Category
 }
 
 /*
-Regimes is the catalog of confluence categories. Broker-painted oracle sides
-may list no envelope Metrics and are lit by the desk before Emit.
+Regimes is the catalog of confluence categories. Desk oracle pairs
+(volume / day / spread / book / peak) are set from Observe bools. Board /
+contagion / capacity stay metric-pinned.
 */
 type Regimes []Regime
 
@@ -46,6 +52,7 @@ var Catalog = Regimes{
 			{"cvd", "value"},
 			{"pumpdump", "compression"},
 			{"pumpdump", "precursor"},
+			{"pumpdump", "rvol"},
 			{"pumpdump", "value"},
 			{"pumpdump", "strength"},
 		},
@@ -53,7 +60,6 @@ var Catalog = Regimes{
 	{
 		Key: 1, Category: "cohort_lift", Kind: "action", Phase: "enter", Side: "support",
 		Metrics: []Metric{
-			{"cvd", "balance"},
 			{"correlation", "herd_score"},
 			{"correlation", "strength"},
 			{"correlation", "correlation"},
@@ -68,8 +74,8 @@ var Catalog = Regimes{
 		Key: 2, Category: "adverse_weight", Kind: "action", Phase: "enter", Side: "opposition",
 		Metrics: []Metric{
 			{"cvd", "starvation"},
-			{"pumpdump", "rvol"},
-			{"depthflow", "loaded_score"},
+			{"cvd", "balance"},
+			{"depthflow", "ask_loaded_score"},
 			{"morphology", "bid_notional_lean"},
 		},
 	},
@@ -79,7 +85,6 @@ var Catalog = Regimes{
 		Key: 3, Category: "absorption_fade", Kind: "action", Phase: "exit", Side: "detector",
 		Metrics: []Metric{
 			{"cvd", "absorption"},
-			{"cvd", "net"},
 			{"pumpdump", "exhaustion"},
 		},
 	},
@@ -145,27 +150,31 @@ var Catalog = Regimes{
 
 	// --- Oracle: Volume Quote ---
 	{Key: 9, Category: "quiet_tape", Kind: "oracle", Phase: "volume", Side: "veto"},
-	{Key: 10, Category: "liquid_quote", Kind: "oracle", Phase: "volume", Side: "approve"},
+	{
+		Key: 10, Category: "liquid_quote", Kind: "oracle", Phase: "volume", Side: "approve",
+		Metrics: []Metric{
+			{"desk", "tape_ratio"},
+			{"desk", "tape_recent"},
+		},
+	},
 
 	// --- Oracle: Day Move ---
 	{Key: 11, Category: "flat_session", Kind: "oracle", Phase: "day", Side: "veto"},
 	{
 		Key: 12, Category: "session_move", Kind: "oracle", Phase: "day", Side: "approve",
-		Metrics: []Metric{{"sentiment", "change"}},
+		Metrics: []Metric{
+			{"desk", "session_move"},
+			{"desk", "impulse"},
+		},
 	},
 
 	// --- Oracle: Spread ---
-	{
-		Key: 13, Category: "blown_spread", Kind: "oracle", Phase: "spread", Side: "veto",
-		Metrics: []Metric{{"liquidity", "scarcity_score"}},
-	},
+	{Key: 13, Category: "blown_spread", Kind: "oracle", Phase: "spread", Side: "veto"},
 	{
 		Key: 14, Category: "tight_touch", Kind: "oracle", Phase: "spread", Side: "approve",
 		Metrics: []Metric{
-			{"pumpdump", "spread"},
-			{"liquidity", "median_score"},
-			{"liquidity", "value"},
-			{"liquidity", "strength"},
+			// Rising spread_tight (−spread_pct) = tighter touch, not a blowout.
+			{"desk", "spread_tight"},
 		},
 	},
 
@@ -174,8 +183,9 @@ var Catalog = Regimes{
 	{
 		Key: 16, Category: "firm_book", Kind: "oracle", Phase: "book", Side: "approve",
 		Metrics: []Metric{
-			{"toxicity", "support_score"},
-			{"liquidity", "depth_score"},
+			{"desk", "touch_cash"},
+			{"desk", "backing"},
+			{"desk", "tape_ratio"},
 		},
 	},
 
@@ -200,8 +210,6 @@ var Catalog = Regimes{
 			{"sentiment", "breadth"},
 			{"sentiment", "value"},
 			{"sentiment", "strength"},
-			{"depthflow", "thin_score"},
-			{"toxicity", "vacuum_score"},
 		},
 	},
 
@@ -242,9 +250,21 @@ var Catalog = Regimes{
 			{"toxicity", "support_score"},
 		},
 	},
+
+	// --- Oracle: 24h Peak ---
+	{Key: 23, Category: "range_peak", Kind: "oracle", Phase: "peak", Side: "veto"},
+	{
+		Key: 24, Category: "range_room", Kind: "oracle", Phase: "peak", Side: "approve",
+		Metrics: []Metric{
+			// Rising peak_room (1−peak_frac) = more room under the 24h high.
+			{"desk", "peak_room"},
+		},
+	},
 }
 
-// Pins builds source → label → region keys for Observe.
+/*
+Pins builds source → label → region keys Observe uses to fan metrics into Catalog.
+*/
 func (regimes Regimes) Pins() map[string]map[string][]uint8 {
 	out := make(map[string]map[string][]uint8)
 
@@ -267,7 +287,9 @@ func (regimes Regimes) Pins() map[string]map[string][]uint8 {
 	return out
 }
 
-// ByKey returns the regime for a region key, or a zero Regime.
+/*
+ByKey resolves a runtime.Region key to its Catalog row for UI and replay.
+*/
 func (regimes Regimes) ByKey(key uint8) Regime {
 	for _, regime := range regimes {
 		if regime.Key == key {

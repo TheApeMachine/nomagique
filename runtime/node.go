@@ -31,6 +31,9 @@ type Consumer struct {
 	capacity int
 }
 
+/*
+NewConsumer binds one pipeline Node to a disruptor handler slot and ring mask.
+*/
 func NewConsumer(
 	node Node,
 	capacity int,
@@ -45,10 +48,16 @@ func NewConsumer(
 	return consumer
 }
 
+/*
+Step is the handler entry: forwards the shared Envelope into the node's tick work.
+*/
 func (consumer *Consumer) Step(envelope *Envelope) *Envelope {
 	return consumer.node.Step(envelope)
 }
 
+/*
+Name surfaces the node label on the symm diagnostics ring view.
+*/
 func (consumer *Consumer) Name() string {
 	return consumer.node.Name()
 }

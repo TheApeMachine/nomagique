@@ -7,6 +7,10 @@ import (
 	"github.com/theapemachine/nomagique/decay"
 )
 
+/*
+Feeds algorithm/excitation and equation Hawkes stages — softplusLinearAt/paramRatioFloor fits marked trade arrivals into intensities and fit categories.
+*/
+
 const (
 	softplusLinearAt = 20
 	paramRatioFloor  = 1e-9
@@ -21,6 +25,10 @@ type logParamBounds struct {
 	lower [bivariateParamCount]float64
 	upper [bivariateParamCount]float64
 }
+
+/*
+Feeds algorithm/excitation and equation Hawkes stages — logParamBounds fits marked trade arrivals into intensities and fit categories.
+*/
 
 func (context FitContext) logParamBounds() (logParamBounds, error) {
 	betaMin := context.BetaCandidates[0]
@@ -66,6 +74,10 @@ func (context FitContext) logParamBounds() (logParamBounds, error) {
 	}, nil
 }
 
+/*
+Feeds algorithm/excitation and equation Hawkes stages — decode fits marked trade arrivals into intensities and fit categories.
+*/
+
 func (bounds logParamBounds) decode(
 	free []float64,
 ) [bivariateParamCount]float64 {
@@ -85,6 +97,10 @@ func (bounds logParamBounds) decode(
 
 	return params
 }
+
+/*
+Feeds algorithm/excitation and equation Hawkes stages — encode fits marked trade arrivals into intensities and fit categories.
+*/
 
 func (bounds logParamBounds) encode(
 	params [bivariateParamCount]float64,
@@ -106,6 +122,10 @@ func (bounds logParamBounds) encode(
 	return free
 }
 
+/*
+Feeds algorithm/excitation and equation Hawkes stages — softplusJacobian fits marked trade arrivals into intensities and fit categories.
+*/
+
 func (bounds logParamBounds) softplusJacobian(
 	free []float64,
 ) [bivariateParamCount]float64 {
@@ -125,6 +145,10 @@ func (bounds logParamBounds) softplusJacobian(
 
 	return jacobian
 }
+
+/*
+Feeds algorithm/excitation and equation Hawkes stages — crossBranchFloorFromContext fits marked trade arrivals into intensities and fit categories.
+*/
 
 func crossBranchFloorFromContext(context FitContext) (float64, error) {
 	radicand := math.Nextafter(1, 2) - 1
@@ -156,6 +180,10 @@ func crossBranchFloorFromContext(context FitContext) (float64, error) {
 	return 1 / context.SpanSec / float64(context.TotalEvents), nil
 }
 
+/*
+Feeds algorithm/excitation and equation Hawkes stages — selfBranchShareFromContext fits marked trade arrivals into intensities and fit categories.
+*/
+
 func selfBranchShareFromContext(context FitContext) float64 {
 	return arrivalTune{
 		totalEvents: context.TotalEvents,
@@ -163,6 +191,10 @@ func selfBranchShareFromContext(context FitContext) float64 {
 		eventsY:     context.EventsY,
 	}.selfBranchShare()
 }
+
+/*
+Feeds algorithm/excitation and equation Hawkes stages — softplus fits marked trade arrivals into intensities and fit categories.
+*/
 
 func softplus(value float64) float64 {
 	if value > softplusLinearAt {
@@ -181,6 +213,10 @@ func softplus(value float64) float64 {
 
 	return math.Log1p(argument)
 }
+
+/*
+Feeds algorithm/excitation and equation Hawkes stages — inverseSoftplus fits marked trade arrivals into intensities and fit categories.
+*/
 
 func inverseSoftplus(value float64) float64 {
 	if value > softplusLinearAt {
@@ -207,6 +243,10 @@ func inverseSoftplus(value float64) float64 {
 
 	return math.Log(expm1)
 }
+
+/*
+Feeds algorithm/excitation and equation Hawkes stages — softplusDerivative fits marked trade arrivals into intensities and fit categories.
+*/
 
 func softplusDerivative(value float64) float64 {
 	if value > softplusLinearAt {

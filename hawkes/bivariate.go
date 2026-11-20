@@ -69,6 +69,9 @@ func (params BivariateParams) BranchingMatrix() [2][2]float64 {
 	}
 }
 
+/*
+Feeds algorithm/excitation and equation Hawkes stages — spectralRadius turns marked trade arrivals into fitted intensities and categories.
+*/
 func spectralRadius(matrix [2][2]float64) float64 {
 	return SpectralRadius(matrix)
 }

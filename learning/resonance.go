@@ -11,6 +11,10 @@ import (
 	"gonum.org/v1/gonum/mat"
 )
 
+/*
+ResonanceConfig holds predictive-coding hyperparameters — pace-tunable rates
+versus fixed geometry the symm resonance solver assumes stable across SetAlpha.
+*/
 type ResonanceConfig struct {
 	MaxInferenceSteps  int
 	MinInferenceSteps  int
@@ -109,6 +113,10 @@ func AdaptiveResonanceConfig(
 	}
 }
 
+/*
+ResonanceManifold is the per-symbol predictive coder symm.logic.resonance
+settles each tick — shared with nomagique learning tests and GPU manifold path.
+*/
 type ResonanceManifold struct {
 	cfg                    ResonanceConfig
 	arch                   []int
@@ -143,6 +151,10 @@ type ResonanceManifold struct {
 	output                 float64
 }
 
+/*
+NewResonanceManifold wires architecture, task head, and pace-derived config into
+a settle-ready coder with Hebbian initialization matched to depth.
+*/
 func NewResonanceManifold(
 	arch []int, targetDim int, alpha float64,
 ) *ResonanceManifold {
@@ -314,6 +326,10 @@ func NewResonanceManifold(
 	return manifold
 }
 
+/*
+ResetState clears latents and optional precision EMAs so a new symbol session or
+desk reset does not inherit another tick's surprise budget.
+*/
 func (rm *ResonanceManifold) ResetState(resetPrecision bool) {
 	for _, latent := range rm.z {
 		latent.Zero()
@@ -343,18 +359,34 @@ func (rm *ResonanceManifold) ResetState(resetPrecision bool) {
 	}
 }
 
+/*
+SetStreamLearn toggles whether SettleFromBatch applies weight updates — replay
+paths can settle without moving weights trained on live data.
+*/
 func (rm *ResonanceManifold) SetStreamLearn(enabled bool) {
 	rm.streamLearn = enabled
 }
 
+/*
+SetStreamAdvanceTemporal toggles prevTop rollover after batch settle — off when
+backtesting must not leak future top states into past windows.
+*/
 func (rm *ResonanceManifold) SetStreamAdvanceTemporal(enabled bool) {
 	rm.streamAdvanceTemporal = enabled
 }
 
+/*
+SettleFromBatch is the streaming entry point symm resonance uses each tick —
+settle under stream flags, optional learn, return reconstruction surprise.
+*/
 func (rm *ResonanceManifold) SettleFromBatch(input []float64, target []float64) (float64, error) {
 	return rm.SettleFromBatchOptions(input, target, rm.streamLearn, rm.streamAdvanceTemporal)
 }
 
+/*
+SettleFromBatchOptions separates settle/learn/temporal flags so tests can replay
+one phase without the others.
+*/
 func (rm *ResonanceManifold) SettleFromBatchOptions(
 	input []float64,
 	target []float64,
@@ -392,6 +424,10 @@ func (rm *ResonanceManifold) SettleFromBatchOptions(
 	return reconstruction, nil
 }
 
+/*
+ReconstructionOutput returns the last batch settle surprise cached for UI wires
+without recomputing a forward pass.
+*/
 func (rm *ResonanceManifold) ReconstructionOutput() float64 {
 	return rm.output
 }
@@ -485,6 +521,10 @@ func (rm *ResonanceManifold) Settle(input []float64, advanceTemporal bool) error
 	return nil
 }
 
+/*
+Learn applies generative, recognition, temporal, and task-head updates after a
+settle that did not advance temporal memory — weights move, latents stay fixed.
+*/
 func (rm *ResonanceManifold) Learn(target []float64) error {
 	if rm.settleAdvancedTemporal {
 		return errors.New("resonance: temporal state advanced before learning")
@@ -574,18 +614,6 @@ func (rm *ResonanceManifold) Learn(target []float64) error {
 		taskError = rm.workspace.taskError
 		taskError.SubVec(targetCol, taskPred)
 
-		/*
-			The return head is a linear regression, so square-root recursive least
-			squares is the exact online learner for its objective. Its gain follows
-			from retained design covariance; sharing the manifold's scalar alpha
-			with unrelated generative, recognition, temporal, precision, and
-			regularization updates made the task fit move for reasons outside its
-			own forecast error.
-
-			Initial covariance is the identity because the top latent is a tanh
-			image on a unit scale. Forgetting is one: no evidence is discarded
-			without an observed regime-reset rule.
-		*/
 		topState := rm.z[topIndex].RawVector().Data
 		targetData := targetCol.RawVector().Data
 		biasData := rm.taskBias.RawVector().Data
@@ -728,6 +756,10 @@ func (rm *ResonanceManifold) PredictionEnergy() float64 {
 	return energy
 }
 
+/*
+ReconstructionError is ‖input − ŷ‖₂ at the bottom layer — the scalar surprise
+symm publishes under Resonance[symbol].
+*/
 func (rm *ResonanceManifold) ReconstructionError() float64 {
 	reconstruction := rm.workspace.reconPred
 	reconstruction.MulVec(rm.W[0], rm.z[1])
@@ -757,6 +789,10 @@ func (rm *ResonanceManifold) taskPredictionInto(dst *mat.VecDense) {
 	dst.AddVec(dst, rm.taskBias)
 }
 
+/*
+TaskPrediction copies the linear supervised head into a fresh slice for callers
+that cannot hold manifold workspace buffers.
+*/
 func (rm *ResonanceManifold) TaskPrediction() []float64 {
 	if rm.V == nil || rm.targetDim <= 0 {
 		return nil
@@ -845,6 +881,9 @@ func (rm *ResonanceManifold) ObserveTask(
 	return rm.updateTaskReliability(targetCol, taskError)
 }
 
+/*
+Learning package shared with symm resonance — (…).LatentState supports predictive coding and online task heads.
+*/
 func (rm *ResonanceManifold) LatentState() []float64 {
 	if len(rm.z) == 0 {
 		return nil
@@ -957,6 +996,9 @@ func (rm *ResonanceManifold) WireSnapshot() (
 		rm.PredictionEnergy() / float64(predictionDimensions)
 }
 
+/*
+advanceTemporalState commits the settled top latent as next tick's temporal prior.
+*/
 func (rm *ResonanceManifold) advanceTemporalState() {
 	topIndex := len(rm.z) - 1
 
@@ -967,10 +1009,16 @@ func (rm *ResonanceManifold) advanceTemporalState() {
 	rm.prevTop.CopyVec(rm.z[topIndex])
 }
 
+/*
+precisionFor selects per-layer unit precisions when UsePrecision weights errors.
+*/
 func (rm *ResonanceManifold) precisionFor(layerIndex int) *mat.VecDense {
 	return rm.precision[layerIndex]
 }
 
+/*
+temporalPrecisionVec is the top-layer precision vector for the temporal prior term.
+*/
 func (rm *ResonanceManifold) temporalPrecisionVec() *mat.VecDense {
 	return rm.temporalPrecision
 }
@@ -1032,6 +1080,9 @@ func (rm *ResonanceManifold) TaskSkill() (float64, bool) {
 		float64(rm.targetDim), true
 }
 
+/*
+predictAdjacentLayers runs one generative pass and fills layer prediction errors.
+*/
 func (rm *ResonanceManifold) predictAdjacentLayers() (
 	[]*mat.VecDense,
 	[]*mat.VecDense,
@@ -1048,6 +1099,10 @@ func (rm *ResonanceManifold) predictAdjacentLayers() (
 	return rm.workspace.predictions, rm.workspace.errors
 }
 
+/*
+initializeLatents merges bottom-up recognition with top-down temporal prior per
+TopDownInitMix — the starting point for inference iterations.
+*/
 func (rm *ResonanceManifold) initializeLatents(xCol *mat.VecDense) {
 	bottomUp := rm.workspace.bottomUp
 	bottomUp[0].CopyVec(xCol)
@@ -1096,6 +1151,10 @@ func (rm *ResonanceManifold) initializeLatents(xCol *mat.VecDense) {
 	}
 }
 
+/*
+stateGradients accumulates precision-weighted prediction errors into latent
+gradients for the inference descent step.
+*/
 func (rm *ResonanceManifold) stateGradients(
 	predictions []*mat.VecDense,
 	layerErrors []*mat.VecDense,
@@ -1187,18 +1246,27 @@ func (rm *ResonanceManifold) stateGradients(
 	return rm.workspace.grads
 }
 
+/*
+saveStates snapshots latents before a line-search trial so failed steps rewind.
+*/
 func (rm *ResonanceManifold) saveStates() {
 	for layerIndex, latent := range rm.z {
 		rm.workspace.savedStates[layerIndex].CopyVec(latent)
 	}
 }
 
+/*
+restoreStates rewinds latents after a rejected inference line-search halving.
+*/
 func (rm *ResonanceManifold) restoreStates() {
 	for layerIndex, latent := range rm.z {
 		latent.CopyVec(rm.workspace.savedStates[layerIndex])
 	}
 }
 
+/*
+tryStateUpdate applies one gradient descent step on hidden latents with clipping.
+*/
 func (rm *ResonanceManifold) tryStateUpdate(
 	gradients []*mat.VecDense,
 	stepSize float64,
@@ -1213,6 +1281,10 @@ func (rm *ResonanceManifold) tryStateUpdate(
 	}
 }
 
+/*
+updatePrecision EMAs layer, temporal, and task error variances into precisions
+after a learn step when UsePrecision is on.
+*/
 func (rm *ResonanceManifold) updatePrecision(
 	layerErrors []*mat.VecDense,
 	temporalError *mat.VecDense,
@@ -1287,6 +1359,10 @@ func (rm *ResonanceManifold) updatePrecision(
 	return nil
 }
 
+/*
+updateTaskReliability tracks task error scale in log space so TaskPrecision stays
+comparable across target magnitudes.
+*/
 func (rm *ResonanceManifold) updateTaskReliability(
 	targetCol *mat.VecDense,
 	taskError *mat.VecDense,
@@ -1344,19 +1420,20 @@ func (rm *ResonanceManifold) updateTaskReliability(
 			beta*math.Log(taskVarianceData[rowIndex])
 	}
 
-	// First supervised pass marks every dim ready — zero residual still
-	// seeds precision at 1 (init variance), so constant/held features do
-	// not block TaskPrecision forever the way a nonzero-error gate would.
+	// Only mark a dim ready once it has seen a nonzero residual. Zero-error
+	// first passes used to seed precision at 1 on constant/flat features and
+	// clear MinTaskRelativePrecision on quiet symbols immediately.
 	for rowIndex, ready := range rm.taskScaleReady {
 		if ready {
 			continue
 		}
 
-		if squaredErrorData[rowIndex] > 0 {
-			taskVarianceData[rowIndex] = squaredErrorData[rowIndex]
-			taskScaleData[rowIndex] = math.Log(squaredErrorData[rowIndex])
+		if squaredErrorData[rowIndex] <= 0 {
+			continue
 		}
 
+		taskVarianceData[rowIndex] = squaredErrorData[rowIndex]
+		taskScaleData[rowIndex] = math.Log(squaredErrorData[rowIndex])
 		rm.taskScaleReady[rowIndex] = true
 	}
 
@@ -1394,6 +1471,10 @@ func (rm *ResonanceManifold) updateTaskReliability(
 	return nil
 }
 
+/*
+updateTaskSkill maintains prequential skill versus a zero-change baseline per task
+dimension for desk gating.
+*/
 func (rm *ResonanceManifold) updateTaskSkill(
 	targetCol *mat.VecDense,
 	modelSquaredError *mat.VecDense,
@@ -1492,6 +1573,10 @@ func (cfg *ResonanceConfig) adoptPace(pace ResonanceConfig) {
 	cfg.GradClip = pace.GradClip
 }
 
+/*
+projectTemporalOperatorNorm caps ‖A‖₂ so temporal priors stay contracting — SVD
+with Frobenius fallback when the matrix is ill-conditioned.
+*/
 func (rm *ResonanceManifold) projectTemporalOperatorNorm() error {
 	if !(rm.cfg.TemporalNormMax > 0) || rm.cfg.TemporalNormMax >= 1 {
 		return errors.New("resonance: temporal operator-norm limit must be in (0, 1)")
@@ -1499,15 +1584,18 @@ func (rm *ResonanceManifold) projectTemporalOperatorNorm() error {
 
 	decomposition := &rm.workspace.temporalSVD
 
+	// Under extreme correlated moves A can be ill-conditioned; Factorize then
+	// fails and would halt Learn. Fall back to a Frobenius rescale Â = A·τ/‖A‖_F
+	// so the temporal update still contracts instead of aborting.
 	if ok := decomposition.Factorize(rm.A, mat.SVDNone); !ok {
-		return errors.New("resonance: temporal singular-value decomposition failed")
+		return rm.rescaleTemporalByFrobenius()
 	}
 
 	singularValues := decomposition.Values(rm.workspace.svdValues)
 
 	if len(singularValues) == 0 || math.IsNaN(singularValues[0]) ||
 		math.IsInf(singularValues[0], 0) {
-		return errors.New("resonance: temporal operator norm must be finite")
+		return rm.rescaleTemporalByFrobenius()
 	}
 
 	operatorNorm := singularValues[0]
@@ -1517,6 +1605,25 @@ func (rm *ResonanceManifold) projectTemporalOperatorNorm() error {
 	}
 
 	denseScaleInPlace(rm.A, rm.cfg.TemporalNormMax/operatorNorm)
+
+	return nil
+}
+
+/*
+rescaleTemporalByFrobenius projects A by Â = A · τ / ‖A‖_F when SVD is unavailable.
+*/
+func (rm *ResonanceManifold) rescaleTemporalByFrobenius() error {
+	frobenius := mat.Norm(rm.A, 2)
+
+	if frobenius == 0 || math.IsNaN(frobenius) || math.IsInf(frobenius, 0) {
+		return errors.New("resonance: temporal frobenius norm must be finite and positive")
+	}
+
+	if frobenius <= rm.cfg.TemporalNormMax {
+		return nil
+	}
+
+	denseScaleInPlace(rm.A, rm.cfg.TemporalNormMax/frobenius)
 
 	return nil
 }

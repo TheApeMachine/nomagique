@@ -91,6 +91,46 @@ func (calibrator *Calibrator) Measure(sample float64) (CalibratorOutput, error) 
 }
 
 /*
+MeasureElevated scores a sample where larger values are better — fraction of prior
+history the reading exceeds. Used for PC surprise and task precision regime gates.
+*/
+func (calibrator *Calibrator) MeasureElevated(sample float64) (CalibratorOutput, error) {
+	if err := finiteProbability("calibrator", sample); err != nil {
+		return CalibratorOutput{}, err
+	}
+
+	count := calibrator.Count()
+	exceeded := 0
+
+	for index := range count {
+		if sample > calibrator.samples[index] {
+			exceeded++
+		}
+	}
+
+	calibrator.samples[calibrator.next] = sample
+	calibrator.next = (calibrator.next + 1) % len(calibrator.samples)
+
+	if calibrator.next == 0 {
+		calibrator.filled = true
+	}
+
+	if count == 0 {
+		return CalibratorOutput{
+			Value: 0,
+			Ready: false,
+			Count: 1,
+		}, nil
+	}
+
+	return CalibratorOutput{
+		Value: float64(exceeded) / float64(count),
+		Ready: true,
+		Count: count + 1,
+	}, nil
+}
+
+/*
 Quantile computes the empirical rank of a sample and updates the retained window.
 */
 func (calibrator *Calibrator) Quantile(sample float64) float64 {

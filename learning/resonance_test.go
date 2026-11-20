@@ -235,6 +235,35 @@ func TestResonanceManifoldProjectTemporalOperatorNorm(testingTB *testing.T) {
 	})
 }
 
+func TestResonanceManifoldProjectTemporalFrobeniusFallback(testingTB *testing.T) {
+	Convey("Given SVD stress, Frobenius rescale still contracts A", testingTB, func() {
+		manifold := NewResonanceManifold([]int{2, 2}, 0, 0.05)
+		manifold.A.Copy(mat.NewDense(2, 2, []float64{10, 4, -3, 8}))
+
+		before := mat.Norm(manifold.A, 2)
+		So(before, ShouldBeGreaterThan, manifold.cfg.TemporalNormMax)
+
+		err := manifold.rescaleTemporalByFrobenius()
+		So(err, ShouldBeNil)
+		So(mat.Norm(manifold.A, 2), ShouldBeLessThanOrEqualTo,
+			manifold.cfg.TemporalNormMax+1e-12)
+
+		Convey("And Factorize failure routes through the same fallback", func() {
+			stressed := NewResonanceManifold([]int{2, 2}, 0, 0.05)
+			stressed.A.Copy(mat.NewDense(2, 2, []float64{
+				math.NaN(), 1, 0, 1,
+			}))
+
+			// NaN breaks SVD; Frobenius of a NaN matrix is also non-finite, so
+			// the fallback must surface a clear error instead of halting Learn
+			// with the old SVD-only message.
+			err := stressed.projectTemporalOperatorNorm()
+			So(err, ShouldNotBeNil)
+			So(err.Error(), ShouldContainSubstring, "frobenius")
+		})
+	})
+}
+
 func BenchmarkResonanceManifoldSettle(testingTB *testing.B) {
 	manifold := NewResonanceManifold([]int{8, 16, 8}, 0, 0.01)
 	input := []float64{0.1, -0.2, 0.3, -0.4, 0.5, -0.6, 0.7, -0.8}

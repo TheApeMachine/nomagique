@@ -104,6 +104,9 @@ func (sample *Sample) MeasureBook(
 	}
 
 	window := sample.window(input.Symbol)
+	window.mu.Lock()
+	defer window.mu.Unlock()
+
 	frame := Frame{}
 	window.observeLevels(input.Bids, flow.SideBid, &frame)
 	window.observeLevels(input.Asks, flow.SideAsk, &frame)
@@ -128,11 +131,43 @@ func (sample *Sample) MeasureLevel3(
 	}
 
 	window := sample.window(input.Symbol)
+	window.mu.Lock()
+	defer window.mu.Unlock()
+
 	frame := Frame{}
 	window.observeOrderEvents(input.Bids, flow.SideBid, &frame)
 	window.observeOrderEvents(input.Asks, flow.SideAsk, &frame)
 	output := window.finish(frame, true)
-	window.tradePrices = nil
+
+	return output, output.LastPrice > 0, window.maturity(), nil
+}
+
+/*
+MeasureLevel3Snapshot scores one full resting order image. Missing order ids
+are deletes, so vanished L3 levels do not remain in the ledger.
+*/
+func (sample *Sample) MeasureLevel3Snapshot(
+	input Level3Input,
+) (equation.BookQualityInput, bool, float64, error) {
+	if input.Symbol == "" {
+		return equation.BookQualityInput{}, false, 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"book-quality-sample: symbol required",
+			nil,
+		))
+	}
+
+	window := sample.window(input.Symbol)
+	window.mu.Lock()
+	defer window.mu.Unlock()
+
+	frame := Frame{}
+	window.replaceOrders(input.Bids, flow.SideBid, &frame)
+	window.replaceOrders(input.Asks, flow.SideAsk, &frame)
+	output := window.finish(frame, true)
+	// Keep the trade-price ring across snapshots — clearing it made
+	// MedianAbsoluteDeviation(trades) collapse whenever only one print
+	// landed between L3 frames.
 
 	return output, output.LastPrice > 0, window.maturity(), nil
 }
@@ -163,12 +198,18 @@ func (sample *Sample) MeasureTrade(
 	}
 
 	window := sample.window(input.Symbol)
-	window.tradePrices = append(window.tradePrices, input.Price)
+	window.mu.Lock()
+	defer window.mu.Unlock()
+
+	window.noteTrade(input.Price)
 	output := window.snapshot()
 
 	return output, output.LastPrice > 0, window.maturity(), nil
 }
 
+/*
+window lazily constructs per-symbol quality state under Sample's sync.Map.
+*/
 func (sample *Sample) window(symbol string) *Window {
 	existing, ok := sample.windows.Load(symbol)
 

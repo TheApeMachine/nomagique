@@ -1,8 +1,7 @@
 package store
 
 /*
-regionMetricPins is derived from Catalog (regimes.go) — region-first regime
-categories with cross-signal metrics. Broker oracle sides (volume/day and
-parts of spread/book) are painted by Training.lightBroker before Emit.
+regionMetricPins is derived from Catalog (regimes.go). Desk bools for
+volume/day/spread/book/peak are applied in Observe onto those pairs.
 */
 var regionMetricPins = Catalog.Pins()

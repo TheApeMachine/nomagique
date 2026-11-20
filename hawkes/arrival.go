@@ -8,7 +8,15 @@ import (
 	"github.com/theapemachine/nomagique/timeline"
 )
 
+/*
+Feeds algorithm/excitation and equation Hawkes stages — eventSide fits marked trade arrivals into intensities and fit categories.
+*/
+
 type eventSide int
+
+/*
+Feeds algorithm/excitation and equation Hawkes stages — sideBuy/sideSell fits marked trade arrivals into intensities and fit categories.
+*/
 
 const (
 	sideBuy eventSide = iota
@@ -105,13 +113,25 @@ func (stream ArrivalStream) Marked() []MarkedEvent {
 	return slices.Clone(stream.marked)
 }
 
+/*
+Feeds algorithm/excitation and equation Hawkes stages — markedEvents fits marked trade arrivals into intensities and fit categories.
+*/
+
 func (stream ArrivalStream) markedEvents() []MarkedEvent {
 	return stream.marked
 }
 
+/*
+Feeds algorithm/excitation and equation Hawkes stages — merge fits marked trade arrivals into intensities and fit categories.
+*/
+
 func (stream ArrivalStream) merge() []MarkedEvent {
 	return stream.mergeInto(make([]MarkedEvent, 0, stream.buy.Len()+stream.sell.Len()))
 }
+
+/*
+Feeds algorithm/excitation and equation Hawkes stages — mergeInto fits marked trade arrivals into intensities and fit categories.
+*/
 
 func (stream ArrivalStream) mergeInto(marked []MarkedEvent) []MarkedEvent {
 	buyTimes := stream.buy.Times()
@@ -184,6 +204,10 @@ func (stream ArrivalStream) Span(horizon time.Time) float64 {
 	return horizon.Sub(stream.origin).Seconds()
 }
 
+/*
+Feeds algorithm/excitation and equation Hawkes stages — observationCounts fits marked trade arrivals into intensities and fit categories.
+*/
+
 func (stream ArrivalStream) observationCounts(horizon time.Time) (buy, sell int) {
 	return observationCount(stream.buy.Times(), stream.origin, horizon),
 		observationCount(stream.sell.Times(), stream.origin, horizon)
@@ -195,6 +219,10 @@ ObservationCounts returns side counts on the common interval (origin, horizon].
 func (stream ArrivalStream) ObservationCounts(horizon time.Time) (buy, sell int) {
 	return stream.observationCounts(horizon)
 }
+
+/*
+Feeds algorithm/excitation and equation Hawkes stages — observationCount fits marked trade arrivals into intensities and fit categories.
+*/
 
 func observationCount(times []time.Time, origin, horizon time.Time) int {
 	count := 0
@@ -214,6 +242,10 @@ func observationCount(times []time.Time, origin, horizon time.Time) int {
 	return count
 }
 
+/*
+Feeds algorithm/excitation and equation Hawkes stages — observationMarked fits marked trade arrivals into intensities and fit categories.
+*/
+
 func (stream ArrivalStream) observationMarked(horizon time.Time) []MarkedEvent {
 	marked := make([]MarkedEvent, 0, len(stream.marked))
 
@@ -232,6 +264,10 @@ func (stream ArrivalStream) observationMarked(horizon time.Time) []MarkedEvent {
 	return marked
 }
 
+/*
+Feeds algorithm/excitation and equation Hawkes stages — buyIntensityAt fits marked trade arrivals into intensities and fit categories.
+*/
+
 func (stream ArrivalStream) buyIntensityAt(
 	horizon time.Time,
 	muBuy, alphaBB, alphaBS, beta float64,
@@ -246,6 +282,10 @@ func (stream ArrivalStream) buyIntensityAt(
 		beta,
 	)
 }
+
+/*
+Feeds algorithm/excitation and equation Hawkes stages — sellIntensityAt fits marked trade arrivals into intensities and fit categories.
+*/
 
 func (stream ArrivalStream) sellIntensityAt(
 	horizon time.Time,
@@ -262,6 +302,10 @@ func (stream ArrivalStream) sellIntensityAt(
 	)
 }
 
+/*
+Feeds algorithm/excitation and equation Hawkes stages — kernelIntegralSupport fits marked trade arrivals into intensities and fit categories.
+*/
+
 func (stream ArrivalStream) kernelIntegralSupport(
 	horizon time.Time, beta float64,
 ) (buy, sell float64) {
@@ -271,6 +315,10 @@ func (stream ArrivalStream) kernelIntegralSupport(
 			stream.sell.Times(), stream.origin, horizon, beta,
 		)
 }
+
+/*
+Feeds algorithm/excitation and equation Hawkes stages — observationKernelIntegralSupport fits marked trade arrivals into intensities and fit categories.
+*/
 
 func observationKernelIntegralSupport(
 	events []time.Time,

@@ -107,6 +107,10 @@ func (meanMedianRatio *MeanMedianRatio) Measure(sample TimedSample) (MeanMedianR
 	return output, nil
 }
 
+/*
+transform applies configured delta or level shaping per series so the ratio
+tracks regime change rather than raw level when Transform is set.
+*/
 func (meanMedianRatio *MeanMedianRatio) transform(series string, sample float64) float64 {
 	if meanMedianRatio.config.Transform == "" {
 		return sample
@@ -136,6 +140,10 @@ func (meanMedianRatio *MeanMedianRatio) transform(series string, sample float64)
 	return sample
 }
 
+/*
+decline measures fractional slowdown when successive transformed deltas shrink,
+surfacing fading momentum before the mean/median ratio turns.
+*/
 func (meanMedianRatio *MeanMedianRatio) decline(series string, sample float64) float64 {
 	previousDelta := meanMedianRatio.previousDeltas[series]
 	meanMedianRatio.previousDeltas[series] = sample
@@ -147,6 +155,10 @@ func (meanMedianRatio *MeanMedianRatio) decline(series string, sample float64) f
 	return (previousDelta - sample) / previousDelta
 }
 
+/*
+trim caps per-series history at the resolved long window so memory and median
+tails stay aligned with WindowsConfig hints.
+*/
 func (meanMedianRatio *MeanMedianRatio) trim(history []TimedSample) []TimedSample {
 	longWindow := meanMedianRatio.config.LongWindow
 
@@ -169,6 +181,10 @@ func (meanMedianRatio *MeanMedianRatio) trim(history []TimedSample) []TimedSampl
 	return history[len(history)-longWindow:]
 }
 
+/*
+ratio compares short-window mean to long median (with deltaPositive fallback)
+as a skew detector; non-finite output errors instead of returning NaN.
+*/
 func (meanMedianRatio *MeanMedianRatio) ratio(history []TimedSample) (MeanMedianRatioOutput, error) {
 	values := timedValues(history)
 	window, err := ResolveWindowSet(values, WindowsConfig{
@@ -233,6 +249,9 @@ func (meanMedianRatio *MeanMedianRatio) ratio(history []TimedSample) (MeanMedian
 	}, nil
 }
 
+/*
+timedValues strips timestamps for window resolution and gonum means on history.
+*/
 func timedValues(history []TimedSample) []float64 {
 	values := make([]float64, len(history))
 
@@ -243,6 +262,10 @@ func timedValues(history []TimedSample) []float64 {
 	return values
 }
 
+/*
+positiveValues filters the long slice for deltaPositive medians when negatives
+would poison the denominator.
+*/
 func positiveValues(values []float64) []float64 {
 	positive := make([]float64, 0, len(values))
 

@@ -148,6 +148,10 @@ func (bernoulli *Bernoulli) Reset() {
 	bernoulli.count = 0
 }
 
+/*
+observe increments the beta posterior and running extrema after public Measure
+paths validate the outcome, keeping prior updates out of the exported API.
+*/
 func (bernoulli *Bernoulli) observe(outcome float64) BernoulliOutput {
 	if bernoulli.count == 0 {
 		bernoulli.prev = outcome

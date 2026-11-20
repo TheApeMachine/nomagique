@@ -10,6 +10,9 @@ import (
 	"github.com/theapemachine/nomagique/statistic"
 )
 
+/*
+flowSampleHistoryCap bounds sampling or gates so equation feature frames stay well-posed for symm envelope wiring.
+*/
 const (
 	flowSampleHistoryCap = 128
 )
@@ -40,6 +43,7 @@ tradeFlowWindow retains the bounded per-symbol observations used by the
 adaptive active and baseline windows.
 */
 type tradeFlowWindow struct {
+	mu           sync.Mutex
 	ticks        []tradeFlowTick
 	observations int
 }
@@ -101,6 +105,9 @@ func (tradeFlowSample *TradeFlowSample) Measure(
 		))
 	}
 
+	window.mu.Lock()
+	defer window.mu.Unlock()
+
 	candidate := &tradeFlowWindow{
 		ticks:        append([]tradeFlowTick(nil), window.ticks...),
 		observations: window.observations,
@@ -122,7 +129,8 @@ func (tradeFlowSample *TradeFlowSample) Measure(
 		return equation.FlowInput{}, false, err
 	}
 
-	*window = *candidate
+	window.ticks = candidate.ticks
+	window.observations = candidate.observations
 
 	return features, true, nil
 }

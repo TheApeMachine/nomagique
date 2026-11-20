@@ -4,6 +4,10 @@ import (
 	"math"
 )
 
+/*
+defaultStandardizerSigmaBound caps extreme z-scores so a single outlier cannot
+dominate downstream softmax or scoring after moments have stabilized.
+*/
 const defaultStandardizerSigmaBound = 8.0
 
 /*
@@ -102,6 +106,36 @@ func (standardizer *Standardizer) Measure(sample float64) (StandardizerOutput, e
 }
 
 /*
+ZScore standardizes one sample against prior moments without absorbing it into
+Welford state — hot-path oracle reads stay separate from settle-time Learn.
+*/
+func (standardizer *Standardizer) ZScore(sample float64) (StandardizerOutput, error) {
+	if err := finiteAdaptive("standardizer", sample); err != nil {
+		return StandardizerOutput{}, err
+	}
+
+	priorVariance := standardizer.variance()
+	precision := standardizer.precision()
+	ready := priorVariance > 0
+	standardized := 0.0
+
+	if ready {
+		scale := math.Sqrt(priorVariance) / precision
+		zScore := (sample - standardizer.mean) / scale
+		standardized = math.Max(-standardizer.config.SigmaBound, math.Min(standardizer.config.SigmaBound, zScore))
+	}
+
+	return StandardizerOutput{
+		Value:     standardized,
+		Mean:      standardizer.mean,
+		Variance:  priorVariance,
+		Precision: precision,
+		Ready:     ready,
+		Count:     standardizer.count,
+	}, nil
+}
+
+/*
 Precision reports how much of a full z-score the current moments can support,
 which is the reciprocal of the inflation a predictive scale carries for having
 estimated both the centre and the spread from a finite sample.
@@ -114,6 +148,10 @@ func (standardizer *Standardizer) Precision() float64 {
 	return standardizer.precision()
 }
 
+/*
+precision estimates how much of a full z-score prior moments support; Measure
+uses it as the scoring scale instead of a fixed warmup count.
+*/
 func (standardizer *Standardizer) precision() float64 {
 	if standardizer.count < 2 || standardizer.variance() <= 0 {
 		return 0
@@ -155,6 +193,10 @@ func (standardizer *Standardizer) Reset() {
 	standardizer.count = 0
 }
 
+/*
+observe updates Welford moments after scoring so the current sample cannot
+inflate the scale used to judge itself.
+*/
 func (standardizer *Standardizer) observe(sample float64) {
 	standardizer.count++
 	delta := sample - standardizer.mean
@@ -163,6 +205,10 @@ func (standardizer *Standardizer) observe(sample float64) {
 	standardizer.m2 += delta * delta2
 }
 
+/*
+variance returns the unbiased sample variance used as spread for z-scoring;
+zero before two observations signals not-ready rather than a numeric default.
+*/
 func (standardizer *Standardizer) variance() float64 {
 	if standardizer.count < 2 {
 		return 0

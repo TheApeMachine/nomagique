@@ -7,6 +7,10 @@ import (
 	"github.com/theapemachine/nomagique/probability"
 )
 
+/*
+defaultRestAlpha through defaultPaceWindow seed Pace when callers omit fields —
+wide enough to learn, tight enough that a bad stretch cannot crank alpha to 1.
+*/
 const (
 	defaultRestAlpha  = 0.03
 	defaultMinAlpha   = 0.005

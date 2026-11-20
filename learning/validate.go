@@ -2,6 +2,10 @@ package learning
 
 import "github.com/theapemachine/errnie"
 
+/*
+validatePair is the shared finite, non-zero gate for any path that turns a
+LearningPair into a loss or feedback signal.
+*/
 func validatePair(pair LearningPair, name string) (float64, float64, error) {
 	if !finite(pair.Predicted) || !finite(pair.Actual) {
 		return 0, 0, errnie.Error(errnie.Err(

@@ -10,9 +10,16 @@ import (
 	"github.com/theapemachine/nomagique/statistic"
 )
 
+/*
+defaultSurgeGate bounds sampling or gates so equation feature frames stay well-posed for symm envelope wiring.
+*/
+/*
+convictionMinPeers bounds sampling or gates so equation feature frames stay well-posed for symm envelope wiring.
+*/
 const (
-	convictionMinPeers = 2
-	defaultSurgeGate   = 0.5
+	convictionMinPeers  = 2
+	defaultSurgeGate    = 0.5
+	convictionFreshness = 30 * time.Second
 )
 
 /*
@@ -31,6 +38,9 @@ type ConvictionSampleInput struct {
 	At     time.Time
 }
 
+/*
+convictionSymbol holds per-symbol sampling state that feeds equation Measure and Map outputs into resonance features.
+*/
 type convictionSymbol struct {
 	mu      sync.Mutex
 	last    float64
@@ -101,20 +111,28 @@ func (sample *ConvictionSample) Measure(
 	}
 
 	return equation.ConvictionInput{
-		Breadth:        stats.breadth,
-		Change:         change,
-		SurgeThreshold: stats.surgeThreshold,
-		Leader:         stats.leader == input.Symbol && stats.leaderMagnitude > 0,
+		Breadth:         stats.breadth,
+		Change:          change,
+		SurgeThreshold:  stats.surgeThreshold,
+		ChangeThreshold: stats.changeThreshold,
+		Leader:          stats.leader == input.Symbol && stats.leaderMagnitude > 0,
 	}, true, nil
 }
 
+/*
+convictionStats holds per-symbol sampling state that feeds equation Measure and Map outputs into resonance features.
+*/
 type convictionStats struct {
 	leader          string
 	leaderMagnitude float64
 	breadth         float64
 	surgeThreshold  float64
+	changeThreshold float64
 }
 
+/*
+(…).statistics supports algorithm sampling that supplies equation inputs symm maps into runtime.Envelope.
+*/
 func (sample *ConvictionSample) statistics() (convictionStats, bool) {
 	type peer struct {
 		symbol  string
@@ -124,7 +142,6 @@ func (sample *ConvictionSample) statistics() (convictionStats, bool) {
 	}
 
 	peers := make([]peer, 0)
-	cadences := make([]float64, 0)
 	latest := time.Time{}
 
 	sample.symbols.Range(func(key, untyped any) bool {
@@ -138,10 +155,6 @@ func (sample *ConvictionSample) statistics() (convictionStats, bool) {
 
 		if state.at.After(latest) {
 			latest = state.at
-		}
-
-		if state.cadence > 0 {
-			cadences = append(cadences, float64(state.cadence))
 		}
 
 		peers = append(peers, peer{
@@ -158,16 +171,18 @@ func (sample *ConvictionSample) statistics() (convictionStats, bool) {
 		return convictionStats{}, false
 	}
 
-	freshness := time.Duration(0)
-	if medianCadence, ok := statistic.MedianOf(cadences); ok && medianCadence > 0 {
-		freshness = time.Duration(medianCadence)
-	}
-
 	alive := make([]peer, 0, len(peers))
 	for _, peer := range peers {
-		if freshness > 0 && latest.Sub(peer.at) > freshness {
+		limit := convictionFreshness
+
+		if peer.cadence > limit {
+			limit = peer.cadence
+		}
+
+		if latest.Sub(peer.at) > limit {
 			continue
 		}
+
 		alive = append(alive, peer)
 	}
 
@@ -198,12 +213,15 @@ func (sample *ConvictionSample) statistics() (convictionStats, bool) {
 	stats.breadth = float64(advances-declines) / float64(len(alive))
 
 	if medianMagnitude, ok := statistic.MedianOf(magnitudes); ok && medianMagnitude > 0 {
-		stats.surgeThreshold = math.Min(1, math.Max(defaultSurgeGate*0.5, medianMagnitude))
+		stats.changeThreshold = medianMagnitude
 	}
 
 	return stats, true
 }
 
+/*
+(…).symbol supports algorithm sampling that supplies equation inputs symm maps into runtime.Envelope.
+*/
 func (sample *ConvictionSample) symbol(name string) *convictionSymbol {
 	if existing, ok := sample.symbols.Load(name); ok {
 		return existing.(*convictionSymbol)

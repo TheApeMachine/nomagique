@@ -134,6 +134,10 @@ func (morphology *Morphology) Measure(
 	}, nil
 }
 
+/*
+bidNotionalLean summarizes book asymmetry when shape metrics alone miss one-sided
+inventory that should lift Strength in the Map.
+*/
 func bidNotionalLean(bids, asks []MorphologyLevel) float64 {
 	bidNotional := 0.0
 	for _, level := range bids {
@@ -256,6 +260,10 @@ func MorphWalk(streamA, streamB []MorphologyPoint) (float64, float64) {
 	return ks, distance
 }
 
+/*
+morphSideCurve normalizes one side onto spread-relative positions for KS walk
+comparisons used in morphology sampling.
+*/
 func morphSideCurve(
 	levels []MorphologyLevel,
 	mid, spread float64,

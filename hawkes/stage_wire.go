@@ -1,5 +1,8 @@
 package hawkes
 
+/*
+Feeds algorithm/excitation and equation Hawkes stages — EncodeMomentBatch turns marked trade arrivals into fitted intensities and categories.
+*/
 func EncodeMomentBatch(xStream, yStream []float64) []float64 {
 	if len(xStream) != len(yStream) || len(xStream) < 2 {
 		return nil
@@ -11,6 +14,10 @@ func EncodeMomentBatch(xStream, yStream []float64) []float64 {
 
 	return batch
 }
+
+/*
+Feeds algorithm/excitation and equation Hawkes stages — EncodeFitBatch fits marked trade arrivals into intensities and fit categories.
+*/
 
 func EncodeFitBatch(xTimes, yTimes []float64) []float64 {
 	if len(xTimes)+len(yTimes) < 2 {

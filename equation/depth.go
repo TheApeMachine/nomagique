@@ -148,6 +148,10 @@ func (depth *Depth) Measure(input DepthInput) (DepthOutput, error) {
 	}, nil
 }
 
+/*
+classifyDepth ranks scarcity, median-band, and depth abundance using peer gates
+from algorithm depth sampling.
+*/
 func classifyDepth(
 	quoteVol, lower, upper float64,
 	peakScarcity bool,
@@ -168,6 +172,9 @@ func classifyDepth(
 	return 2
 }
 
+/*
+isPeakScarcity marks historic min-quote events that should dominate scarcity_score.
+*/
 func isPeakScarcity(quoteVol float64, volumes []float64) bool {
 	if len(volumes) == 0 {
 		return false
@@ -184,6 +191,10 @@ func isPeakScarcity(quoteVol float64, volumes []float64) bool {
 	return quoteVol <= minVolume
 }
 
+/*
+medianDepthEvidence scores how deep quote volume sits inside the peer band for
+median_score on the grid.
+*/
 func medianDepthEvidence(quoteVol, lower, upper float64) float64 {
 	if upper <= lower || quoteVol <= lower || quoteVol >= upper {
 		return 0
@@ -201,6 +212,10 @@ func medianDepthEvidence(quoteVol, lower, upper float64) float64 {
 	return math.Max(0, 1-distance/halfBand)
 }
 
+/*
+depthHistoricallyLiquid requires peer context before treating scarcity as
+structural rather than a quiet tape artifact.
+*/
 func depthHistoricallyLiquid(
 	relativeVolume float64,
 	ready bool,

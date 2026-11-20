@@ -10,6 +10,9 @@ import (
 	"github.com/theapemachine/nomagique/temporal"
 )
 
+/*
+LatencyProvider holds per-symbol sampling state that feeds equation Measure and Map outputs into resonance features.
+*/
 type LatencyProvider interface {
 	Delay() time.Duration
 }
@@ -34,24 +37,39 @@ type LatencyConfig struct {
 	Clock     temporal.Clock
 }
 
+/*
+ConstantLatency holds per-symbol sampling state that feeds equation Measure and Map outputs into resonance features.
+*/
 type ConstantLatency struct {
 	delay time.Duration
 }
 
+/*
+NewConstantLatency supports algorithm sampling that supplies equation inputs symm maps into runtime.Envelope.
+*/
 func NewConstantLatency(delay time.Duration) *ConstantLatency {
 	return &ConstantLatency{delay: delay}
 }
 
+/*
+(…).Delay supports algorithm sampling that supplies equation inputs symm maps into runtime.Envelope.
+*/
 func (c *ConstantLatency) Delay() time.Duration {
 	return c.delay
 }
 
+/*
+UniformRandomLatency holds per-symbol sampling state that feeds equation Measure and Map outputs into resonance features.
+*/
 type UniformRandomLatency struct {
 	min time.Duration
 	max time.Duration
 	rng *rand.Rand
 }
 
+/*
+NewUniformRandomLatency supports algorithm sampling that supplies equation inputs symm maps into runtime.Envelope.
+*/
 func NewUniformRandomLatency(
 	min, max time.Duration, seed int64,
 ) *UniformRandomLatency {
@@ -62,6 +80,9 @@ func NewUniformRandomLatency(
 	}
 }
 
+/*
+(…).Delay supports algorithm sampling that supplies equation inputs symm maps into runtime.Envelope.
+*/
 func (u *UniformRandomLatency) Delay() time.Duration {
 	delta := u.max - u.min
 
@@ -72,12 +93,18 @@ func (u *UniformRandomLatency) Delay() time.Duration {
 	return u.min + time.Duration(u.rng.Int63n(int64(delta)))
 }
 
+/*
+NormalLatency holds per-symbol sampling state that feeds equation Measure and Map outputs into resonance features.
+*/
 type NormalLatency struct {
 	mean   time.Duration
 	stddev time.Duration
 	rng    *rand.Rand
 }
 
+/*
+NewNormalLatency supports algorithm sampling that supplies equation inputs symm maps into runtime.Envelope.
+*/
 func NewNormalLatency(mean, stddev time.Duration, seed int64) *NormalLatency {
 	return &NormalLatency{
 		mean:   mean,
@@ -86,6 +113,9 @@ func NewNormalLatency(mean, stddev time.Duration, seed int64) *NormalLatency {
 	}
 }
 
+/*
+(…).Delay supports algorithm sampling that supplies equation inputs symm maps into runtime.Envelope.
+*/
 func (n *NormalLatency) Delay() time.Duration {
 	return max(time.Duration(
 		n.rng.NormFloat64()*float64(n.stddev)+float64(n.mean),
@@ -105,13 +135,25 @@ type LoadScaledLatency struct {
 	load       atomic.Int64
 }
 
+/*
+NewLoadScaledLatency supports algorithm sampling that supplies equation inputs symm maps into runtime.Envelope.
+*/
 func NewLoadScaledLatency(base, perRequest time.Duration) *LoadScaledLatency {
 	return &LoadScaledLatency{base: base, perRequest: perRequest}
 }
 
+/*
+(…).Inc supports algorithm sampling that supplies equation inputs symm maps into runtime.Envelope.
+*/
 func (l *LoadScaledLatency) Inc() { l.load.Add(1) }
+/*
+(…).Dec supports algorithm sampling that supplies equation inputs symm maps into runtime.Envelope.
+*/
 func (l *LoadScaledLatency) Dec() { l.load.Add(-1) }
 
+/*
+(…).Delay supports algorithm sampling that supplies equation inputs symm maps into runtime.Envelope.
+*/
 func (l *LoadScaledLatency) Delay() time.Duration {
 	return l.base + time.Duration(
 		max(l.load.Load(), 0),
@@ -144,6 +186,9 @@ type LogNormalLatency struct {
 	mu       sync.Mutex
 }
 
+/*
+NewLogNormalLatency supports algorithm sampling that supplies equation inputs symm maps into runtime.Envelope.
+*/
 func NewLogNormalLatency(
 	min, medianAboveMin time.Duration, logSigma float64, seed int64,
 ) *LogNormalLatency {
@@ -155,6 +200,9 @@ func NewLogNormalLatency(
 	}
 }
 
+/*
+(…).Delay supports algorithm sampling that supplies equation inputs symm maps into runtime.Envelope.
+*/
 func (l *LogNormalLatency) Delay() time.Duration {
 	l.mu.Lock()
 	z := l.rng.NormFloat64()
@@ -198,6 +246,9 @@ type HawkesLatency struct {
 	mu          sync.Mutex
 }
 
+/*
+NewHawkesLatency supports algorithm sampling that supplies equation inputs symm maps into runtime.Envelope.
+*/
 func NewHawkesLatency(
 	minLatency, jumpPerEvent time.Duration, decayPerSec float64,
 ) *HawkesLatency {
@@ -221,6 +272,9 @@ func (hawkes *HawkesLatency) SetClock(c temporal.Clock) {
 	hawkes.mu.Unlock()
 }
 
+/*
+(…).RecordEvent supports algorithm sampling that supplies equation inputs symm maps into runtime.Envelope.
+*/
 func (hawkes *HawkesLatency) RecordEvent() {
 	hawkes.mu.Lock()
 	now := hawkes.clock.NowUnixNano()
@@ -230,6 +284,9 @@ func (hawkes *HawkesLatency) RecordEvent() {
 	hawkes.mu.Unlock()
 }
 
+/*
+(…).Delay supports algorithm sampling that supplies equation inputs symm maps into runtime.Envelope.
+*/
 func (hawkes *HawkesLatency) Delay() time.Duration {
 	hawkes.mu.Lock()
 	now := hawkes.clock.NowUnixNano()

@@ -21,9 +21,16 @@ func ignitionFamilies(
 	compressionScale float64,
 ) (IgnitionSideOutput, error) {
 	scaledRVOL := ignitionSquash(rvol, rvolScale)
+	scaledPrecursor := ignitionSquash(precursor, precursorScale)
 	quietCompression := ignitionInverse(compression, compressionScale)
 	quietPrecursor := ignitionInverse(precursor, precursorScale)
-	ignitionScore, err := ignitionMean(rvol > 0 && precursor > 0, rvol, precursor)
+	// Squash before the geomean so a 1.0/1.0 ratio against a one-bar baseline
+	// cannot claim Ignition ≈ 1.0 on a flat-liner bounce.
+	ignitionScore, err := ignitionMean(
+		scaledRVOL > 0 && scaledPrecursor > 0,
+		scaledRVOL,
+		scaledPrecursor,
+	)
 
 	if err != nil {
 		return IgnitionSideOutput{}, err

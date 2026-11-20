@@ -152,6 +152,10 @@ func (classifier *ScoreClassifier) Classify(
 	}, nil
 }
 
+/*
+Outputs maps classifier fields into the generic runtime envelope so downstream
+nodes can consume probabilities without importing score-specific structs.
+*/
 func (result ScoreResult) Outputs() map[string]any {
 	return map[string]any{
 		"probabilities":       result.Probabilities,

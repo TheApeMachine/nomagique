@@ -49,6 +49,17 @@ func TestCalibrator(t *testing.T) {
 			So(errInf, ShouldNotBeNil)
 		})
 
+		Convey("Then elevated scoring favors larger readings", func() {
+			calibrator.Reset()
+			calibrator.MeasureElevated(10)
+			calibrator.MeasureElevated(20)
+			calibrator.MeasureElevated(30)
+
+			out, err := calibrator.MeasureElevated(25)
+			So(err, ShouldBeNil)
+			So(out.Value, ShouldAlmostEqual, 2.0/3.0, 1e-6)
+		})
+
 		Convey("Then reset clears all state", func() {
 			calibrator.Quantile(10)
 			calibrator.Quantile(20)

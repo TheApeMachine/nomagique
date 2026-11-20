@@ -7,8 +7,16 @@ import (
 	"github.com/theapemachine/errnie"
 )
 
+/*
+Stage is the shared lifecycle vocabulary for System, Workspace, and pipeline
+nodes; Workspace.Step drops ticks until READY.
+*/
 type Stage uint8
 
+/*
+INIT through DONE are the legal stages symm boot, error recovery, and the
+disruptor ingress gate use.
+*/
 const (
 	INIT Stage = iota
 	OK

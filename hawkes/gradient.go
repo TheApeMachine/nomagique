@@ -8,6 +8,9 @@ import (
 	"github.com/theapemachine/nomagique/timeline"
 )
 
+/*
+Feeds algorithm/excitation and equation Hawkes stages — likelihoodGradient turns marked trade arrivals into fitted intensities and categories.
+*/
 type likelihoodGradient struct {
 	muX     float64
 	muY     float64
@@ -84,6 +87,10 @@ func (fit BivariateFit) LogLikelihoodGradient(
 
 	return logLikelihood, gradient, true
 }
+
+/*
+Feeds algorithm/excitation and equation Hawkes stages — eventLogLikelihoodGradient fits marked trade arrivals into intensities and fit categories.
+*/
 
 func (fit BivariateFit) eventLogLikelihoodGradient(
 	marked []MarkedEvent,
@@ -171,6 +178,10 @@ func (fit BivariateFit) eventLogLikelihoodGradient(
 	return result
 }
 
+/*
+Feeds algorithm/excitation and equation Hawkes stages — kernelIntegralSupportBetaDerivative fits marked trade arrivals into intensities and fit categories.
+*/
+
 func kernelIntegralSupportBetaDerivative(
 	events timeline.Timeline,
 	origin, horizon time.Time,
@@ -200,6 +211,10 @@ func kernelIntegralSupportBetaDerivative(
 	return derivative
 }
 
+/*
+Feeds algorithm/excitation and equation Hawkes stages — compensatorBetaDerivative fits marked trade arrivals into intensities and fit categories.
+*/
+
 func (fit BivariateFit) compensatorBetaDerivative(
 	buySupport, sellSupport, buySupportBeta, sellSupportBeta float64,
 ) float64 {
@@ -218,6 +233,10 @@ func (fit BivariateFit) compensatorBetaDerivative(
 		-branchY/beta*sellSupport +
 		branchY*sellSupportBeta
 }
+
+/*
+Feeds algorithm/excitation and equation Hawkes stages — logSpaceGradient fits marked trade arrivals into intensities and fit categories.
+*/
 
 func logSpaceGradient(naturalGradient [7]float64, fit BivariateFit) [7]float64 {
 	alphaContribution := naturalGradient[2]*fit.AlphaXX +

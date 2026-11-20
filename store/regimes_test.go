@@ -31,7 +31,7 @@ func TestCatalog(t *testing.T) {
 
 		So(pins["cvd"]["drive"], ShouldResemble, []uint8{0})
 		So(pins["hawkes"]["spectral_radius"], ShouldResemble, []uint8{6, 18})
-		So(pins["liquidity"]["scarcity_score"], ShouldResemble, []uint8{8, 13, 21})
+		So(pins["liquidity"]["scarcity_score"], ShouldResemble, []uint8{8, 21})
 
 		So(Catalog.ByKey(0).Category, ShouldEqual, "ignition")
 		So(Catalog.ByKey(6).Category, ShouldEqual, "excitation")

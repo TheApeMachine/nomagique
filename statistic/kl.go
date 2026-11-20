@@ -63,6 +63,10 @@ func (klDivergence *KLDivergence) Measure(sample PairSample) (ScalarOutput, erro
 	}, nil
 }
 
+/*
+klValue compares two histogram rows with a mass floor so zero bins do not
+produce -Inf contributions when totals are positive but sparse.
+*/
 func klValue(samples, paired []float64) (float64, error) {
 	totalSample := 0.0
 	totalPaired := 0.0

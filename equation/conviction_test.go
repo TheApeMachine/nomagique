@@ -36,9 +36,10 @@ func TestConviction_Measure(testingTB *testing.T) {
 
 		So(err, ShouldBeNil)
 
-		Convey("It should not classify risk-on surge without a leader", func() {
-			So(int(output.Category), ShouldNotEqual, 1)
-			So(int(output.Category), ShouldEqual, 3)
+		Convey("It should classify risk-on surge from aligned breadth", func() {
+			So(int(output.Category), ShouldEqual, 1)
+			So(output.SurgeScore, ShouldEqual, 1)
+			So(output.SlumpScore, ShouldEqual, 0)
 		})
 	})
 

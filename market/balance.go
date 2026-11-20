@@ -1,277 +1,325 @@
 package market
 
 import (
-	"context"
+	"encoding/json"
 	"sync"
-	"time"
 
 	"github.com/shopspring/decimal"
 )
 
 /*
-Balance is the book wallet: quote cash and per-asset capital / pnl / equity.
-Venue polling belongs behind Feed; this type only holds and serves state.
+Balance is spendable cash plus account equity. Cash comes from Balance REST;
+equity and unrealized come from TradeBalance REST.
 */
 type Balance struct {
-	mu       sync.RWMutex
-	Quote    string   `json:"quote"`
-	Assets   []*Asset `json:"assets"`
-	onChange func(*Balance)
+	mu         sync.RWMutex
+	Quote      string           `json:"quote"`
+	Assets     []*Asset         `json:"assets"`
+	Equity     *decimal.Decimal `json:"equity,omitempty"`
+	Unrealized *decimal.Decimal `json:"unrealized,omitempty"`
+	// reserved subtracts from Cash between REST Balance polls so concurrent
+	// Enter sizing cannot all spend the same stale free cash.
+	reserved map[string]decimal.Decimal
 }
 
 /*
-Feed pulls a fresh asset snapshot from a venue or simulator.
+NewBalance creates a new balance book with the given quote currency.
 */
-type Feed interface {
-	Fetch(ctx context.Context) ([]*Asset, error)
-}
-
-func NewBalance(quote string) *Balance {
-	return &Balance{
-		Quote:  quote,
-		Assets: make([]*Asset, 0),
-	}
-}
-
-func (balance *Balance) OnChange(fn func(*Balance)) {
-	balance.mu.Lock()
-	defer balance.mu.Unlock()
-	balance.onChange = fn
-}
-
-func (balance *Balance) AddAsset(asset *Asset) {
-	if asset == nil {
-		return
+func NewBalance(data map[string]any) *Balance {
+	balance := &Balance{
+		Quote:  data["quote"].(string),
+		Assets: data["assets"].([]*Asset),
 	}
 
-	balance.mu.Lock()
-	defer balance.mu.Unlock()
-	balance.Assets = append(balance.Assets, asset)
+	if value, ok := data["equity"].(*decimal.Decimal); ok {
+		balance.Equity = value
+	}
+
+	if value, ok := data["unrealized"].(*decimal.Decimal); ok {
+		balance.Unrealized = value
+	}
+
+	return balance
 }
 
-func (balance *Balance) GetAsset(symbol string) *Asset {
+/*
+Request is empty: balance arrives on venue push, not a poll subscription.
+*/
+func (balance *Balance) Request() map[string]any {
+	return map[string]any{}
+}
+
+/*
+Cash returns quote currency for paper tier sizing and ledger checks.
+In-flight Enter reservations are subtracted so Allocate sees decaying cash
+between 5s Balance polls.
+*/
+func (balance *Balance) Cash(quote string) *decimal.Decimal {
+	if balance == nil {
+		return nil
+	}
+
 	balance.mu.RLock()
 	defer balance.mu.RUnlock()
-	return balance.lookup(symbol)
-}
 
-func (balance *Balance) UpdateAsset(asset *Asset) {
-	if asset == nil {
-		return
-	}
-
-	balance.mu.Lock()
-	defer balance.mu.Unlock()
-
-	for i, existing := range balance.Assets {
-		if existing.Symbol == asset.Symbol {
-			balance.Assets[i] = asset
-			return
+	for _, asset := range balance.Assets {
+		if asset.Symbol == quote {
+			copied := asset.Capital
+			if reserved, ok := balance.reserved[quote]; ok {
+				copied = copied.Sub(reserved)
+			}
+			return &copied
 		}
-	}
-
-	balance.Assets = append(balance.Assets, asset)
-}
-
-/*
-Replace swaps the whole book under lock and notifies listeners.
-*/
-func (balance *Balance) Replace(assets []*Asset) {
-	balance.mu.Lock()
-	balance.Assets = assets
-	fn := balance.onChange
-	balance.mu.Unlock()
-
-	if fn != nil {
-		fn(balance)
-	}
-}
-
-/*
-Seed installs starting quote capital when the book is empty.
-*/
-func (balance *Balance) Seed(bankroll decimal.Decimal) {
-	if bankroll.Sign() <= 0 || balance.Quote == "" {
-		return
-	}
-
-	balance.mu.Lock()
-	defer balance.mu.Unlock()
-
-	if balance.lookup(balance.Quote) != nil {
-		return
-	}
-
-	balance.Assets = append(balance.Assets, NewAsset(
-		nil, balance.Quote, bankroll, decimal.Zero, bankroll,
-	))
-}
-
-/*
-Cash is available capital for an asset (exact symbol, then venue alias).
-*/
-func (balance *Balance) Cash(symbol string) *decimal.Decimal {
-	balance.mu.RLock()
-	defer balance.mu.RUnlock()
-
-	if asset := balance.lookup(symbol); asset != nil {
-		capital := asset.Capital
-		return &capital
 	}
 
 	return nil
 }
 
 /*
-Reading is the dashboard cash / equity / unrealized map for the quote asset.
+Reserve encumbers quote cash until Release (fill, reject, or Drop).
 */
-func (balance *Balance) Reading() map[string]any {
-	balance.mu.RLock()
-	defer balance.mu.RUnlock()
-
-	asset := balance.lookup(balance.Quote)
-
-	if asset == nil {
-		return nil
+func (balance *Balance) Reserve(quote string, amount decimal.Decimal) {
+	if balance == nil || quote == "" || amount.Sign() <= 0 {
+		return
 	}
 
-	cash := asset.Capital
-	equity := asset.Equity
-	unrealized := asset.PnL
+	balance.mu.Lock()
+	defer balance.mu.Unlock()
 
-	return map[string]any{
-		"cash":       &cash,
-		"equity":     &equity,
-		"unrealized": &unrealized,
+	if balance.reserved == nil {
+		balance.reserved = make(map[string]decimal.Decimal)
 	}
+	balance.reserved[quote] = balance.reserved[quote].Add(amount)
 }
 
 /*
-Sync replaces assets from feed.
+Release frees a prior Reserve — idempotent when amount exceeds remaining.
 */
-func (balance *Balance) Sync(ctx context.Context, feed Feed) error {
-	if feed == nil {
-		return nil
+func (balance *Balance) Release(quote string, amount decimal.Decimal) {
+	if balance == nil || quote == "" || amount.Sign() <= 0 {
+		return
 	}
 
-	assets, err := feed.Fetch(ctx)
+	balance.mu.Lock()
+	defer balance.mu.Unlock()
 
-	if err != nil {
+	if balance.reserved == nil {
+		return
+	}
+
+	next := balance.reserved[quote].Sub(amount)
+	if next.Sign() <= 0 {
+		delete(balance.reserved, quote)
+		return
+	}
+	balance.reserved[quote] = next
+}
+
+/*
+CommitSpend applies a filled enter to local Assets and clears the matching
+Reserve. Waiting for the 5s Balance poll left reserved parks stuck through
+REST outages and drove Cash to ~0 so Allocate never sized again.
+*/
+func (balance *Balance) CommitSpend(quote string, amount decimal.Decimal) {
+	if balance == nil || quote == "" || amount.Sign() <= 0 {
+		return
+	}
+
+	balance.mu.Lock()
+	defer balance.mu.Unlock()
+
+	for _, asset := range balance.Assets {
+		if asset.Symbol != quote {
+			continue
+		}
+		asset.Capital = asset.Capital.Sub(amount)
+		if asset.Capital.Sign() < 0 {
+			asset.Capital = decimal.Zero
+		}
+		break
+	}
+
+	if balance.reserved == nil {
+		return
+	}
+
+	next := balance.reserved[quote].Sub(amount)
+	if next.Sign() <= 0 {
+		delete(balance.reserved, quote)
+		return
+	}
+	balance.reserved[quote] = next
+}
+
+/*
+Reading is the hub wallet shape: cash, unrealized, equity as float64.
+*/
+func (balance *Balance) Reading() map[string]float64 {
+	out := map[string]float64{
+		"cash":       0,
+		"unrealized": 0,
+		"equity":     0,
+	}
+
+	if balance == nil {
+		return out
+	}
+
+	balance.mu.RLock()
+	defer balance.mu.RUnlock()
+
+	for _, asset := range balance.Assets {
+		if asset.Symbol == balance.Quote {
+			out["cash"], _ = asset.Capital.Float64()
+			break
+		}
+	}
+
+	if balance.Unrealized != nil {
+		out["unrealized"], _ = balance.Unrealized.Float64()
+	}
+
+	if balance.Equity != nil {
+		out["equity"], _ = balance.Equity.Float64()
+	}
+
+	return out
+}
+
+/*
+ReplaceAssets swaps the spendable asset list without wiping equity/unrealized.
+*/
+func (balance *Balance) ReplaceAssets(quote string, assets []*Asset) {
+	if balance == nil {
+		return
+	}
+
+	balance.mu.Lock()
+	defer balance.mu.Unlock()
+
+	if quote != "" {
+		balance.Quote = quote
+	}
+	balance.Assets = append([]*Asset(nil), assets...)
+}
+
+/*
+SetUnrealized stores mark PnL under Hello without racing Watch ingest.
+*/
+func (balance *Balance) SetUnrealized(value *decimal.Decimal) {
+	if balance == nil {
+		return
+	}
+
+	balance.mu.Lock()
+	defer balance.mu.Unlock()
+	balance.Unrealized = value
+}
+
+/*
+SetEquity stores TradeBalance equity under ingest without racing Hello.
+*/
+func (balance *Balance) SetEquity(value *decimal.Decimal) {
+	if balance == nil {
+		return
+	}
+
+	balance.mu.Lock()
+	defer balance.mu.Unlock()
+	balance.Equity = value
+}
+
+/*
+ToMarket copies this book into other when other is a *Balance.
+*/
+func (balance *Balance) ToMarket(other MarketType) MarketType {
+	dst, ok := other.(*Balance)
+
+	if !ok || dst == nil || balance == nil {
+		return other
+	}
+
+	balance.mu.RLock()
+	quote := balance.Quote
+	assets := append([]*Asset(nil), balance.Assets...)
+	equity := balance.Equity
+	unrealized := balance.Unrealized
+	balance.mu.RUnlock()
+
+	dst.mu.Lock()
+	dst.Quote = quote
+	dst.Assets = assets
+	dst.Equity = equity
+	dst.Unrealized = unrealized
+	dst.mu.Unlock()
+
+	return dst
+}
+
+/*
+FromMarket copies other into this book when other is a *Balance.
+*/
+func (balance *Balance) FromMarket(other MarketType) MarketType {
+	src, ok := other.(*Balance)
+
+	if !ok || src == nil || balance == nil {
+		return balance
+	}
+
+	return src.ToMarket(balance)
+}
+
+/*
+MarshalJSON serializes the balance book into a JSON-encoded byte slice.
+*/
+func (balance *Balance) MarshalJSON() ([]byte, error) {
+	type alias struct {
+		Quote      string           `json:"quote"`
+		Assets     []*Asset         `json:"assets"`
+		Equity     *decimal.Decimal `json:"equity,omitempty"`
+		Unrealized *decimal.Decimal `json:"unrealized,omitempty"`
+	}
+
+	if balance == nil {
+		return json.Marshal(alias{})
+	}
+
+	balance.mu.RLock()
+	defer balance.mu.RUnlock()
+
+	return json.Marshal(alias{
+		Quote:      balance.Quote,
+		Assets:     balance.Assets,
+		Equity:     balance.Equity,
+		Unrealized: balance.Unrealized,
+	})
+}
+
+/*
+UnmarshalJSON deserializes a JSON-encoded byte slice into a balance book.
+Replaces the book from JSON.
+*/
+func (balance *Balance) UnmarshalJSON(data []byte) error {
+	type alias struct {
+		Quote      string           `json:"quote"`
+		Assets     []*Asset         `json:"assets"`
+		Equity     *decimal.Decimal `json:"equity,omitempty"`
+		Unrealized *decimal.Decimal `json:"unrealized,omitempty"`
+	}
+
+	var decoded alias
+
+	if err := json.Unmarshal(data, &decoded); err != nil {
 		return err
 	}
 
-	balance.Replace(assets)
-	return nil
-}
+	balance.mu.Lock()
+	defer balance.mu.Unlock()
 
-/*
-TimedFeed is a Feed that knows how often it should be polled.
-*/
-type TimedFeed interface {
-	Feed
-	Interval() time.Duration
-}
-
-/*
-Follow starts Watch using feed.Interval when feed is a TimedFeed, else 1s.
-*/
-func (balance *Balance) Follow(ctx context.Context, feed Feed) {
-	if feed == nil {
-		return
-	}
-
-	interval := time.Second
-
-	if timed, ok := feed.(TimedFeed); ok {
-		interval = timed.Interval()
-	}
-
-	balance.Watch(ctx, interval, feed)
-}
-
-/*
-Watch polls feed on interval until ctx is done.
-*/
-func (balance *Balance) Watch(
-	ctx context.Context, interval time.Duration, feed Feed,
-) {
-	if feed == nil || interval <= 0 {
-		return
-	}
-
-	go func() {
-		ticker := time.NewTicker(interval)
-		defer ticker.Stop()
-
-		_ = balance.Sync(ctx, feed)
-
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				_ = balance.Sync(ctx, feed)
-			}
-		}
-	}()
-}
-
-func (balance *Balance) lookup(symbol string) *Asset {
-	if symbol == "" {
-		return nil
-	}
-
-	for _, asset := range balance.Assets {
-		if asset != nil && asset.Symbol == symbol {
-			return asset
-		}
-	}
-
-	if alias := Alias(symbol); alias != "" {
-		for _, asset := range balance.Assets {
-			if asset != nil && asset.Symbol == alias {
-				return asset
-			}
-		}
-	}
+	balance.Quote = decoded.Quote
+	balance.Assets = decoded.Assets
+	balance.Equity = decoded.Equity
+	balance.Unrealized = decoded.Unrealized
 
 	return nil
-}
-
-/*
-Alias maps venue legacy currency codes to their counterparts.
-*/
-func Alias(symbol string) string {
-	switch symbol {
-	case "USD":
-		return "ZUSD"
-	case "ZUSD":
-		return "USD"
-	case "EUR":
-		return "ZEUR"
-	case "ZEUR":
-		return "EUR"
-	case "GBP":
-		return "ZGBP"
-	case "ZGBP":
-		return "GBP"
-	case "CAD":
-		return "ZCAD"
-	case "ZCAD":
-		return "CAD"
-	case "JPY":
-		return "ZJPY"
-	case "ZJPY":
-		return "JPY"
-	case "BTC":
-		return "XXBT"
-	case "XXBT", "XBT":
-		return "BTC"
-	case "ETH":
-		return "XETH"
-	case "XETH":
-		return "ETH"
-	default:
-		return ""
-	}
 }

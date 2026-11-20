@@ -7,6 +7,10 @@ import (
 	"github.com/theapemachine/nomagique/statistic"
 )
 
+/*
+minBookGateHistory and maxBookImbalanceDisagreement bound spoof and separation
+scales so Map outputs stay comparable once symm fans them into envelope keys.
+*/
 const (
 	minBookGateHistory           = 3
 	maxBookImbalanceDisagreement = 2.0
@@ -46,6 +50,7 @@ type BookflowInput struct {
 	TouchDepth          float64
 	BookNotional        float64
 	TradePressure       float64
+	EventOFI            float64 // Cont frame Δq bid−ask (touch-normalized)
 	WeightedHistory     []float64
 	Level1History       []float64
 	FlatHistory         []float64
@@ -59,15 +64,20 @@ type BookflowOutput struct {
 	Value                float64 `json:"value"`
 	HypothesisSeparation float64 `json:"hypothesis_separation"`
 	LoadedScore          float64 `json:"loaded_score"`
+	AskLoadedScore       float64 `json:"ask_loaded_score"`
 	SpoofScore           float64 `json:"spoof_score"`
 	ThinScore            float64 `json:"thin_score"`
 	NeutralScore         float64 `json:"neutral_score"`
+	PressureZ            float64 `json:"pressure_z"`
+	EventOFI             float64 `json:"event_ofi"`
 	Category             float64 `json:"category"`
 	Ready                bool    `json:"ready"`
 }
 
 /*
 Map returns scored labels for the grid.
+loaded_score is bid inventory; ask_loaded_score is ask inventory — Abs(weighted)
+used to light enter opposition and hold support with the same unsigned reading.
 */
 func (output *BookflowOutput) Map() map[string]float64 {
 	if output == nil {
@@ -76,9 +86,12 @@ func (output *BookflowOutput) Map() map[string]float64 {
 
 	return map[string]float64{
 		"loaded_score":          output.LoadedScore,
+		"ask_loaded_score":      output.AskLoadedScore,
 		"spoof_score":           output.SpoofScore,
 		"thin_score":            output.ThinScore,
 		"neutral_score":         output.NeutralScore,
+		"pressure_z":            output.PressureZ,
+		"event_ofi":             output.EventOFI,
 		"hypothesis_separation": output.HypothesisSeparation,
 		"value":                 output.Value,
 	}
@@ -141,16 +154,21 @@ func (bookflow *Bookflow) Measure(input BookflowInput) (BookflowOutput, error) {
 
 	category := bookflowClassify(spoofed, thinning, loaded)
 
-	loadedScore := 0.0
+	bidLoaded := 0.0
+	askLoaded := 0.0
 
 	if loaded {
-		loadedScore = bookflowLoadedScore(
+		signed := bookflowLoadedScore(
 			input.Weighted,
 			input.TradePressure,
 			baseline.bookNotional,
 			loadedThreshold,
 		)
+		bidLoaded = math.Max(0, signed)
+		askLoaded = math.Max(0, -signed)
 	}
+
+	loadedMagnitude := math.Max(bidLoaded, askLoaded)
 
 	spoofScore := 0.0
 
@@ -174,7 +192,7 @@ func (bookflow *Bookflow) Measure(input BookflowInput) (BookflowOutput, error) {
 
 	switch category {
 	case 1:
-		value = loadedScore
+		value = loadedMagnitude
 	case 2:
 		value = spoofScore
 	case 3:
@@ -188,7 +206,7 @@ func (bookflow *Bookflow) Measure(input BookflowInput) (BookflowOutput, error) {
 	}
 
 	separation, err := probability.HypothesisSeparation([]float64{
-		loadedScore,
+		loadedMagnitude,
 		spoofScore / maxBookImbalanceDisagreement,
 		thinScore,
 		neutralScore,
@@ -200,13 +218,43 @@ func (bookflow *Bookflow) Measure(input BookflowInput) (BookflowOutput, error) {
 	return BookflowOutput{
 		Value:                value,
 		HypothesisSeparation: separation,
-		LoadedScore:          loadedScore,
+		LoadedScore:          bidLoaded,
+		AskLoadedScore:       askLoaded,
 		SpoofScore:           spoofScore,
 		ThinScore:            thinScore,
 		NeutralScore:         neutralScore,
+		PressureZ:            bookflowPressureZ(input.Weighted, input.WeightedHistory),
+		EventOFI:             input.EventOFI,
 		Category:             float64(category),
 		Ready:                true,
 	}, nil
+}
+
+/*
+bookflowPressureZ is Bolz-style book-pressure z-score vs recent weighted imbalance.
+*/
+func bookflowPressureZ(current float64, history []float64) float64 {
+	if len(history) < minBookGateHistory {
+		return 0
+	}
+
+	mean := 0.0
+	for _, v := range history {
+		mean += v
+	}
+	mean /= float64(len(history))
+
+	var sumSq float64
+	for _, v := range history {
+		d := v - mean
+		sumSq += d * d
+	}
+	std := math.Sqrt(sumSq / float64(len(history)))
+	if std <= 1e-12 {
+		return 0
+	}
+
+	return (current - mean) / std
 }
 
 /*
@@ -252,14 +300,14 @@ func bookflowMeasureBaseline(input BookflowInput) bookflowBaseline {
 
 /*
 bookflowMedianAbsolute returns a robust central absolute-depth gate.
-It uses statistic.MedianOf so caller-owned histories are never reordered.
+MedianAbsoluteOf copies before scoring so caller-owned histories stay put.
 */
 func bookflowMedianAbsolute(values []float64) float64 {
 	if len(values) == 0 {
 		return 0
 	}
 
-	median, ok := statistic.MedianOf(values)
+	median, ok := statistic.MedianAbsoluteOf(values)
 
 	if !ok {
 		return 0
@@ -268,29 +316,48 @@ func bookflowMedianAbsolute(values []float64) float64 {
 	return median
 }
 
+/*
+bookflowLoadedScore rewards signed depth skew confirmed by trade pressure.
+Positive is bid inventory, negative is ask inventory — callers split the sides
+so enter opposition and hold support are not lit by the same Abs reading.
+*/
 func bookflowLoadedScore(
 	weighted, tradePressure, bookNotional, weightedThreshold float64,
 ) float64 {
-	loadedScore := math.Abs(weighted)
+	magnitude := math.Abs(weighted)
+
+	if magnitude <= 0 {
+		return 0
+	}
+
+	sign := 1.0
+
+	if weighted < 0 {
+		sign = -1
+	}
 
 	if bookNotional <= 0 || weightedThreshold <= 0 || tradePressure == 0 {
-		return loadedScore
+		return sign * magnitude
 	}
 
 	pressureRatio := math.Abs(tradePressure) / bookNotional
 	confirmation := pressureRatio / (pressureRatio + weightedThreshold)
 
 	if weighted*tradePressure > 0 {
-		return loadedScore + confirmation - loadedScore*confirmation
+		return sign * (magnitude + confirmation - magnitude*confirmation)
 	}
 
 	if weighted*tradePressure < 0 {
-		return loadedScore * weightedThreshold / (weightedThreshold + pressureRatio)
+		return sign * magnitude * weightedThreshold / (weightedThreshold + pressureRatio)
 	}
 
-	return loadedScore
+	return sign * magnitude
 }
 
+/*
+bookflowIsSpoofSkew detects touch-depth disagreement that would otherwise read as
+neutral imbalance in downstream resonance features.
+*/
 func bookflowIsSpoofSkew(
 	weighted, level1, weightedThreshold, level1Threshold, spoofContrast float64,
 	ready bool,
@@ -310,6 +377,10 @@ func bookflowIsSpoofSkew(
 	return math.Abs(level1) >= level1Threshold*spoofContrast
 }
 
+/*
+bookflowIsBookThinning flags notional withdrawal against its own median so thin_score
+signals liquidity pull rather than a permanently small book.
+*/
 func bookflowIsBookThinning(
 	bookNotional, baselineNotional float64,
 	ready bool,
@@ -321,6 +392,10 @@ func bookflowIsBookThinning(
 	return bookNotional < baselineNotional
 }
 
+/*
+bookflowClassify picks the dominant hypothesis so category and value align when
+symm maps the output bundle into runtime.Envelope.
+*/
 func bookflowClassify(spoofed, thinning, loaded bool) int {
 	if spoofed {
 		return 2

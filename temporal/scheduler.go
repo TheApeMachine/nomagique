@@ -5,7 +5,10 @@ import (
 	"sync"
 )
 
-// ScheduledEvent represents a single event scheduled to occur at a specific simulation time
+/*
+ScheduledEvent is one callback bound to a simulation timestamp and optional
+repeat interval so ProcessUntil can reschedule recurring ticks.
+*/
 type ScheduledEvent struct {
 	Time      int64
 	Callback  func()
@@ -14,7 +17,10 @@ type ScheduledEvent struct {
 	id        uint64
 }
 
-// EventScheduler manages scheduled events and fires them when simulation time advances
+/*
+EventScheduler orders pending callbacks by time and fires them as SimulatedClock
+advances, using a side table for in-flight events so Cancel remains reliable.
+*/
 type EventScheduler struct {
 	clock  *SimulatedClock
 	events eventHeap
@@ -23,7 +29,9 @@ type EventScheduler struct {
 	mu     sync.Mutex
 }
 
-// NewEventScheduler creates a new event scheduler
+/*
+NewEventScheduler attaches to a simulated clock and initializes the time heap.
+*/
 func NewEventScheduler(clock *SimulatedClock) *EventScheduler {
 	es := &EventScheduler{
 		clock:  clock,
@@ -34,7 +42,9 @@ func NewEventScheduler(clock *SimulatedClock) *EventScheduler {
 	return es
 }
 
-// Schedule schedules a one-time event at the specified simulation time
+/*
+Schedule enqueues a one-shot callback at atTime simulation nanoseconds.
+*/
 func (es *EventScheduler) Schedule(atTime int64, callback func()) uint64 {
 	es.mu.Lock()
 	defer es.mu.Unlock()
@@ -49,7 +59,9 @@ func (es *EventScheduler) Schedule(atTime int64, callback func()) uint64 {
 	return es.nextID
 }
 
-// ScheduleRepeating schedules a callback to be called every interval nanoseconds
+/*
+ScheduleRepeating arms a periodic callback from the current simulation time.
+*/
 func (es *EventScheduler) ScheduleRepeating(interval int64, callback func()) uint64 {
 	es.mu.Lock()
 	defer es.mu.Unlock()
@@ -66,7 +78,9 @@ func (es *EventScheduler) ScheduleRepeating(interval int64, callback func()) uin
 	return es.nextID
 }
 
-// Cancel removes a scheduled event by ID
+/*
+Cancel removes a pending event or marks an in-flight one so it is not rescheduled.
+*/
 func (es *EventScheduler) Cancel(id uint64) {
 	es.mu.Lock()
 	defer es.mu.Unlock()
@@ -81,8 +95,10 @@ func (es *EventScheduler) Cancel(id uint64) {
 	es.off.cancel(id)
 }
 
-// ProcessUntil fires all events up to and including the given time
-// Called by SimulatedClock.Advance()
+/*
+ProcessUntil fires callbacks with time <= untilTime, invoking each outside the
+lock so nested Schedule calls do not deadlock the scheduler.
+*/
 func (es *EventScheduler) ProcessUntil(untilTime int64) {
 	for {
 		es.mu.Lock()
@@ -95,7 +111,6 @@ func (es *EventScheduler) ProcessUntil(untilTime int64) {
 		es.off.hold(event.id)
 		es.mu.Unlock()
 
-		// Fire callback (unlocked to prevent deadlock if callback schedules events)
 		event.Callback()
 
 		es.mu.Lock()
@@ -110,12 +125,17 @@ func (es *EventScheduler) ProcessUntil(untilTime int64) {
 	}
 }
 
-// offHeap tracks events popped for Callback so Cancel still reaches them.
+/*
+offHeap tracks events popped for Callback so Cancel still reaches them.
+*/
 type offHeap struct {
 	popped    map[uint64]struct{}
 	cancelled map[uint64]struct{}
 }
 
+/*
+newOffHeap allocates per-scheduler cancel tracking for in-flight event IDs.
+*/
 func newOffHeap() *offHeap {
 	return &offHeap{
 		popped:    map[uint64]struct{}{},
@@ -123,10 +143,16 @@ func newOffHeap() *offHeap {
 	}
 }
 
+/*
+hold records an event ID as running between Pop and Callback return.
+*/
 func (set *offHeap) hold(id uint64) {
 	set.popped[id] = struct{}{}
 }
 
+/*
+cancel marks a running event so drop suppresses reschedule after Callback.
+*/
 func (set *offHeap) cancel(id uint64) {
 	if _, running := set.popped[id]; !running {
 		return
@@ -135,6 +161,9 @@ func (set *offHeap) cancel(id uint64) {
 	set.cancelled[id] = struct{}{}
 }
 
+/*
+drop clears tracking for id and reports whether the event was cancelled mid-flight.
+*/
 func (set *offHeap) drop(id uint64) bool {
 	_, cancelled := set.cancelled[id]
 	delete(set.popped, id)
@@ -143,25 +172,42 @@ func (set *offHeap) drop(id uint64) bool {
 	return cancelled
 }
 
-// eventHeap implements heap.Interface for priority queue of events
+/*
+eventHeap is the priority queue backing EventScheduler ordered by simulation time.
+*/
 type eventHeap []*ScheduledEvent
 
+/*
+Len implements heap.Interface for the pending event count.
+*/
 func (h eventHeap) Len() int { return len(h) }
 
-// Less orders by time, then by schedule sequence so equal-timestamp events
-// fire in FIFO order — heap sift order is not deterministic across runs.
+/*
+Less orders by time, then by schedule sequence so equal-timestamp events
+fire in FIFO order — heap sift order is not deterministic across runs.
+*/
 func (h eventHeap) Less(i, j int) bool {
 	if h[i].Time != h[j].Time {
 		return h[i].Time < h[j].Time
 	}
 	return h[i].id < h[j].id
 }
+
+/*
+Swap implements heap.Interface for heap maintenance.
+*/
 func (h eventHeap) Swap(i, j int) { h[i], h[j] = h[j], h[i] }
 
+/*
+Push implements heap.Interface to append a scheduled event pointer.
+*/
 func (h *eventHeap) Push(x any) {
 	*h = append(*h, x.(*ScheduledEvent))
 }
 
+/*
+Pop implements heap.Interface to remove the earliest scheduled event.
+*/
 func (h *eventHeap) Pop() any {
 	old := *h
 	n := len(old)

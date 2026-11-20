@@ -2,6 +2,7 @@ package algorithm
 
 import (
 	"math"
+	"sync"
 	"time"
 
 	"github.com/theapemachine/errnie"
@@ -9,6 +10,9 @@ import (
 	"github.com/theapemachine/nomagique/statistic"
 )
 
+/*
+lagPayloadFields bounds sampling or gates so equation feature frames stay well-posed for symm envelope wiring.
+*/
 const lagPayloadFields = 11
 
 /*
@@ -63,6 +67,7 @@ type LagInput struct {
 Lag classifies anchor stall, inefficient lag, synchronized drift, and decoupling.
 */
 type Lag struct {
+	mu      sync.RWMutex
 	outcome LagOutcome
 }
 
@@ -105,17 +110,24 @@ Measure classifies typed lead-lag evidence. Ineligible readings return an empty
 outcome without error so warmup stays quiet on the feed.
 */
 func (lag *Lag) Measure(input LagInput) (LagOutcome, error) {
-	lag.outcome = lag.evaluate(input)
+	outcome := lag.evaluate(input)
 
-	if !lag.outcome.Eligible || lag.outcome.Strength <= 0 {
-		lag.outcome = LagOutcome{}
-
-		return LagOutcome{}, nil
+	if !outcome.Eligible || outcome.Strength <= 0 {
+		outcome = LagOutcome{}
 	}
 
-	return lag.outcome, nil
+	// Publish under lock so concurrent symbol batches cannot cross-wire
+	// LagReading.Measure or return another symbol's outcome.
+	lag.mu.Lock()
+	lag.outcome = outcome
+	lag.mu.Unlock()
+
+	return outcome, nil
 }
 
+/*
+(…).evaluate supports algorithm sampling that supplies equation inputs symm maps into runtime.Envelope.
+*/
 func (lag *Lag) evaluate(input LagInput) LagOutcome {
 	if input.Price <= 0 {
 		return LagOutcome{}
@@ -139,6 +151,9 @@ func (lag *Lag) evaluate(input LagInput) LagOutcome {
 	)
 }
 
+/*
+(…).evaluateAnchor supports algorithm sampling that supplies equation inputs symm maps into runtime.Envelope.
+*/
 func (lag *Lag) evaluateAnchor(
 	price float64,
 	moveReady, moveMoved bool,
@@ -164,6 +179,9 @@ func (lag *Lag) evaluateAnchor(
 	}
 }
 
+/*
+(…).evaluateFollower supports algorithm sampling that supplies equation inputs symm maps into runtime.Envelope.
+*/
 func (lag *Lag) evaluateFollower(
 	price float64,
 	moveReady, moveMoved bool,
@@ -220,6 +238,9 @@ func (lag *Lag) evaluateFollower(
 	return LagOutcome{}
 }
 
+/*
+(…).lagOutcome supports algorithm sampling that supplies equation inputs symm maps into runtime.Envelope.
+*/
 func (lag *Lag) lagOutcome(price float64, lagBars int, corr float64) (LagOutcome, error) {
 	maxBars, err := lagMaxBars()
 
@@ -227,8 +248,13 @@ func (lag *Lag) lagOutcome(price float64, lagBars int, corr float64) (LagOutcome
 		return LagOutcome{}, err
 	}
 
-	lagMagnitude := math.Abs(float64(lagBars))
-	lagFraction := lagMagnitude / float64(maxBars)
+	sign := 1.0
+
+	if lagBars < 0 {
+		sign = -1
+	}
+
+	lagFraction := math.Abs(float64(lagBars)) / float64(maxBars)
 	threshold := minLagFraction(maxBars)
 
 	category := 2
@@ -237,11 +263,11 @@ func (lag *Lag) lagOutcome(price float64, lagBars int, corr float64) (LagOutcome
 
 	if lagFraction >= threshold {
 		category = 1
-		inefficientScore = lagFraction * corr
+		inefficientScore = sign * lagFraction * corr
 	}
 
 	if category == 2 {
-		syncScore = corr * (threshold - lagFraction)
+		syncScore = sign * corr * (threshold - lagFraction)
 	}
 
 	strength := lagFraction
@@ -256,6 +282,9 @@ func (lag *Lag) lagOutcome(price float64, lagBars int, corr float64) (LagOutcome
 	}, nil
 }
 
+/*
+(…).contemporaneousOutcome supports algorithm sampling that supplies equation inputs symm maps into runtime.Envelope.
+*/
 func (lag *Lag) contemporaneousOutcome(price, corr float64, sampleCount int) LagOutcome {
 	if sampleCount <= 0 {
 		return LagOutcome{}
@@ -289,6 +318,9 @@ func (lag *Lag) contemporaneousOutcome(price, corr float64, sampleCount int) Lag
 	}
 }
 
+/*
+minLagFraction supports algorithm sampling that supplies equation inputs symm maps into runtime.Envelope.
+*/
 func minLagFraction(maxBars int) float64 {
 	if maxBars <= 0 {
 		return 1
@@ -297,6 +329,9 @@ func minLagFraction(maxBars int) float64 {
 	return math.Ceil(float64(maxBars)/2) / float64(maxBars)
 }
 
+/*
+lagMinSamples supports algorithm sampling that supplies equation inputs symm maps into runtime.Envelope.
+*/
 func lagMinSamples() (int, error) {
 	_, longWindow, err := statistic.ResolveWindows(make([]float64, 1), 0, 0)
 
@@ -311,6 +346,9 @@ func lagMinSamples() (int, error) {
 	return longWindow, nil
 }
 
+/*
+lagMaxBars supports algorithm sampling that supplies equation inputs symm maps into runtime.Envelope.
+*/
 func lagMaxBars() (int, error) {
 	_, longWindow, err := statistic.ResolveWindows(make([]float64, 1), 0, 0)
 
@@ -325,6 +363,9 @@ func lagMaxBars() (int, error) {
 	return longWindow, nil
 }
 
+/*
+maxLagBarsForSeries supports algorithm sampling that supplies equation inputs symm maps into runtime.Envelope.
+*/
 func maxLagBarsForSeries(sampleCount int) (int, error) {
 	if sampleCount <= 0 {
 		return lagMaxBars()
@@ -353,35 +394,53 @@ func maxLagBarsForSeries(sampleCount int) (int, error) {
 	return longWindow, nil
 }
 
+/*
+(…).InefficientReading supports algorithm sampling that supplies equation inputs symm maps into runtime.Envelope.
+*/
 func (lag *Lag) InefficientReading() *LagReading {
 	return newLagReading(lag, func(outcome LagOutcome) float64 {
 		return outcome.InefficientScore
 	})
 }
 
+/*
+(…).SyncReading supports algorithm sampling that supplies equation inputs symm maps into runtime.Envelope.
+*/
 func (lag *Lag) SyncReading() *LagReading {
 	return newLagReading(lag, func(outcome LagOutcome) float64 {
 		return outcome.SyncScore
 	})
 }
 
+/*
+(…).DecoupledReading supports algorithm sampling that supplies equation inputs symm maps into runtime.Envelope.
+*/
 func (lag *Lag) DecoupledReading() *LagReading {
 	return newLagReading(lag, func(outcome LagOutcome) float64 {
 		return outcome.DecoupledScore
 	})
 }
 
+/*
+(…).StallReading supports algorithm sampling that supplies equation inputs symm maps into runtime.Envelope.
+*/
 func (lag *Lag) StallReading() *LagReading {
 	return newLagReading(lag, func(outcome LagOutcome) float64 {
 		return outcome.StallScore
 	})
 }
 
+/*
+LagReading holds per-symbol sampling state that feeds equation Measure and Map outputs into resonance features.
+*/
 type LagReading struct {
 	lag     *Lag
 	project func(LagOutcome) float64
 }
 
+/*
+newLagReading supports algorithm sampling that supplies equation inputs symm maps into runtime.Envelope.
+*/
 func newLagReading(lag *Lag, project func(LagOutcome) float64) *LagReading {
 	return &LagReading{
 		lag:     lag,
@@ -401,7 +460,11 @@ func (reading *LagReading) Measure() (float64, error) {
 		))
 	}
 
-	return reading.project(reading.lag.outcome), nil
+	reading.lag.mu.RLock()
+	outcome := reading.lag.outcome
+	reading.lag.mu.RUnlock()
+
+	return reading.project(outcome), nil
 }
 
 /*

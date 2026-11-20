@@ -137,6 +137,9 @@ func (baseline *MoveBaseline) Measure(recentMove float64) (MoveBaselineOutput, e
 	return baseline.output(moved, stallMargin, ready), nil
 }
 
+/*
+(…).output supports algorithm sampling that supplies equation inputs symm maps into runtime.Envelope.
+*/
 func (baseline *MoveBaseline) output(
 	moved float64,
 	stallMargin float64,
@@ -154,6 +157,9 @@ func (baseline *MoveBaseline) output(
 	}
 }
 
+/*
+updateMoveMoments supports algorithm sampling that supplies equation inputs symm maps into runtime.Envelope.
+*/
 func updateMoveMoments(
 	mean, variance float64,
 	count int,
@@ -172,6 +178,9 @@ func updateMoveMoments(
 	return mean, variance, count
 }
 
+/*
+pathMoveFloor supports algorithm sampling that supplies equation inputs symm maps into runtime.Envelope.
+*/
 func pathMoveFloor(pathMoves []float64, minObs int) float64 {
 	if len(pathMoves) < minObs {
 		return 0
@@ -199,6 +208,9 @@ func pathMoveFloor(pathMoves []float64, minObs int) float64 {
 	return floor
 }
 
+/*
+moveSampleQuantile supports algorithm sampling that supplies equation inputs symm maps into runtime.Envelope.
+*/
 func moveSampleQuantile(percentile float64, values []float64) (float64, error) {
 	if len(values) == 0 {
 		return 0, errnie.Error(errnie.Err(

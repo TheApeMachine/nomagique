@@ -230,6 +230,10 @@ func (rls *RLS) copyCoefficients(weights []float64) (float64, error) {
 	return rls.session.beta[0], nil
 }
 
+/*
+rlsSession is the square-root RLS factorization state kept off the exported RLS
+handle so snapshots stay copyable without leaking buffers.
+*/
 type rlsSession struct {
 	dimension        int
 	initialVariance  float64
@@ -243,6 +247,10 @@ type rlsSession struct {
 	noiseScale       float64
 }
 
+/*
+rlsPrediction bundles point forecast with optional Student-t uncertainty once
+enough innovations have been seen.
+*/
 type rlsPrediction struct {
 	value            float64
 	scale            float64
@@ -250,6 +258,10 @@ type rlsPrediction struct {
 	ready            bool
 }
 
+/*
+loadSession materializes config into a fresh factorized session with validated
+forgetting and variance floors.
+*/
 func (rls *RLS) loadSession() (*rlsSession, error) {
 	config := rls.config
 
@@ -285,6 +297,10 @@ func (rls *RLS) loadSession() (*rlsSession, error) {
 	return session, nil
 }
 
+/*
+resetState zeroes coefficients and rebuilds the initial diagonal factor — the
+recovery path after a numeric blow-up in observe.
+*/
 func (session *rlsSession) resetState() {
 	size := session.dimension + 1
 	scale := math.Sqrt(session.initialVariance)
@@ -305,6 +321,10 @@ func (session *rlsSession) resetState() {
 	session.noiseScale = 0
 }
 
+/*
+observe applies one design row and retries once after reset so a single bad
+tick cannot permanently corrupt task-head weights.
+*/
 func (session *rlsSession) observe(
 	features []float64,
 	target float64,
@@ -334,6 +354,10 @@ func (session *rlsSession) observe(
 	}, nil
 }
 
+/*
+observeOnce is one square-root RLS update — separated so observe can reset and
+retry without duplicating the factor math.
+*/
 func (session *rlsSession) observeOnce(features []float64, target float64) (float64, error) {
 	if !finite(target) {
 		return 0, fmt.Errorf("learning: rls target must be finite")
@@ -591,6 +615,10 @@ func (session *rlsSession) predictiveSum(
 	return prediction, nil
 }
 
+/*
+snapshot materializes β and covariance for tests and desk inspection without
+exposing the mutable root factor.
+*/
 func (session *rlsSession) snapshot() RLSSnapshot {
 	size := session.dimension + 1
 	covariance := make([]float64, size*size)

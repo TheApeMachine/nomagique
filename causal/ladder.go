@@ -157,6 +157,9 @@ func (ladder *Ladder) Measure(input LadderInput) (LadderOutput, error) {
 	}, nil
 }
 
+/*
+Transitive causal layer from symm — (…).uplift estimates do/backdoor effects on tabular desk features.
+*/
 func (ladder *Ladder) uplift(
 	table nodeTable,
 	rows [][]float64,
@@ -212,6 +215,10 @@ func (ladder *Ladder) uplift(
 
 	return uplift, nil
 }
+
+/*
+Transitive causal layer from symm — interventionLevel estimates do/backdoor and counterfactual effects on desk tables.
+*/
 
 func (ladder *Ladder) interventionLevel(
 	table nodeTable,

@@ -58,6 +58,9 @@ func (fit BivariateFit) TotalDescendants() (
 	return buyParent, sellParent, true
 }
 
+/*
+Feeds algorithm/excitation and equation Hawkes stages — finiteNonNegative turns marked trade arrivals into fitted intensities and categories.
+*/
 func finiteNonNegative(value float64) bool {
 	return value >= 0 && !math.IsNaN(value) && !math.IsInf(value, 0)
 }

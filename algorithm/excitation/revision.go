@@ -16,6 +16,10 @@ type revision struct {
 	sell []time.Time
 }
 
+/*
+Observe updates buy/sell arrival copies and returns how many new events should
+advance the refit schedule.
+*/
 func (revision *revision) Observe(stream hawkes.ArrivalStream) int {
 	buy := stream.BuyTimes()
 	sell := stream.SellTimes()
@@ -27,6 +31,9 @@ func (revision *revision) Observe(stream hawkes.ArrivalStream) int {
 	return changed
 }
 
+/*
+additions counts strictly new timestamps between sorted previous and current windows.
+*/
 func (revision *revision) additions(
 	previous []time.Time,
 	current []time.Time,

@@ -40,8 +40,14 @@ func TestBookflowSample_MeasureBook(testingTB *testing.T) {
 			measureErr error
 		)
 
-		for range 6 {
-			input, ok, _, measureErr = sample.MeasureBook(bookflowBookInput())
+		for step := range 6 {
+			frame := bookflowBookInput()
+
+			for index := range frame.Bids {
+				frame.Bids[index].Quantity += float64(step)
+			}
+
+			input, ok, _, measureErr = sample.MeasureBook(frame)
 		}
 
 		So(measureErr, ShouldBeNil)

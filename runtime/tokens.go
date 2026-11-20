@@ -14,6 +14,9 @@ type Token struct {
 	Brightness float64  `json:"brightness"`
 }
 
+/*
+NewToken copies symbols so path tokens on the envelope stay immutable across rings.
+*/
 func NewToken(symbols []string, brightness float64) Token {
 	if len(symbols) == 0 {
 		return Token{}
@@ -28,6 +31,9 @@ func NewToken(symbols []string, brightness float64) Token {
 	}
 }
 
+/*
+String renders one path segment for envelope.Paths JSON and dashboard facets.
+*/
 func (token Token) String() string {
 	if len(token.Symbols) == 0 {
 		return ""
@@ -40,16 +46,28 @@ func (token Token) String() string {
 	return "[" + strings.Join(token.Symbols, "-") + "]"
 }
 
+/*
+Tokens is the ordered path list on Envelope.Paths for solver and UI replay.
+*/
 type Tokens []Token
 
+/*
+NewTokens starts an empty path chain before cognition appends per tick.
+*/
 func NewTokens() Tokens {
 	return make([]Token, 0)
 }
 
+/*
+Append extends the path without mutating a shared slice backing store.
+*/
 func (tokens Tokens) Append(token Token) Tokens {
 	return append(tokens, token)
 }
 
+/*
+String joins path segments for logging and Publish("paths").
+*/
 func (tokens Tokens) String() string {
 	parts := make([]string, 0, len(tokens))
 
@@ -62,6 +80,9 @@ func (tokens Tokens) String() string {
 	return strings.Join(parts, "/")
 }
 
+/*
+Brightness sums impulse along the path for desk tier gating and grid weighting.
+*/
 func (tokens Tokens) Brightness() float64 {
 	brightness := 0.0
 
@@ -72,10 +93,16 @@ func (tokens Tokens) Brightness() float64 {
 	return brightness
 }
 
+/*
+Len is path depth for trie and cognition bounds checks.
+*/
 func (tokens Tokens) Len() int {
 	return len(tokens)
 }
 
+/*
+Last is the active path head decisions and Emit read each tick.
+*/
 func (tokens Tokens) Last() Token {
 	if len(tokens) == 0 {
 		return Token{}
@@ -84,6 +111,9 @@ func (tokens Tokens) Last() Token {
 	return tokens[len(tokens)-1]
 }
 
+/*
+StringList exposes per-segment strings for UI tables without re-parsing paths.
+*/
 func (tokens Tokens) StringList() []string {
 	out := make([]string, 0, len(tokens))
 
@@ -94,10 +124,16 @@ func (tokens Tokens) StringList() []string {
 	return out
 }
 
+/*
+MarshalJSON stores symbols only so tick JSON stays compact in store uploads.
+*/
 func (token Token) MarshalJSON() ([]byte, error) {
 	return sonic.Marshal(token.Symbols)
 }
 
+/*
+UnmarshalJSON reloads path letters from persisted envelope ticks.
+*/
 func (token *Token) UnmarshalJSON(data []byte) error {
 	return sonic.Unmarshal(data, &token.Symbols)
 }

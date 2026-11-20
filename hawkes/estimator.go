@@ -18,6 +18,12 @@ observation window and data-derived parameter bounds.
 */
 type fitRestriction int
 
+/*
+Feeds algorithm/excitation and equation Hawkes stages — fitSelfOnly turns marked trade arrivals into fitted intensities and categories.
+*/
+/*
+Feeds algorithm/excitation and equation Hawkes stages — fitUnrestricted turns marked trade arrivals into fitted intensities and categories.
+*/
 const (
 	fitUnrestricted fitRestriction = iota
 	fitSelfOnly
@@ -47,11 +53,18 @@ restricted likelihood reference for testing whether cross excitation adds
 explanatory power.
 */
 func (estimator *BivariateEstimator) FitSelfOnly(
+/*
+Feeds algorithm/excitation and equation Hawkes stages — (…).fit turns marked trade arrivals into fitted intensities and categories.
+*/
 	stream ArrivalStream,
 	horizon time.Time,
 ) BivariateFit {
 	return estimator.fit(stream, horizon, fitSelfOnly)
 }
+
+/*
+Feeds algorithm/excitation and equation Hawkes stages — fit fits marked trade arrivals into intensities and fit categories.
+*/
 
 func (estimator *BivariateEstimator) fit(
 	stream ArrivalStream,
@@ -104,6 +117,10 @@ func (estimator *BivariateEstimator) fit(
 	return best
 }
 
+/*
+Feeds algorithm/excitation and equation Hawkes stages — crossLikelihoodValid fits marked trade arrivals into intensities and fit categories.
+*/
+
 func (estimator *BivariateEstimator) crossLikelihoodValid(
 	stream ArrivalStream,
 	horizon time.Time,
@@ -127,6 +144,10 @@ func (estimator *BivariateEstimator) crossLikelihoodValid(
 	return fitLL+logLikelihoodTolerance(fitLL, restrictedLL) >= restrictedLL
 }
 
+/*
+Feeds algorithm/excitation and equation Hawkes stages — preferCandidate fits marked trade arrivals into intensities and fit categories.
+*/
+
 func (estimator *BivariateEstimator) preferCandidate(
 	current, candidate BivariateFit,
 	currentLL, candidateLL float64,
@@ -143,6 +164,10 @@ func (estimator *BivariateEstimator) preferCandidate(
 
 	return candidateLL > currentLL+improvementTolerance
 }
+
+/*
+Feeds algorithm/excitation and equation Hawkes stages — logLikelihoodTolerance fits marked trade arrivals into intensities and fit categories.
+*/
 
 func logLikelihoodTolerance(values ...float64) float64 {
 	scale := 1.0

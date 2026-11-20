@@ -13,10 +13,23 @@ import (
 	"gonum.org/v1/gonum/stat"
 )
 
+/*
+cohortMinimumPeers bounds sampling or gates so equation feature frames stay well-posed for symm envelope wiring.
+*/
+/*
+cohortHistoryCap bounds sampling or gates so equation feature frames stay well-posed for symm envelope wiring.
+*/
+/*
+cohortMinimumWindow bounds sampling or gates so equation feature frames stay well-posed for symm envelope wiring.
+*/
 const (
 	cohortMinimumWindow = 2
 	cohortMinimumPeers  = 1
 	cohortHistoryCap    = 128
+	// maxCohortPeers caps the all-pairs matrix. Full-board 605² peer math on
+	// every disruptor tick freezes the signal ring; herd classification only
+	// needs a deep peer sample.
+	maxCohortPeers = 32
 )
 
 /*
@@ -46,6 +59,9 @@ type CohortSampleInput struct {
 	At     time.Time
 }
 
+/*
+cohortSymbol holds per-symbol sampling state that feeds equation Measure and Map outputs into resonance features.
+*/
 type cohortSymbol struct {
 	lastPrice float64
 	prices    []float64
@@ -63,6 +79,9 @@ func NewCohortSample(config ...CohortSampleConfig) *CohortSample {
 	}
 }
 
+/*
+cohortSampleConfig supports algorithm sampling that supplies equation inputs symm maps into runtime.Envelope.
+*/
 func cohortSampleConfig(config []CohortSampleConfig) CohortSampleConfig {
 	if len(config) == 0 {
 		return CohortSampleConfig{HistoryCap: cohortHistoryCap}
@@ -81,50 +100,271 @@ Measure observes a tick and emits a feature frame once peer history is ready.
 func (cohortSample *CohortSample) Measure(
 	input CohortSampleInput,
 ) (equation.FeatureFrame, bool, error) {
-	cohortSample.mu.Lock()
-	defer cohortSample.mu.Unlock()
-
-	sample, err := cohortSample.sample(input)
+	frames, err := cohortSample.MeasureMany([]CohortSampleInput{input})
 
 	if err != nil {
 		return equation.FeatureFrame{}, false, err
 	}
 
-	window := cohortSample.window(sample.name)
+	frame, ok := frames[input.Symbol]
 
-	if window < cohortMinimumWindow {
-		return equation.FeatureFrame{}, false, nil
-	}
-
-	pairCorrelations, peerCorrelations, peerEnergies, energy, barSpacingSeconds :=
-		cohortSample.peers(sample.name, window)
-
-	if len(pairCorrelations) == 0 ||
-		len(peerCorrelations) < cohortMinimumPeers ||
-		len(peerEnergies) < cohortMinimumPeers ||
-		energy <= 0 ||
-		barSpacingSeconds <= 0 {
-		return equation.FeatureFrame{}, false, nil
-	}
-
-	features := cohortFeatures(
-		window,
-		barSpacingSeconds,
-		energy,
-		pairCorrelations,
-		peerCorrelations,
-		peerEnergies,
-	)
-
-	return equation.NewFeatureFrame(equation.CohortInputKeys, features), true, nil
+	return frame, ok, nil
 }
 
+/*
+ObserveMany records prices without building feature frames — heartbeat marks
+must warm history without paying O(peers²) on the disruptor path.
+*/
+func (cohortSample *CohortSample) ObserveMany(inputs []CohortSampleInput) error {
+	cohortSample.mu.Lock()
+	defer cohortSample.mu.Unlock()
+
+	return cohortSample.observeManyLocked(inputs)
+}
+
+/*
+MeasureMany observes inputs then emits frames for those symbols.
+*/
+func (cohortSample *CohortSample) MeasureMany(
+	inputs []CohortSampleInput,
+) (map[string]equation.FeatureFrame, error) {
+	cohortSample.mu.Lock()
+	defer cohortSample.mu.Unlock()
+
+	err := cohortSample.observeManyLocked(inputs)
+	frames := cohortSample.emitManyLocked(inputSymbols(inputs))
+
+	return frames, err
+}
+
+/*
+EmitMany builds feature frames for named symbols that already have history.
+Peer work is capped at maxCohortPeers and shared per window.
+*/
+func (cohortSample *CohortSample) EmitMany(
+	names []string,
+) (map[string]equation.FeatureFrame, error) {
+	cohortSample.mu.Lock()
+	defer cohortSample.mu.Unlock()
+
+	return cohortSample.emitManyLocked(names), nil
+}
+
+func (cohortSample *CohortSample) observeManyLocked(inputs []CohortSampleInput) error {
+	var firstErr error
+
+	for _, input := range inputs {
+		if _, err := cohortSample.sample(input); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+
+	return firstErr
+}
+
+func (cohortSample *CohortSample) emitManyLocked(
+	names []string,
+) map[string]equation.FeatureFrame {
+	out := make(map[string]equation.FeatureFrame, len(names))
+	targets := uniqueNames(names)
+
+	if len(targets) == 0 {
+		return out
+	}
+
+	peers := cohortSample.peerUniverse(targets)
+	gridInterval := cohortSample.gridIntervalAmong(peers)
+
+	if gridInterval <= 0 {
+		return out
+	}
+
+	currentTime := cohortSample.currentTimeAmong(peers)
+	barSpacingSeconds := float64(gridInterval) / float64(time.Second)
+	peerCache := make(map[int]cohortPeerBoard, 4)
+
+	for _, name := range targets {
+		window := cohortSample.window(name, peers)
+
+		if window < cohortMinimumWindow {
+			continue
+		}
+
+		board, ok := peerCache[window]
+
+		if !ok {
+			board = cohortSample.peerBoard(peers, gridInterval, currentTime, window)
+			peerCache[window] = board
+		}
+
+		if len(board.peerCorrelations) < cohortMinimumPeers ||
+			len(board.peerEnergies) < cohortMinimumPeers ||
+			barSpacingSeconds <= 0 {
+			continue
+		}
+
+		targetState := cohortSample.symbols[name]
+
+		if targetState == nil {
+			continue
+		}
+
+		windowStart := currentTime - int64(window)*gridInterval
+		targetIntervals := returnIntervalsCohort(targetState, windowStart, currentTime)
+		energy := medianAbsoluteIntervalsCohort(targetIntervals)
+
+		if energy <= 0 {
+			continue
+		}
+
+		pairCorrelations := make([]float64, 0, len(peers)-1)
+
+		for _, symbol := range peers {
+			if symbol == name {
+				continue
+			}
+
+			symbolState := cohortSample.symbols[symbol]
+
+			if correlation, ok := pairCorrelationCohort(
+				targetState, symbolState, gridInterval, windowStart, currentTime, window,
+			); ok {
+				pairCorrelations = append(pairCorrelations, correlation)
+			}
+		}
+
+		if len(pairCorrelations) == 0 {
+			continue
+		}
+
+		out[name] = equation.NewFeatureFrame(
+			equation.CohortInputKeys,
+			cohortFeatures(
+				window,
+				barSpacingSeconds,
+				energy,
+				pairCorrelations,
+				board.peerCorrelations,
+				board.peerEnergies,
+			),
+		)
+	}
+
+	return out
+}
+
+func inputSymbols(inputs []CohortSampleInput) []string {
+	names := make([]string, 0, len(inputs))
+
+	for _, input := range inputs {
+		if input.Symbol != "" {
+			names = append(names, input.Symbol)
+		}
+	}
+
+	return names
+}
+
+func uniqueNames(names []string) []string {
+	out := make([]string, 0, len(names))
+	seen := make(map[string]struct{}, len(names))
+
+	for _, name := range names {
+		if name == "" {
+			continue
+		}
+
+		if _, ok := seen[name]; ok {
+			continue
+		}
+
+		seen[name] = struct{}{}
+		out = append(out, name)
+	}
+
+	return out
+}
+
+/*
+peerUniverse returns at most maxCohortPeers symbols with enough history,
+always including mustInclude, preferring the deepest return rings.
+*/
+func (cohortSample *CohortSample) peerUniverse(mustInclude []string) []string {
+	type ranked struct {
+		name  string
+		depth int
+	}
+
+	must := make(map[string]struct{}, len(mustInclude))
+	candidates := make([]ranked, 0, len(cohortSample.symbols))
+
+	for _, name := range mustInclude {
+		if name == "" {
+			continue
+		}
+
+		must[name] = struct{}{}
+	}
+
+	for name, state := range cohortSample.symbols {
+		if state == nil || len(state.returns) < cohortMinimumWindow {
+			continue
+		}
+
+		candidates = append(candidates, ranked{name: name, depth: len(state.returns)})
+	}
+
+	sort.Slice(candidates, func(i, j int) bool {
+		if candidates[i].depth != candidates[j].depth {
+			return candidates[i].depth > candidates[j].depth
+		}
+
+		return candidates[i].name < candidates[j].name
+	})
+
+	out := make([]string, 0, maxCohortPeers)
+	picked := make(map[string]struct{}, maxCohortPeers)
+
+	for name := range must {
+		if state := cohortSample.symbols[name]; state == nil ||
+			len(state.returns) < cohortMinimumWindow {
+			continue
+		}
+
+		out = append(out, name)
+		picked[name] = struct{}{}
+	}
+
+	for _, candidate := range candidates {
+		if len(out) >= maxCohortPeers {
+			break
+		}
+
+		if _, ok := picked[candidate.name]; ok {
+			continue
+		}
+
+		out = append(out, candidate.name)
+		picked[candidate.name] = struct{}{}
+	}
+
+	sort.Strings(out)
+
+	return out
+}
+
+/*
+cohortTick holds per-symbol sampling state that feeds equation Measure and Map outputs into resonance features.
+*/
 type cohortTick struct {
 	name  string
 	price float64
 	at    int64
 }
 
+/*
+(…).sample supports algorithm sampling that supplies equation inputs symm maps into runtime.Envelope.
+*/
 func (cohortSample *CohortSample) sample(input CohortSampleInput) (cohortTick, error) {
 	tick := cohortTick{
 		name:  input.Symbol,
@@ -153,16 +393,27 @@ func (cohortSample *CohortSample) sample(input CohortSampleInput) (cohortTick, e
 	return tick, nil
 }
 
+/*
+(…).observe supports algorithm sampling that supplies equation inputs symm maps into runtime.Envelope.
+*/
 func (cohortSample *CohortSample) observe(tick cohortTick) {
 	symbolState := cohortSample.symbol(tick.name)
 
 	historyCap := cohortSample.historyCap()
 
-	if len(symbolState.times) > 0 && symbolState.times[len(symbolState.times)-1] == tick.at {
-		symbolState.prices[len(symbolState.prices)-1] = tick.price
-		symbolState.lastPrice = tick.price
+	if n := len(symbolState.times); n > 0 {
+		last := symbolState.times[n-1]
 
-		return
+		if tick.at < last {
+			return
+		}
+
+		if tick.at == last {
+			symbolState.prices[len(symbolState.prices)-1] = tick.price
+			symbolState.lastPrice = tick.price
+
+			return
+		}
 	}
 
 	symbolState.prices = utils.AppendRingFloat(symbolState.prices, tick.price, historyCap)
@@ -183,6 +434,9 @@ func (cohortSample *CohortSample) observe(tick cohortTick) {
 	symbolState.lastPrice = tick.price
 }
 
+/*
+(…).symbol supports algorithm sampling that supplies equation inputs symm maps into runtime.Envelope.
+*/
 func (cohortSample *CohortSample) symbol(name string) *cohortSymbol {
 	existing, ok := cohortSample.symbols[name]
 
@@ -196,6 +450,9 @@ func (cohortSample *CohortSample) symbol(name string) *cohortSymbol {
 	return symbolState
 }
 
+/*
+(…).historyCap supports algorithm sampling that supplies equation inputs symm maps into runtime.Envelope.
+*/
 func (cohortSample *CohortSample) historyCap() int {
 	if cohortSample.config.HistoryCap < cohortMinimumWindow {
 		return cohortHistoryCap
@@ -204,7 +461,10 @@ func (cohortSample *CohortSample) historyCap() int {
 	return cohortSample.config.HistoryCap
 }
 
-func (cohortSample *CohortSample) window(symbol string) int {
+/*
+(…).window supports algorithm sampling that supplies equation inputs symm maps into runtime.Envelope.
+*/
+func (cohortSample *CohortSample) window(symbol string, peers []string) int {
 	symbolState := cohortSample.symbols[symbol]
 
 	if symbolState == nil {
@@ -221,7 +481,7 @@ func (cohortSample *CohortSample) window(symbol string) int {
 		return 0
 	}
 
-	commonDepth := cohortSample.commonDepth()
+	commonDepth := cohortSample.commonDepth(peers)
 
 	if commonDepth <= 0 {
 		return 0
@@ -238,11 +498,16 @@ func (cohortSample *CohortSample) window(symbol string) int {
 	return shortWindow
 }
 
-func (cohortSample *CohortSample) commonDepth() int {
+/*
+(…).commonDepth supports algorithm sampling that supplies equation inputs symm maps into runtime.Envelope.
+*/
+func (cohortSample *CohortSample) commonDepth(peers []string) int {
 	commonDepth := 0
 
-	for _, symbolState := range cohortSample.symbols {
-		if len(symbolState.returns) < cohortMinimumWindow {
+	for _, name := range peers {
+		symbolState := cohortSample.symbols[name]
+
+		if symbolState == nil || len(symbolState.returns) < cohortMinimumWindow {
 			continue
 		}
 
@@ -254,35 +519,26 @@ func (cohortSample *CohortSample) commonDepth() int {
 	return commonDepth
 }
 
-func (cohortSample *CohortSample) peers(
-	target string,
+/*
+cohortPeerBoard is the window-scoped all-pairs matrix shared across targets in
+one MeasureMany call.
+*/
+type cohortPeerBoard struct {
+	peerCorrelations []float64
+	peerEnergies     []float64
+}
+
+/*
+peerBoard builds board-wide peer correlations and energies for one window.
+*/
+func (cohortSample *CohortSample) peerBoard(
+	symbols []string,
+	gridInterval, currentTime int64,
 	window int,
-) ([]float64, []float64, []float64, float64, float64) {
-	gridInterval := cohortSample.gridInterval()
-
-	if gridInterval <= 0 {
-		return nil, nil, nil, 0, 0
-	}
-
-	currentTime := cohortSample.currentTime()
+) cohortPeerBoard {
 	windowStart := currentTime - int64(window)*gridInterval
-	targetState := cohortSample.symbols[target]
-
-	if targetState == nil {
-		return nil, nil, nil, 0, 0
-	}
-
-	targetIntervals := returnIntervalsCohort(targetState, windowStart, currentTime)
-	energy := medianAbsoluteIntervalsCohort(targetIntervals)
-
-	if energy <= 0 {
-		return nil, nil, nil, 0, 0
-	}
-
-	pairCorrelations := make([]float64, 0, len(cohortSample.symbols)-1)
-	peerCorrelations := make([]float64, 0, len(cohortSample.symbols))
-	peerEnergies := make([]float64, 0, len(cohortSample.symbols))
-	symbols := cohortSample.sortedSymbols()
+	peerCorrelations := make([]float64, 0, len(symbols))
+	peerEnergies := make([]float64, 0, len(symbols))
 
 	for _, symbol := range symbols {
 		symbolState := cohortSample.symbols[symbol]
@@ -292,14 +548,6 @@ func (cohortSample *CohortSample) peers(
 		if symbolEnergy > 0 {
 			peerEnergies = append(peerEnergies, symbolEnergy)
 		}
-
-		if symbol == target {
-			continue
-		}
-
-		if correlation, ok := pairCorrelationCohort(targetState, symbolState, gridInterval, windowStart, currentTime, window); ok {
-			pairCorrelations = append(pairCorrelations, correlation)
-		}
 	}
 
 	for leftIndex := range symbols {
@@ -307,7 +555,9 @@ func (cohortSample *CohortSample) peers(
 
 		for rightIndex := leftIndex + 1; rightIndex < len(symbols); rightIndex++ {
 			right := cohortSample.symbols[symbols[rightIndex]]
-			correlation, ok := pairCorrelationCohort(left, right, gridInterval, windowStart, currentTime, window)
+			correlation, ok := pairCorrelationCohort(
+				left, right, gridInterval, windowStart, currentTime, window,
+			)
 
 			if ok {
 				peerCorrelations = append(peerCorrelations, correlation)
@@ -315,17 +565,29 @@ func (cohortSample *CohortSample) peers(
 		}
 	}
 
-	return pairCorrelations,
-		peerCorrelations,
-		peerEnergies,
-		energy,
-		float64(gridInterval) / float64(time.Second)
+	return cohortPeerBoard{
+		peerCorrelations: peerCorrelations,
+		peerEnergies:     peerEnergies,
+	}
 }
 
+/*
+(…).gridInterval supports algorithm sampling that supplies equation inputs symm maps into runtime.Envelope.
+*/
 func (cohortSample *CohortSample) gridInterval() int64 {
-	deltas := make([]float64, 0, len(cohortSample.symbols))
+	return cohortSample.gridIntervalAmong(cohortSample.sortedSymbols())
+}
 
-	for _, symbolState := range cohortSample.symbols {
+func (cohortSample *CohortSample) gridIntervalAmong(symbols []string) int64 {
+	deltas := make([]float64, 0, len(symbols)*8)
+
+	for _, name := range symbols {
+		symbolState := cohortSample.symbols[name]
+
+		if symbolState == nil {
+			continue
+		}
+
 		for index := 1; index < len(symbolState.times); index++ {
 			delta := symbolState.times[index] - symbolState.times[index-1]
 
@@ -344,6 +606,9 @@ func (cohortSample *CohortSample) gridInterval() int64 {
 	return int64(median)
 }
 
+/*
+(…).sortedSymbols supports algorithm sampling that supplies equation inputs symm maps into runtime.Envelope.
+*/
 func (cohortSample *CohortSample) sortedSymbols() []string {
 	symbols := make([]string, 0, len(cohortSample.symbols))
 
@@ -356,11 +621,20 @@ func (cohortSample *CohortSample) sortedSymbols() []string {
 	return symbols
 }
 
+/*
+(…).currentTime supports algorithm sampling that supplies equation inputs symm maps into runtime.Envelope.
+*/
 func (cohortSample *CohortSample) currentTime() int64 {
+	return cohortSample.currentTimeAmong(cohortSample.sortedSymbols())
+}
+
+func (cohortSample *CohortSample) currentTimeAmong(symbols []string) int64 {
 	current := int64(0)
 
-	for _, symbolState := range cohortSample.symbols {
-		if len(symbolState.times) == 0 {
+	for _, name := range symbols {
+		symbolState := cohortSample.symbols[name]
+
+		if symbolState == nil || len(symbolState.times) == 0 {
 			continue
 		}
 
@@ -374,6 +648,9 @@ func (cohortSample *CohortSample) currentTime() int64 {
 	return current
 }
 
+/*
+pairCorrelationCohort supports algorithm sampling that supplies equation inputs symm maps into runtime.Envelope.
+*/
 func pairCorrelationCohort(
 	left *cohortSymbol,
 	right *cohortSymbol,
@@ -397,6 +674,9 @@ func pairCorrelationCohort(
 	)
 }
 
+/*
+gridReturnsCohort supports algorithm sampling that supplies equation inputs symm maps into runtime.Envelope.
+*/
 func gridReturnsCohort(
 	symbolState *cohortSymbol,
 	gridInterval int64,
@@ -426,6 +706,9 @@ func gridReturnsCohort(
 	return logReturnsCohort(prices)
 }
 
+/*
+pearsonCohort supports algorithm sampling that supplies equation inputs symm maps into runtime.Envelope.
+*/
 func pearsonCohort(left, right []float64) (float64, bool) {
 	if len(left) != len(right) || len(left) < cohortMinimumWindow {
 		return 0, false
@@ -459,18 +742,43 @@ func pearsonCohort(left, right []float64) (float64, bool) {
 	return math.Max(-1, math.Min(1, correlation)), true
 }
 
+/*
+priceAtCohort forward-fills the last observed price at or before timestamp.
+Synthetic grid cutoffs almost never equal exchange trade times.
+*/
 func priceAtCohort(symbolState *cohortSymbol, timestamp int64) (float64, bool) {
-	for index, observed := range symbolState.times {
-		if observed == timestamp && index < len(symbolState.prices) {
-			price := symbolState.prices[index]
-
-			return price, price > 0
-		}
+	if symbolState == nil || len(symbolState.times) == 0 {
+		return 0, false
 	}
 
-	return 0, false
+	var price float64
+	found := false
+
+	for index, observed := range symbolState.times {
+		if observed > timestamp {
+			break
+		}
+
+		if index >= len(symbolState.prices) {
+			continue
+		}
+
+		candidate := symbolState.prices[index]
+
+		if candidate <= 0 {
+			continue
+		}
+
+		price = candidate
+		found = true
+	}
+
+	return price, found
 }
 
+/*
+cohortFeatures supports algorithm sampling that supplies equation inputs symm maps into runtime.Envelope.
+*/
 func cohortFeatures(
 	window int,
 	barSpacingSeconds float64,
@@ -493,6 +801,9 @@ func cohortFeatures(
 	return features
 }
 
+/*
+appendRingInt64 supports algorithm sampling that supplies equation inputs symm maps into runtime.Envelope.
+*/
 func appendRingInt64(values []int64, value int64, capacity int) []int64 {
 	values = append(values, value)
 
@@ -503,6 +814,9 @@ func appendRingInt64(values []int64, value int64, capacity int) []int64 {
 	return values[len(values)-capacity:]
 }
 
+/*
+logReturnsCohort supports algorithm sampling that supplies equation inputs symm maps into runtime.Envelope.
+*/
 func logReturnsCohort(prices []float64) []float64 {
 	if len(prices) < 2 {
 		return nil
@@ -521,12 +835,18 @@ func logReturnsCohort(prices []float64) []float64 {
 	return returns
 }
 
+/*
+cohortReturnInterval holds per-symbol sampling state that feeds equation Measure and Map outputs into resonance features.
+*/
 type cohortReturnInterval struct {
 	start int64
 	end   int64
 	value float64
 }
 
+/*
+returnIntervalsCohort supports algorithm sampling that supplies equation inputs symm maps into runtime.Envelope.
+*/
 func returnIntervalsCohort(
 	symbolState *cohortSymbol,
 	windowStart int64,
@@ -563,6 +883,9 @@ func returnIntervalsCohort(
 	return intervals
 }
 
+/*
+hayashiYoshidaCohort supports algorithm sampling that supplies equation inputs symm maps into runtime.Envelope.
+*/
 func hayashiYoshidaCohort(
 	left []cohortReturnInterval,
 	right []cohortReturnInterval,
@@ -605,6 +928,9 @@ func hayashiYoshidaCohort(
 	return math.Max(-1, math.Min(1, correlation)), true
 }
 
+/*
+medianAbsoluteIntervalsCohort supports algorithm sampling that supplies equation inputs symm maps into runtime.Envelope.
+*/
 func medianAbsoluteIntervalsCohort(intervals []cohortReturnInterval) float64 {
 	absValues := make([]float64, 0, len(intervals))
 

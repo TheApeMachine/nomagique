@@ -7,6 +7,33 @@ import (
 	"github.com/theapemachine/nomagique/equation"
 )
 
+func TestBook_ApplyBookDropsAbsentTicks(testingTB *testing.T) {
+	Convey("Given a two-sided book", testingTB, func() {
+		book := NewBook()
+		So(book.Configure(BookInput{TickSize: 1}), ShouldBeNil)
+		_, _, err := book.ApplyBook(
+			[]BookLevel{
+				{Price: 100, Ticks: 100, Quantity: 5},
+				{Price: 99, Ticks: 99, Quantity: 4},
+			},
+			[]BookLevel{{Price: 101, Ticks: 101, Quantity: 3}},
+		)
+		So(err, ShouldBeNil)
+
+		Convey("It should delete ticks missing from the next snapshot", func() {
+			_, _, err = book.ApplyBook(
+				[]BookLevel{{Price: 100, Ticks: 100, Quantity: 5}},
+				[]BookLevel{{Price: 101, Ticks: 101, Quantity: 3}},
+			)
+			So(err, ShouldBeNil)
+			So(book.bids.Len(), ShouldEqual, 1)
+			_, ghost := book.bids.levels[99]
+			So(ghost, ShouldBeFalse)
+			So(book.asks.Len(), ShouldEqual, 1)
+		})
+	})
+}
+
 func TestBook_Imbalance(testingTB *testing.T) {
 	Convey("Given symmetric depth on a high-resolution integer price lattice", testingTB, func() {
 		book := NewBook()

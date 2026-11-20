@@ -6,6 +6,9 @@ import (
 	"github.com/theapemachine/errnie"
 )
 
+/*
+Feeds algorithm/excitation and equation Hawkes stages — linspace turns marked trade arrivals into fitted intensities and categories.
+*/
 func linspace(start, end float64, count int) ([]float64, error) {
 	if count <= 0 {
 		return nil, errnie.Error(errnie.Err(
@@ -28,6 +31,10 @@ func linspace(start, end float64, count int) ([]float64, error) {
 
 	return values, nil
 }
+
+/*
+Feeds algorithm/excitation and equation Hawkes stages — logspace fits marked trade arrivals into intensities and fit categories.
+*/
 
 func logspace(start, end float64, count int) ([]float64, error) {
 	if count <= 0 || start <= 0 || end <= 0 {

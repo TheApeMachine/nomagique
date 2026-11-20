@@ -9,14 +9,25 @@ import (
 	"gonum.org/v1/gonum/mat"
 )
 
+/*
+denseColDot and denseColNorm wrap Gonum norms so the manifold hot path never
+allocates or boxes slice headers per layer.
+*/
 func denseColDot(left, right *mat.VecDense) float64 {
 	return floats.Dot(left.RawVector().Data, right.RawVector().Data)
 }
 
+/*
+Learning package shared with symm resonance — denseColNorm supports predictive coding and online task heads.
+*/
 func denseColNorm(vector *mat.VecDense) float64 {
 	return floats.Norm(vector.RawVector().Data, 2)
 }
 
+/*
+denseApplyTanhInPlace keeps latent squashing in raw storage — the same layout
+Metallib and CPU settle loops write into.
+*/
 func denseApplyTanhInPlace(vector *mat.VecDense) {
 	data := vector.RawVector().Data
 
@@ -25,6 +36,10 @@ func denseApplyTanhInPlace(vector *mat.VecDense) {
 	}
 }
 
+/*
+denseApplyOneMinusSquareInto forms (1−z²) for tanh derivative and precision
+chains without re-reading src after dst is aliased.
+*/
 func denseApplyOneMinusSquareInto(dst, src *mat.VecDense) {
 	dstData := dst.RawVector().Data
 	srcData := src.RawVector().Data
@@ -34,6 +49,10 @@ func denseApplyOneMinusSquareInto(dst, src *mat.VecDense) {
 	}
 }
 
+/*
+denseFill seeds error variance and precision vectors at construction so the
+first settle never divides by zero.
+*/
 func denseFill(vector *mat.VecDense, value float64) {
 	data := vector.RawVector().Data
 
@@ -42,10 +61,17 @@ func denseFill(vector *mat.VecDense, value float64) {
 	}
 }
 
+/*
+denseScaleInPlace applies learning-rate scalings directly on weight blocks.
+*/
 func denseScaleInPlace(matrix *mat.Dense, scale float64) {
 	floats.Scale(scale, matrix.RawMatrix().Data)
 }
 
+/*
+denseVarianceEMAInto tracks running reconstruction error variance per unit so
+precision can track signal quality instead of staying at the initial guess.
+*/
 func denseVarianceEMAInto(
 	variance *mat.VecDense,
 	residual *mat.VecDense,
@@ -64,6 +90,11 @@ func denseVarianceEMAInto(
 	}
 }
 
+/*
+densePrecisionFromVarianceInto inverts variance into a clipped precision so
+state updates weight surprising errors more without exploding when variance
+hits the EMA floor.
+*/
 func densePrecisionFromVarianceInto(
 	precision *mat.VecDense,
 	variance *mat.VecDense,
@@ -81,6 +112,10 @@ func densePrecisionFromVarianceInto(
 	}
 }
 
+/*
+denseClipColInPlace enforces StateClip on latent columns during inference line
+search without allocating a fresh vector each halving.
+*/
 func denseClipColInPlace(vector *mat.VecDense, clip float64) {
 	data := vector.RawVector().Data
 
@@ -94,6 +129,9 @@ func denseClipColInPlace(vector *mat.VecDense, clip float64) {
 	}
 }
 
+/*
+denseOuterColsInto forms scaled outer products for local Hebbian weight nudges.
+*/
 func denseOuterColsInto(
 	dst *mat.Dense,
 	left *mat.VecDense,
@@ -103,6 +141,10 @@ func denseOuterColsInto(
 	dst.Outer(scale, left, right)
 }
 
+/*
+denseMulWeightTransposeInto is Wᵀx into a pre-sized column — the recognition
+pass in predictive coding.
+*/
 func denseMulWeightTransposeInto(
 	dst *mat.VecDense,
 	weight *mat.Dense,

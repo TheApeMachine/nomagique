@@ -79,14 +79,17 @@ func (flow *Flow) Measure(input FlowInput) (FlowOutput, error) {
 	}
 
 	net := input.BuyNotional - input.SellNotional
-	netFraction := math.Abs(net) / gross
+	// Signed fraction so enter pins only light on net buying; Abs is kept for
+	// balance / highNet thresholds so chop still scores as balance=1.
+	absNetFraction := math.Abs(net) / gross
+	netFraction := net / gross
 
 	// A single price gives no move to compare against yet, so price-response
 	// categories (drive, absorption, starvation) are undefined. The buy/sell
 	// balance of the trade itself is still a defined reading — this is the
 	// reflexive boundary: the first observation's balance against nothing.
 	if len(input.Prices) < 2 {
-		balance := math.Max(0, 1-netFraction)
+		balance := math.Max(0, 1-absNetFraction)
 
 		return FlowOutput{
 			Value:       balance,
@@ -134,8 +137,11 @@ func (flow *Flow) Measure(input FlowInput) (FlowOutput, error) {
 	driveThreshold := 1 / math.Sqrt(float64(input.TradeCount))
 	starvationPressure := flowStarvationPressure(gross, input.GrossFloor, input.MedianNotional)
 
-	highNet := netFraction >= driveThreshold
-	flowAligned := (net > 0 && priceDrift > 0) || (net < 0 && priceDrift < 0)
+	highNet := absNetFraction >= driveThreshold
+	// Buy-side alignment only — sell dumps that push price down must not light
+	// enter-detector drive the same way a rally does.
+	buyAligned := net > 0 && priceDrift > 0
+	flowAligned := buyAligned || (net < 0 && priceDrift < 0)
 	hiddenAbsorption := flowHiddenAbsorption(
 		highNet, flowPressure, impactEfficiency, priceDrift, flatThreshold, input.TradeCount,
 	)
@@ -153,31 +159,31 @@ func (flow *Flow) Measure(input FlowInput) (FlowOutput, error) {
 
 	absorption := 0.0
 	drive := 0.0
-	balance := math.Max(0, 1-netFraction)
+	balance := math.Max(0, 1-absNetFraction)
 	starvation := 0.0
 
 	if hiddenAbsorption {
 		// Zero impact under aggressive pressure is full absorption of that net.
 		// A positive but small impact is scored against the local efficiency scale.
 		if impactEfficiency <= 0 {
-			absorption = netFraction
+			absorption = absNetFraction
 		} else {
 			impactScale := impactEfficiencyScale(
 				flatThreshold, firstPrice, flowPressure, impactEfficiency,
 			)
 
 			if impactScale > 0 {
-				absorption = netFraction * inverseSquash(impactEfficiency, impactScale)
+				absorption = absNetFraction * inverseSquash(impactEfficiency, impactScale)
 			}
 		}
 	}
 
-	if highNet && flowAligned && !flatPrice {
-		drive = netFraction
+	if highNet && buyAligned && !flatPrice {
+		drive = absNetFraction
 	}
 
 	if highNet && !flatPrice && !flowAligned {
-		absorption = math.Max(absorption, netFraction)
+		absorption = math.Max(absorption, absNetFraction)
 	}
 
 	if category == flowCategoryStarvation {
@@ -201,11 +207,19 @@ func (flow *Flow) Measure(input FlowInput) (FlowOutput, error) {
 	}, nil
 }
 
+/*
+flowCategoryStarvation and basisPointsPerUnit anchor starvation detection and
+price-response scaling for drive and absorption Map keys consumed by symm.
+*/
 const (
 	flowCategoryStarvation = 4
 	basisPointsPerUnit     = 10000
 )
 
+/*
+impactEfficiencyScale derives a local efficiency denominator so absorption does
+not fire on noise when flat-threshold context exists in the window.
+*/
 func impactEfficiencyScale(
 	flatThreshold float64,
 	firstPrice float64,
@@ -223,6 +237,10 @@ func impactEfficiencyScale(
 	return magnitudeScale(impactEfficiency)
 }
 
+/*
+medianAbsoluteMove summarizes typical step size so flat-price tests compare
+drift to the tick's own microstructure, not a fixed bps floor.
+*/
 func medianAbsoluteMove(prices []float64) float64 {
 	moves := priceMoves(prices)
 
@@ -244,6 +262,9 @@ func medianAbsoluteMove(prices []float64) float64 {
 	return median
 }
 
+/*
+priceMoves extracts pairwise changes for robust move gates used inside Measure.
+*/
 func priceMoves(prices []float64) []float64 {
 	moves := make([]float64, 0, len(prices)-1)
 
@@ -254,6 +275,10 @@ func priceMoves(prices []float64) []float64 {
 	return moves
 }
 
+/*
+flowFlatPrice widens the flat band with sqrt(trade count) so wide windows are
+not misread as absorption on statistically tiny drift.
+*/
 func flowFlatPrice(priceDrift, stepThreshold float64, tradeCount int) bool {
 	if stepThreshold <= 0 {
 		return priceDrift == 0
@@ -264,6 +289,10 @@ func flowFlatPrice(priceDrift, stepThreshold float64, tradeCount int) bool {
 	return math.Abs(priceDrift) <= windowThreshold
 }
 
+/*
+flowCategory selects the dominant CVD story so category and Map strengths stay
+aligned for trade_flow features in resonance.
+*/
 func flowCategory(
 	highNet, flowAligned, flatPrice bool,
 	gross, grossFloor float64,
@@ -293,6 +322,10 @@ func flowCategory(
 	return 3
 }
 
+/*
+flowStarvationPressure scores sub-floor gross so starvation surfaces before
+drive and balance when flow is too thin to move price.
+*/
 func flowStarvationPressure(
 	gross float64,
 	grossFloor float64,
@@ -317,6 +350,10 @@ func flowStarvationPressure(
 	return 1 - pressure
 }
 
+/*
+flowHiddenAbsorption flags aggressive net with muted impact, the signature that
+should win absorption over balance in the exported Map.
+*/
 func flowHiddenAbsorption(
 	highNet bool,
 	flowPressure float64,

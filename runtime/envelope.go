@@ -12,6 +12,8 @@ import (
 
 /*
 Decision is one symbol's model/desk outcome for a tick: action taken or why not.
+Leaf evidence (Count/Wins/Mean/M2) accumulates on settled path proofs so paper
+promotion requires sample size and significance, not a single lucky win.
 */
 type Decision struct {
 	Symbol     string  `json:"symbol"`
@@ -21,8 +23,17 @@ type Decision struct {
 	Path       string  `json:"path,omitempty"`
 	Tier       string  `json:"tier,omitempty"`
 	Resistance float64 `json:"resistance,omitempty"`
+	Count      int     `json:"count,omitempty"`
+	Wins       int     `json:"wins,omitempty"`
+	MeanPnLPct float64 `json:"mean_pnl_pct,omitempty"`
+	M2         float64 `json:"m2,omitempty"`
 }
 
+/*
+Envelope is the one disruptor payload per tick: symm nodes read and enrich the
+same struct in ring order, embed the market Trade anchor, and fan signal output
+into store.Grid via Metrics and dashboard facets via Publish.
+*/
 type Envelope struct {
 	*market.Trade `json:"trade"`
 	Correlation   map[string]*equation.CohortOutput      `json:"correlation"`
@@ -39,9 +50,18 @@ type Envelope struct {
 	Regions       map[string][]*Region                   `json:"regions"`
 	Paths         map[string]*Tokens                     `json:"paths"`
 	Decisions     map[string]*Decision                   `json:"decisions"`
-	pipe          sync.WaitGroup                         `json:"-"`
+	N             uint64                                 `json:"n,omitempty"`
+	// metricsCache is built once per tick; Resonance is overlaid on later reads
+	// so training sees solver output without rebuilding every signal Map().
+	metricsCache map[string]map[string]map[string]float64 `json:"-"`
+	// decideMu guards Decisions: Model.Step fans Decide across symbols.
+	decideMu sync.Mutex `json:"-"`
 }
 
+/*
+NewEnvelope pre-allocates per-source maps so parallel pipeline nodes can write
+without nil checks on the hot tick path.
+*/
 func NewEnvelope(trade *market.Trade) *Envelope {
 	return &Envelope{
 		Trade:       trade,
@@ -63,86 +83,131 @@ func NewEnvelope(trade *market.Trade) *Envelope {
 }
 
 /*
-Decide records the outcome for one symbol on this tick.
+Decide records the outcome for one symbol (and tier, when set) on this tick.
+Safe under Model.Step's per-symbol goroutine fan-out.
 */
 func (envelope *Envelope) Decide(decision *Decision) {
 	if envelope == nil || decision == nil || decision.Symbol == "" {
 		return
 	}
 
+	envelope.decideMu.Lock()
+	defer envelope.decideMu.Unlock()
+
 	if envelope.Decisions == nil {
 		envelope.Decisions = make(map[string]*Decision)
 	}
 
-	envelope.Decisions[decision.Symbol] = decision
+	key := decision.Symbol
+
+	if decision.Tier != "" {
+		key = decision.Symbol + "/" + decision.Tier
+	}
+
+	envelope.Decisions[key] = decision
 }
 
 /*
 Metrics gathers every symbol's mapped signal readings into the
 symbol → source → label → value shape grid.Observe expects.
+Built once per envelope; later calls only overlay Resonance.
+Observe may take ownership of the inner label maps.
 */
 func (envelope *Envelope) Metrics() map[string]map[string]map[string]float64 {
+	if envelope == nil {
+		return make(map[string]map[string]map[string]float64)
+	}
+
+	if envelope.metricsCache == nil {
+		envelope.metricsCache = envelope.buildMetrics()
+	} else {
+		envelope.overlayResonance(envelope.metricsCache)
+	}
+
+	return envelope.metricsCache
+}
+
+/*
+putMetric inserts one source's label map into the symbol→source→label cube
+grid.Observe and tick persistence both consume.
+*/
+func putMetric(
+	out map[string]map[string]map[string]float64,
+	symbol, source string,
+	labels map[string]float64,
+) {
+	if symbol == "" || len(labels) == 0 {
+		return
+	}
+
+	sources := out[symbol]
+	if sources == nil {
+		sources = make(map[string]map[string]float64)
+		out[symbol] = sources
+	}
+
+	sources[source] = labels
+}
+
+/*
+buildMetrics runs once per tick to fan every signal Map() into metricsCache
+before resonance overlay and store observation.
+*/
+func (envelope *Envelope) buildMetrics() map[string]map[string]map[string]float64 {
 	out := make(map[string]map[string]map[string]float64)
 
-	if envelope == nil {
-		return out
-	}
-
-	put := func(symbol, source string, labels map[string]float64) {
-		if symbol == "" || len(labels) == 0 {
-			return
-		}
-
-		sources := out[symbol]
-		if sources == nil {
-			sources = make(map[string]map[string]float64)
-			out[symbol] = sources
-		}
-
-		sources[source] = labels
-	}
-
 	for symbol, reading := range envelope.Correlation {
-		put(symbol, "correlation", reading.Map())
+		putMetric(out, symbol, "correlation", reading.Map())
 	}
 	for symbol, reading := range envelope.CVD {
-		put(symbol, "cvd", reading.Map())
+		putMetric(out, symbol, "cvd", reading.Map())
 	}
 	for symbol, reading := range envelope.DepthFlow {
-		put(symbol, "depthflow", reading.Map())
+		putMetric(out, symbol, "depthflow", reading.Map())
 	}
 	for symbol, reading := range envelope.Hawkes {
-		put(symbol, "hawkes", reading.Map())
+		putMetric(out, symbol, "hawkes", reading.Map())
 	}
 	for symbol, reading := range envelope.LeadLag {
-		put(symbol, "leadlag", reading.Map())
+		putMetric(out, symbol, "leadlag", reading.Map())
 	}
 	for symbol, reading := range envelope.Liquidity {
-		put(symbol, "liquidity", reading.Map())
+		putMetric(out, symbol, "liquidity", reading.Map())
 	}
 	for symbol, reading := range envelope.Morphology {
-		put(symbol, "morphology", reading.Map())
+		putMetric(out, symbol, "morphology", reading.Map())
 	}
 	for symbol, reading := range envelope.Pumpdump {
-		put(symbol, "pumpdump", reading.Map())
+		putMetric(out, symbol, "pumpdump", reading.Map())
 	}
 	for symbol, reading := range envelope.Sentiment {
-		put(symbol, "sentiment", reading.Map())
+		putMetric(out, symbol, "sentiment", reading.Map())
 	}
 	for symbol, reading := range envelope.Toxicity {
-		put(symbol, "toxicity", reading.Map())
+		putMetric(out, symbol, "toxicity", reading.Map())
 	}
-	for symbol, reading := range envelope.Resonance {
-		put(symbol, "resonance", reading)
-	}
+
+	envelope.overlayResonance(out)
 
 	return out
 }
 
 /*
+overlayResonance merges solver output after the first Metrics read so training
+sees resonance without rebuilding the full signal cube every call.
+*/
+func (envelope *Envelope) overlayResonance(
+	out map[string]map[string]map[string]float64,
+) {
+	for symbol, reading := range envelope.Resonance {
+		putMetric(out, symbol, "resonance", reading)
+	}
+}
+
+/*
 Publish returns JSON {"<ctx>": facet} for the dashboard store keyed by ctx.
 */
-func (envelope *Envelope) Publish(ctx string) []byte {
+func (envelope *Envelope) Publish(ctx string, focusSymbol string) []byte {
 	var payload any
 
 	switch ctx {
@@ -157,25 +222,25 @@ func (envelope *Envelope) Publish(ctx string) []byte {
 	case "trade":
 		payload = envelope.Trade
 	case "correlation":
-		payload = envelope.Correlation
+		payload = envelope.Correlation[focusSymbol]
 	case "cvd":
-		payload = envelope.CVD
+		payload = envelope.CVD[focusSymbol]
 	case "depthflow":
-		payload = envelope.DepthFlow
+		payload = envelope.DepthFlow[focusSymbol]
 	case "hawkes":
-		payload = envelope.Hawkes
+		payload = envelope.Hawkes[focusSymbol]
 	case "leadlag":
-		payload = envelope.LeadLag
+		payload = envelope.LeadLag[focusSymbol]
 	case "liquidity":
-		payload = envelope.Liquidity
+		payload = envelope.Liquidity[focusSymbol]
 	case "morphology":
-		payload = envelope.Morphology
+		payload = envelope.Morphology[focusSymbol]
 	case "pumpdump":
-		payload = envelope.Pumpdump
+		payload = envelope.Pumpdump[focusSymbol]
 	case "sentiment":
-		payload = envelope.Sentiment
+		payload = envelope.Sentiment[focusSymbol]
 	case "toxicity":
-		payload = envelope.Toxicity
+		payload = envelope.Toxicity[focusSymbol]
 	default:
 		payload = envelope
 	}

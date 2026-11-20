@@ -108,6 +108,10 @@ func (rollingZScore *RollingZScore) Measure(sample TimedSample) (ScalarOutput, e
 	}, nil
 }
 
+/*
+trim retains only the resolved long window so rolling z-scores compare each
+sample against a contemporaneous prior rather than unbounded history.
+*/
 func (rollingZScore *RollingZScore) trim(history []TimedSample) []TimedSample {
 	longWindow := rollingZScore.config.LongHint
 
@@ -128,6 +132,10 @@ func (rollingZScore *RollingZScore) trim(history []TimedSample) []TimedSample {
 	return history[len(history)-longWindow:]
 }
 
+/*
+rollingScore uses standard deviation when spread exists and falls back to a
+mean-absolute-deviation scale so early windows still produce finite scores.
+*/
 func rollingScore(sample float64, prior []float64) float64 {
 	meanSample := stat.Mean(prior, nil)
 	stdSample := stat.StdDev(prior, nil)

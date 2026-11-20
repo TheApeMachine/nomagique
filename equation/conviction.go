@@ -15,10 +15,11 @@ type Conviction struct{}
 ConvictionInput contains the float-only market breadth inputs.
 */
 type ConvictionInput struct {
-	Breadth        float64
-	Change         float64
-	SurgeThreshold float64
-	Leader         bool
+	Breadth         float64
+	Change          float64
+	SurgeThreshold  float64
+	ChangeThreshold float64
+	Leader          bool
 }
 
 /*
@@ -67,7 +68,7 @@ Measure calculates conviction scores from floats without artifact transport.
 func (conviction *Conviction) Measure(
 	input ConvictionInput,
 ) (ConvictionOutput, error) {
-	for _, value := range []float64{input.Breadth, input.Change, input.SurgeThreshold} {
+	for _, value := range []float64{input.Breadth, input.Change, input.SurgeThreshold, input.ChangeThreshold} {
 		if math.IsNaN(value) || math.IsInf(value, 0) {
 			return ConvictionOutput{}, errnie.Error(errnie.Err(
 				errnie.Validation,
@@ -90,7 +91,7 @@ func (conviction *Conviction) Measure(
 		surgeThreshold = 1
 	}
 
-	category := conviction.classify(input.Breadth, input.Change, surgeThreshold, input.Leader)
+	category := conviction.classify(input.Breadth, input.Change, surgeThreshold, input.ChangeThreshold)
 	output := ConvictionOutput{
 		Category: float64(category),
 		Breadth:  input.Breadth,
@@ -114,24 +115,37 @@ func (conviction *Conviction) Measure(
 	return output, nil
 }
 
+/*
+classifyConviction separates surge, divergent, and slump from breadth and change.
+Surge is a positive change aligned with positive breadth. It does not require
+being the single largest move. Breadth uses its own gate; change magnitude
+uses ChangeThreshold and is never compared with the breadth fraction.
+*/
 func classifyConviction(
-	breadth, change, surgeThreshold float64,
-	leader bool,
+	breadth, change, breadthGate, changeGate float64,
 ) int {
-	if breadth >= surgeThreshold && leader {
+	if change > 0 && breadth > 0 && breadth >= breadthGate {
 		return 1
 	}
 
-	if leader && change != 0 {
+	meaningful := changeGate <= 0 || math.Abs(change) >= changeGate
+
+	if meaningful && change > 0 && breadth < breadthGate {
+		return 2
+	}
+
+	if meaningful && change < 0 && breadth >= breadthGate {
 		return 2
 	}
 
 	return 3
 }
 
+/*
+classify forwards to the package classifier so Measure stays a thin adapter.
+*/
 func (conviction *Conviction) classify(
-	breadth, change, surgeThreshold float64,
-	leader bool,
+	breadth, change, breadthGate, changeGate float64,
 ) int {
-	return classifyConviction(breadth, change, surgeThreshold, leader)
+	return classifyConviction(breadth, change, breadthGate, changeGate)
 }

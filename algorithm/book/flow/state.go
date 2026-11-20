@@ -125,6 +125,9 @@ type SideFlowLedger struct {
 	CancelAsk float64
 }
 
+/*
+AddDepth tracks resting depth per side for book-quality cancel/fill ratios.
+*/
 func (ledger *SideFlowLedger) AddDepth(side Side, delta float64) {
 	if err := side.Validate(); err != nil {
 		return
@@ -139,6 +142,9 @@ func (ledger *SideFlowLedger) AddDepth(side Side, delta float64) {
 	ledger.AskDepth = maxFloat(0, ledger.AskDepth+delta)
 }
 
+/*
+SideDepth reads one side's depth for toxic-size threshold resolution.
+*/
 func (ledger *SideFlowLedger) SideDepth(side Side) float64 {
 	if side == SideBid {
 		return ledger.BidDepth
@@ -147,6 +153,9 @@ func (ledger *SideFlowLedger) SideDepth(side Side) float64 {
 	return ledger.AskDepth
 }
 
+/*
+ApplyFlow smooths or replaces cancel/fill accumulators feeding equation.BookQuality inputs.
+*/
 func (ledger *SideFlowLedger) ApplyFlow(side Side, fill, cancel, alpha float64) {
 	if err := side.Validate(); err != nil {
 		return
@@ -177,12 +186,18 @@ func (ledger *SideFlowLedger) ApplyFlow(side Side, fill, cancel, alpha float64) 
 	ledger.CancelAsk += alpha * (cancel - ledger.CancelAsk)
 }
 
+/*
+Snapshot exports the ledger scalars quality sampling maps into feature frames.
+*/
 func (ledger *SideFlowLedger) Snapshot() (
 	cancelBid, fillBid, cancelAsk, fillAsk, bidDepth, askDepth float64,
 ) {
 	return ledger.CancelBid, ledger.FillBid, ledger.CancelAsk, ledger.FillAsk, ledger.BidDepth, ledger.AskDepth
 }
 
+/*
+maxFloat avoids negative depth after partial cancels in ledger updates.
+*/
 func maxFloat(left, right float64) float64 {
 	if left > right {
 		return left
@@ -286,6 +301,9 @@ func (gate *GateQuantile) Ready() bool {
 	return len(gate.history) >= gate.minSamples
 }
 
+/*
+gateHistoryCapacity sizes quantile history from distinct span so gates adapt without unbounded memory.
+*/
 func gateHistoryCapacity(values []float64, minSamples int) int {
 	if len(values) == 0 {
 		return 1
@@ -389,10 +407,16 @@ func SupportRatioGate(threshold float64, vacuumLow float64, vacuumReady bool) fl
 	return vacuumLow / threshold
 }
 
+/*
+mathInf supplies an open upper bound when depth gates cannot resolve a finite threshold.
+*/
 func mathInf(sign int) float64 {
 	return math.Inf(sign)
 }
 
+/*
+gateSampleQuantile computes empirical gates from retained samples for bluff and vacuum detection.
+*/
 func gateSampleQuantile(percentile float64, values []float64) (float64, error) {
 	if len(values) == 0 {
 		return 0, errnie.Error(errnie.Err(
@@ -418,6 +442,9 @@ func gateSampleQuantile(percentile float64, values []float64) (float64, error) {
 	return stat.Quantile(percentile, stat.LinInterp, sorted, nil), nil
 }
 
+/*
+gateDistinctSpan counts unique observations to cap history when the tape is repetitive.
+*/
 func gateDistinctSpan(values []float64) (float64, error) {
 	if len(values) == 0 {
 		return 0, errnie.Error(errnie.Err(

@@ -132,6 +132,10 @@ func (transition *Transition) Counts() [][]float64 {
 	return counts
 }
 
+/*
+ready validates dynamic transition wiring before counts or KL updates run,
+so nil config fails at the boundary rather than mid-matrix update.
+*/
 func (transition *Transition) ready() error {
 	if transition == nil {
 		return errnie.Error(errnie.Err(

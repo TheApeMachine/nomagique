@@ -7,15 +7,18 @@ import (
 	"github.com/theapemachine/errnie"
 )
 
+/*
+bufferSize and bufferMask size the LMAX ring; capacity must stay a power of two
+so sequence masking stays O(1) on every symm tick.
+*/
 const (
 	bufferSize = 1024 * 64 // must be a power of 2
 	bufferMask = bufferSize - 1
 )
 
-// ringBuffer is owned by the caller of go-disruptor (see README): Reserve a
-// slot, write the payload, then Commit so handler groups can see it.
-var ringBuffer = [bufferSize]*Envelope{}
-
+/*
+optionList builds disruptor.Options without a helper package in symm boot wiring.
+*/
 func optionList[O any](initial ...O) []O {
 	return initial
 }
@@ -30,13 +33,17 @@ type Ring struct {
 	Nodes []Node
 }
 
+/*
+Workspace is the symm disruptor pipeline: staged handler groups, shared System
+lifecycle, and non-blocking Step from the market ingress loop.
+*/
 type Workspace struct {
 	*System
 	channel  disruptor.Disruptor
 	mask     int64
 	capacity int
 	stages   [][]*Consumer
-	lastFan  int
+	ring     [bufferSize]*Envelope
 }
 
 /*
@@ -49,13 +56,6 @@ func NewWorkspace(
 ) *Workspace {
 	capacity := bufferSize
 	mask := int64(capacity - 1)
-
-	lastIdx := -1
-	for i, stage := range stages {
-		if len(stage.Nodes) > 0 {
-			lastIdx = i
-		}
-	}
 
 	workspace := &Workspace{
 		mask:     mask,
@@ -77,9 +77,8 @@ func NewWorkspace(
 			consumers = append(consumers, consumer)
 
 			group = append(group, &stageHandler{
-				consumer:  consumer,
-				workspace: workspace,
-				last:      stageIdx == lastIdx,
+				consumer: consumer,
+				ring:     &workspace.ring,
 			})
 		}
 
@@ -105,10 +104,6 @@ func NewWorkspace(
 
 	workspace.channel = channel
 
-	if lastIdx >= 0 {
-		workspace.lastFan = len(workspace.stages[lastIdx])
-	}
-
 	go workspace.channel.Listen()
 
 	return workspace
@@ -116,8 +111,7 @@ func NewWorkspace(
 
 /*
 Step publishes the envelope into the disruptor and returns immediately so the
-ingress Read loop never stalls. Callers that need a finished tick (S3 marshal)
-must Wait on the envelope after Step.
+ingress Read loop never stalls behind the pipeline.
 */
 func (workspace *Workspace) Step(envelope *Envelope) *Envelope {
 	if workspace.Status() != READY {
@@ -152,30 +146,31 @@ func (workspace *Workspace) Step(envelope *Envelope) *Envelope {
 	}
 
 	seq := workspace.channel.Reserve(1)
-	ringBuffer[seq&workspace.mask] = envelope
+	workspace.ring[seq&workspace.mask] = envelope
 	workspace.channel.Commit(seq, seq)
 
 	return envelope
 }
 
+/*
+stageHandler adapts Consumer to disruptor.Handler without exporting ring seq math.
+*/
 type stageHandler struct {
-	consumer  *Consumer
-	workspace *Workspace
-	last      bool
+	consumer *Consumer
+	ring     *[bufferSize]*Envelope
 }
 
+/*
+Handle drains [lower,upper] sequences and invokes each slot's Consumer.Step.
+*/
 func (sh *stageHandler) Handle(lower, upper int64) {
 	for seq := lower; seq <= upper; seq++ {
-		envelope := ringBuffer[seq&bufferMask]
+		envelope := sh.ring[seq&bufferMask]
 
 		if envelope == nil {
 			continue
 		}
 
-		sh.consume(envelope)
+		sh.consumer.Step(envelope)
 	}
-}
-
-func (sh *stageHandler) consume(envelope *Envelope) {
-	sh.consumer.Step(envelope)
 }

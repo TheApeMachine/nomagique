@@ -7,6 +7,10 @@ import (
 	"github.com/theapemachine/errnie"
 )
 
+/*
+scratchPool reuses median scratch slices across MedianOf calls to avoid
+per-tick allocations on hot ranking paths.
+*/
 var scratchPool = sync.Pool{
 	New: func() any {
 		s := make([]float64, 0, 1024)
@@ -188,6 +192,10 @@ func MedianInPlace(values []float64) (float64, bool) {
 	return (left + right) / 2, true
 }
 
+/*
+medianSelect finds the order-statistic at target via quickselect on pooled
+scratch so MedianOf stays O(n) without sorting the full history each time.
+*/
 func medianSelect(values []float64, target int) float64 {
 	left := 0
 	right := len(values) - 1
@@ -210,6 +218,9 @@ func medianSelect(values []float64, target int) float64 {
 	return values[target]
 }
 
+/*
+medianPartition is the Lomuto partition step for in-place quickselect.
+*/
 func medianPartition(values []float64, left int, right int) int {
 	pivot := values[right]
 	store := left

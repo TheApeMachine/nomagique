@@ -23,6 +23,10 @@ import (
 )
 
 //go:embed kernels.metallib
+/*
+GPU batch resonance (symm.logic.resonance parity) — resonanceMetallib amortizes settle/learn across symbols on Metal.
+*/
+
 var resonanceMetallib []byte
 
 /*
@@ -53,6 +57,10 @@ type BatchSolver struct {
 	outcomeEnergy      []float32
 	outcomeSurprise    []float32
 }
+
+/*
+GPU batch resonance (symm.logic.resonance parity) — LayerWire amortizes settle/learn across symbols on Metal.
+*/
 
 type LayerWire struct {
 	State      []float64
@@ -132,6 +140,10 @@ func NewBatchSolver(
 	return solver
 }
 
+/*
+GPU batch resonance (symm.logic.resonance parity) — cConfigFrom amortizes settle/learn across symbols on Metal.
+*/
+
 func cConfigFrom(cfg Config) C.ResonanceConfig {
 	boolU32 := func(b bool) C.uint32_t {
 		if b {
@@ -208,6 +220,10 @@ func InitialWeights(arch []int, targetDim int) (w, r, a, v []float32) {
 	return w, r, a, v
 }
 
+/*
+GPU batch resonance (symm.logic.resonance parity) — weightSizes amortizes settle/learn across symbols on Metal.
+*/
+
 func weightSizes(arch []int, targetDim int) (wTotal, rTotal, aTotal, vTotal int) {
 	for layer := 0; layer < len(arch)-1; layer++ {
 		rows, cols := arch[layer], arch[layer+1]
@@ -250,6 +266,10 @@ func (s *BatchSolver) SeedSlot(slot int, w, r, a, v []float32) error {
 	return err
 }
 
+/*
+GPU batch resonance (symm.logic.resonance parity) — seedAllSlots amortizes settle/learn across symbols on Metal.
+*/
+
 func (s *BatchSolver) seedAllSlots(w, r, a, v []float32) error {
 	wP, wL := floatPtr(w)
 	rP, rL := floatPtr(r)
@@ -270,6 +290,10 @@ func (s *BatchSolver) seedAllSlots(w, r, a, v []float32) error {
 	return err
 }
 
+/*
+GPU batch resonance (symm.logic.resonance parity) — Close amortizes settle/learn across symbols on Metal.
+*/
+
 func (s *BatchSolver) Close() {
 	if s == nil || s.handle == nil {
 		return
@@ -278,7 +302,15 @@ func (s *BatchSolver) Close() {
 	s.handle = nil
 }
 
+/*
+GPU batch resonance (symm.logic.resonance parity) — Batch amortizes settle/learn across symbols on Metal.
+*/
+
 func (s *BatchSolver) Batch() int { return s.batch }
+
+/*
+GPU batch resonance (symm.logic.resonance parity) — ResetState amortizes settle/learn across symbols on Metal.
+*/
 
 func (s *BatchSolver) ResetState(resetPrecision bool) error {
 	reset := C.uint32_t(0)
@@ -398,6 +430,10 @@ func (s *BatchSolver) SetInputs32(inputs, targets []float32) error {
 	return err
 }
 
+/*
+GPU batch resonance (symm.logic.resonance parity) — Settle amortizes settle/learn across symbols on Metal.
+*/
+
 func (s *BatchSolver) Settle(advanceTemporal bool) error {
 	advance := C.uint32_t(0)
 	if advanceTemporal {
@@ -408,6 +444,10 @@ func (s *BatchSolver) Settle(advanceTemporal bool) error {
 			(*C.char)(unsafe.Pointer(&errBuf[0])), C.int(len(errBuf)))
 	})
 }
+
+/*
+GPU batch resonance (symm.logic.resonance parity) — Learn amortizes settle/learn across symbols on Metal.
+*/
 
 func (s *BatchSolver) Learn() error {
 	return s.call(func(errBuf []byte) C.int {
@@ -469,6 +509,10 @@ func (s *BatchSolver) OutcomeSlot(slot int) (latent []float64, energy, surprise 
 		nil
 }
 
+/*
+GPU batch resonance (symm.logic.resonance parity) — TopDimension amortizes settle/learn across symbols on Metal.
+*/
+
 func (s *BatchSolver) TopDimension() int {
 	if s == nil || len(s.arch) == 0 {
 		return 0
@@ -479,6 +523,10 @@ func (s *BatchSolver) TopDimension() int {
 
 // TargetDim reports the supervised task-head dimension (0 when the V head is
 // disabled).
+/*
+GPU batch resonance (symm.logic.resonance parity) — TargetDim amortizes settle/learn across symbols on Metal.
+*/
+
 func (s *BatchSolver) TargetDim() int {
 	if s == nil {
 		return 0
@@ -535,6 +583,10 @@ func (s *BatchSolver) TaskPrediction(slot int, latent []float64) ([]float64, err
 	return prediction, nil
 }
 
+/*
+GPU batch resonance (symm.logic.resonance parity) — LatentState amortizes settle/learn across symbols on Metal.
+*/
+
 func (s *BatchSolver) LatentState(slot int) ([]float64, error) {
 	topDim := s.arch[len(s.arch)-1]
 	buf := make([]float32, topDim)
@@ -551,6 +603,10 @@ func (s *BatchSolver) LatentState(slot int) ([]float64, error) {
 	return toFloat64(buf), nil
 }
 
+/*
+GPU batch resonance (symm.logic.resonance parity) — Energy amortizes settle/learn across symbols on Metal.
+*/
+
 func (s *BatchSolver) Energy(slot int) (float64, error) {
 	var out C.float
 	err := s.call(func(errBuf []byte) C.int {
@@ -560,6 +616,10 @@ func (s *BatchSolver) Energy(slot int) (float64, error) {
 	return float64(out), err
 }
 
+/*
+GPU batch resonance (symm.logic.resonance parity) — ReconstructionError amortizes settle/learn across symbols on Metal.
+*/
+
 func (s *BatchSolver) ReconstructionError(slot int) (float64, error) {
 	var out C.float
 	err := s.call(func(errBuf []byte) C.int {
@@ -568,6 +628,10 @@ func (s *BatchSolver) ReconstructionError(slot int) (float64, error) {
 	})
 	return float64(out), err
 }
+
+/*
+GPU batch resonance (symm.logic.resonance parity) — WireLayers amortizes settle/learn across symbols on Metal.
+*/
 
 func (s *BatchSolver) WireLayers(slot int) ([]LayerWire, error) {
 	if err := s.validateSlot(slot); err != nil {
@@ -622,6 +686,10 @@ func (s *BatchSolver) WireLayers(slot int) ([]LayerWire, error) {
 	return layers, nil
 }
 
+/*
+GPU batch resonance (symm.logic.resonance parity) — Weights amortizes settle/learn across symbols on Metal.
+*/
+
 func (s *BatchSolver) Weights(slot int) (w, r, a, v []float32, err error) {
 	numLinks := len(s.arch) - 1
 	wTotal, rTotal := 0, 0
@@ -653,6 +721,10 @@ func (s *BatchSolver) Weights(slot int) (w, r, a, v []float32, err error) {
 	return w, r, a, v, nil
 }
 
+/*
+GPU batch resonance (symm.logic.resonance parity) — call amortizes settle/learn across symbols on Metal.
+*/
+
 func (s *BatchSolver) call(run func(errBuf []byte) C.int) error {
 	if s == nil || s.handle == nil {
 		return fmt.Errorf("resonance: solver is not initialized")
@@ -667,6 +739,10 @@ func (s *BatchSolver) call(run func(errBuf []byte) C.int) error {
 	return nil
 }
 
+/*
+GPU batch resonance (symm.logic.resonance parity) — validateSlot amortizes settle/learn across symbols on Metal.
+*/
+
 func (s *BatchSolver) validateSlot(slot int) error {
 	if s == nil || s.handle == nil {
 		return fmt.Errorf("resonance: solver is not initialized")
@@ -677,12 +753,20 @@ func (s *BatchSolver) validateSlot(slot int) error {
 	return nil
 }
 
+/*
+GPU batch resonance (symm.logic.resonance parity) — floatPtr amortizes settle/learn across symbols on Metal.
+*/
+
 func floatPtr(values []float32) (*C.float, int) {
 	if len(values) == 0 {
 		return nil, 0
 	}
 	return (*C.float)(unsafe.Pointer(&values[0])), len(values)
 }
+
+/*
+GPU batch resonance (symm.logic.resonance parity) — toFloat32Into amortizes settle/learn across symbols on Metal.
+*/
 
 func toFloat32Into(dst []float32, values []float64) []float32 {
 	if cap(dst) < len(values) {
@@ -696,6 +780,10 @@ func toFloat32Into(dst []float32, values []float64) []float32 {
 	return dst
 }
 
+/*
+GPU batch resonance (symm.logic.resonance parity) — toFloat64 amortizes settle/learn across symbols on Metal.
+*/
+
 func toFloat64(values []float32) []float64 {
 	out := make([]float64, len(values))
 	for i, v := range values {
@@ -703,6 +791,10 @@ func toFloat64(values []float32) []float64 {
 	}
 	return out
 }
+
+/*
+GPU batch resonance (symm.logic.resonance parity) — cString amortizes settle/learn across symbols on Metal.
+*/
 
 func cString(buffer []byte) string {
 	for i, v := range buffer {

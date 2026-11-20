@@ -2,6 +2,10 @@ package equation
 
 import "github.com/theapemachine/errnie"
 
+/*
+BookQualityInputKeys names the feature frame contract algorithm/book/quality
+samples before Measure and Map fan into symm resonance keys.
+*/
 var BookQualityInputKeys = []string{
 	"cancelBid",
 	"fillBid",
@@ -18,6 +22,10 @@ var BookQualityInputKeys = []string{
 	"lastPrice",
 }
 
+/*
+FlowInputKeys names trade-pressure scalars trade_flow sampling must supply for
+flow Map outputs on the grid.
+*/
 var FlowInputKeys = []string{
 	"buyNotional",
 	"sellNotional",
@@ -26,11 +34,19 @@ var FlowInputKeys = []string{
 	"medianNotional",
 }
 
+/*
+DepthInputKeys names quote-volume features depth sampling attaches before
+scarcity and median scores export.
+*/
 var DepthInputKeys = []string{
 	"scaledQuoteVol",
 	"peerCount",
 }
 
+/*
+ConvictionInputKeys names cross-section breadth fields conviction sampling must
+align with surge and slump classification.
+*/
 var ConvictionInputKeys = []string{
 	"breadth",
 	"change",
@@ -38,6 +54,10 @@ var ConvictionInputKeys = []string{
 	"leader",
 }
 
+/*
+ManifoldInputKeys names pressure and coherence scalars manifold sampling uses
+before herd and drift scores reach the envelope.
+*/
 var ManifoldInputKeys = []string{
 	"pressureGradNorm",
 	"coherenceMag2",
@@ -46,6 +66,10 @@ var ManifoldInputKeys = []string{
 	"price",
 }
 
+/*
+BookflowInputKeys names depth skew histories book-flow sampling retains so
+spoof and loaded gates in Measure match live book state.
+*/
 var BookflowInputKeys = []string{
 	"weighted",
 	"level1",
@@ -60,6 +84,10 @@ var BookflowInputKeys = []string{
 	"flatCount",
 }
 
+/*
+DecayInputKeys names rolling depth and pressure counts decay sampling must
+preserve for dual-sided exit urgency Map families.
+*/
 var DecayInputKeys = []string{
 	"lastPrice",
 	"bidDepthCount",
@@ -70,6 +98,10 @@ var DecayInputKeys = []string{
 	"imbalanceCount",
 }
 
+/*
+CohortInputKeys names cross-section correlation layout cohort sampling packs
+into the feature frame before classifyCohort runs.
+*/
 var CohortInputKeys = []string{
 	"window",
 	"pairCorrelationCount",
@@ -79,6 +111,10 @@ var CohortInputKeys = []string{
 	"energy",
 }
 
+/*
+LagInputKeys names anchor lag features lag sampling exports for pairwise
+lead-lag evidence in resonance.
+*/
 var LagInputKeys = []string{
 	"isAnchor",
 	"price",

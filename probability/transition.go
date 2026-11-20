@@ -135,6 +135,10 @@ func (matrix *TransitionMatrix) Reset() {
 	matrix.lastCategory = 0
 }
 
+/*
+klDivergence measures surprise of observed counts against the smoothed expected
+row; non-finite or negative masses error out before log terms are taken.
+*/
 func klDivergence(observed, expected []float64) (float64, error) {
 	if len(observed) == 0 || len(observed) != len(expected) {
 		return 0, errnie.Error(errnie.Err(
